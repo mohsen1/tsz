@@ -37,6 +37,23 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// True when the *resolved* index-signature key type is concrete (free of
+    /// type parameters) and a structurally valid index key.
+    ///
+    /// Used by [`Self::classify_index_sig_param_type`] to override a spurious
+    /// AST-level "generic" classification for instantiated generic-alias
+    /// applications (e.g. `Brand<string, 'event'>`), while preserving TS1337 for
+    /// still-generic keys such as `T & string` and literal keys such as
+    /// `'a' | 'b'`. Mirrors tsc deciding TS1337 from the resolved type rather
+    /// than the syntactic spelling.
+    pub(crate) fn resolved_index_key_is_concrete_valid(&mut self, key_type: TypeId) -> bool {
+        let resolved = self.evaluate_type_for_assignability(key_type);
+        crate::query_boundaries::index_signature::resolved_index_key_is_concrete_valid(
+            self.ctx.types.as_type_database(),
+            resolved,
+        )
+    }
+
     /// Classify an index-signature parameter type against tsc's grammar rules,
     /// returning `(is_generic_or_literal, is_valid)`.
     ///
@@ -57,10 +74,26 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(type_annotation_idx)
             .map_or(0, |n| n.kind);
-        let is_generic_or_literal =
-            self.is_type_param_or_literal_in_index_sig(type_node_kind, type_annotation_idx);
+        // Resolve the key once and derive both the TS1268 validity and the
+        // TS1337 generic/literal classification from it.
+        let resolved_key = self.evaluate_type_for_assignability(key_type);
+        let db = self.ctx.types.as_type_database();
+        let resolved_key_is_valid =
+            crate::query_boundaries::index_signature::resolved_index_key_type_is_valid(
+                db,
+                resolved_key,
+            );
+        // The AST walk over-reports "generic" for an instantiated generic-alias
+        // application (e.g. `Brand<string, 'event'>`); drop the spurious TS1337
+        // when the resolved key is a concrete valid index key. See
+        // `resolved_index_key_is_concrete_valid` for the full rationale.
+        let resolved_key_is_concrete_valid = resolved_key_is_valid
+            && !crate::query_boundaries::common::contains_free_type_parameters(db, resolved_key);
+        let is_generic_or_literal = self
+            .is_type_param_or_literal_in_index_sig(type_node_kind, type_annotation_idx)
+            && !resolved_key_is_concrete_valid;
         let is_valid = !is_generic_or_literal
-            && (self.index_key_type_is_valid(key_type)
+            && (resolved_key_is_valid
                 || self.is_valid_index_sig_param_type(type_node_kind, type_annotation_idx));
         (is_generic_or_literal, is_valid)
     }
