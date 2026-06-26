@@ -451,6 +451,9 @@ mod return_alias_unknown_eval_assignability_tests;
 #[path = "tests/return_relation_routing_arch_tests.rs"]
 mod return_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/spread_array_rest_param_inference_tests.rs"]
+mod spread_array_rest_param_inference_tests;
+#[cfg(test)]
 #[path = "../tests/spread_rest_diagnostics_tests.rs"]
 mod spread_rest_diagnostics_tests;
 #[cfg(test)]

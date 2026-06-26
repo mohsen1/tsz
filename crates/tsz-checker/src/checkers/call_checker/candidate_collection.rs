@@ -870,6 +870,29 @@ impl<'a> CheckerState<'a> {
                                 effective_index += 1;
                                 continue;
                             }
+                            // The spread lands on a rest position. When that rest
+                            // parameter is a *bare type parameter* (`...args: T`),
+                            // its open-ended length feeds the inference variable
+                            // `T`; the open array must be preserved as a
+                            // spread-argument marker so rest-tuple inference
+                            // reconstructs `T` as the open `E[]` (variadic) rather
+                            // than collapsing the single representative element into
+                            // a fixed-length `[E]` tuple — which makes arity-
+                            // dependent reads (indexing, `.length`, fixed-tuple
+                            // assignment) spuriously fail (e.g. TS2493). This mirrors
+                            // the open-ended tuple-spread tail handled by
+                            // `preserve_open_tail` above. A plain array rest
+                            // (`...rest: E[]`) keeps the historical single-element
+                            // materialization, and a rest *tuple* (`...args: [...,
+                            // cb]`) keeps the aggregate-rest path; neither is
+                            // remarked here.
+                            if self.array_spread_rest_param_is_bare_type_param(
+                                callable_ctx.callable_type,
+                            ) {
+                                arg_types.push(self.spread_argument_marker_type(spread_type));
+                                effective_index += 1;
+                                continue;
+                            }
                             // Continue processing - push the element type for assignability checking
                             if let Some(elem_type) =
                                 array_element_type_for_type(self.ctx.types, spread_type)
@@ -1645,24 +1668,55 @@ impl<'a> CheckerState<'a> {
     /// type or rest parameter cannot be determined, fall back to the historical
     /// materialization (no marker).
     fn open_spread_tail_needs_marker(&self, callable_type: Option<TypeId>) -> bool {
-        let Some(callable_type) = callable_type else {
+        let Some(rest_type) = self.unwrapped_callable_rest_parameter_type(callable_type) else {
+            // No determinable rest parameter — fall back to the historical
+            // materialization (no marker).
             return false;
         };
-        // Inspect the *whole* declared rest-parameter type rather than indexing
-        // into it: `get_rest_parameter_type(index)` resolves a type-parameter rest
-        // to its constraint (`...args: T` -> `unknown[]`), which would look like a
-        // plain array and defeat the distinction. The rest parameter is the last
-        // parameter of the contextual signature.
-        let Some(rest_type) = self.callable_rest_parameter_type(callable_type) else {
-            return false;
-        };
-        let rest_type =
-            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
-                .unwrap_or(rest_type);
         let is_plain_array = array_element_type_for_type(self.ctx.types, rest_type).is_some()
             && tuple_elements_for_type(self.ctx.types, rest_type).is_none()
             && !is_type_parameter_type(self.ctx.types, rest_type);
         !is_plain_array
+    }
+
+    /// Whether a *bare non-tuple array/iterable* spread (`f(...arrayValue)`)
+    /// landing on this callable's rest parameter must be preserved as an
+    /// open-ended spread-argument marker.
+    ///
+    /// This is narrower than [`Self::open_spread_tail_needs_marker`]: it fires
+    /// only when the rest parameter is a *bare type parameter* (`...args: T`),
+    /// where the open array's indeterminate length directly feeds the inference
+    /// variable `T`. Without the marker, the single representative element
+    /// collapses `T` into a fixed-length `[E]` tuple, breaking every
+    /// arity-dependent read of the result (TS2493, `.length`, fixed-tuple
+    /// assignment). A plain array rest (`...rest: E[]`) needs no marker (its
+    /// element type is inferred positionally), and a rest *tuple* (`...args:
+    /// [..., cb]`) must keep the aggregate-rest path — marking it would compare
+    /// the whole array against the tuple and surface a spurious TS2345. When the
+    /// callee type or rest parameter cannot be determined, no marker is added.
+    fn array_spread_rest_param_is_bare_type_param(&self, callable_type: Option<TypeId>) -> bool {
+        self.unwrapped_callable_rest_parameter_type(callable_type)
+            .is_some_and(|rest_type| is_type_parameter_type(self.ctx.types, rest_type))
+    }
+
+    /// The callable's declared rest-parameter type with `readonly`/`NoInfer`
+    /// wrappers stripped, or `None` when the callee has no determinable rest
+    /// parameter.
+    ///
+    /// The *whole* declared rest-parameter type is inspected rather than indexing
+    /// into it: `get_rest_parameter_type(index)` resolves a type-parameter rest to
+    /// its constraint (`...args: T` -> `unknown[]`), which would look like a plain
+    /// array and erase the bare-type-parameter / rest-tuple / plain-array
+    /// distinction the spread-marker callers depend on.
+    fn unwrapped_callable_rest_parameter_type(
+        &self,
+        callable_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let rest_type = self.callable_rest_parameter_type(callable_type?)?;
+        Some(
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
+                .unwrap_or(rest_type),
+        )
     }
 
     /// The declared type of the contextual signature's rest parameter (`...args`),
