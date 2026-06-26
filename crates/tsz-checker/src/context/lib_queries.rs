@@ -99,7 +99,7 @@ impl<'a> CheckerContext<'a> {
     /// interning and the file-local cache, so it can be consulted from the
     /// `Fn`-typed `typeof` lowering overrides.
     pub(crate) fn global_this_surface_type(&self) -> TypeId {
-        use tsz_solver::{ObjectShape, PropertyInfo, SymbolRef};
+        use tsz_solver::{PropertyInfo, SymbolRef};
 
         let cache = &self.type_reference_validation_caches.type_node_surface;
         if let Some(cached) = cache.global_this_type.get() {
@@ -151,11 +151,7 @@ impl<'a> CheckerContext<'a> {
             properties.push(prop);
         }
 
-        let global_this_type = self.types.factory().object_with_index(ObjectShape {
-            properties,
-            flags: tsz_solver::ObjectFlags::GLOBAL_THIS_SURFACE,
-            ..ObjectShape::default()
-        });
+        let global_this_type = self.types.factory().global_this_surface_object(properties);
         // Record the synthetic surface so diagnostics render it as
         // `typeof globalThis` rather than its full member body.
         self.types

@@ -159,6 +159,19 @@ impl<'db> TypeFactory<'db> {
         self.db.object_with_index(shape)
     }
 
+    /// Create the synthetic `typeof globalThis` surface object. It carries the
+    /// `GLOBAL_THIS_SURFACE` flag so diagnostics render it as `typeof
+    /// globalThis` rather than its full member body. Builder method so checker
+    /// call sites do not name `ObjectFlags` directly.
+    #[inline]
+    pub fn global_this_surface_object(&self, properties: Vec<PropertyInfo>) -> TypeId {
+        self.object_with_index(ObjectShape {
+            properties,
+            flags: ObjectFlags::GLOBAL_THIS_SURFACE,
+            ..ObjectShape::default()
+        })
+    }
+
     /// Create an object whose declaration order should be preserved for
     /// stable spread display.
     #[inline]
