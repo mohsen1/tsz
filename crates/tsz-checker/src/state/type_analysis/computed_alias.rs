@@ -770,6 +770,14 @@ impl CheckerState<'_> {
     /// Restricted to actual/cloned-lib type aliases (a user/local type that
     /// shadows a lib name keeps the normal path) and skipped once a usable body
     /// is already registered, so the resolution runs at most once per def.
+    ///
+    /// The caller gates this to names that appear as the *object-type of an
+    /// indexed access* (`Parameters<F>[0]`): only that shape exhibits the
+    /// #14729 false `TS2349`. A bare lib-utility application that is not indexed
+    /// (`type Path<T> = Extract<keyof T, string>`) is left on the normal
+    /// deferred path; priming it eagerly could perturb the utility's
+    /// instantiation in unrelated alias bodies (regressed the `nextjs-fresh-app`
+    /// project row).
     fn prime_actual_lib_type_alias_body(&mut self, name: &str) {
         if self.ctx.lib_contexts.is_empty() || self.ctx.file_local_type_shadow_for_lib_name(name) {
             return;
@@ -811,6 +819,15 @@ impl CheckerState<'_> {
     ) {
         let mut stack = vec![root];
         let mut names_to_prime = Vec::new();
+        // Names that appear as the immediate object-type of an indexed-access
+        // type (`Parameters<F>[0]`, `ReturnType<G>["fn"]`). Only these need the
+        // lib-utility *body* primed: the #14729 false `TS2349` arises because the
+        // bodyless cross-arena def resolves to the `unknown` placeholder and the
+        // *index into it* stays deferred. A bare lib-utility application that is
+        // not indexed (`type Path<T> = Extract<keyof T, string>`) does not need —
+        // and must not get — the body primed here, since priming it can perturb
+        // the utility's instantiation in unrelated alias bodies.
+        let mut indexed_object_names: Vec<String> = Vec::new();
 
         while let Some(node_idx) = stack.pop() {
             let Some(node) = decl_arena.get(node_idx) else {
@@ -835,12 +852,26 @@ impl CheckerState<'_> {
                 }
             }
 
+            if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && let Some(indexed) = decl_arena.get_indexed_access_type(node)
+                && let Some(object_node) = decl_arena.get(indexed.object_type)
+                && object_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(object_ref) = decl_arena.get_type_ref(object_node)
+                && let Some(object_name_node) = decl_arena.get(object_ref.type_name)
+                && object_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(object_ident) = decl_arena.get_identifier(object_name_node)
+            {
+                indexed_object_names.push(object_ident.escaped_text.clone());
+            }
+
             stack.extend(decl_arena.get_children(node_idx));
         }
 
         for name in names_to_prime {
             self.prime_lib_type_params(&name);
-            self.prime_actual_lib_type_alias_body(&name);
+            if indexed_object_names.iter().any(|n| n == &name) {
+                self.prime_actual_lib_type_alias_body(&name);
+            }
             let lib_binders = self.get_lib_binders();
             let decl_binder = self
                 .ctx
