@@ -1858,8 +1858,9 @@ fn test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback() {
         .expect("failed to isolate instanceof class-symbol branch");
 
     assert!(
-        class_branch.contains("self.resolve_symbol_to_lazy(symbol_ref)"),
-        "instanceof class-symbol branch should resolve through the DefId-backed lazy helper"
+        class_branch.contains("self.resolve_symbol_to_instance_type(symbol_ref)"),
+        "instanceof class-symbol branch should resolve through the DefId-backed instance-type helper \
+         (which wraps resolve_symbol_to_lazy and any-fills generic type parameters)"
     );
     assert!(
         !class_branch.contains(".reference("),
@@ -1873,8 +1874,9 @@ fn test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback() {
         .expect("failed to isolate instanceof global-constructor branch");
 
     assert!(
-        global_constructor_branch.contains("self.resolve_symbol_to_lazy(symbol_ref)"),
-        "instanceof global-constructor branch should resolve through the DefId-backed lazy helper"
+        global_constructor_branch.contains("self.resolve_symbol_to_instance_type(symbol_ref)"),
+        "instanceof global-constructor branch should resolve through the DefId-backed instance-type \
+         helper (which wraps resolve_symbol_to_lazy and any-fills generic type parameters)"
     );
     assert!(
         !global_constructor_branch.contains(".reference("),

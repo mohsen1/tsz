@@ -156,6 +156,82 @@ async function run() {
 }
 
 #[test]
+fn await_declared_class_instance_thenable_unwraps() {
+    // A class-declared thenable: the instance type does NOT classify as an
+    // `Object` promise shape, yet it exposes a callable `then(onfulfilled)` and
+    // so `await` must unwrap it structurally (mirrors tsc's getAwaitedType).
+    // Regression for the neverthrow `class Err implements PromiseLike` family.
+    assert_no_2322(
+        r#"
+export {};
+declare class Settler { then(onFulfil: (payload: number) => void): void }
+async function run(make: () => Settler) {
+    const value = await make();
+    const checked: number = value;
+    return checked;
+}
+"#,
+        "declared-class instance thenable",
+    );
+}
+
+#[test]
+fn await_class_property_then_thenable_unwraps() {
+    // Property-style `then` field on a class instance must also unwrap.
+    assert_no_2322(
+        r#"
+export {};
+declare class Settler { then: (onFulfil: (payload: number) => void) => void }
+async function run(make: () => Settler) {
+    const value = await make();
+    const checked: number = value;
+    return checked;
+}
+"#,
+        "class property-`then` thenable",
+    );
+}
+
+#[test]
+fn await_class_thenable_arbitrary_names_unwraps() {
+    // Same shape with different class / payload-param names: the fix must be
+    // structural, not keyed on any identifier.
+    assert_no_2322(
+        r#"
+export {};
+declare class Deferred { then(cb: (outcome: string) => void): void }
+async function go(produce: () => Deferred) {
+    const result = await produce();
+    const narrowed: string = result;
+    return narrowed;
+}
+"#,
+        "class thenable arbitrary binder names",
+    );
+}
+
+#[test]
+fn await_class_without_then_does_not_unwrap() {
+    // Guard: a class instance with NO `then` member is not a thenable; awaiting
+    // it yields the instance type, so assigning to `number` must still TS2322.
+    let diags = await_diagnostics(
+        r#"
+export {};
+declare class Plain { payload: number }
+async function run(make: () => Plain) {
+    const value = await make();
+    const checked: number = value;
+    return checked;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2322),
+        "class without `then` must not unwrap. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn await_non_callable_then_member_does_not_unwrap() {
     // Guard: a `then` that is not callable is NOT a thenable; the operand type
     // must survive so assigning it to `number` still reports TS2322.
