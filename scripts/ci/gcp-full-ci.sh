@@ -215,17 +215,36 @@ ensure_host_tools() {
 }
 
 ensure_gcs_auth() {
-  # Set GOOGLE_APPLICATION_CREDENTIALS from SCCACHE_GCS_KEY_JSON when the
-  # caller hasn't gone through setup_sccache (e.g. conformance shards that
-  # skip Rust compilation).  gsutil respects GOOGLE_APPLICATION_CREDENTIALS,
-  # so without this the upload/download falls back to the Cloud Run metadata
-  # server, which is intermittently unavailable on self-hosted runners.
-  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
-    local key_file="/tmp/sccache-gcs-key.json"
-    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
-    chmod 600 "$key_file"
-    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
-    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+    if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+      local key_file="/tmp/sccache-gcs-key.json"
+      printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+      chmod 600 "$key_file"
+      export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+      echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+    fi
+
+    # gsutil from the Cloud SDK does not reliably consume ADC-only JSON key
+    # files. Activate the same key in gcloud, then let gsutil reuse that
+    # account instead of falling through to anonymous GCS requests.
+    if command -v gcloud >/dev/null 2>&1; then
+      if ! gcloud auth activate-service-account \
+        --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
+        echo "error: failed to activate SCCACHE_GCS_KEY_JSON for GCS access" >&2
+        return 1
+      fi
+      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
+      echo "gcs-auth: activated service account credentials for gsutil"
+    fi
+  fi
+
+  # Cloud Run runners can arrive with `gcloud auth` already configured. Make
+  # the bundled gsutil use that account instead of falling back to anonymous
+  # requests during shard artifact transfer.
+  if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && command -v gcloud >/dev/null 2>&1; then
+    if gcloud auth print-access-token >/dev/null 2>&1; then
+      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
+    fi
   fi
 }
 
@@ -787,7 +806,7 @@ build_test_binaries() {
   # Wrap with safe-run.sh so cargo is killed gracefully before the kernel
   # OOM-killer fires and silently kills the GitHub Actions runner process.
   set +e
-  "$ROOT_DIR/scripts/safe-run.sh" --limit "${TSZ_CI_DIST_BUILD_MEMORY_LIMIT_PCT:-88}%" -- \
+  CARGO_INCREMENTAL=0 "$ROOT_DIR/scripts/safe-run.sh" --limit "${TSZ_CI_DIST_BUILD_MEMORY_LIMIT_PCT:-88}%" -- \
     cargo build --profile dist-fast \
       --jobs "$CARGO_BUILD_JOBS" \
       -p tsz-cli \
@@ -1330,6 +1349,9 @@ run_common_setup() {
     # avoids the gitlink-vs-ref-file staleness check that's only relevant
     # when the tree is actually used.
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+  fi
+  if [[ -n "${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}" ]] && command -v gsutil >/dev/null 2>&1; then
+    ensure_gcs_auth
   fi
   if suite_needs_group "$suite" rust_compile; then
     if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then

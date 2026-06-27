@@ -12,6 +12,20 @@ pub(crate) fn conditional_branch_union_constraint(
     tsz_solver::type_queries::conditional_branch_union_constraint(db, type_id)
 }
 
+/// Apparent **value** type of a deferred conditional, for spread / iteration
+/// element extraction (tsc's `getApparentType` ->
+/// `getDefaultConstraintOfConditionalType`). The inferred true branch narrows
+/// the check type parameter to `check & extends` throughout, so a wrapped
+/// occurrence (`T extends U ? [T] : Y`) iterates to the narrowed element type
+/// `T & U` rather than the unconstrained `T`. `None` when `type_id` is not a
+/// deferred conditional or the reduction makes no progress.
+pub(crate) fn conditional_apparent_value_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_conditional_apparent_value_constraint(db, type_id)
+}
+
 /// Apparent base constraint of a deferred conditional type (tsc's
 /// `getDefaultConstraintOfConditionalType`): the union of its inferred
 /// true-branch and false-branch result types. `None` when `type_id` is not a

@@ -1409,7 +1409,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
             // MetaProperty: `new.target` (import.meta is parsed as PROPERTY_ACCESS_EXPRESSION)
             k if k == syntax_kind_ext::META_PROPERTY => {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use crate::diagnostics::diagnostic_codes;
                 use tsz_parser::parser::syntax_kind_ext::{
                     CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
                 };
@@ -1429,10 +1429,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     )
                 });
                 if invalid_context {
-                    self.checker.error_at_node(
+                    // Route through the substituting emitter so the `{0}`
+                    // placeholder is filled with the meta-property's canonical
+                    // text rather than leaked verbatim (#14840). A `META_PROPERTY`
+                    // node is only ever produced for `new.<name>` (the parser
+                    // lowers `import.meta` to a `PROPERTY_ACCESS_EXPRESSION`), and
+                    // tsc's `checkNewTargetMetaProperty` always reports the
+                    // canonical `new.target` here — even for a misspelled name
+                    // like `new.foo`.
+                    self.checker.error_at_node_msg(
                         idx,
-                        diagnostic_messages::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
                         diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP,
+                        &["new.target"],
                     );
                     return TypeId::ANY;
                 }
