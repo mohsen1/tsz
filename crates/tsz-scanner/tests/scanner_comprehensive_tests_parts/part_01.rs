@@ -87,6 +87,30 @@ mod shebang_scanning {
         let len = scanner.scan_shebang_trivia();
         assert!(len > 0);
     }
+
+    // Regression for #14806: a leading UTF-8 BOM (U+FEFF, 3 bytes) before a
+    // shebang must be transparent. The shebang previously went unrecognized
+    // because pos 0 is the BOM byte, so the parser later fired a spurious
+    // TS18026 + TS1005. tsc accepts a BOM before the shebang.
+    #[test]
+    fn shebang_after_bom() {
+        let mut scanner =
+            ScannerState::new("\u{FEFF}#!/usr/bin/env node\nvar x".to_string(), true);
+        let len = scanner.scan_shebang_trivia();
+        assert!(len > 0, "shebang after a BOM must be recognized");
+        // 3 BOM bytes + "#!/usr/bin/env node\n" (20 bytes) consumed.
+        assert_eq!(scanner.get_pos(), 23);
+    }
+
+    #[test]
+    fn bom_without_shebang_leaves_pos_at_zero() {
+        // A BOM with no following shebang must NOT be consumed here; it is left
+        // for the normal trivia path (next_token), so pos stays at 0.
+        let mut scanner = ScannerState::new("\u{FEFF}var x".to_string(), true);
+        let len = scanner.scan_shebang_trivia();
+        assert_eq!(len, 0);
+        assert_eq!(scanner.get_pos(), 0);
+    }
 }
 mod full_token_stream {
     use super::*;
