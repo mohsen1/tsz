@@ -259,6 +259,38 @@ impl<'a> CheckerState<'a> {
                     // cached == ERROR but type_parameter_scope is non-empty: re-resolve
                     // cached != ERROR and type_parameter_scope non-empty: re-resolve (type params may differ)
                 }
+                // Lazy own-member lowering (`TSZ_LAZY_OWN_MEMBERS`): defer an
+                // eligible non-generic lib-interface reference to a bare
+                // `Lazy(DefId)` instead of materializing its full transitive
+                // closure at this reference site (variable annotations, type
+                // aliases, member annotations, …). It resolves on demand via the
+                // #8638 single-member fast path / relation `resolve_lazy`. Only
+                // argument-less references qualify; an ineligible reference
+                // (generic, globally augmented, user-shadowed, user type) yields
+                // `None` and falls through to the normal full-materialization
+                // path, so flag-off is byte-identical.
+                if crate::state_checking::lazy_lib_member::lazy_own_members_varpos_enabled() {
+                    let deferral_name = self
+                        .ctx
+                        .arena
+                        .get(idx)
+                        .and_then(|n| self.ctx.arena.get_type_ref(n))
+                        .filter(|type_ref| {
+                            type_ref
+                                .type_arguments
+                                .as_ref()
+                                .is_none_or(|args| args.nodes.is_empty())
+                        })
+                        .map(|type_ref| type_ref.type_name);
+                    if let Some(type_name) = deferral_name
+                        && let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+                            self.resolve_identifier_symbol_in_type_position(type_name)
+                        && let Some(lazy) = self.try_defer_eligible_lib_type_reference(sym_id)
+                    {
+                        self.ctx.node_types.insert(idx.0, lazy);
+                        return lazy;
+                    }
+                }
                 let mut result = self.get_type_from_type_reference(idx);
                 // Eagerly reduce a concrete `Awaited<…>` reference to its
                 // unwrapped form, the way tsc computes `getAwaitedType` at the

@@ -191,6 +191,7 @@ pub mod computation {
 
     // Operations
     pub use crate::inference::infer_type_arguments_from_param_args;
+    pub use crate::inference::xarena_base::{xarena_base_decl_dump_line, xarena_dump_enabled};
     pub use crate::operations::infer_generic_function;
     pub use crate::operations::widening::widen_literal_type;
     pub use crate::operations::{
