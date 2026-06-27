@@ -88,6 +88,30 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
+        // Narrowing a property/element reference on an object/array-literal
+        // assignment must reduce the reference's *declared* type rather than
+        // adopt the fresh literal's structure. A literal drops the declared
+        // property modifiers — notably `readonly` — so a later nested write
+        // through the same reference (`r.a.b = …` after `r.a = …`) would wrongly
+        // be seen as writable (#14787). `tsc` keeps the declared modifiers: a
+        // readonly nested member survives the assignment and is still rejected
+        // (TS2540), whether the outer property is `readonly` or mutable, and even
+        // inside a constructor. `narrow_assignment` returns the declared type
+        // unchanged for a non-union (preserving its modifiers) and reduces a
+        // declared union to the assigned member (which carries its own declared
+        // modifiers), so discriminant narrowing is unaffected. Scoped to declared
+        // reference types that actually carry `readonly` members so mutable
+        // shapes keep their existing RHS-narrowed flow type.
+        if self.node_is_object_or_array_literal(bin.right)
+            && let Some(declared_ref_type) = self.declared_access_reference_type(target)
+            && crate::query_boundaries::common::type_has_readonly_members(
+                self.interner.as_type_database(),
+                declared_ref_type,
+            )
+        {
+            return Some(self.narrow_assignment(declared_ref_type, assigned_type));
+        }
+
         if let Some((read_type, write_type)) = self.access_reference_split_read_write_type(target) {
             if read_type.is_any_unknown_or_error()
                 || self
@@ -118,10 +142,13 @@ impl<'a> FlowAnalyzer<'a> {
             .then_some(assigned_type)
     }
 
-    fn access_reference_split_read_write_type(
-        &self,
-        target: NodeIndex,
-    ) -> Option<(TypeId, TypeId)> {
+    /// Resolve the property accessed by an access-reference `target` against its
+    /// receiver's type and return the raw [`PropertyAccessResult`]. The receiver
+    /// type is the cached node type, or `concrete_this_type` for a bare `this`.
+    /// Returns `None` for a computed/dynamic key or an unresolved receiver.
+    /// Shared by the read/write-surface split and the declared-reference-type
+    /// query so the name/base/resolution logic lives in one place.
+    fn resolve_access_reference_property(&self, target: NodeIndex) -> Option<PropertyAccessResult> {
         let target_node = self.arena.get(target)?;
         let access = self.arena.get_access_expr(target_node)?;
 
@@ -146,7 +173,7 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         };
 
-        let access_result = if let Some(env_ref) = &self.type_environment {
+        Some(if let Some(env_ref) = &self.type_environment {
             let env = env_ref.borrow();
             crate::query_boundaries::property_access::resolve_property_access_with_resolver(
                 self.interner,
@@ -162,9 +189,14 @@ impl<'a> FlowAnalyzer<'a> {
                 name_atom,
                 self.interner.no_unchecked_indexed_access(),
             )
-        };
+        })
+    }
 
-        match access_result {
+    fn access_reference_split_read_write_type(
+        &self,
+        target: NodeIndex,
+    ) -> Option<(TypeId, TypeId)> {
+        match self.resolve_access_reference_property(target)? {
             PropertyAccessResult::Success {
                 type_id,
                 write_type: Some(write_type),
@@ -172,6 +204,45 @@ impl<'a> FlowAnalyzer<'a> {
             } if write_type != type_id => Some((type_id, write_type)),
             _ => None,
         }
+    }
+
+    /// True when `node` is an object- or array-literal expression — the RHS
+    /// shape whose fresh structure drops declared property modifiers.
+    fn node_is_object_or_array_literal(&self, node: NodeIndex) -> bool {
+        self.arena.get(node).is_some_and(|n| {
+            n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        })
+    }
+
+    /// The *declared* type of a property/element access reference: the property
+    /// resolved on the receiver's type, evaluated through the environment so an
+    /// alias / mapped / `Readonly<…>` application exposes its concrete property
+    /// modifiers. Returns `None` for a computed/dynamic key or an unresolved
+    /// receiver. Used to reduce an object-literal assignment against the
+    /// declared shape rather than adopting the literal's fresh (modifier-less)
+    /// structure.
+    fn declared_access_reference_type(&self, target: NodeIndex) -> Option<TypeId> {
+        match self.resolve_access_reference_property(target)? {
+            PropertyAccessResult::Success { type_id, .. } => Some(self.evaluated_via_env(type_id)),
+            _ => None,
+        }
+    }
+
+    /// Resolve a type to the structural form whose property modifiers can be
+    /// classified: resolve a `Lazy(DefId)` through the `TypeEnvironment`, then
+    /// evaluate an alias / mapped application (e.g. `Readonly<{ … }>`).
+    fn evaluated_via_env(&self, type_id: TypeId) -> TypeId {
+        let resolved = self.resolve_lazy_via_env(type_id);
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            return crate::query_boundaries::flow_analysis::evaluate_application_type(
+                self.interner,
+                &env,
+                resolved,
+            );
+        }
+        resolved
     }
 
     fn node_contains_descendant(&self, ancestor: NodeIndex, mut descendant: NodeIndex) -> bool {
