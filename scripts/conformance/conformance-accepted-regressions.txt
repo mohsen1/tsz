@@ -197,27 +197,3 @@
 # fast path defers to the full parse when a comment-only `import(` is present, so
 # both relative and package JSDoc import-types resolve like tsc. Covered by
 # jsdoc_import_type_specifier_collection_tests.
-
-
-# Accessor missing brace-body (#14838, PR #14958). The parser now emits the real
-# tsc TS1005 `'{' expected` for a body-less, non-ambient, non-abstract class
-# `get`/`set` accessor (confirmed against the upstream `.errors.txt` baselines).
-# The three rows below have a *degenerate or partial* TS-6.0.3 conformance cache
-# that never records that diagnostic, so tsz's now-correct output reads as an
-# extra code. These are cache artifacts, not behavior bugs: the genuine bug
-# (member-level `declare` accessors must stay body-less) is fixed in the parser,
-# not accepted.
-#
-# - giant.ts / abstractPropertyNegative.ts: both use `target: es5`, which is a
-#   deprecation *error* (TS5107) in tsc 6.0.3. tsc halts at config validation and
-#   never type-checks the file, so the cache holds only TS5107 (filtered out by
-#   the harness, leaving an empty expected set). The upstream baselines
-#   (giant.errors.txt: 72x TS1005; abstractPropertyNegative(target=es5).errors.txt:
-#   TS1005 at `get concreteWithNoBody`) confirm the body-less accessors are real
-#   TS1005 sites.
-# - plainJSGrammarErrors.ts: the cache records only 8 fingerprints (TS8009/TS8012)
-#   versus ~150 diagnostics in plainJSGrammarErrors.errors.txt, which includes the
-#   TS1005 at `get incorporeal();`. The cache is partial; tsz's TS1005 is correct.
-TypeScript/tests/cases/compiler/giant.ts
-TypeScript/tests/cases/compiler/abstractPropertyNegative.ts
-TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts
