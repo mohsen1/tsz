@@ -1477,14 +1477,26 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `query_boundaries::common` reads. No new quarantine entry; #8225
         # narrowing remains the removal condition.
         #
-        # Bumped 3078→3079 for the #14789 TS2820 display-types spelling
+        # Bumped 3078→3079 for the #14787 declared-type narrowing fix: the
+        # object/array-literal assignment guard in `flow/control_flow` adds one
+        # `query_boundaries::common::type_has_readonly_members` read so a
+        # readonly nested member survives an outer assignment (TS2540 parity).
+        # It is an existing request-shaped boundary helper already used
+        # throughout the checker — no new quarantine entry. Removal condition
+        # remains #8225.
+        #
+        # Bumped 3079→3080 for the #14789 TS2820 display-types spelling
         # suggestion: `find_string_literal_spelling_suggestion_reduced` in
         # `error_reporter/core_formatting.rs` adds one
         # `query_boundaries::common::literal_value` string-literal-source guard
         # so the suggestion scan is gated to literal sources, matching the
         # existing direct-call pattern already used throughout this file. No new
         # quarantine entry; #8225 narrowing remains the removal condition.
-        3079,
+        #
+        # Merge reconciliation: #14787 (main) and #14789 (this branch) each add
+        # one independent `query_boundaries::common` reference over the shared
+        # 3078 base, so the live merged count is 3080.
+        3080,
     ),
 ]
 

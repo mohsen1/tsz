@@ -195,6 +195,39 @@ impl<'a> CheckerContext<'a> {
         self.actual_lib_symbol_id_for_bare_name(name)
     }
 
+    /// Resolve a synthetic `globalThis.<name>` *type* member to a `SymbolId`
+    /// that is valid in **this file's** binder, so a consumer that re-reads the
+    /// id locally (e.g. `type_reference_symbol_type`) resolves the intended
+    /// symbol.
+    ///
+    /// Mirrors [`Self::actual_lib_def_id_for_bare_name`] on the `SymbolId` axis:
+    /// prefer the merged-lib clone in `file_locals` (the production pipeline
+    /// merges every lib symbol into each file binder), then fall back to the
+    /// lib-context-local id only for non-merged setups (where the ids coincide
+    /// with the file binder anyway). Unlike
+    /// [`Self::actual_lib_global_type_symbol_id`] — whose lib-arena-canonical id
+    /// is intended only for name-keyed identity comparison — this never hands a
+    /// foreign binder's `SymbolId` to a local consumer, which would alias an
+    /// unrelated symbol of the same numeric id (the `globalThis.Record` ->
+    /// `CSSNestedDeclarations`, `globalThis.Array` -> `btoa` family, #14921).
+    pub(crate) fn actual_lib_symbol_id_for_global_type(&self, name: &str) -> Option<SymbolId> {
+        if name.contains('.') {
+            return None;
+        }
+
+        if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
+            return Some(sym_id);
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        None
+    }
+
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 

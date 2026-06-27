@@ -112,14 +112,74 @@ impl GlobalDeclaredModules {
                 }
                 continue;
             }
-            if let Ok(glob) = globset::GlobBuilder::new(trimmed)
-                .literal_separator(false)
-                .build()
-                && glob.compile_matcher().is_match(normalized)
-            {
+            if wildcard_glob_match(trimmed, normalized) {
                 return true;
             }
         }
         false
     }
+
+    /// Return the declared wildcard pattern that best matches `module_name`,
+    /// or `None` when no pattern matches.
+    ///
+    /// "Best" mirrors tsc's `findBestPatternMatch`: among all matching patterns,
+    /// the one with the longest literal prefix (the text before the `*`) wins,
+    /// so `prefix/*` is preferred over a broad `*` when both match. Ties keep the
+    /// first pattern in declaration order (patterns are sorted/deduplicated).
+    ///
+    /// The returned string is the pattern's stored spelling (quote-stripped), so
+    /// it can be used directly as a `module_exports` key.
+    #[must_use]
+    pub fn best_matching_pattern(&self, module_name: &str) -> Option<&str> {
+        best_wildcard_match(self.patterns.iter().map(String::as_str), module_name)
+    }
+}
+
+/// Pick the wildcard `pattern` from `patterns` that best matches `module_name`,
+/// following tsc's longest-literal-prefix preference (see
+/// [`GlobalDeclaredModules::best_matching_pattern`]). Shared by the skeleton
+/// index and the standalone `module_exports`-key scan so both rank candidates
+/// identically. The returned slice is quote-stripped, ready for a map lookup.
+pub fn best_wildcard_match<'a, I>(patterns: I, module_name: &str) -> Option<&'a str>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let normalized = module_name.trim().trim_matches('"').trim_matches('\'');
+    let mut best: Option<&str> = None;
+    let mut best_prefix_len = 0usize;
+    for pattern in patterns {
+        let trimmed = pattern.trim().trim_matches('"').trim_matches('\'');
+        if !trimmed.contains('*') || !wildcard_glob_match(trimmed, normalized) {
+            continue;
+        }
+        let prefix_len = wildcard_prefix_len(trimmed);
+        if best.is_none() || prefix_len > best_prefix_len {
+            best = Some(trimmed);
+            best_prefix_len = prefix_len;
+        }
+    }
+    best
+}
+
+/// Length of the literal prefix of a wildcard pattern — the text before the
+/// first `*`. Used to rank competing pattern matches (longest prefix wins).
+#[must_use]
+pub fn wildcard_prefix_len(pattern: &str) -> usize {
+    pattern.split('*').next().map_or(0, str::len)
+}
+
+/// Glob-match a single ambient-module wildcard `pattern` against a concrete
+/// module specifier. Uses `literal_separator(false)` so `*` spans `/`, matching
+/// tsc's pattern-ambient-module semantics (`*.svg` matches `./assets/logo.svg`).
+#[must_use]
+pub fn wildcard_glob_match(pattern: &str, module_name: &str) -> bool {
+    let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
+    let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
+    if !pattern.contains('*') {
+        return pattern == module_name;
+    }
+    globset::GlobBuilder::new(pattern)
+        .literal_separator(false)
+        .build()
+        .is_ok_and(|glob| glob.compile_matcher().is_match(module_name))
 }

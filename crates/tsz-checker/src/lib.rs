@@ -172,6 +172,9 @@ mod class_member_circular_return_tests;
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]
+#[path = "../tests/class_member_self_type_circularity_tests.rs"]
+mod class_member_self_type_circularity_tests;
+#[cfg(test)]
 #[path = "tests/class_namespace_static_relation_routing_arch_tests.rs"]
 mod class_namespace_static_relation_routing_arch_tests;
 #[cfg(test)]
@@ -444,6 +447,9 @@ mod override_intersection_display_tests;
 #[cfg(test)]
 #[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
 mod private_field_no_spelling_suggestion_tests;
+#[cfg(test)]
+#[path = "tests/readonly_assignment_no_flow_narrow_tests.rs"]
+mod readonly_assignment_no_flow_narrow_tests;
 #[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
@@ -1377,6 +1383,9 @@ mod property_receiver_display_recursion_overflow_tests;
 #[cfg(test)]
 #[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
 mod property_receiver_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/readonly_property_assignment_narrowing_tests.rs"]
+mod readonly_property_assignment_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/recursive_accumulator_depth_tests.rs"]
 mod recursive_accumulator_depth_tests;

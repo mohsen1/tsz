@@ -166,7 +166,7 @@ pub fn resolve_lib_files_from_dir(lib_list: &[String], lib_dir: &Path) -> Result
 ///
 /// This is NOT applied for `--target`-derived default libs, where `es6`
 /// correctly refers to `lib.es6.d.ts` (which includes DOM).
-fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
+pub fn apply_explicit_lib_aliases(lib_list: &[String]) -> Vec<String> {
     lib_list
         .iter()
         .map(|name| match name.to_ascii_lowercase().as_str() {

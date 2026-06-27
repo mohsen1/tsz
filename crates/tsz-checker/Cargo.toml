@@ -261,6 +261,9 @@ path = "tests/ts2371_binding_pattern_default_tests.rs"
 name = "return_type_literal_union_widening_tests"
 path = "tests/return_type_literal_union_widening_tests.rs"
 [[test]]
+name = "namespace_local_inferred_return_widening_tests"
+path = "tests/namespace_local_inferred_return_widening_tests.rs"
+[[test]]
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
 [[test]]
@@ -440,6 +443,9 @@ path = "tests/await_structural_thenable_object_literal_tests.rs"
 name = "instanceof_loop_generic_any_fill_tests"
 path = "tests/instanceof_loop_generic_any_fill_tests.rs"
 [[test]]
+name = "weak_callable_target_assignability_tests"
+path = "tests/weak_callable_target_assignability_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
@@ -505,6 +511,9 @@ path = "tests/ts1240_accessor_decorator_tests.rs"
 [[test]]
 name = "ts1241_method_decorator_tests"
 path = "tests/ts1241_method_decorator_tests.rs"
+[[test]]
+name = "es_member_decorator_arity_tests"
+path = "tests/es_member_decorator_arity_tests.rs"
 [[test]]
 name = "ts1207_decorated_accessor_tests"
 path = "tests/ts1207_decorated_accessor_tests.rs"
@@ -676,6 +685,9 @@ path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 [[test]]
 name = "ambient_module_value_export_tests"
 path = "tests/ambient_module_value_export_tests.rs"
+[[test]]
+name = "wildcard_ambient_module_export_tests"
+path = "tests/wildcard_ambient_module_export_tests.rs"
 [[test]]
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
@@ -2259,3 +2271,7 @@ path = "tests/computed_key_and_iterator_heritage_member_retention_tests.rs"
 [[test]]
 name = "let_var_initializer_assignment_reduced_type_tests"
 path = "tests/let_var_initializer_assignment_reduced_type_tests.rs"
+
+[[test]]
+name = "noinfer_object_property_literal_widening_tests"
+path = "tests/noinfer_object_property_literal_widening_tests.rs"

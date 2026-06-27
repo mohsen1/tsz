@@ -1650,6 +1650,7 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(first_arg) = es_member_first_arg {
                     self.check_es_member_decorator_call_signature(
+                        decorator.expression,
                         modifier_idx,
                         decorator_type,
                         first_arg,
