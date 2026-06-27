@@ -1,7 +1,7 @@
 //! Tests for type expression parsing in the parser.
 use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{
-    assert_no_errors, assert_span, assert_span_on, parse_source, parse_source_named,
+    assert_no_errors, assert_span, assert_span_on, count_nodes, parse_source, parse_source_named,
 };
 
 #[test]
@@ -1316,4 +1316,166 @@ fn conditional_type_argument_in_extends_position_builds_nested_conditional_node(
 fn infer_constraint_disambiguation_unaffected_by_delimited_context_fix() {
     assert_no_errors("type R<T> = T extends infer U extends number ? 1 : 0;");
     assert_no_errors("type R<T> = T extends infer U extends Foo<A extends B ? C : D> ? U : never;");
+}
+
+// --- Missing-comma recovery between type parameters / type arguments (#14835) ---
+//
+// When two type-list elements are separated by whitespace instead of a comma,
+// tsc's `parseDelimitedList` reports a single TS1005 `','` expected (anchored at
+// the offending element) and keeps parsing the list. tsz previously bailed with
+// TS1005 `'>'` expected and cascaded into spurious downstream diagnostics. These
+// guards cover every callable/declaration form that takes type parameters, plus
+// type-argument lists in type position.
+
+/// Offset tsc anchors the missing `','` at: the second element in `needle`
+/// (`"<first> <second>"`), located inside `source`.
+fn gap_offset(source: &str, needle: &str) -> u32 {
+    let base = source
+        .find(needle)
+        .unwrap_or_else(|| panic!("`{needle}` not found in `{source}`"));
+    let space = needle.find(' ').expect("needle must contain a space");
+    (base + space + 1) as u32
+}
+
+/// Recovery must never fall back to `'>' expected` (the pre-fix behavior).
+fn assert_no_close_gt(parser: &crate::parser::ParserState, source: &str) {
+    assert!(
+        parser
+            .get_diagnostics()
+            .iter()
+            .all(|d| d.message != "'>' expected."),
+        "[{source}] recovery must not report a closing `'>'`, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+/// A whitespace-separated type list recovers like tsc: one TS1005 `','` at the
+/// gap, no `'>' expected`, and none of the historical cascade codes.
+fn assert_missing_comma_recovery(file: &str, source: &str, gap: &str) {
+    let (parser, _root) = parse_source_named(file, source);
+    let diags = parser.get_diagnostics();
+    let comma_at = gap_offset(source, gap);
+
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 1005 && d.start == comma_at && d.message == "',' expected."),
+        "[{source}] expected TS1005 `','` at offset {comma_at}, got {diags:?}"
+    );
+    assert_no_close_gt(&parser, source);
+    // Historical cascade codes: TS1068 (class), TS1131 (interface), TS1134 (arrow).
+    for cascade in [1068u32, 1131, 1134] {
+        assert!(
+            diags.iter().all(|d| d.code != cascade),
+            "[{source}] unexpected cascade TS{cascade}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
+fn missing_comma_between_type_parameters_recovers_across_all_forms() {
+    // Every callable/declaration form that takes type parameters shares
+    // `parse_type_parameters`, so all recover identically.
+    for source in [
+        "function f<A B>() {}",
+        "class C<A B> {}",
+        "interface I<A B> {}",
+        "type Z<A B> = A;",
+        "const f = <A B>() => 1;",
+    ] {
+        assert_missing_comma_recovery("g.ts", source, "A B");
+    }
+}
+
+#[test]
+fn missing_comma_between_type_parameters_does_not_drop_second_parameter() {
+    // The recovery keeps parsing the list, so both type parameters survive.
+    let (parser, _root) = parse_source("function f<A B>() {}");
+    assert_eq!(
+        count_nodes(&parser, syntax_kind_ext::TYPE_PARAMETER),
+        2,
+        "both type parameters should be parsed after comma recovery"
+    );
+}
+
+#[test]
+fn missing_comma_between_three_type_parameters_reports_a_comma_per_gap() {
+    // Names are spaced far enough apart that the parser's
+    // `ERROR_SUPPRESSION_DISTANCE` window does not collapse the two separate
+    // missing-comma errors, so each gap is reported (matching tsc).
+    let source = "function f<Aaaa Bbbb Cccc>() {}";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    let b_at = gap_offset(source, "Aaaa Bbbb");
+    let c_at = gap_offset(source, "Bbbb Cccc");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 1005 && d.start == b_at && d.message == "',' expected."),
+        "expected TS1005 `','` before `Bbbb`, got {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 1005 && d.start == c_at && d.message == "',' expected."),
+        "expected TS1005 `','` before `Cccc`, got {diags:?}"
+    );
+    assert_no_close_gt(&parser, source);
+    assert_eq!(
+        count_nodes(&parser, syntax_kind_ext::TYPE_PARAMETER),
+        3,
+        "all three type parameters should be parsed"
+    );
+}
+
+#[test]
+fn missing_comma_between_three_short_type_parameters_still_parses_all() {
+    // Even when the suppression window collapses the second comma error, the
+    // recovery keeps parsing the list, so no element is dropped and no spurious
+    // closing `'>'`/cascade appears.
+    let source = "function f<A B C>() {}";
+    let (parser, _root) = parse_source(source);
+    assert!(
+        parser
+            .get_diagnostics()
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "',' expected."),
+        "expected at least one TS1005 `','`, got {:?}",
+        parser.get_diagnostics()
+    );
+    assert_no_close_gt(&parser, source);
+    assert_eq!(
+        count_nodes(&parser, syntax_kind_ext::TYPE_PARAMETER),
+        3,
+        "all three type parameters should be parsed"
+    );
+}
+
+#[test]
+fn missing_comma_with_constraint_then_next_type_parameter() {
+    // `A extends X` is fully parsed, then the missing comma before `B` is recovered.
+    let source = "function f<A extends X B>() {}";
+    assert_missing_comma_recovery("g.ts", source, "X B");
+    let (parser, _root) = parse_source(source);
+    assert_eq!(count_nodes(&parser, syntax_kind_ext::TYPE_PARAMETER), 2);
+}
+
+#[test]
+fn missing_comma_between_type_arguments_in_type_reference() {
+    // The committed type-argument path (type position) recovers identically.
+    assert_missing_comma_recovery("g.ts", "type R = Foo<A B>;", "A B");
+}
+
+#[test]
+fn type_parameter_list_followed_by_non_element_still_terminates() {
+    // A non-element token after the missing comma (here `)`) must not loop and
+    // must not be mis-recovered as another parameter.
+    let (parser, _root) = parse_source("function f<A )>() {}");
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "',' expected."),
+        "expected TS1005 `','`, got {diags:?}"
+    );
 }

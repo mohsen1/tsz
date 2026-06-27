@@ -42,25 +42,44 @@ impl ParserState {
             let param = self.parse_type_parameter();
             params.push(param);
 
-            if !self.parse_optional(SyntaxKind::CommaToken) {
-                if self.is_js_file() && self.is_token(SyntaxKind::ColonToken) {
-                    self.error_comma_expected();
-                    self.next_token();
-                    if !self.is_greater_than_or_compound()
-                        && !self.is_token(SyntaxKind::EndOfFileToken)
-                    {
-                        let recover_start = self.token_pos();
-                        let _ = self.parse_type();
-                        if self.token_pos() == recover_start {
-                            self.next_token();
-                        }
-                    }
+            if self.parse_optional(SyntaxKind::CommaToken) {
+                // If the next token is `>`, the comma we just consumed was trailing.
+                if self.is_greater_than_or_compound() {
+                    has_trailing_comma = true;
                 }
+                continue;
+            }
+
+            // No comma after this type parameter. If the list is terminated by
+            // `>` (or a compound `>`-token) or EOF, it is simply closing; stop
+            // without an error, matching tsc's `isListTerminator` check in
+            // `parseDelimitedList`.
+            if self.is_greater_than_or_compound() || self.is_token(SyntaxKind::EndOfFileToken) {
                 break;
             }
-            // If the next token is `>`, the comma we just consumed was trailing.
-            if self.is_greater_than_or_compound() {
-                has_trailing_comma = true;
+
+            // Missing separator between type parameters. tsc's `parseDelimitedList`
+            // emits a single TS1005 `','` expected (anchored at the offending
+            // token) and keeps parsing the list, rather than bailing with
+            // `'>' expected` and cascading downstream diagnostics. Mirror that.
+            self.error_comma_expected();
+
+            // JS-file stray-colon recovery: `<T: U>` Flow-style bounds — drop the
+            // `:` so the loop re-enters cleanly on the following type parameter
+            // instead of re-reporting at the colon.
+            if self.is_js_file() && self.is_token(SyntaxKind::ColonToken) {
+                self.next_token();
+            }
+
+            // Continue the list only when the current token can actually begin
+            // another type parameter (identifier, keyword, reserved word, or a
+            // `const`/variance modifier — all of which sort at or above
+            // `Identifier`). Otherwise break and let `parse_expected_greater_than`
+            // and the enclosing parser recover, mirroring tsc's `isListElement`
+            // gate. This also guarantees loop progress: every `continue` is
+            // followed by a `parse_type_parameter` that consumes the name token.
+            if !self.is_identifier_or_keyword() {
+                break;
             }
         }
 
