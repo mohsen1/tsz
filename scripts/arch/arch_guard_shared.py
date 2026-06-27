@@ -1476,7 +1476,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # window; each added a small number of existing-pattern
         # `query_boundaries::common` reads. No new quarantine entry; #8225
         # narrowing remains the removal condition.
-        3078,
+        #
+        # Bumped 3078→3079 for the #14787 declared-type narrowing fix: the
+        # object/array-literal assignment guard in `flow/control_flow` adds one
+        # `query_boundaries::common::type_has_readonly_members` read so a
+        # readonly nested member survives an outer assignment (TS2540 parity).
+        # It is an existing request-shaped boundary helper already used
+        # throughout the checker — no new quarantine entry. Removal condition
+        # remains #8225.
+        3079,
     ),
 ]
 
