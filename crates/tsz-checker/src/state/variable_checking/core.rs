@@ -762,9 +762,9 @@ impl<'a> CheckerState<'a> {
                             false,
                         )
                         .is_some();
-                // Then try semantic check
                 let semantic_circular = !accessor_circular
                     && !ast_circular
+                    && !self.annotation_is_eligible_lib_lazy(final_type)
                     && query::has_type_query_for_symbol(
                         self.ctx.types,
                         final_type,
