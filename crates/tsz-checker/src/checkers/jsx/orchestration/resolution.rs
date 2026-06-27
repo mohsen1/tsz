@@ -252,6 +252,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
+        self.check_jsx_flag_provided(idx);
         self.check_jsx_factory_in_scope(idx);
         self.check_jsx_import_source(idx);
 
@@ -1753,6 +1754,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Rule #36: Fragments resolve to JSX.Element type.
     pub(crate) fn get_jsx_element_type(&mut self, node_idx: NodeIndex) -> TypeId {
+        self.check_jsx_flag_provided(node_idx);
         self.check_jsx_factory_in_scope(node_idx);
         self.check_jsx_fragment_factory(node_idx);
         self.check_jsx_import_source(node_idx);
