@@ -1413,6 +1413,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
     }
 
+    fn is_unresolved_import_def(&self, def_id: DefId) -> bool {
+        self.def_is_unresolved_import(def_id)
+    }
+
     fn def_is_non_program(&self, def_id: DefId) -> bool {
         // Lib/ambient defs carry the non-program file sentinel in the shared
         // store. Consulted by `is_genuine_unknown_alias_body` to keep a lib
