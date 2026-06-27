@@ -482,6 +482,14 @@ impl<'a> Completions<'a> {
             completions.push(item);
         }
 
+        // Global value symbols declared by the bound standard library. Sourcing
+        // these from `lib_contexts` is what lets completions track the
+        // configured lib level: `Map`/`Set`/`Promise` appear at es2015+ and are
+        // correctly absent under `lib: ["es5"]`. The hardcoded `GLOBAL_VARS`
+        // list below remains as the es5-era fallback for standalone mode where
+        // no libs are installed; `seen_names` dedups the overlap.
+        self.add_lib_global_completions(member_request, &mut seen_names, &mut completions);
+
         for &(name, kind) in GLOBAL_VARS {
             if !seen_names.contains(name) {
                 let name_str = name.to_string();
@@ -576,6 +584,56 @@ impl<'a> Completions<'a> {
                     .then_with(|| compare_case_sensitive_ui(&a.label, &b.label))
             });
             Some(completions)
+        }
+    }
+
+    /// Add global value completions sourced from the bound standard library.
+    ///
+    /// Each lib context's `file_locals` holds the globals declared at the
+    /// configured lib level, so surfacing the *value* symbols here is what makes
+    /// expression-position completion offer `Map`/`Set`/`Promise` at es2015+
+    /// while staying silent under `lib: ["es5"]`. Type-only declarations
+    /// (interfaces, type aliases) are skipped — they flow through the
+    /// type-position completion paths. Symbol kinds are classified from flags
+    /// only: a lib symbol's declaration node lives in the lib arena, not
+    /// `self.arena`, so arena-dependent refinement must not be applied here.
+    fn add_lib_global_completions(
+        &self,
+        member_request: bool,
+        seen_names: &mut FxHashSet<String>,
+        completions: &mut Vec<CompletionItem>,
+    ) {
+        if self.lib_contexts.is_empty() {
+            return;
+        }
+        let sort_text = if member_request {
+            sort_priority::LOCATION_PRIORITY
+        } else {
+            sort_priority::GLOBALS_OR_KEYWORDS
+        };
+        for lib_ctx in self.lib_contexts {
+            for (name, &sym_id) in lib_ctx.binder.file_locals.iter() {
+                if seen_names.contains(name) {
+                    continue;
+                }
+                let Some(symbol) = lib_ctx.binder.symbols.get(sym_id) else {
+                    continue;
+                };
+                if symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
+                    continue;
+                }
+                let kind =
+                    crate::classify::classify_symbol_flags(symbol.flags).to_completion_kind();
+                seen_names.insert(name.clone());
+                let mut item = CompletionItem::new(name.clone(), kind);
+                item.sort_text = Some(sort_text.to_string());
+                item.kind_modifiers = Some("declare".to_string());
+                if kind == CompletionItemKind::Function {
+                    item.insert_text = Some(format!("{name}($1)"));
+                    item.is_snippet = true;
+                }
+                completions.push(item);
+            }
         }
     }
 

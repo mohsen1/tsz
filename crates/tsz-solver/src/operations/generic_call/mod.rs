@@ -662,6 +662,7 @@ mod foreign_param_shapes;
 mod inference_helpers;
 mod inference_helpers_candidates;
 mod inference_helpers_higher_order;
+mod inference_helpers_reach;
 mod normalization;
 mod readonly_direct_inference;
 pub mod request;

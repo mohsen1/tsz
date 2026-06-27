@@ -621,10 +621,6 @@ impl<'a> FlowAnalyzer<'a> {
                                         // A prior write can be assignment-compatible without changing the
                                         // member's declared read surface, especially for interface/class
                                         // members with generic call/construct signatures.
-                                        let widened = query::widen_literal_to_primitive(
-                                            self.interner,
-                                            assigned_type,
-                                        );
                                         let callable_read_preserves_declared_type = |type_id| {
                                             let function_shape = query::function_shape_for_type(
                                                 self.interner,
@@ -654,15 +650,21 @@ impl<'a> FlowAnalyzer<'a> {
                                         };
                                         let preserves_declared_callable_read_type =
                                             callable_read_preserves_declared_type(initial_type)
-                                                || callable_read_preserves_declared_type(widened);
+                                                || callable_read_preserves_declared_type(
+                                                    assigned_type,
+                                                );
                                         if preserves_declared_callable_read_type {
                                             initial_type
-                                        } else if self
-                                            .flow_assignability_related(widened, initial_type)
-                                        {
-                                            widened
                                         } else {
-                                            initial_type
+                                            // Match tsc's `getTypeAtFlowAssignment`: reduce a union
+                                            // declared type to the members compatible with the
+                                            // assigned value, but keep a non-union declared type
+                                            // verbatim instead of adopting the RHS shape. This
+                                            // preserves declared property modifiers — e.g. a nested
+                                            // `readonly`, so `r.a.b = ...` still reports TS2540
+                                            // after `r.a = { b: 2 }`. `narrow_assignment` returns
+                                            // the declared type unchanged when it is not a union.
+                                            self.narrow_assignment(initial_type, assigned_type)
                                         }
                                     }
                                 } else if is_control_flow_typed_any {
