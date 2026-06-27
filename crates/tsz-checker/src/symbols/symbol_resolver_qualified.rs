@@ -188,8 +188,18 @@ impl<'a> CheckerState<'a> {
     /// Returns `None` when no global type of that name exists, so the caller can
     /// route the missing member through the normal "no exported member"
     /// diagnostic.
+    ///
+    /// The returned `SymbolId` must be interpretable by the caller's
+    /// `type_reference_symbol_type`, which reads symbol ids against *this file's*
+    /// binder. The production pipeline merges every lib symbol into each file's
+    /// binder (`lib_symbols_merged`), so the lib global's merged clone is the
+    /// correct, locally-resolvable id — `actual_lib_symbol_id_for_global_type`
+    /// prefers it over the lib-arena-canonical id, which would alias an
+    /// unrelated symbol of the same numeric id when re-read locally (the
+    /// `globalThis.Record` -> `CSSNestedDeclarations`, `globalThis.Array` ->
+    /// `btoa` family, #14921).
     pub(crate) fn resolve_global_this_type_member_symbol(&self, name: &str) -> Option<SymbolId> {
-        if let Some(sym_id) = self.ctx.actual_lib_global_type_symbol_id(name) {
+        if let Some(sym_id) = self.ctx.actual_lib_symbol_id_for_global_type(name) {
             return Some(sym_id);
         }
 

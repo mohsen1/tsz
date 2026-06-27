@@ -1664,6 +1664,20 @@ impl<'a> InferenceContext<'a> {
         !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_array_element)
     }
 
+    /// Returns true when every candidate for `var` was inferred from an
+    /// object-literal property match (`{ value: T }` vs `{ value: 1 }`). A
+    /// literal inferred through an object-literal property is widened to its
+    /// primitive in tsc's `getInferredType` regardless of whether the type
+    /// parameter is also at the top level of the return type, so a sibling
+    /// `NoInfer<T>` position must be checked against the widened type. Only a
+    /// *direct* top-level argument (`value: T`) preserves the literal. Mirrors
+    /// `all_candidates_from_array_elements` for the object-property case.
+    pub fn all_candidates_from_object_property(&mut self, var: InferenceVar) -> bool {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        !info.candidates.is_empty() && info.candidates.iter().all(|c| c.from_object_property)
+    }
+
     /// Returns true when at least one fresh literal candidate came from array
     /// element inference. This is narrower than `all_candidates_from_array_elements`
     /// so mixed direct/callback inference can still recognize literal-array evidence.
