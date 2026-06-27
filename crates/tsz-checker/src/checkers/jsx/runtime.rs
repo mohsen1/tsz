@@ -325,6 +325,34 @@ impl<'a> CheckerState<'a> {
         candidate_start < current_start
     }
 
+    /// TS17004 — using JSX syntax requires the `jsx` compiler option to be set.
+    ///
+    /// tsc's `checkJsxPreconditions` reports this grammar error once per JSX
+    /// opening element, self-closing element, and fragment whenever the
+    /// effective `compilerOptions.jsx` is `JsxEmit.None` (i.e. the `--jsx`
+    /// flag was not provided). The gate is the raw option only: a per-file
+    /// `@jsx` / `@jsxImportSource` pragma does NOT satisfy it (verified against
+    /// tsc 6.0), so this reads `compiler_options.jsx_mode` directly rather than
+    /// the pragma-adjusted `effective_jsx_mode()`.
+    ///
+    /// The diagnostics layer dedupes on `(span, code, message)`, so emitting
+    /// from each opening-like / fragment precondition site yields exactly one
+    /// diagnostic per element — matching tsc's cardinality even when an
+    /// element's type is requested more than once during checking.
+    pub(crate) fn check_jsx_flag_provided(&mut self, node_idx: NodeIndex) {
+        use tsz_common::checker_options::JsxMode;
+
+        if self.ctx.compiler_options.jsx_mode != JsxMode::None {
+            return;
+        }
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            node_idx,
+            diagnostic_codes::CANNOT_USE_JSX_UNLESS_THE_JSX_FLAG_IS_PROVIDED,
+            &[],
+        );
+    }
+
     /// Check that the JSX import source module can be resolved (TS2875).
     pub(crate) fn check_jsx_import_source(&mut self, node_idx: NodeIndex) {
         use tsz_common::checker_options::JsxMode;
