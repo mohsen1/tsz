@@ -113,13 +113,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Expand it here so the pure-index guard in the
             // `object_with_index_shape_id` arm owns the decision, exactly as it
             // does for the written-out `{ [k: string]: V }` form.
-            let target = mapped_type_id(self.interner, target)
-                .and_then(|mapped_id| self.try_expand_mapped(mapped_id))
-                .filter(|&expanded| {
-                    object_shape_id(self.interner, expanded).is_some()
-                        || object_with_index_shape_id(self.interner, expanded).is_some()
-                })
-                .unwrap_or(target);
+            let target = self.expand_mapped_target_for_shape(target);
             if let Some(t_shape_id) = object_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
                 // Reset `in_intersection_member_check` for apparent primitive structural
@@ -815,6 +809,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // elsewhere via the inferable-index rule), but the `object` keyword gets
             // stricter treatment in tsc.
             if s_kind == IntrinsicKind::Object {
+                // `Record<any, V>` reaches relations as a deferred `Mapped` node
+                // (`{ [P in any]: V }`), so the shape lookups below report `None`
+                // for it and the keyword would wrongly fall through to `False`.
+                // Expand it to its pure-index shape so the any-index waiver fires,
+                // mirroring the apparent-primitive path above. See issue #14751.
+                let target = self.expand_mapped_target_for_shape(target);
                 let target_shape = object_shape_id(self.interner, target)
                     .or_else(|| object_with_index_shape_id(self.interner, target));
                 if let Some(t_shape_id) = target_shape {
