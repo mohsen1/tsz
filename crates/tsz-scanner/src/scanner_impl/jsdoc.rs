@@ -209,13 +209,26 @@ impl ScannerState {
             return 0;
         }
 
+        // A leading UTF-8 BOM is transparent: tsc still recognizes a shebang that
+        // immediately follows it. Probe past the BOM, but only commit `self.pos`
+        // when a shebang actually follows, so a BOM without a shebang is left for
+        // the normal trivia path unchanged.
+        let bom_len = if self.pos < self.end
+            && self.char_code_unchecked(self.pos) == CharacterCodes::BYTE_ORDER_MARK
+        {
+            3 // BOM is 3 bytes in UTF-8
+        } else {
+            0
+        };
+        let shebang_start = self.pos + bom_len;
+
         // Check for #!
-        if self.pos + 1 < self.end
-            && self.char_code_unchecked(self.pos) == CharacterCodes::HASH
-            && self.char_code_unchecked(self.pos + 1) == CharacterCodes::EXCLAMATION
+        if shebang_start + 1 < self.end
+            && self.char_code_unchecked(shebang_start) == CharacterCodes::HASH
+            && self.char_code_unchecked(shebang_start + 1) == CharacterCodes::EXCLAMATION
         {
             let start = self.pos;
-            self.pos += 2;
+            self.pos = shebang_start + 2;
 
             // Scan to end of line
             while self.pos < self.end {

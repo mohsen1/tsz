@@ -164,13 +164,7 @@ pub(crate) fn merge_lib_files(lib_files: Vec<Arc<LibFile>>) -> Vec<Arc<LibFile>>
 
     // Create a single merged binder from all lib files.
     let mut merged_binder = BinderState::new();
-    let lib_contexts: Vec<_> = lib_files
-        .iter()
-        .map(|lib| BinderLibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
+    let lib_contexts = BinderLibContext::from_lib_files(&lib_files);
 
     merged_binder.merge_lib_contexts_into_binder(&lib_contexts);
 
