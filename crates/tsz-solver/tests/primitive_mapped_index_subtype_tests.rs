@@ -119,3 +119,50 @@ fn string_is_not_subtype_of_record_any_string_value() {
         "primitive `string` must not satisfy `{{ [P in any]: string }}`"
     );
 }
+
+// The `object` keyword (and a type parameter constrained `extends object`) has no
+// index signature of its own, but tsc's `any`-index waiver in
+// `indexSignaturesRelatedTo` accepts it against an all-`any` index signature —
+// exactly the shape that `Record<any, any>` / `{ [P in any]: any }` reduces to.
+// The keyword reaches relations as a deferred `Mapped` node (same as the
+// primitive cases above), so the `object`-keyword arm must expand it before
+// inspecting the structural shape. Regression guard for the tRPC false-positive
+// TS2322/TS2344 in issue #14751 (the source-direction mirror of #14220).
+
+#[test]
+fn object_keyword_is_subtype_of_record_any_any() {
+    let interner = TypeInterner::new();
+    let mapped = any_constrained_mapped(&interner, TypeId::ANY);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        checker.is_subtype_of(TypeId::OBJECT, mapped),
+        "the `object` keyword must satisfy `Record<any, any>` (`{{ [P in any]: any }}`), \
+         matching tsc's any-index waiver — the same accept path `{{}}` already takes"
+    );
+}
+
+#[test]
+fn object_keyword_is_not_subtype_of_record_any_unknown_value() {
+    // A concrete `unknown` index value is NOT waived: `object` has no index
+    // signature, so tsc rejects `object <: { [P in any]: unknown }`. Only the
+    // all-`any` index is relaxed.
+    let interner = TypeInterner::new();
+    let mapped = any_constrained_mapped(&interner, TypeId::UNKNOWN);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(TypeId::OBJECT, mapped),
+        "the `object` keyword must not satisfy `{{ [P in any]: unknown }}` (concrete value rejects)"
+    );
+}
+
+#[test]
+fn object_keyword_is_not_subtype_of_record_any_string_value() {
+    // A narrowed `string` index value is likewise not waived.
+    let interner = TypeInterner::new();
+    let mapped = any_constrained_mapped(&interner, TypeId::STRING);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(TypeId::OBJECT, mapped),
+        "the `object` keyword must not satisfy `{{ [P in any]: string }}` (concrete value rejects)"
+    );
+}

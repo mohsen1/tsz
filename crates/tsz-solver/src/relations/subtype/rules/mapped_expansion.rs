@@ -6,11 +6,33 @@ use crate::types::{
     TypeId, Visibility,
 };
 use crate::visitor::{
-    index_access_parts, keyof_inner_type, lazy_def_id, literal_value, object_shape_id,
-    object_with_index_shape_id, type_param_info, union_list_id,
+    index_access_parts, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
+    object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// If `target` is a deferred `Mapped` node that expands to a concrete object
+    /// or pure-index shape (e.g. `Record<any, V>`'s `{ [P in any]: V }` reducing
+    /// to `{ [k: string]: V; [k: number]: V }`), return the expanded shape;
+    /// otherwise return `target` unchanged.
+    ///
+    /// Such index-signature mapped types are intentionally NOT expanded by the
+    /// eager evaluator (to keep error-message display stable), so
+    /// `object_shape_id` / `object_with_index_shape_id` report `None` for them.
+    /// Relation arms that must inspect the structural shape of the target (the
+    /// apparent-primitive path and the `object`-keyword path) call this first so
+    /// the shape-aware guard owns the decision, exactly as it does for the
+    /// written-out `{ [k: string]: V }` form.
+    pub(crate) fn expand_mapped_target_for_shape(&mut self, target: TypeId) -> TypeId {
+        mapped_type_id(self.interner, target)
+            .and_then(|mapped_id| self.try_expand_mapped(mapped_id))
+            .filter(|&expanded| {
+                object_shape_id(self.interner, expanded).is_some()
+                    || object_with_index_shape_id(self.interner, expanded).is_some()
+            })
+            .unwrap_or(target)
+    }
+
     /// Try to expand a Mapped type to its structural form.
     /// Returns None if the mapped type cannot be expanded (unresolvable constraint).
     pub(crate) fn try_expand_mapped(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {

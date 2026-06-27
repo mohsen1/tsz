@@ -871,3 +871,81 @@ export { makeSink };
         result.diagnostics
     );
 }
+
+// Regression for #14852: a triple-slash `/// <reference path="./x" />` whose path
+// begins with a `./` or `../` relative prefix must still probe `.ts`/`.tsx`/`.d.ts`
+// extensions. The old guard tested the whole path for `.`, so the `.` in the
+// relative prefix skipped probing and the referenced file was never pulled,
+// producing a downstream TS2304. The referenced declaration is reachable ONLY via
+// the reference (it is not listed in tsconfig `files`), so a regression resurfaces
+// the TS2304. tsc resolves both relative and bare forms.
+#[test]
+fn triple_slash_reference_dot_slash_prefix_probes_extensions() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("dep.d.ts"), "declare const DEP_VAL: number;\n");
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./dep\" />\nconst y: number = DEP_VAL;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_NAME),
+        "`./dep` reference must pull dep.d.ts (no TS2304). Diagnostics: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.is_empty(),
+        "the program must be clean, matching tsc. Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn triple_slash_reference_dot_dot_slash_prefix_probes_extensions() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2022",
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["sub/main.ts"]
+        }"#,
+    );
+    write_file(&base.join("dep.d.ts"), "declare const DEP_VAL: number;\n");
+    write_file(
+        &base.join("sub/main.ts"),
+        "/// <reference path=\"../dep\" />\nconst y: number = DEP_VAL;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "`../dep` reference must pull dep.d.ts from the parent dir (no TS2304). \
+         Diagnostics: {:?}",
+        result.diagnostics
+    );
+}

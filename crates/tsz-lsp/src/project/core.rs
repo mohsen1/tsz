@@ -15,6 +15,7 @@ use crate::rename::TextEdit;
 use crate::rename::WorkspaceEdit;
 use crate::resolver::ScopeCacheStats;
 use crate::symbols::symbol_index::SymbolIndex;
+use tsz_binder::lib_loader::LibFile;
 use tsz_common::position::LineMap;
 use tsz_parser::NodeIndex;
 use tsz_solver::construction::TypeInterner;
@@ -148,6 +149,20 @@ pub struct FileResidencyInfo {
     pub estimated_bytes: usize,
     /// How long ago the file was last accessed by an LSP operation.
     pub idle_duration: Duration,
+}
+
+/// Compare two lib-file lists by `Arc` pointer identity.
+///
+/// The host caches the parsed-and-bound lib set per `target`/`lib`, so a
+/// re-install with the same effective configuration hands back the same `Arc`s.
+/// Pointer equality lets [`Project::set_lib_files`] skip a redundant re-bind of
+/// every file without deep-comparing lib contents.
+fn lib_files_equal(current: &[Arc<LibFile>], incoming: &[Arc<LibFile>]) -> bool {
+    current.len() == incoming.len()
+        && current
+            .iter()
+            .zip(incoming.iter())
+            .all(|(a, b)| Arc::ptr_eq(a, b))
 }
 
 fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Option<String> {
@@ -324,6 +339,15 @@ pub struct Project {
     /// method uses `CheckerState::with_cache_and_shared_def_store` (or
     /// `new_with_shared_def_store`) to propagate it into the checker context.
     pub(crate) definition_store: Arc<DefinitionStore>,
+    /// Standard-library files (parsed and bound) shared into every
+    /// `ProjectFile` so global value/type symbols resolve.
+    ///
+    /// Empty by default: a freshly-constructed `Project` has no libs, matching
+    /// the historical behavior, until the host installs them via
+    /// [`Project::set_lib_files`] (the binary resolves the embedded lib set for
+    /// the effective `target`/`lib`). Wrapped in `Arc` so each file shares the
+    /// same parsed-and-bound lib representation with O(1) clone cost.
+    pub(crate) lib_files: Arc<Vec<Arc<LibFile>>>,
     /// Stable file ID allocator for per-file `DefinitionStore` invalidation.
     ///
     /// Assigns a unique `u32` to each file name, ensuring that definitions
@@ -525,6 +549,12 @@ pub struct TsConfigSettings {
     pub strict: Option<bool>,
     /// Target ES version (affects lib files).
     pub target: Option<String>,
+    /// Explicit `compilerOptions.lib` entries (e.g. `["es2022", "dom"]`).
+    ///
+    /// Empty when unspecified, in which case the lib set is derived from
+    /// `target`. The LSP host resolves these to the embedded standard library
+    /// installed via `Project::set_lib_files`.
+    pub lib: Vec<String>,
     /// Module resolution strategy.
     pub module_resolution: Option<String>,
     /// Base URL for module resolution.
@@ -564,6 +594,7 @@ impl Project {
             tsconfig_settings: FxHashMap::default(),
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
+            lib_files: Arc::new(Vec::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
@@ -592,6 +623,7 @@ impl Project {
             tsconfig_settings: FxHashMap::default(),
             type_interner: Arc::new(TypeInterner::new()),
             definition_store: Arc::new(DefinitionStore::new()),
+            lib_files: Arc::new(Vec::new()),
             file_id_allocator: FileIdAllocator::new(),
             fingerprint_cache: SkeletonFingerprintCache::new(),
             open_files: FxHashSet::default(),
@@ -855,6 +887,42 @@ impl Project {
         }
     }
 
+    /// Install the standard-library files shared into every file's binder and
+    /// checker.
+    ///
+    /// The host (the LSP binary) resolves the embedded lib set for the effective
+    /// `target`/`lib` and calls this once at startup — and again whenever the
+    /// resolved lib level changes (e.g. a tsconfig load). Any files already
+    /// loaded are re-bound against the new libs so their diagnostics, hovers,
+    /// and completions immediately reflect the global symbols; all cached
+    /// pull-model diagnostics are invalidated.
+    ///
+    /// Installing the same lib set twice is cheap to detect and skipped, so the
+    /// host can call this unconditionally on each tsconfig load.
+    pub fn set_lib_files(&mut self, lib_files: Vec<Arc<LibFile>>) {
+        if lib_files_equal(&self.lib_files, &lib_files) {
+            return;
+        }
+        let shared = Arc::new(lib_files);
+        self.lib_files = Arc::clone(&shared);
+        self.invalidate_all_cached_diagnostics();
+        for file in self.files.values_mut() {
+            file.reload_with_lib_files(Arc::clone(&shared));
+        }
+    }
+
+    /// The standard-library files currently installed (empty when none).
+    #[must_use]
+    pub fn lib_files(&self) -> &[Arc<LibFile>] {
+        &self.lib_files
+    }
+
+    /// Whether any standard-library files have been installed.
+    #[must_use]
+    pub fn has_lib_files(&self) -> bool {
+        !self.lib_files.is_empty()
+    }
+
     pub const fn set_allow_importing_ts_extensions(&mut self, allow: bool) {
         self.allow_importing_ts_extensions = allow;
     }
@@ -1073,6 +1141,7 @@ impl Project {
             Arc::clone(&self.type_interner),
             Arc::clone(&self.definition_store),
             file_idx,
+            Arc::clone(&self.lib_files),
         );
 
         // Update symbol index with the new file's binder data and AST identifiers
@@ -1653,6 +1722,13 @@ fn parse_tsconfig_file(path: &std::path::Path) -> Option<TsConfigSettings> {
             .get("target")
             .and_then(|v| v.as_str())
             .map(String::from);
+
+        if let Some(libs) = compiler_options.get("lib").and_then(|v| v.as_array()) {
+            settings.lib = libs
+                .iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect();
+        }
 
         settings.module_resolution = compiler_options
             .get("moduleResolution")
