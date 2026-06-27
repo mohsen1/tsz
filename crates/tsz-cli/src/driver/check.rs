@@ -913,7 +913,10 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         .set_exact_optional_property_types(options.checker.exact_optional_property_types);
 
     // Create a shared QueryCache for memoized evaluate_type/is_subtype_of calls.
-    let query_cache = QueryCache::new(&program.type_interner);
+    // Attach the shared DefinitionStore so generic-call inference can resolve
+    // cross-arena declaration identity (issue #14344, `TSZ_XARENA_BASE_DECL`).
+    let query_cache =
+        QueryCache::new(&program.type_interner).with_definition_store(&program.definition_store);
 
     // Pre-compute declared modules from skeleton when available.
     // This avoids re-scanning all binders for declared/ambient module names in

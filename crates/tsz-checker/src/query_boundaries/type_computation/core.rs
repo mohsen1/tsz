@@ -1,4 +1,5 @@
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::def::DefId;
 use tsz_solver::narrowing::NullishFilter;
 use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{PropertyInfo, TypeId};
@@ -36,6 +37,22 @@ pub(crate) fn is_bigint_like(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::operations::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
+}
+
+pub(crate) fn enum_components(db: &dyn TypeDatabase, type_id: TypeId) -> Option<(DefId, TypeId)> {
+    tsz_solver::visitor::enum_components(db, type_id)
+}
+
+pub(crate) fn is_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_keyof_type(db, type_id)
+}
+
+pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_type_parameter_constraint(db, type_id)
+}
+
+pub(crate) fn evaluate_type_structure(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::computation::evaluate_type(db, type_id)
 }
 
 pub(crate) fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
