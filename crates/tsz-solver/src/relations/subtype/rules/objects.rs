@@ -390,9 +390,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !crate::utils::has_common_property_name(&source.properties, &target.properties)
         {
             crate::relations::subtype::cache::note_weak_type_sensitivity();
-            if self.enforce_weak_types
-                && (!self.in_intersection_member_check || self.in_property_check)
-            {
+            // The weak-type rejection is suppressed at the direct level when the
+            // shapes are the property part of an intersection member or of a
+            // callable-to-callable relation (a callable target is never weak in
+            // tsc's `isWeakType`). A nested property-value comparison sets
+            // `in_property_check`, which re-enables the rule so genuine weak inner
+            // objects still fail.
+            let suppressed_at_direct_level =
+                self.in_intersection_member_check || self.in_callable_property_check;
+            if self.enforce_weak_types && (!suppressed_at_direct_level || self.in_property_check) {
                 return SubtypeResult::False;
             }
         }
