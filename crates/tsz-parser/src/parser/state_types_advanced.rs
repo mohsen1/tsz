@@ -1443,9 +1443,17 @@ impl ParserState {
             {
                 args.push(self.parse_type_argument_in_type_arguments());
 
+                // tsc's `isListTerminator(TypeArguments)` returns true for any
+                // token other than `,`, so a type-argument list does NOT recover
+                // a missing separator: the first non-comma token terminates the
+                // list and `parse_expected_greater_than` reports `'>' expected`.
+                // (This differs from type *parameters*, which recover a missing
+                // comma between two element-starting tokens.)
                 if !self.parse_optional(SyntaxKind::CommaToken) {
                     break;
                 }
+
+                // The comma we just consumed was trailing if `>` follows.
                 if self.is_greater_than_or_compound() {
                     has_trailing_comma = true;
                 }
