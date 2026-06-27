@@ -228,15 +228,9 @@ impl Parser {
 
             // Set up lib contexts for global type resolution (Object, Array, etc.)
             if !self.lib_files.is_empty() {
-                let lib_contexts: Vec<LibContext> = self
-                    .lib_files
-                    .iter()
-                    .map(|lib| LibContext {
-                        arena: Arc::clone(&lib.arena),
-                        binder: Arc::clone(&lib.binder),
-                    })
-                    .collect();
-                checker.ctx.set_lib_contexts(lib_contexts);
+                checker
+                    .ctx
+                    .set_lib_contexts(LibContext::from_lib_files(&self.lib_files));
             }
 
             // Full source file type checking - traverse all statements
@@ -745,13 +739,7 @@ impl Parser {
     }
 
     fn lib_contexts(&self) -> Vec<LibContext> {
-        self.lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
+        LibContext::from_lib_files(&self.lib_files)
     }
 
     /// Ensure source file is parsed and bound.

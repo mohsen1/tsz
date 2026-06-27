@@ -189,6 +189,26 @@ pub struct LibContext {
     pub binder: Arc<BinderState>,
 }
 
+impl LibContext {
+    /// Build the checker-facing lib contexts from a set of parsed-and-bound
+    /// lib files.
+    ///
+    /// Each context is a cheap `Arc` clone of a lib file's arena and binder.
+    /// Shared by every consumer that feeds libs into a checker or provider
+    /// (the CLI/WASM parser and the LSP project), so the `arena`/`binder`
+    /// clone pattern lives in one place.
+    #[must_use]
+    pub fn from_lib_files(lib_files: &[Arc<crate::lib_loader::LibFile>]) -> Vec<Self> {
+        lib_files
+            .iter()
+            .map(|lib| Self {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect()
+    }
+}
+
 /// Represents a module augmentation with arena context.
 ///
 /// This structure ensures that `NodeIndex` values remain valid across files by
