@@ -598,6 +598,27 @@ fn trailing_empty_parameter_slot_reports_ts1138() {
 }
 
 #[test]
+fn invalid_character_in_parameter_slot_reports_only_ts1127() {
+    // `function f(a,¬)` — the `¬` (U+00AC) is an invalid character, scanned as
+    // `Unknown`. tsc reports a single TS1127 `Invalid character.` (its would-be
+    // TS1138 is deduped against the same-position scanner TS1127). The empty-slot
+    // recovery must NOT promote this to TS1138; an `Unknown` token is not the
+    // comma delimiter the recovery targets. Mirrors conformance test
+    // `parserErrorRecovery_ParameterList4.ts`.
+    let fingerprints = parameter_diag_fingerprints("function f(a,\u{00AC}) {}");
+    assert_eq!(
+        fingerprints,
+        vec![(
+            diagnostic_codes::INVALID_CHARACTER,
+            1,
+            14,
+            "Invalid character.".to_string(),
+        )],
+        "invalid character in a parameter slot must report a single TS1127, got {fingerprints:?}"
+    );
+}
+
+#[test]
 fn well_formed_parameter_lists_remain_diagnostic_free() {
     // Guard against the recovery introducing false positives on valid lists.
     for source in [

@@ -417,10 +417,26 @@ impl ParserState {
             // or mis-parsing the construct entirely.
             if !self.is_start_of_parameter() {
                 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.parse_error_at_current_token(
-                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
-                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
-                );
+                // An invalid character (scanned as `Unknown`, e.g. the `¬` in
+                // `function f(a,¬)`) at a parameter-start position surfaces as
+                // TS1127 `Invalid character.`, not TS1138. In tsc the scanner
+                // reports TS1127 and the would-be TS1138 from `parsingContextErrors`
+                // is deduplicated against the same-position TS1127; tsz's scanner
+                // skips the invalid char without a diagnostic, so the parser emits
+                // TS1127 itself, mirroring `error_identifier_expected`'s `Unknown`
+                // branch. A real list delimiter such as the stray `,` of `(a, , b)`
+                // is a `CommaToken`, not `Unknown`, so it still reports TS1138.
+                if self.is_token(SyntaxKind::Unknown) {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::INVALID_CHARACTER,
+                        diagnostic_codes::INVALID_CHARACTER,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                        diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                    );
+                }
                 self.next_token();
                 continue;
             }
