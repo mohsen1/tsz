@@ -101,3 +101,4 @@ declare namespace JSX {
 mod part_00;
 mod part_01;
 mod part_02;
+mod part_03_jsx_flag;
