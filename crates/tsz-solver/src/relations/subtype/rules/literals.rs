@@ -9,7 +9,7 @@
 //! - Template-to-template literal subtype matching (generalized pattern matching)
 
 use crate::types::{
-    IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeId, TypeListId,
+    IntrinsicKind, LiteralValue, TemplateLiteralId, TemplateSpan, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     intersection_list_id, intrinsic_kind, literal_value, string_intrinsic_components,
@@ -230,6 +230,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                     };
+                }
+
+                if let Some(TypeData::Enum(_, member_type)) = self.interner.lookup(type_id) {
+                    let mut enum_spans = Vec::with_capacity(spans.len() - span_idx);
+                    enum_spans.push(TemplateSpan::Type(member_type));
+                    enum_spans.extend_from_slice(&spans[span_idx + 1..]);
+                    return self.match_template_literal_recursive(remaining, &enum_spans, 0);
                 }
 
                 if let Some(members) = union_list_id(self.interner, type_id) {

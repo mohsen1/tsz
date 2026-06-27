@@ -1052,17 +1052,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // NOT the instance type (from resolve_lazy/symbol_instance_types).
         let sym = SymbolRef(symbol_ref);
 
-        // Use resolve_ref first (returns constructor type for classes),
-        // then fall back to resolve_lazy for non-class symbols.
         let resolved = self
             .checker
             .resolver
-            .resolve_ref(sym, self.checker.interner)
-            .or_else(|| {
-                self.checker
-                    .resolver
-                    .resolve_symbol_ref(sym, self.checker.interner)
-            })
+            .resolve_type_query(sym, self.checker.interner)
             .unwrap_or(self.source);
 
         // If resolution succeeded and gave us a different type, restart the check.

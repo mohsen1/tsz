@@ -5,6 +5,8 @@
 //! has been extracted to `queries/lib_resolution.rs`.
 
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -681,13 +683,21 @@ impl<'a> CheckerState<'a> {
     /// this mirrors the `this`-receiver gate used for object-literal
     /// method-call cycles (`object_literal_circularity.rs`).
     pub(crate) fn object_literal_getter_has_self_reference(
-        &self,
+        &mut self,
         accessor_idx: NodeIndex,
         body_idx: NodeIndex,
         name: &str,
     ) -> bool {
         let binding_sym = self.object_literal_initializer_binding_symbol(accessor_idx);
-        self.getter_self_reference_in_subtree(body_idx, name, binding_sym)
+        let member_names = self.object_literal_member_names_for_accessor(accessor_idx);
+        let receiver_aliases = self.object_literal_getter_receiver_aliases(body_idx, binding_sym);
+        self.getter_self_reference_in_subtree(
+            body_idx,
+            name,
+            binding_sym,
+            &receiver_aliases,
+            &member_names,
+        )
     }
 
     /// Symbol of the variable an object-literal accessor's enclosing object
@@ -698,7 +708,7 @@ impl<'a> CheckerState<'a> {
     fn object_literal_initializer_binding_symbol(
         &self,
         accessor_idx: NodeIndex,
-    ) -> Option<tsz_binder::SymbolId> {
+    ) -> Option<SymbolId> {
         let obj_idx = self.ctx.arena.get_extended(accessor_idx)?.parent;
         let obj_node = self.ctx.arena.get(obj_idx)?;
         if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -714,6 +724,120 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         self.ctx.binder.get_node_symbol(var_decl.name)
+    }
+
+    fn object_literal_member_names_for_accessor(
+        &mut self,
+        accessor_idx: NodeIndex,
+    ) -> FxHashSet<String> {
+        let mut names = FxHashSet::default();
+        let Some(obj_idx) = self
+            .ctx
+            .arena
+            .get_extended(accessor_idx)
+            .map(|ext| ext.parent)
+        else {
+            return names;
+        };
+        let Some(obj_node) = self.ctx.arena.get(obj_idx) else {
+            return names;
+        };
+        if obj_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return names;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return names;
+        };
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let name = if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                self.get_property_name_resolved(prop.name)
+            } else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_method_decl(elem_node)
+                    .and_then(|method| self.get_property_name_resolved(method.name))
+            } else if elem_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                self.ctx
+                    .arena
+                    .get_accessor(elem_node)
+                    .and_then(|accessor| self.get_property_name_resolved(accessor.name))
+            } else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                self.ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|shorthand| self.ctx.arena.get(shorthand.name))
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .map(|ident| ident.escaped_text.clone())
+            } else {
+                None
+            };
+            if let Some(name) = name {
+                names.insert(name);
+            }
+        }
+        names
+    }
+
+    fn object_literal_getter_receiver_aliases(
+        &self,
+        body_idx: NodeIndex,
+        binding_sym: Option<SymbolId>,
+    ) -> FxHashSet<SymbolId> {
+        let mut aliases = FxHashSet::default();
+        loop {
+            let before = aliases.len();
+            self.collect_object_literal_getter_receiver_aliases(
+                body_idx,
+                binding_sym,
+                &mut aliases,
+            );
+            if aliases.len() == before {
+                return aliases;
+            }
+        }
+    }
+
+    fn collect_object_literal_getter_receiver_aliases(
+        &self,
+        node_idx: NodeIndex,
+        binding_sym: Option<SymbolId>,
+        aliases: &mut FxHashSet<SymbolId>,
+    ) {
+        if node_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+
+        match node.kind {
+            syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::CLASS_EXPRESSION => return,
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                if let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+                    && decl.initializer.is_some()
+                    && self.receiver_denotes_object_under_construction(
+                        decl.initializer,
+                        binding_sym,
+                        aliases,
+                    )
+                    && let Some(alias_sym) = self.ctx.binder.get_node_symbol(decl.name)
+                {
+                    aliases.insert(alias_sym);
+                }
+            }
+            _ => {}
+        }
+
+        for child_idx in self.ctx.arena.get_children(node_idx) {
+            self.collect_object_literal_getter_receiver_aliases(child_idx, binding_sym, aliases);
+        }
     }
 
     /// Recursive helper for `collect_self_references`.
@@ -777,7 +901,9 @@ impl<'a> CheckerState<'a> {
         &self,
         node_idx: NodeIndex,
         name: &str,
-        binding_sym: Option<tsz_binder::SymbolId>,
+        binding_sym: Option<SymbolId>,
+        receiver_aliases: &FxHashSet<SymbolId>,
+        object_member_names: &FxHashSet<String>,
     ) -> bool {
         if node_idx.is_none() {
             return false;
@@ -790,8 +916,12 @@ impl<'a> CheckerState<'a> {
             && let Some(access) = self.ctx.arena.get_access_expr(node)
             && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-            && ident.escaped_text == name
-            && self.receiver_denotes_object_under_construction(access.expression, binding_sym)
+            && self.receiver_denotes_object_under_construction(
+                access.expression,
+                binding_sym,
+                receiver_aliases,
+            )
+            && (ident.escaped_text == name || !object_member_names.contains(&ident.escaped_text))
         {
             return true;
         }
@@ -809,7 +939,15 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_children(node_idx)
             .into_iter()
-            .any(|child_idx| self.getter_self_reference_in_subtree(child_idx, name, binding_sym))
+            .any(|child_idx| {
+                self.getter_self_reference_in_subtree(
+                    child_idx,
+                    name,
+                    binding_sym,
+                    receiver_aliases,
+                    object_member_names,
+                )
+            })
     }
 
     /// Whether a property-access receiver expression evaluates to the object
@@ -823,7 +961,8 @@ impl<'a> CheckerState<'a> {
     fn receiver_denotes_object_under_construction(
         &self,
         receiver_idx: NodeIndex,
-        binding_sym: Option<tsz_binder::SymbolId>,
+        binding_sym: Option<SymbolId>,
+        receiver_aliases: &FxHashSet<SymbolId>,
     ) -> bool {
         let receiver_idx = self
             .ctx
@@ -837,23 +976,30 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if node.kind == SyntaxKind::Identifier as u16 {
-            return binding_sym
-                .is_some_and(|sym| self.resolve_identifier_symbol(receiver_idx) == Some(sym));
+            let receiver_sym = self.resolve_identifier_symbol(receiver_idx);
+            return binding_sym.is_some_and(|sym| receiver_sym == Some(sym))
+                || receiver_sym.is_some_and(|sym| receiver_aliases.contains(&sym));
         }
         match node.kind {
             // `[this][0]`: the indexed result is one of the array's elements.
             syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.ctx.arena.get_literal_expr(node).is_some_and(|arr| {
-                    arr.elements
-                        .nodes
-                        .iter()
-                        .copied()
-                        .any(|el| self.receiver_denotes_object_under_construction(el, binding_sym))
+                    arr.elements.nodes.iter().copied().any(|el| {
+                        self.receiver_denotes_object_under_construction(
+                            el,
+                            binding_sym,
+                            receiver_aliases,
+                        )
+                    })
                 })
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 self.ctx.arena.get_access_expr(node).is_some_and(|access| {
-                    self.receiver_denotes_object_under_construction(access.expression, binding_sym)
+                    self.receiver_denotes_object_under_construction(
+                        access.expression,
+                        binding_sym,
+                        receiver_aliases,
+                    )
                 })
             }
             syntax_kind_ext::CONDITIONAL_EXPRESSION => self
@@ -861,11 +1007,15 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_conditional_expr(node)
                 .is_some_and(|cond| {
-                    self.receiver_denotes_object_under_construction(cond.when_true, binding_sym)
-                        || self.receiver_denotes_object_under_construction(
-                            cond.when_false,
-                            binding_sym,
-                        )
+                    self.receiver_denotes_object_under_construction(
+                        cond.when_true,
+                        binding_sym,
+                        receiver_aliases,
+                    ) || self.receiver_denotes_object_under_construction(
+                        cond.when_false,
+                        binding_sym,
+                        receiver_aliases,
+                    )
                 }),
             _ => false,
         }
