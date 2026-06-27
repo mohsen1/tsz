@@ -647,9 +647,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// union signature combination (tsc's `compareSignaturesIdentical` with
     /// `partialMatch=true`, `ignoreReturnTypes=true`).
     ///
-    /// Two signatures are compatible when they have the same number of required
-    /// parameters (allowing extra optional params) and their type positions are
-    /// identical under the checker-backed type identity hook.
+    /// `a` is the *query* signature and `b` a *candidate* drawn from another
+    /// union member's signature list, matching tsc's
+    /// `findMatchingSignature(candidateList, querySignature, partialMatch=true)`
+    /// usage: two signatures are compatible when they have the same number of
+    /// required parameters (allowing extra optional params) and, for each shared
+    /// position, the query parameter is a *subtype* of the candidate parameter
+    /// (tsc's `compareTypesSubtypeOf`), not merely identical to it.
     pub(super) fn are_signatures_compatible_for_union(
         &mut self,
         a: &CallSignature,
@@ -688,14 +692,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Use the minimum total — both must have at least that many params
         let min_total = a.params.len().min(b.params.len());
 
-        // Check parameter types are identical for overlapping positions. Use the
-        // checker hook instead of raw TypeId equality so aliases/lazy refs that
-        // resolve to the same semantic type can still participate in tsc's
-        // union-signature merging.
+        // Check parameter types for overlapping positions. tsc's
+        // `compareSignaturesIdentical(partialMatch=true)` relates each position
+        // with `compareTypesSubtypeOf(queryParam, candidateParam)` rather than
+        // identity, so a query parameter that is a *subtype* of the candidate
+        // parameter still matches. This is what keeps a union member whose
+        // method is declared with an overload set — e.g. `subscribe(o: Partial<O>)`
+        // — matchable against a sibling member's stricter single signature
+        // `subscribe(o: O)` (`O <: Partial<O>`); identity-only matching wrongly
+        // dropped the overloaded member's contribution and collapsed the union
+        // to "not callable" (false TS2349, #14745). Type identity is the
+        // reflexive case of this relation, so the existing exact-match behaviour
+        // is preserved. The checker-backed strict relation also resolves
+        // aliases/lazy refs to their semantic shape before comparing.
         for i in 0..min_total {
-            if !self
-                .checker
-                .are_types_identical(a.params[i].type_id, b.params[i].type_id)
+            let query_param = a.params[i].type_id;
+            let candidate_param = b.params[i].type_id;
+            if query_param != candidate_param
+                && !self
+                    .checker
+                    .is_assignable_to_strict(query_param, candidate_param)
             {
                 return false;
             }
