@@ -1877,10 +1877,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             symbol_index: None,
             symbol: target.symbol,
         };
-        if !self
+        // Both shapes are the property part of callables whose call/construct
+        // signatures already matched above. tsc's `isWeakType` returns false for
+        // any type with a call or construct signature, so the weak-type "no common
+        // property" rule must not fire on these stripped property shapes (e.g.
+        // `{ (): void; extra: number }` <: `{ (): void; name?: string }`). Mark the
+        // direct level so `check_object_subtype` suppresses it; nested property-value
+        // comparisons re-enable it through `in_property_check`.
+        let prev_in_callable_property_check = self.in_callable_property_check;
+        self.in_callable_property_check = true;
+        let props_ok = self
             .check_object_subtype(&source_shape, None, None, &target_shape, None)
-            .is_true()
-        {
+            .is_true();
+        self.in_callable_property_check = prev_in_callable_property_check;
+        if !props_ok {
             return SubtypeResult::False;
         }
 

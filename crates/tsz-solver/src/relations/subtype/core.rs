@@ -267,6 +267,14 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// source may have no common properties with one member but still be assignable
     /// to the combined intersection (e.g., `A <: A & WeakType` should pass).
     pub(crate) in_intersection_member_check: bool,
+    /// When true, we're comparing the object-property part of a callable-to-callable
+    /// relation, after the call/construct signatures have already been compared.
+    /// Weak type checks are suppressed at this direct level because tsc's `isWeakType`
+    /// returns false for any type carrying a call or construct signature, so a callable
+    /// target is never a weak type. Nested property-value comparisons re-enable the
+    /// check via `in_property_check` (e.g. a callable property whose value is a genuine
+    /// weak object still triggers TS2559).
+    pub(crate) in_callable_property_check: bool,
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
@@ -421,6 +429,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             enforce_weak_types: false,
             in_property_check: false,
             in_intersection_member_check: false,
+            in_callable_property_check: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
@@ -474,6 +483,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             enforce_weak_types: false,
             in_property_check: false,
             in_intersection_member_check: false,
+            in_callable_property_check: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
