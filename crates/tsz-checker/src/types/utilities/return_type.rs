@@ -781,18 +781,18 @@ impl<'a> CheckerState<'a> {
         // within an expression's contextual flow where the ambient flag is
         // load-bearing (e.g. an `async () => makePromise()` argument typed under
         // argument inference). Their nested-widening is already handled at the
-        // function-expression branch of `return_expression_type`.
-        let function_is_named_declaration = self.ctx.arena.get(function_idx).is_some_and(|node| {
+        // function-expression branch of `return_expression_type`. Setters return
+        // `void` and never reach literal widening, so only the value-returning
+        // named kinds are listed.
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        if self.ctx.arena.get(function_idx).is_some_and(|node| {
             matches!(
                 node.kind,
                 syntax_kind_ext::FUNCTION_DECLARATION
                     | syntax_kind_ext::METHOD_DECLARATION
                     | syntax_kind_ext::GET_ACCESSOR
-                    | syntax_kind_ext::SET_ACCESSOR
             )
-        });
-        let prev_preserve_literals = self.ctx.preserve_literal_types;
-        if function_is_named_declaration {
+        }) {
             self.ctx.preserve_literal_types = false;
         }
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
