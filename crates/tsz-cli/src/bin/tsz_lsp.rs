@@ -70,6 +70,8 @@ use tsz::lsp::{
     FormattingOptions, Position, Project, Range,
 };
 
+#[path = "tsz_lsp/lib_loading.rs"]
+mod lib_loading;
 #[path = "tsz_lsp/tsz_lsp_dispatch.rs"]
 mod tsz_lsp_dispatch;
 #[path = "tsz_lsp/tsz_lsp_notification_handlers.rs"]
@@ -600,6 +602,42 @@ impl LspServer {
 
     // ─── Initialize ─────────────────────────────────────────────────────
 
+    /// (Re)install the embedded standard library matching the effective
+    /// `target`/`lib` resolved from any loaded tsconfig, defaulting to the CLI
+    /// target when none is configured.
+    ///
+    /// Idempotent: `Project::set_lib_files` skips the work when the resolved lib
+    /// set is unchanged, so this is safe to call on every config-affecting
+    /// event. Installing libs is what lets the server resolve global values
+    /// (`Date`, `Map`, `Math`, ...) instead of emitting spurious
+    /// `TS2304`/`TS2552`/`TS2583`.
+    fn refresh_libs(&mut self) {
+        let (target, lib) = self.effective_lib_config();
+        let libs = lib_loading::embedded_lib_files(target, lib.as_deref());
+        self.project.set_lib_files(libs.as_ref().clone());
+    }
+
+    /// Determine the effective `(target, lib)` from loaded tsconfig settings,
+    /// falling back to the CLI default target with no explicit lib list.
+    ///
+    /// Uses the first workspace root that has parsed tsconfig settings; LSP
+    /// sessions are overwhelmingly single-root, and a lib-less default is the
+    /// safe fallback for the rest.
+    fn effective_lib_config(&self) -> (tsz::emitter::ScriptTarget, Option<Vec<String>>) {
+        for root in self.project.workspace_roots() {
+            if let Some(settings) = self.project.tsconfig_for_root(root) {
+                let target = settings
+                    .target
+                    .as_deref()
+                    .and_then(tsz::emitter::ScriptTarget::from_ts_str)
+                    .unwrap_or_else(lib_loading::default_lsp_target);
+                let lib = (!settings.lib.is_empty()).then(|| settings.lib.clone());
+                return (target, lib);
+            }
+        }
+        (lib_loading::default_lsp_target(), None)
+    }
+
     fn handle_initialize(&mut self, params: Option<&Value>) -> Value {
         // Extract workspace folders from initialization params
         if let Some(p) = params {
@@ -638,6 +676,12 @@ impl LspServer {
                     .unwrap_or(false);
             }
         }
+
+        // Install the default-target standard library immediately so files
+        // opened before `initialized` (or with no workspace tsconfig) resolve
+        // globals. `handle_initialized` re-installs once tsconfigs are parsed,
+        // which is a no-op when the effective lib set is unchanged.
+        self.refresh_libs();
 
         serde_json::json!({
             "capabilities": {
@@ -879,6 +923,10 @@ impl LspServer {
             self.log_message(3, &format!("tsz-lsp: Loaded configuration from {root}"));
         }
 
+        // Re-resolve the standard library now that tsconfig `target`/`lib` are
+        // known (no-op when unchanged from the default installed at initialize).
+        self.refresh_libs();
+
         // Discover files from workspace roots (with progress reporting)
         let token = Self::next_progress_token();
         self.begin_progress(&token, "Indexing workspace", Some("Discovering files..."));
@@ -940,6 +988,9 @@ impl LspServer {
                     self.log_message(3, &format!("tsz-lsp: Added workspace folder: {uri}"));
                 }
             }
+
+            // A newly-added root may change the effective lib configuration.
+            self.refresh_libs();
 
             // Discover files from new workspace roots
             if !new_roots.is_empty() {

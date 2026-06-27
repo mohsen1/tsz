@@ -1064,7 +1064,17 @@ pub(super) fn read_source_files(
                     let mut candidates = Vec::new();
                     let direct_reference = base_dir.join(&reference_path);
                     candidates.push(direct_reference);
-                    if !reference_path.contains('.') {
+                    // Probe `.ts`/`.tsx`/`.d.ts` when the reference's FILE NAME has no
+                    // extension. Testing the whole string for `.` misfires on a `./` or
+                    // `../` relative prefix, silently skipping the probe. Mirror the
+                    // diagnostic path in state_checking/directive.rs, which uses
+                    // `Path::file_name()`.
+                    let file_name_lacks_extension = !Path::new(&reference_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or(reference_path.as_str())
+                        .contains('.');
+                    if file_name_lacks_extension {
                         for ext in
                             tsz::checker::triple_slash_validator::reference_path_probe_extensions(
                                 options.allow_js,

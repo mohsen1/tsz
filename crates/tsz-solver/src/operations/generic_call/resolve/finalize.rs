@@ -538,7 +538,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                         );
                                     let should_widen = crate::visitor::is_literal_type(db, result)
                                         && (!return_preserves_direct_literal
-                                            || infer_ctx.all_candidates_from_array_elements(var))
+                                            || infer_ctx.all_candidates_from_array_elements(var)
+                                            || infer_ctx.all_candidates_from_object_property(var))
                                         || crate::visitor::is_union_of_fresh_literals(db, result);
                                     if should_widen {
                                         widening::widen_literal_type(db, result)

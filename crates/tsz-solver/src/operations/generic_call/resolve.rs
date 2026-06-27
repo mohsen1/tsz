@@ -797,6 +797,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && func.params.iter().zip(instantiated_params.iter()).all(
                             |(original, instantiated)| original.type_id == instantiated.type_id,
                         );
+                // A construct signature can mention a class type parameter only
+                // in a position round-1 argument inference does not actually pin
+                // — most commonly a contravariant callback parameter such as
+                // `refiner?: (value: T) => boolean`. There `constructor_params_lack_type_params`
+                // is false (the param type changed under placeholder
+                // instantiation), so the original direction would record only an
+                // upper bound and the parameter falls back to `unknown` (#14822).
+                // When such a return-type variable is genuinely uncovered by
+                // round-1 direct seeding, use the reversed (tsc) direction so the
+                // contextual instance type records it as a CANDIDATE. Covered
+                // variables keep their stronger round-1 candidates, which win on
+                // priority, so this does not disturb constructors whose value
+                // parameters pin their type parameters (e.g. React's
+                // `new (props: P) => Component<P, S>`).
+                let constructor_has_uncovered_return_var = func.is_constructor
+                    && return_seed_vars
+                        .iter()
+                        .any(|var| !round1_direct_seed_vars.contains(var));
                 if bare_return_var_value_arg_seeded {
                     // Argument inference owns `T`: record the contextual type as a
                     // low-priority `ReturnType` candidate (a hint) rather than an
@@ -810,7 +828,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             crate::types::InferencePriority::ReturnType,
                         );
                     }
-                } else if return_is_union_with_placeholder || constructor_params_lack_type_params {
+                } else if return_is_union_with_placeholder
+                    || constructor_params_lack_type_params
+                    || constructor_has_uncovered_return_var
+                {
                     self.constrain_types(
                         &mut infer_ctx,
                         &var_map,

@@ -11,6 +11,8 @@ pub(crate) mod file_context;
 mod import_collect;
 mod import_render;
 pub(crate) mod imports;
+#[cfg(test)]
+mod lib_files_tests;
 pub(crate) mod module_specifiers;
 pub(crate) mod operations;
 

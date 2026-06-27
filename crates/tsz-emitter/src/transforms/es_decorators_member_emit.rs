@@ -304,7 +304,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             {
                 ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
             }
-        } else if has_instance_method && !parameter_properties_run_instance_initializers {
+        } else if has_instance_method
+            && !parameter_properties_run_instance_initializers
+            && !has_instance_auto_accessors
+        {
+            // No instance field or auto-accessor exists to consume
+            // `_instanceExtraInitializers` inline, so flush it in the ctor.
+            // (When an auto-accessor is present, the first such member's value
+            // flushes it instead — see `preceding_extra_initializers_to_flush`.)
             ctor_init_calls.push(format!(
                 "{inner_indent}{run_init}(this, {instance_extra_initializers_var});\n"
             ));
@@ -320,15 +327,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         let var_info = &member_vars[info.member_var_index];
                         let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                         let init_arg = self.auto_accessor_initializer_arg(info);
-                        let previous_extra = self
-                            .previous_decorated_element_extra_initializers(
-                                decorated_members,
-                                member_vars,
-                                info.member_var_index,
-                            )
-                            .or_else(|| {
-                                has_instance_method.then_some(instance_extra_initializers_var)
-                            });
+                        let previous_extra = self.preceding_instance_extra_initializers_to_flush(
+                            decorated_members,
+                            member_vars,
+                            info.member_var_index,
+                            has_instance_method,
+                            instance_extra_initializers_var,
+                        );
                         let value = if let Some(prev_extra) = previous_extra {
                             format!(
                                 "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
@@ -341,16 +346,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                             self.native_auto_accessor_storage_name(info)
                         ));
                     }
-                }
-                if let Some(info) = auto_accessor_infos
-                    .iter()
-                    .rev()
-                    .find(|info| !decorated_members[info.member_var_index].is_static)
-                    && let Some(extra_var) = member_vars[info.member_var_index]
-                        .extra_initializers_var
-                        .as_deref()
-                {
-                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
                 }
             } else {
                 let instance_auto_accessors: Vec<&DecoratedAutoAccessorInfo> = auto_accessor_infos
@@ -366,10 +361,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     // Private WeakMap auto-accessors must flush extra-initializers as
                     // separate statements; public ones use the comma expression pattern.
                     let value = if let Some(prev_extra) = self
-                        .previous_decorated_element_extra_initializers(
+                        .preceding_instance_extra_initializers_to_flush(
                             decorated_members,
                             member_vars,
                             info.member_var_index,
+                            has_instance_method,
+                            instance_extra_initializers_var,
                         ) {
                         if is_private {
                             ctor_init_calls
@@ -387,16 +384,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         "{inner_indent}{storage_name}.set(this, {value});\n"
                     ));
                 }
-                if let Some(info) = auto_accessor_infos
-                    .iter()
-                    .rev()
-                    .find(|info| !decorated_members[info.member_var_index].is_static)
-                    && let Some(extra_var) = member_vars[info.member_var_index]
-                        .extra_initializers_var
-                        .as_deref()
-                {
-                    ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
-                }
+            }
+            // Flush the last instance auto-accessor's own extra initializers in
+            // the ctor tail — unless a later decorated field consumes them inline
+            // (the storage-init shape differs per target, but this tail is the
+            // same for both the static-block and WeakMap paths).
+            if let Some(info) = auto_accessor_infos
+                .iter()
+                .rev()
+                .find(|info| !decorated_members[info.member_var_index].is_static)
+                && let Some(extra_var) = member_vars[info.member_var_index]
+                    .extra_initializers_var
+                    .as_deref()
+                && !self.has_following_decorated_field(decorated_members, info.member_var_index)
+            {
+                ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
             }
         }
 
@@ -443,30 +445,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
         output
     }
 
-    pub(super) fn previous_auto_accessor_extra_initializers<'b>(
-        &self,
-        auto_accessor_infos: &'b [DecoratedAutoAccessorInfo],
-        decorated_members: &[DecoratedMember],
-        member_vars: &'b [MemberVarInfo],
-        current_info: &DecoratedAutoAccessorInfo,
-    ) -> Option<&'b str> {
-        let current_member = &decorated_members[current_info.member_var_index];
-        let mut previous: Option<&DecoratedAutoAccessorInfo> = None;
-        for info in auto_accessor_infos {
-            if std::ptr::eq(info, current_info) {
-                break;
-            }
-            if decorated_members[info.member_var_index].is_static == current_member.is_static {
-                previous = Some(info);
-            }
-        }
-        previous.and_then(|info| {
-            member_vars[info.member_var_index]
-                .extra_initializers_var
-                .as_deref()
-        })
-    }
-
     pub(super) fn previous_decorated_element_extra_initializers<'b>(
         &self,
         decorated_members: &[DecoratedMember],
@@ -486,19 +464,103 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .and_then(|(idx, _)| member_vars[idx].extra_initializers_var.as_deref())
     }
 
-    pub(super) fn has_following_decorated_auto_accessor(
+    /// The extra-initializers array a decorated field or auto-accessor must
+    /// flush *before* running its own initializer, per the tsc standard-decorator
+    /// (TC39) execution order. This is the shared decision for both the field
+    /// and auto-accessor value-position emit paths.
+    ///
+    /// The chain runs across ALL decorated instance (resp. static) fields and
+    /// auto-accessors in source order — fields and accessors are not separate
+    /// chains. Each member flushes the immediately-preceding decorated
+    /// field/accessor's `extra_initializers_var`; the FIRST such member in its
+    /// static/instance group flushes the group's `_instanceExtraInitializers` /
+    /// `_staticExtraInitializers` (only declared when a decorated
+    /// method/getter/setter contributed `addInitializer` callbacks).
+    ///
+    /// `None` means there is nothing to flush and the member emits a bare
+    /// `__runInitializers(receiver, _initializers, value)`.
+    pub(super) fn preceding_extra_initializers_to_flush<'b>(
+        &self,
+        decorated_members: &[DecoratedMember],
+        member_vars: &'b [MemberVarInfo],
+        member_var_index: usize,
+        has_instance_method: bool,
+        has_static_method: bool,
+        instance_extra_initializers_var: &'b str,
+        static_extra_initializers_var: &'b str,
+    ) -> Option<&'b str> {
+        self.previous_decorated_element_extra_initializers(
+            decorated_members,
+            member_vars,
+            member_var_index,
+        )
+        .or_else(|| {
+            let is_static = decorated_members.get(member_var_index)?.is_static;
+            if is_static {
+                has_static_method.then_some(static_extra_initializers_var)
+            } else {
+                has_instance_method.then_some(instance_extra_initializers_var)
+            }
+        })
+    }
+
+    /// Instance-only counterpart of [`Self::preceding_extra_initializers_to_flush`]
+    /// for the constructor accessor-init loops, which only ever process instance
+    /// members (so there is no static fallback to thread through).
+    pub(super) fn preceding_instance_extra_initializers_to_flush<'b>(
+        &self,
+        decorated_members: &[DecoratedMember],
+        member_vars: &'b [MemberVarInfo],
+        member_var_index: usize,
+        has_instance_method: bool,
+        instance_extra_initializers_var: &'b str,
+    ) -> Option<&'b str> {
+        self.previous_decorated_element_extra_initializers(
+            decorated_members,
+            member_vars,
+            member_var_index,
+        )
+        .or_else(|| has_instance_method.then_some(instance_extra_initializers_var))
+    }
+
+    /// True when a decorated member of `kind` in the same static/instance group
+    /// appears after `member_var_index` in source order.
+    fn has_following_decorated_member(
         &self,
         decorated_members: &[DecoratedMember],
         member_var_index: usize,
+        kind: MemberKind,
     ) -> bool {
         let Some(current_member) = decorated_members.get(member_var_index) else {
             return false;
         };
         decorated_members.iter().any(|member| {
             member.is_static == current_member.is_static
-                && member.kind == MemberKind::Accessor
+                && member.kind == kind
                 && self.member_pos_after(member.member_idx, current_member.member_idx)
         })
+    }
+
+    /// Used to suppress an auto-accessor's trailing extra-initializers flush
+    /// when a later decorated field will consume it inline.
+    pub(super) fn has_following_decorated_field(
+        &self,
+        decorated_members: &[DecoratedMember],
+        member_var_index: usize,
+    ) -> bool {
+        self.has_following_decorated_member(decorated_members, member_var_index, MemberKind::Field)
+    }
+
+    pub(super) fn has_following_decorated_auto_accessor(
+        &self,
+        decorated_members: &[DecoratedMember],
+        member_var_index: usize,
+    ) -> bool {
+        self.has_following_decorated_member(
+            decorated_members,
+            member_var_index,
+            MemberKind::Accessor,
+        )
     }
 
     pub(super) fn has_following_class_decorator_auto_accessor(
