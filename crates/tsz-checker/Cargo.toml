@@ -515,6 +515,9 @@ path = "tests/ts1240_accessor_decorator_tests.rs"
 name = "ts1241_method_decorator_tests"
 path = "tests/ts1241_method_decorator_tests.rs"
 [[test]]
+name = "es_member_decorator_arity_tests"
+path = "tests/es_member_decorator_arity_tests.rs"
+[[test]]
 name = "ts1207_decorated_accessor_tests"
 path = "tests/ts1207_decorated_accessor_tests.rs"
 [[test]]
@@ -685,6 +688,9 @@ path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 [[test]]
 name = "ambient_module_value_export_tests"
 path = "tests/ambient_module_value_export_tests.rs"
+[[test]]
+name = "wildcard_ambient_module_export_tests"
+path = "tests/wildcard_ambient_module_export_tests.rs"
 [[test]]
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
@@ -2268,3 +2274,7 @@ path = "tests/computed_key_and_iterator_heritage_member_retention_tests.rs"
 [[test]]
 name = "let_var_initializer_assignment_reduced_type_tests"
 path = "tests/let_var_initializer_assignment_reduced_type_tests.rs"
+
+[[test]]
+name = "noinfer_object_property_literal_widening_tests"
+path = "tests/noinfer_object_property_literal_widening_tests.rs"

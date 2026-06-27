@@ -290,6 +290,10 @@ impl ParserState {
         let mut previous_top_level_was_optional_parameter = false;
         let mut saw_top_level_conditional_operator = false;
         let mut previous_top_level_token = SyntaxKind::Unknown;
+        // Whether at least one real parameter slot has begun. An empty slot
+        // (`,` where a parameter should start) only keeps the arrow
+        // interpretation alive once a prior parameter exists.
+        let mut seen_param_slot = false;
         while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
             let token = self.token();
             let at_top_level =
@@ -325,9 +329,30 @@ impl ParserState {
                 return false;
             }
 
+            // Record that a real parameter slot has begun, so a later empty
+            // slot can be tolerated as recoverable arrow syntax: `(a, , b) =>`
+            // recovers in place, while `(, a)` (no prior parameter) does not.
+            if at_top_level && at_param_start && !seen_param_slot && self.is_parameter_start() {
+                seen_param_slot = true;
+            }
+
+            // An empty parameter slot (`,` at a parameter-start position) keeps
+            // the arrow interpretation alive ONLY when a real parameter already
+            // preceded it. tsc's speculative parse recovers `(a, , b) =>` in
+            // place (reporting TS1138), but rejects a LEADING empty slot
+            // `(, a)` and reparses it as a parenthesized expression (TS1109).
+            let empty_slot_comma =
+                at_top_level && at_param_start && token == SyntaxKind::CommaToken;
+            if empty_slot_comma && !seen_param_slot {
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                return false;
+            }
+
             if at_top_level
                 && at_param_start
                 && !saw_parameter_syntax
+                && !empty_slot_comma
                 && !matches!(
                     token,
                     SyntaxKind::CloseParenToken

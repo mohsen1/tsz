@@ -67,7 +67,7 @@ struct ClassCircularMember {
     name: String,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Emit TS7023 / TS7024 for un-annotated class members whose inferred return
     /// type is circular through a `this.`/`Class.` self-invocation. Runs once
     /// per class, after the members have been checked.
@@ -346,7 +346,7 @@ impl<'a> CheckerState<'a> {
 /// Indices of candidates that lie on a self-invocation cycle (including direct
 /// self-loops). DFS path-stack collection, mirroring the object-literal
 /// `collect_circular_return_graph_sites` cycle walk.
-fn cyclic_member_indices(adjacency: &[Vec<usize>]) -> FxHashSet<usize> {
+pub(crate) fn cyclic_member_indices(adjacency: &[Vec<usize>]) -> FxHashSet<usize> {
     let mut cyclic = FxHashSet::default();
     let mut visited = vec![false; adjacency.len()];
     let mut stack = Vec::new();
