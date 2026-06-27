@@ -1254,11 +1254,8 @@ impl<'a> CheckerContext<'a> {
         }
         // Wildcard ambient-module fallback: a concrete specifier (e.g.
         // `./logo.svg`) satisfied by a *pattern* module (`declare module
-        // "*.svg"`) stores its exports under the pattern key, never the concrete
-        // specifier. tsc resolves the specifier onto the matching pattern module
-        // and types each export from its declaration; mirror that by resolving
-        // the matched pattern key here. Without this the bindings degrade to
-        // `any` and every downstream assignability error is silently dropped.
+        // "*.svg"`) stores its exports under the pattern key. Resolve the
+        // specifier onto its matching pattern as tsc does, else bindings = `any`.
         self.lookup_wildcard_module_exports(module_key, map)
     }
 
