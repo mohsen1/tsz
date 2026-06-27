@@ -20,7 +20,7 @@
 use tsz_checker::test_utils::check_source_codes;
 
 fn assert_clean(source: &str) {
-    let codes = check_source_codes(source).to_vec();
+    let codes = check_source_codes(source);
     assert!(
         !codes.contains(&1240) && !codes.contains(&1241) && !codes.contains(&1329),
         "Expected no decorator-signature diagnostic (TS1240/1241/1329); got: {codes:?}"
@@ -157,8 +157,7 @@ fn es_zero_param_method_decorator_emits_ts1329() {
 function d() {}
 class C { @d method(): void {} }
 "#,
-    )
-    .to_vec();
+    );
     assert!(
         codes.contains(&1329) && !codes.contains(&1241),
         "Zero-param method decorator should keep TS1329 (not TS1241); got: {codes:?}"
@@ -174,8 +173,7 @@ fn es_zero_param_field_decorator_emits_ts1329_not_ts1240() {
 function d() {}
 class C { @d field = 1; }
 "#,
-    )
-    .to_vec();
+    );
     assert!(
         codes.contains(&1329) && !codes.contains(&1240),
         "Zero-param field decorator should emit TS1329, not TS1240; got: {codes:?}"
@@ -191,8 +189,7 @@ fn es_one_param_method_decorator_wrong_value_type_still_rejected() {
 function d(value: string): any { return value; }
 class C { @d method(): number { return 1; } }
 "#,
-    )
-    .to_vec();
+    );
     assert!(
         codes.contains(&1241),
         "A 1-param method decorator whose value parameter rejects the member type must still emit TS1241; got: {codes:?}"
@@ -208,8 +205,7 @@ fn es_three_required_param_method_decorator_still_rejected() {
 function d(a: any, b: any, c: any) {}
 class C { @d method(): void {} }
 "#,
-    )
-    .to_vec();
+    );
     assert!(
         codes.contains(&1241),
         "A 3-required-param method decorator should still emit TS1241; got: {codes:?}"
