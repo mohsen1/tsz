@@ -9,6 +9,7 @@ pub(crate) mod infer_variance;
 mod partially_inferable;
 mod template_anchor;
 mod template_segment_prefix;
+pub(crate) mod xarena_base;
 
 pub(crate) use infer::InferenceContext;
 

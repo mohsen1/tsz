@@ -278,6 +278,74 @@ pub fn conditional_default_constraint_from_data(
     Some(constraint)
 }
 
+/// Apparent **value** type of a deferred conditional, for spread / iteration
+/// element extraction.
+///
+/// Mirrors tsc's `getApparentType` -> `getDefaultConstraintOfConditionalType`,
+/// where `getInferredTrueTypeFromConditionalType` narrows the check type
+/// parameter to `check & extends` throughout the *whole* true branch. Unlike
+/// [`get_conditional_default_constraint`] — which narrows only when the true
+/// branch **is** the check type (enough for indexed-access key-space
+/// validation, where a wrapped occurrence such as `[T]` keeps the same key
+/// space) — this instantiates the entire true branch with `check := check &
+/// extends`, so a wrapped occurrence carries the narrowed element type.
+///
+/// For `v: T extends U ? [T] : Y`, the iterated element of the true branch is
+/// then `T & U` (assignable to `U`) rather than the unconstrained `T`, which is
+/// what a spread `...v` must relate to the rest-parameter element. The false
+/// branch is used unchanged, mirroring tsc. When one branch is `any`, tsc keeps
+/// the other branch (a union with `any` would otherwise erase the constraint).
+///
+/// Returns `None` when `type_id` is not a deferred conditional, or when the
+/// constraint makes no progress (so the caller keeps the type deferred).
+pub fn get_conditional_apparent_value_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
+
+    let check_type_param = match db.lookup(cond.check_type) {
+        Some(TypeData::TypeParameter(info)) => Some(info),
+        _ => None,
+    };
+
+    // Deferred-ness guard: if neither operand carries type parameters the
+    // evaluator would already have selected a branch, so there is nothing to
+    // reduce here.
+    if check_type_param.is_none()
+        && !contains_type_parameters_db(db, cond.check_type)
+        && !contains_type_parameters_db(db, cond.extends_type)
+    {
+        return None;
+    }
+
+    // Inferred true branch: instantiate with `check := check & extends` so a
+    // wrapped occurrence (`[T]`, `T[]`, an alias over `T`, ...) carries the
+    // narrowed element type. A branch that does not mention the check parameter
+    // (e.g. a concrete `number[]`) is returned unchanged by the instantiator.
+    let inferred_true = if let Some(info) = check_type_param {
+        let narrowed = db.intersection2(cond.check_type, cond.extends_type);
+        let subst =
+            crate::instantiation::instantiate::TypeSubstitution::single(info.name, narrowed);
+        crate::instantiation::instantiate::instantiate_type(db, cond.true_type, &subst)
+    } else {
+        cond.true_type
+    };
+
+    // Union the branches, but collapse to the non-`any` branch when one is
+    // `any` (tsc's `getDefaultConstraintOfConditionalType`): a `X | any` union
+    // would otherwise erase the constraint to `any`.
+    let constraint = if inferred_true == TypeId::ANY {
+        cond.false_type
+    } else if cond.false_type == TypeId::ANY {
+        inferred_true
+    } else {
+        db.union2(inferred_true, cond.false_type)
+    };
+    (constraint != type_id).then_some(constraint)
+}
+
 /// Substitute a deferred conditional's check-type parameter with its own base
 /// constraint, returning the substituted (still unevaluated) conditional.
 ///

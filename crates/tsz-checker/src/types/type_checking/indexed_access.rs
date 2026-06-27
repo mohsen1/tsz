@@ -19,6 +19,18 @@ use indexed_access_helpers::{
     same_type_param_name,
 };
 
+/// Default-on; `TSZ_DISABLE_NESTED_INDEXED_ACCESS_CONSTRAINT_REDUCTION=1` is the
+/// kill switch for the arbitrarily-deep deferred-indexed-access base-constraint
+/// reduction in [`CheckerState::check_indexed_access_type`]. The env read is
+/// cached so the (hot) per-indexed-access-node check is a plain bool load.
+fn nested_indexed_access_constraint_reduction_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_NESTED_INDEXED_ACCESS_CONSTRAINT_REDUCTION")
+            .is_ok_and(|v| v == "1")
+    })
+}
+
 impl<'a> CheckerState<'a> {
     /// Check if two AST nodes have the same text representation.
     fn nodes_have_same_text(&self, a: NodeIndex, b: NodeIndex) -> bool {
@@ -646,21 +658,53 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 object_type_for_check,
             )
-            && let Some(base_constraint) =
+        {
+            if let Some(base_constraint) =
                 crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
                     base_object_type,
                 )
-        {
-            let constrained_access = self
-                .ctx
-                .types
-                .factory()
-                .index_access(base_constraint, access_index_type);
-            let evaluated_constrained_access =
-                self.evaluate_type_for_assignability(constrained_access);
-            if evaluated_constrained_access != TypeId::ERROR {
-                object_type_for_check = evaluated_constrained_access;
+            {
+                // Single-level `K[idx]`: the access base is itself a type
+                // parameter, so substitute its constraint and evaluate.
+                let constrained_access = self
+                    .ctx
+                    .types
+                    .factory()
+                    .index_access(base_constraint, access_index_type);
+                let evaluated_constrained_access =
+                    self.evaluate_type_for_assignability(constrained_access);
+                if evaluated_constrained_access != TypeId::ERROR {
+                    object_type_for_check = evaluated_constrained_access;
+                }
+            } else if nested_indexed_access_constraint_reduction_enabled() {
+                // Arbitrarily-deep deferred indexed access (`T[K1][K2][K3]…`):
+                // the access base is itself an indexed access, not a bare type
+                // parameter, so the single-level branch above does not apply and
+                // the key space stays deferred. A literal outer key — e.g.
+                // `T[K1][K2][K3]` with `K3 extends keyof T[keyof T][keyof
+                // T[keyof T]]`, which reduces to a concrete literal — then cannot
+                // be validated, yielding a spurious TS2536 (the depth-≥3
+                // generalization of the depth-2 #13720 recovery). Reduce every
+                // reachable type parameter to its constraint and evaluate,
+                // mirroring tsc's `getApparentType` /
+                // `getConstraintOfIndexedAccessType`; full parameter substitution
+                // leaves no free parameters, so the result is the concrete
+                // apparent base. It is used only for key-space validation here —
+                // `object_type` keeps the original surface for diagnostics, and a
+                // genuinely-missing key still fails the relation below, so a real
+                // TS2536 is preserved.
+                let reduced =
+                    crate::query_boundaries::type_computation::complex::instantiate_type_params_to_constraints(
+                        self.ctx.types,
+                        object_type_for_check,
+                    );
+                if reduced != object_type_for_check {
+                    let evaluated = self.evaluate_type_for_assignability(reduced);
+                    if evaluated != TypeId::ERROR && evaluated != TypeId::ANY {
+                        object_type_for_check = evaluated;
+                    }
+                }
             }
         }
         if crate::query_boundaries::common::is_generic_application(

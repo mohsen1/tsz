@@ -646,18 +646,26 @@ impl<'a> FlowAnalyzer<'a> {
             // Class symbols must narrow through a real DefId-backed lazy type.
             // Falling back to `reference(SymbolRef)` would create Lazy(DefId(symbol_id)),
             // which can point at an unrelated definition because SymbolId and DefId
-            // are independent identity spaces.
-            return self.resolve_symbol_to_lazy(symbol_ref);
+            // are independent identity spaces. For a generic class
+            // (`class Box<T>`), `tsc` narrows `x instanceof Box` to `Box<any>`, so
+            // fill its type parameters with `any` (no-op for non-generic classes).
+            return self.resolve_symbol_to_instance_type(symbol_ref);
         }
 
         // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
-        // have both INTERFACE and VARIABLE flags. The interface type IS the instance type
-        // since interfaces describe instances, not constructors.
-        // This handles `x instanceof Array`, `x instanceof Date`, etc.
+        // have both INTERFACE and VARIABLE flags. The interface type IS the instance
+        // type since interfaces describe instances, not constructors. The raw
+        // interface is generic (`Map<K, V>`, `Array<T>`), so fill its type
+        // parameters with `any` — `x instanceof Map` narrows to `Map<any, any>`,
+        // matching tsc's prototype-derived instance type and the node_types fast
+        // path. Non-generic globals (`Date`, `RegExp`) resolve to the bare
+        // interface unchanged. This handles `x instanceof Array`, `x instanceof
+        // Date`, etc., including inside loops where the fast path is unavailable
+        // (issue #14945).
         if symbol.has_any_flags(symbol_flags::INTERFACE)
             && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
-            return self.resolve_symbol_to_lazy(symbol_ref);
+            return self.resolve_symbol_to_instance_type(symbol_ref);
         }
 
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
