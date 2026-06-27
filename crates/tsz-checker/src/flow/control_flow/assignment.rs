@@ -1787,7 +1787,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// for flow purposes: `++`/`--` and `delete`. The binder only records a flow
     /// `ASSIGNMENT` node for these (and, for `delete`, only with a property-access
     /// operand), so the targets/affects predicates recognize the same set.
-    fn is_flow_mutating_unary_operator(operator: u16) -> bool {
+    const fn is_flow_mutating_unary_operator(operator: u16) -> bool {
         operator == SyntaxKind::PlusPlusToken as u16
             || operator == SyntaxKind::MinusMinusToken as u16
             || operator == SyntaxKind::DeleteKeyword as u16
