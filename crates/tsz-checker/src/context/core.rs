@@ -1243,10 +1243,58 @@ impl<'a> CheckerContext<'a> {
         binder: &'b tsz_binder::BinderState,
         module_key: &str,
     ) -> Option<&'b tsz_binder::SymbolTable> {
-        if let Some(ref idx) = self.program_module_exports {
-            return Self::lookup_any_file_key(module_key, idx);
+        let map: &'b rustc_hash::FxHashMap<String, tsz_binder::SymbolTable> =
+            if let Some(ref idx) = self.program_module_exports {
+                idx.as_ref()
+            } else {
+                binder.module_exports.as_ref()
+            };
+        if let Some(table) = Self::lookup_any_file_key(module_key, map) {
+            return Some(table);
         }
-        Self::lookup_any_file_key(module_key, binder.module_exports.as_ref())
+        // Wildcard ambient-module fallback: a concrete specifier (e.g.
+        // `./logo.svg`) satisfied by a *pattern* module (`declare module
+        // "*.svg"`) stores its exports under the pattern key, never the concrete
+        // specifier. tsc resolves the specifier onto the matching pattern module
+        // and types each export from its declaration; mirror that by resolving
+        // the matched pattern key here. Without this the bindings degrade to
+        // `any` and every downstream assignability error is silently dropped.
+        self.lookup_wildcard_module_exports(module_key, map)
+    }
+
+    /// Resolve a concrete module specifier onto a declared *wildcard* ambient
+    /// module's export table, when no exact `module_exports` key matched.
+    ///
+    /// Returns `None` for keys that are themselves wildcard patterns (a pattern
+    /// is never resolved against another pattern) and when no declared pattern
+    /// matches. The chosen pattern follows tsc's longest-prefix preference.
+    fn lookup_wildcard_module_exports<'b>(
+        &self,
+        module_key: &str,
+        map: &'b rustc_hash::FxHashMap<String, tsz_binder::SymbolTable>,
+    ) -> Option<&'b tsz_binder::SymbolTable> {
+        let normalized = module_key.trim().trim_matches('"').trim_matches('\'');
+        if normalized.contains('*') {
+            return None;
+        }
+        // Fast path: the project-wide skeleton index already separates the
+        // wildcard patterns, so most projects (which declare none) skip the scan
+        // entirely, and those that do match against a small pre-built list.
+        if let Some(dm) = &self.global_declared_modules {
+            if dm.patterns.is_empty() {
+                return None;
+            }
+            return dm
+                .best_matching_pattern(normalized)
+                .and_then(|pattern| map.get(pattern));
+        }
+        // Standalone/test fallback (no skeleton index): scan the export map's own
+        // keys for wildcard patterns, ranked by the same longest-prefix rule.
+        crate::context::global_declared_modules::best_wildcard_match(
+            map.keys().map(String::as_str),
+            normalized,
+        )
+        .and_then(|key| map.get(key))
     }
 
     /// Like `module_exports_for_module` but tests existence only.

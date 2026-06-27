@@ -674,6 +674,9 @@ path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 name = "ambient_module_value_export_tests"
 path = "tests/ambient_module_value_export_tests.rs"
 [[test]]
+name = "wildcard_ambient_module_export_tests"
+path = "tests/wildcard_ambient_module_export_tests.rs"
+[[test]]
 name = "export_star_module_augmentation_tests"
 path = "tests/export_star_module_augmentation_tests.rs"
 [[test]]
