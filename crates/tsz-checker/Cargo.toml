@@ -440,6 +440,9 @@ path = "tests/await_structural_thenable_object_literal_tests.rs"
 name = "spread_deferred_conditional_tests"
 path = "tests/spread_deferred_conditional_tests.rs"
 [[test]]
+name = "instanceof_loop_generic_any_fill_tests"
+path = "tests/instanceof_loop_generic_any_fill_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
