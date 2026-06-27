@@ -448,6 +448,9 @@ mod override_intersection_display_tests;
 #[path = "tests/private_field_no_spelling_suggestion_tests.rs"]
 mod private_field_no_spelling_suggestion_tests;
 #[cfg(test)]
+#[path = "tests/readonly_assignment_no_flow_narrow_tests.rs"]
+mod readonly_assignment_no_flow_narrow_tests;
+#[cfg(test)]
 #[path = "../tests/relation_boundary_tests.rs"]
 mod relation_boundary_tests;
 #[cfg(test)]

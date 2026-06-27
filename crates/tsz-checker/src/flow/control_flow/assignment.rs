@@ -88,6 +88,30 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(assigned_type);
         }
 
+        // Narrowing a property/element reference on an object/array-literal
+        // assignment must reduce the reference's *declared* type rather than
+        // adopt the fresh literal's structure. A literal drops the declared
+        // property modifiers — notably `readonly` — so a later nested write
+        // through the same reference (`r.a.b = …` after `r.a = …`) would wrongly
+        // be seen as writable (#14787). `tsc` keeps the declared modifiers: a
+        // readonly nested member survives the assignment and is still rejected
+        // (TS2540), whether the outer property is `readonly` or mutable, and even
+        // inside a constructor. `narrow_assignment` returns the declared type
+        // unchanged for a non-union (preserving its modifiers) and reduces a
+        // declared union to the assigned member (which carries its own declared
+        // modifiers), so discriminant narrowing is unaffected. Scoped to declared
+        // reference types that actually carry `readonly` members so mutable
+        // shapes keep their existing RHS-narrowed flow type.
+        if self.node_is_object_or_array_literal(bin.right)
+            && let Some(declared_ref_type) = self.declared_access_reference_type(target)
+            && crate::query_boundaries::common::type_has_readonly_members(
+                self.interner.as_type_database(),
+                declared_ref_type,
+            )
+        {
+            return Some(self.narrow_assignment(declared_ref_type, assigned_type));
+        }
+
         if let Some((read_type, write_type)) = self.access_reference_split_read_write_type(target) {
             if read_type.is_any_unknown_or_error()
                 || self
@@ -122,49 +146,7 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         target: NodeIndex,
     ) -> Option<(TypeId, TypeId)> {
-        let target_node = self.arena.get(target)?;
-        let access = self.arena.get_access_expr(target_node)?;
-
-        let name_atom = if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let ident = self.arena.get_identifier_at(access.name_or_argument)?;
-            self.interner.intern_string(&ident.escaped_text)
-        } else if target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            self.literal_atom_from_node_or_type(access.name_or_argument)?
-        } else {
-            return None;
-        };
-
-        let node_types = self.node_types?;
-        let base_type = if let Some(&base_type) = node_types.get(&access.expression.0) {
-            base_type
-        } else if let Some(this_type) = self.concrete_this_type
-            && let Some(base_node) = self.arena.get(access.expression)
-            && base_node.kind == SyntaxKind::ThisKeyword as u16
-        {
-            this_type
-        } else {
-            return None;
-        };
-
-        let access_result = if let Some(env_ref) = &self.type_environment {
-            let env = env_ref.borrow();
-            crate::query_boundaries::property_access::resolve_property_access_with_resolver(
-                self.interner,
-                &*env,
-                base_type,
-                name_atom,
-                self.interner.no_unchecked_indexed_access(),
-            )
-        } else {
-            crate::query_boundaries::property_access::resolve_property_access_with_options(
-                self.interner,
-                base_type,
-                name_atom,
-                self.interner.no_unchecked_indexed_access(),
-            )
-        };
-
-        match access_result {
+        match self.resolve_access_reference_property(target)? {
             PropertyAccessResult::Success {
                 type_id,
                 write_type: Some(write_type),
