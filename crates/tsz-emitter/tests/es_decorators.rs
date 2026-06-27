@@ -1022,6 +1022,122 @@ fn synthetic_constructor_appears_after_instance_fields() {
     );
 }
 
+// Regression: #14776 — for standard (TC39) decorators, the first decorated
+// instance member's value must flush the preceding members' extra initializers.
+// When that first instance member is an auto-accessor, tsz used to drop the
+// leading `__runInitializers(this, _instanceExtraInitializers)` and mis-place
+// the chain further down. tsc flushes `_instanceExtraInitializers` inside the
+// accessor storage initializer, and each later member flushes the immediately
+// preceding decorated field/accessor's extra initializers.
+#[test]
+fn tc39_14776_method_then_accessor_flushes_instance_extra_in_storage() {
+    let source = "\
+class C {
+    @d m() {}
+    @d accessor x = 1;
+}
+";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains(
+            "#x_accessor_storage = (__runInitializers(this, _instanceExtraInitializers), __runInitializers(this, _x_initializers, 1));"
+        ),
+        "accessor storage must flush _instanceExtraInitializers before its own initializer.\nOutput:\n{output}"
+    );
+    // The accessor consumes _instanceExtraInitializers, so the ctor must NOT
+    // emit a separate flush for it; only the accessor's own extras remain.
+    assert!(
+        !output.contains("__runInitializers(this, _instanceExtraInitializers);"),
+        "no standalone _instanceExtraInitializers flush once the accessor consumes it.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__runInitializers(this, _x_extraInitializers);"),
+        "the accessor's own extra initializers must still flush in the ctor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_14776_method_accessor_field_cascade_shifts_correctly() {
+    let source = "\
+class C {
+    @logged method() {}
+    @logged accessor x = 1;
+    @logged field = 2;
+}
+";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains(
+            "#x_accessor_storage = (__runInitializers(this, _instanceExtraInitializers), __runInitializers(this, _x_initializers, 1));"
+        ),
+        "first instance member (accessor) flushes _instanceExtraInitializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "field = (__runInitializers(this, _x_extraInitializers), __runInitializers(this, _field_initializers, 2));"
+        ),
+        "the field flushes the previous member's (accessor x) extra initializers, not _instanceExtraInitializers.\nOutput:\n{output}"
+    );
+    // Only the LAST instance member's (field) extras flush in the ctor; the
+    // accessor's extras were consumed by the field's value.
+    assert!(
+        output.contains("__runInitializers(this, _field_extraInitializers);"),
+        "the final member's extras flush in the ctor.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__runInitializers(this, _x_extraInitializers);"),
+        "no spurious trailing _x_extraInitializers flush; the field consumed it.\nOutput:\n{output}"
+    );
+}
+
+// Adjacent case: ES2015/ES5 downlevel (WeakMap private storage) of the same
+// method-then-accessor shape must also flush `_instanceExtraInitializers`
+// inside the accessor storage's `.set(this, ...)` initializer.
+#[test]
+fn tc39_14776_downlevel_method_accessor_flushes_instance_extra() {
+    let source = "\
+class C {
+    @d m() {}
+    @d accessor x = 1;
+}
+";
+    let output = emit_decorator_with(source, false, false);
+
+    assert!(
+        output.contains(
+            "_C_x_accessor_storage.set(this, (__runInitializers(this, _instanceExtraInitializers), __runInitializers(this, _x_initializers, 1)));"
+        ),
+        "downlevel WeakMap accessor storage must flush _instanceExtraInitializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__runInitializers(this, _instanceExtraInitializers);"),
+        "no standalone _instanceExtraInitializers flush; the accessor consumed it.\nOutput:\n{output}"
+    );
+}
+
+// Adjacent case: an accessor-only class with no instance method has no
+// preceding instance extra source, so the storage initializer stays bare.
+#[test]
+fn tc39_14776_accessor_only_no_method_stays_bare() {
+    let source = "\
+class C {
+    @d accessor x = 1;
+}
+";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("#x_accessor_storage = __runInitializers(this, _x_initializers, 1);"),
+        "accessor-only class must NOT synthesize an _instanceExtraInitializers flush.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_instanceExtraInitializers"),
+        "no _instanceExtraInitializers var/flush when there is no decorated method.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn esnext_use_define_false_fields_order_auto_accessor_storage_initializers() {
     let source = "\

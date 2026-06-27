@@ -302,3 +302,67 @@ fn generic_new_argument_inference_still_overrides_contextual_return() {
         "argument-supplied T = number must override contextual return and still report TS2322, got: {diagnostics:?}"
     );
 }
+
+// Regression tests for #14822: the surviving callback-argument variant of
+// #14171. When the construct argument supplies the optional `refiner` callback
+// with an *unannotated* parameter, `T` is reachable only through that
+// callback's contravariant parameter position. Round-1 argument inference must
+// not treat that as pinning `T` (the parameter is contextually typed, not an
+// inference source), so the contextual return type still seeds the class type
+// parameter. Otherwise `T` falls back to `unknown` -> spurious TS2322.
+const BOX_WITH_TYPE: &str = r#"
+declare class Box<S, T> {
+  readonly TYPE: T;
+  schema: S;
+  constructor(props: { schema: S; refiner?: (value: T) => boolean });
+}
+"#;
+
+#[test]
+fn generic_new_callback_arg_seeds_type_param_from_contextual_return() {
+    // Return-annotation position with an unannotated callback parameter.
+    let source = format!(
+        "{BOX_WITH_TYPE}\nfunction viaNew<T>(): Box<unknown, T> {{\n  \
+         return new Box({{ schema: null, refiner(value) {{ return true; }} }});\n}}"
+    );
+    let diagnostics = check_with_options(&source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "unannotated callback arg must not pin T; contextual return Box<unknown, T> should seed it, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_new_callback_arg_seeds_type_param_via_variable_annotation() {
+    // Variable-annotation position is also a contextual-return site.
+    let source = format!(
+        "{BOX_WITH_TYPE}\nfunction wrap<T>(): void {{\n  \
+         const x: Box<unknown, T> = new Box({{ schema: null, refiner(value) {{ return true; }} }});\n  \
+         void x;\n}}"
+    );
+    let diagnostics = check_with_options(&source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "variable-annotated contextual return should seed T through the callback-arg construct, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_new_callback_arg_contextual_return_renamed_binders() {
+    // Structural, not identifier-keyed: rename every type parameter and member.
+    let source = r#"
+declare class Holder<Cfg, Elem> {
+  readonly OUT: Elem;
+  cfg: Cfg;
+  constructor(opts: { cfg: Cfg; refine?: (item: Elem) => boolean });
+}
+function build<Elem>(): Holder<unknown, Elem> {
+  return new Holder({ cfg: null, refine(item) { return true; } });
+}
+"#;
+    let diagnostics = check_with_options(source, strict());
+    assert!(
+        ts2322(&diagnostics).is_empty(),
+        "renamed-binder callback-arg construct should seed Elem from contextual return, got: {diagnostics:?}"
+    );
+}

@@ -13,8 +13,10 @@ use crate::project::LspProviderContext;
 use crate::rename::TextEdit;
 use crate::resolver::{ScopeCache, ScopeCacheStats, scope_cache_estimated_size_bytes};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
+use tsz_binder::lib_loader::LibFile;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_checker::TypeCache;
+use tsz_checker::context::LibContext;
 use tsz_checker::state::CheckerState;
 use tsz_common::position::{LineMap, Location, Position, Range};
 use tsz_parser::ParserState;
@@ -60,6 +62,14 @@ pub struct ProjectFile {
     pub(crate) type_cache: Option<TypeCache>,
     pub(crate) scope_cache: ScopeCache,
     pub(crate) strict: bool,
+    /// Standard-library files (parsed and bound) shared from the owning
+    /// `Project`. Empty in standalone mode (no `Project`), in which case the
+    /// file is bound and checked without any global lib symbols — matching the
+    /// historical behavior. When non-empty, the lib symbols are merged into the
+    /// per-file binder (so global values like `Date`/`Map`/`Math` resolve), the
+    /// checker is seeded via `set_lib_contexts`, and the hover/completion/
+    /// signature providers receive the same contexts.
+    pub(crate) lib_files: Arc<Vec<Arc<LibFile>>>,
     /// Flag indicating if caches were invalidated and diagnostics need re-computation
     pub(crate) diagnostics_dirty: bool,
     /// Diagnostics from the most recent full recompute, served by the
@@ -117,6 +127,47 @@ pub(super) fn hash_source_content(source: &str) -> u64 {
     let mut hasher = FxHasher::default();
     source.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Bind a source file, merging standard-library global symbols when any lib
+/// files are present.
+///
+/// With no lib files this is exactly `BinderState::bind_source_file`, preserving
+/// the historical standalone behavior. With lib files it routes through
+/// `bind_source_file_with_libs`, which merges the lib symbols (remapping
+/// `SymbolId`s to avoid collisions) so global values such as `Date`, `Map`, and
+/// `Math` resolve in the per-file binder.
+fn bind_with_optional_libs(
+    binder: &mut BinderState,
+    arena: &NodeArena,
+    root: NodeIndex,
+    lib_files: &[Arc<LibFile>],
+) {
+    if lib_files.is_empty() {
+        binder.bind_source_file(arena, root);
+    } else {
+        binder.bind_source_file_with_libs(arena, root, lib_files);
+    }
+}
+
+/// Build the checker options used for both diagnostics and the type-aware
+/// providers, keyed off the file's `strict` flag.
+///
+/// Centralized so the hover/completion/signature providers check under the same
+/// options as `compute_diagnostics`.
+fn checker_options_for(strict: bool) -> tsz_checker::context::CheckerOptions {
+    tsz_checker::context::CheckerOptions {
+        strict,
+        no_implicit_any: strict,
+        no_implicit_returns: false,
+        no_implicit_this: strict,
+        strict_null_checks: strict,
+        strict_function_types: strict,
+        strict_property_initialization: strict,
+        use_unknown_in_catch_variables: strict,
+        isolated_modules: false,
+        ..Default::default()
+    }
 }
 
 /// Scan the top-level statements of a source file and return `true` if any
@@ -229,6 +280,7 @@ impl ProjectFile {
             strict,
             type_interner,
             u32::MAX,
+            Arc::new(Vec::new()),
         )
     }
 
@@ -244,6 +296,7 @@ impl ProjectFile {
         strict: bool,
         type_interner: Arc<TypeInterner>,
         file_idx: u32,
+        lib_files: Arc<Vec<Arc<LibFile>>>,
     ) -> Self {
         let content_hash = hash_source_content(&source_text);
         let mut parser = ParserState::new(file_name.clone(), source_text);
@@ -254,7 +307,7 @@ impl ProjectFile {
         if file_idx != u32::MAX {
             binder.set_file_idx(file_idx);
         }
-        binder.bind_source_file(arena, root);
+        bind_with_optional_libs(&mut binder, arena, root, &lib_files);
 
         let line_map = LineMap::build(parser.get_source_text());
         let export_signature = ExportSignature::compute(&binder, &file_name);
@@ -272,6 +325,7 @@ impl ProjectFile {
             type_cache: None,
             scope_cache: ScopeCache::default(),
             strict,
+            lib_files,
             diagnostics_dirty: false,
             cached_diagnostics: None,
             diagnostics_result_id: None,
@@ -313,6 +367,7 @@ impl ProjectFile {
         type_interner: Arc<TypeInterner>,
         definition_store: Arc<DefinitionStore>,
         file_idx: u32,
+        lib_files: Arc<Vec<Arc<LibFile>>>,
     ) -> Self {
         let mut file = Self::with_shared_interner_and_file_idx(
             file_name,
@@ -320,6 +375,7 @@ impl ProjectFile {
             strict,
             type_interner,
             file_idx,
+            lib_files,
         );
         file.definition_store = Some(definition_store);
         file
@@ -378,6 +434,47 @@ impl ProjectFile {
     /// has actually changed, enabling skip of redundant re-parse and re-bind.
     pub const fn content_hash(&self) -> u64 {
         self.content_hash
+    }
+
+    /// Build the checker-facing lib contexts from this file's lib files.
+    ///
+    /// Each context is a cheap `Arc` clone of a pre-parsed, pre-bound lib file's
+    /// arena and binder. Returns an empty `Vec` in standalone mode (no libs),
+    /// in which case providers fall back to their no-lib construction.
+    fn lib_contexts(&self) -> Vec<LibContext> {
+        LibContext::from_lib_files(&self.lib_files)
+    }
+
+    /// Build the full provider options for the type-aware providers (hover,
+    /// completions, signature help) from this file's strict flag and the given
+    /// lib contexts.
+    ///
+    /// An empty `lib_contexts` slice yields options equivalent to the historical
+    /// `with_strict` construction, so all three providers can use the single
+    /// `with_options_and_lib_contexts` constructor unconditionally.
+    fn provider_options<'a>(
+        &self,
+        lib_contexts: &'a [LibContext],
+    ) -> crate::provider_macro::FullProviderOptions<'a> {
+        crate::provider_macro::FullProviderOptions {
+            strict: self.strict,
+            sound_mode: false,
+            checker_options: Some(checker_options_for(self.strict)),
+            lib_contexts,
+        }
+    }
+
+    /// Replace this file's lib files and re-bind so the new global symbols are
+    /// merged into the binder.
+    ///
+    /// Called by `Project::set_lib_files` when libs are installed (or change)
+    /// after a file has already been loaded. Re-parses and re-binds from the
+    /// current source text; per-file analysis caches are dropped by the
+    /// re-bind so subsequent diagnostics/hover/completions observe the libs.
+    pub(crate) fn reload_with_lib_files(&mut self, lib_files: Arc<Vec<Arc<LibFile>>>) {
+        self.lib_files = lib_files;
+        let current_source = self.parser.get_source_text().to_string();
+        self.update_source(current_source);
     }
 
     /// Record that this file was accessed by an LSP operation.
@@ -527,7 +624,7 @@ impl ProjectFile {
         if self.file_idx != u32::MAX {
             self.binder.set_file_idx(self.file_idx);
         }
-        self.binder.bind_source_file(arena, self.root);
+        bind_with_optional_libs(&mut self.binder, arena, self.root, &self.lib_files);
 
         self.line_map = LineMap::build(self.parser.get_source_text());
         let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
@@ -707,19 +804,25 @@ impl ProjectFile {
         self.line_map = line_map;
         self.content_hash = new_content_hash;
         let arena = self.parser.get_arena();
-        if !self.binder.bind_source_file_incremental(
-            arena,
-            self.root,
-            &plan.prefix_nodes,
-            &old_suffix_nodes,
-            &parse_result.statements.nodes,
-            plan.reparse_start,
-        ) {
+        // The incremental binder does not merge lib symbols, so when lib files
+        // are present we force a full lib-aware rebind rather than risk losing
+        // the merged global scope. The `||` short-circuits before the
+        // incremental attempt so the file is bound exactly once.
+        if !self.lib_files.is_empty()
+            || !self.binder.bind_source_file_incremental(
+                arena,
+                self.root,
+                &plan.prefix_nodes,
+                &old_suffix_nodes,
+                &parse_result.statements.nodes,
+                plan.reparse_start,
+            )
+        {
             self.binder.reset();
             if self.file_idx != u32::MAX {
                 self.binder.set_file_idx(self.file_idx);
             }
-            self.binder.bind_source_file(arena, self.root);
+            bind_with_optional_libs(&mut self.binder, arena, self.root, &self.lib_files);
         }
         let has_wildcard_reexport = compute_has_wildcard_reexport(arena, self.root);
         self.reset_analysis_state();
@@ -751,14 +854,15 @@ impl ProjectFile {
         position: Position,
         scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<HoverInfo> {
-        let provider = HoverProvider::with_strict(
+        let lib_contexts = self.lib_contexts();
+        let provider = HoverProvider::with_options_and_lib_contexts(
             self.parser.get_arena(),
             &self.binder,
             &self.line_map,
             &self.type_interner,
             self.parser.get_source_text(),
             self.file_name.clone(),
-            self.strict,
+            self.provider_options(&lib_contexts),
         );
 
         provider.get_hover_with_scope_cache(
@@ -779,14 +883,15 @@ impl ProjectFile {
         position: Position,
         scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<SignatureHelp> {
-        let provider = SignatureHelpProvider::with_strict(
+        let lib_contexts = self.lib_contexts();
+        let provider = SignatureHelpProvider::with_options_and_lib_contexts(
             self.parser.get_arena(),
             &self.binder,
             &self.line_map,
             &self.type_interner,
             self.parser.get_source_text(),
             self.file_name.clone(),
-            self.strict,
+            self.provider_options(&lib_contexts),
         );
 
         provider.get_signature_help_with_scope_cache(
@@ -807,14 +912,15 @@ impl ProjectFile {
         position: Position,
         scope_stats: Option<&mut ScopeCacheStats>,
     ) -> Option<Vec<CompletionItem>> {
-        let provider = Completions::with_strict(
+        let lib_contexts = self.lib_contexts();
+        let provider = Completions::with_options_and_lib_contexts(
             self.parser.get_arena(),
             &self.binder,
             &self.line_map,
             &self.type_interner,
             self.parser.get_source_text(),
             self.file_name.clone(),
-            self.strict,
+            self.provider_options(&lib_contexts),
         );
 
         provider.get_completions_with_caches(
@@ -849,18 +955,7 @@ impl ProjectFile {
     pub(crate) fn compute_diagnostics(&mut self) -> Vec<LspDiagnostic> {
         let file_name = self.file_name.clone();
         let source_text = self.parser.get_source_text();
-        let compiler_options = tsz_checker::context::CheckerOptions {
-            strict: self.strict,
-            no_implicit_any: self.strict,
-            no_implicit_returns: false,
-            no_implicit_this: self.strict,
-            strict_null_checks: self.strict,
-            strict_function_types: self.strict,
-            strict_property_initialization: self.strict,
-            use_unknown_in_catch_variables: self.strict,
-            isolated_modules: false,
-            ..Default::default()
-        };
+        let compiler_options = checker_options_for(self.strict);
 
         let query_cache = tsz_solver::construction::QueryCache::new(&self.type_interner);
 
@@ -898,6 +993,14 @@ impl ProjectFile {
                 compiler_options,
             ),
         };
+
+        // Seed the standard-library contexts so the checker can resolve global
+        // values/types (`Date`, `Map`, `Math`, ...) instead of emitting spurious
+        // TS2304/TS2552/TS2583. No-op in standalone mode (empty lib files).
+        let lib_contexts = self.lib_contexts();
+        if !lib_contexts.is_empty() {
+            checker.ctx.set_lib_contexts(lib_contexts);
+        }
 
         checker.check_source_file(self.root);
 
