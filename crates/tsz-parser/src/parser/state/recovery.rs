@@ -280,6 +280,41 @@ impl ParserState {
             || self.is_token(SyntaxKind::OpenBracketToken) // array binding pattern
     }
 
+    /// Check whether the current token can begin a parameter, mirroring tsc's
+    /// `isStartOfParameter`.
+    ///
+    /// A parameter slot tolerates not only binding identifiers, patterns,
+    /// modifiers, decorators, and `...` rest syntax, but also any token that can
+    /// begin a TYPE. tsc parses those type-leading tokens as a (malformed)
+    /// parameter name and reports TS1003 `Identifier expected.`; only when the
+    /// current token can begin neither a parameter nor a type does tsc emit
+    /// TS1138 `Parameter declaration expected.` and skip the slot. Keeping this
+    /// distinction is what stops an empty slot delimiter such as the stray `,`
+    /// in `(a, , b)` from falling through to the identifier/expression path.
+    pub(crate) fn is_start_of_parameter(&mut self) -> bool {
+        if self.is_parameter_start() {
+            return true;
+        }
+        // Keyword-led type starts (`number`, `string`, `this`, `typeof`,
+        // `keyof`, `new`, `import`, `object`, `true`, `null`, ...) are already
+        // covered by `is_parameter_start` via `is_identifier_or_keyword`. The
+        // remaining type-start tokens are punctuation/literals that sort below
+        // `Identifier`, so enumerate them explicitly.
+        matches!(
+            self.current_token,
+            SyntaxKind::StringLiteral
+                | SyntaxKind::NumericLiteral
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::MinusToken
+                | SyntaxKind::LessThanToken
+                | SyntaxKind::BarToken
+                | SyntaxKind::AmpersandToken
+        )
+    }
+
     /// Error: Unterminated template literal (TS1160)
     ///
     /// tsc reports this error at the END of the template content (where EOF was hit),
