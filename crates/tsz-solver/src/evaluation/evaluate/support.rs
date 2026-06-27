@@ -322,10 +322,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // breaks unrelated relations such as the `Wrapper<BWrapped>` override
         // of `Wrapper<AWrapped>` (spurious `TS2416`;
         // `indexedAccessKeyofNestedSimplifiedSubstituteUnwrapped`).
-        if let TypeData::IndexAccess(obj, _) = &key {
-            if crate::visitor::contains_type_parameters(self.interner, *obj) {
-                return arg;
-            }
+        if let TypeData::IndexAccess(obj, _) = &key
+            && crate::visitor::contains_type_parameters(self.interner, *obj)
+        {
+            return arg;
         }
         match key {
             TypeData::TypeQuery(sym_ref) => {
