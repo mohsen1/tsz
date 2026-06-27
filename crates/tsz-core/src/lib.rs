@@ -100,6 +100,10 @@ mod strict_mode_and_module_tests;
 mod overload_compatibility_tests;
 
 #[cfg(test)]
+#[path = "../tests/variadic_indexed_constraint_inference_tests.rs"]
+mod variadic_indexed_constraint_inference_tests;
+
+#[cfg(test)]
 #[path = "../tests/core_public_helpers_tests.rs"]
 mod core_public_helpers_tests;
 

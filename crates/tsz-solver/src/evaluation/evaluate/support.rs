@@ -302,6 +302,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             return arg;
         }
+        // A generic indexed access `T[K]` must stay deferred during
+        // type-argument expansion. Evaluating it would resolve through `T`'s
+        // constraint (e.g. `(readonly unknown[])[number]` -> `unknown`),
+        // baking out the type parameter before the surrounding signature is
+        // instantiated. tsc keeps it as a deferred indexed-access type (its
+        // base constraint is only consulted by relations), so a later
+        // substitution `T = number[]` still resolves `T[number]` to the real
+        // element type. Without this guard a nested alias argument such as
+        // `NonEmptyArray<OrderRule<T[number]>>` collapses the callback
+        // parameter to `unknown` (spurious `TS2345`/`TS2769`; remeda
+        // `purryOrderRules`: `nthBy`, `firstBy`, `sortBy`).
+        if matches!(key, TypeData::IndexAccess(_, _))
+            && crate::visitor::contains_type_parameters(self.interner, arg)
+        {
+            return arg;
+        }
         match key {
             TypeData::TypeQuery(sym_ref) => {
                 // Resolve the TypeQuery to get the VALUE type (constructor for classes).
