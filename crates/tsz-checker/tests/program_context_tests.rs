@@ -132,6 +132,32 @@ fn global_declared_modules_matches_vite_style_asset_patterns() {
 }
 
 #[test]
+fn global_declared_modules_best_matching_pattern_prefers_longest_prefix() {
+    let dm = GlobalDeclaredModules::from_skeleton(
+        FxHashSet::default(),
+        vec!["*".to_string(), "*.svg".to_string(), "vendor/*".to_string()],
+    );
+
+    // A bare catch-all is the only match for a plain name.
+    assert_eq!(dm.best_matching_pattern("./main.ts"), Some("*"));
+    // `vendor/*` (prefix len 7) outranks the catch-all `*` (prefix len 0).
+    assert_eq!(dm.best_matching_pattern("vendor/thing"), Some("vendor/*"));
+    // The extension pattern shares the empty prefix with `*`; declaration order
+    // (sorted) keeps the first match — both are valid keys for the same table.
+    assert!(matches!(
+        dm.best_matching_pattern("./logo.svg"),
+        Some("*" | "*.svg")
+    ));
+}
+
+#[test]
+fn global_declared_modules_best_matching_pattern_none_when_unmatched() {
+    let dm =
+        GlobalDeclaredModules::from_skeleton(FxHashSet::default(), vec!["prefix/*".to_string()]);
+    assert_eq!(dm.best_matching_pattern("./logo.svg"), None);
+}
+
+#[test]
 fn global_declared_modules_insert_normalizes_and_deduplicates() {
     let mut dm = GlobalDeclaredModules::default();
     dm.insert_module_name("\"my-module\"");
