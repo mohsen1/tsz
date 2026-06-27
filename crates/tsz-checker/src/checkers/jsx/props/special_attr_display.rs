@@ -13,7 +13,7 @@
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// True when `attr_name` is a JSX framework "special" attribute — a member
     /// declared on (or inherited into) `JSX.IntrinsicAttributes` (React's `key`)
     /// or `JSX.IntrinsicClassAttributes` (React's `ref`). Detected structurally
