@@ -235,6 +235,45 @@ assert.match(
 
 assert.match(
   ciWorkflow,
+  /\n\s{2}dist-binaries:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit dist-fast build to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-dist-binaries\.yaml[\s\S]+?Download dist-fast binaries[\s\S]+?Upload dist-fast binaries/,
+  "dist-binaries should compile on the highmem Cloud Build pool and only use the Cloud Run runner to publish the small GitHub artifact",
+);
+
+const distCloudBuild = fs.readFileSync(
+  path.join(ROOT, "scripts", "cloudbuild", "cloudbuild-dist-binaries.yaml"),
+  "utf8",
+);
+const gcpFullCi = fs.readFileSync(
+  path.join(ROOT, "scripts", "ci", "gcp-full-ci.sh"),
+  "utf8",
+);
+
+assert.match(
+  distCloudBuild,
+  /'CARGO_INCREMENTAL=0'/,
+  "dist-binaries must disable incremental compilation so restored target caches cannot ship stale semantic code into conformance artifacts",
+);
+
+assert.match(
+  distCloudBuild,
+  /'GITHUB_WORKSPACE=\/home\/runner\/_work\/tsz\/tsz'[\s\S]+?tar -C \/workspace -cf - \. \| tar -C "\$GITHUB_WORKSPACE" -xf -[\s\S]+?cd "\$GITHUB_WORKSPACE"[\s\S]+?git init --quiet/,
+  "dist-binaries Cloud Build should compile from the same workspace path used by GitHub Actions shards before creating synthetic git metadata",
+);
+
+assert.match(
+  gcpFullCi,
+  /CARGO_INCREMENTAL=0 "\$ROOT_DIR\/scripts\/safe-run\.sh"[\s\S]+cargo build --profile dist-fast/,
+  "build_test_binaries should force non-incremental dist-fast builds regardless of inherited CI environment",
+);
+
+assert.doesNotMatch(
+  ciWorkflow,
+  /\n\s{2}dist-binaries:\n[\s\S]+?Build dist-fast binaries[\s\S]+?scripts\/ci\/github-suite\.sh dist-binaries/,
+  "dist-binaries must not compile directly on the 32 GiB Cloud Run runner; cold or stale target restores can SIGKILL the runner before logs are persisted",
+);
+
+assert.match(
+  ciWorkflow,
   /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- unit\s*\n\s+- unit-checker-integration[\s\S]+?required\.update\(\{"dist-binaries", "unit", "unit-checker-integration"\}\)/,
   "CI Summary should require both the Cloud Run unit slice and checker integration heavy slice",
 );
