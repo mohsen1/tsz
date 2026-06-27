@@ -654,6 +654,32 @@ fn abstract_bodyless_accessor_emits_no_brace_diagnostic() {
 }
 
 #[test]
+fn declare_modifier_bodyless_accessor_emits_no_brace_diagnostic() {
+    // A member-level `declare` modifier sets the ambient node flag, so
+    // `checkGrammarAccessor` accepts the body-less accessor and reports TS1031
+    // (`declare` modifier cannot appear here) instead of TS1005 `'{' expected`.
+    // Cf. conformance test `privateNamesIncompatibleModifiers.ts` (`declare
+    // get/set` accessors). Both the ASI-before-`}`/line-break and explicit-`;`
+    // forms are gated, and binder names are varied so no fix keys on an
+    // identifier.
+    for source in [
+        "class C { declare get x() }",
+        "class C { declare set x(v) }",
+        "class Box { declare get value(); }",
+        "class Pair { declare set first(v); }",
+        "class C { static declare get x() }",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert_eq!(
+            count_diag(&parser, diagnostic_codes::EXPECTED, "'{' expected."),
+            0,
+            "`declare` body-less accessor must not require a brace for {source:?}, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
 fn ambient_accessor_nonsemicolon_body_still_emits_brace_expected() {
     // Mechanism 1 is the parser's own `parseExpected` and fires in ambient too.
     let source = "declare class C { get x() return 1 }";

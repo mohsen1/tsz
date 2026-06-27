@@ -884,10 +884,20 @@ impl ParserState {
             // body. Anchor TS1005 at the final character of the signature, length
             // one, matching `checkGrammarAccessor`'s `accessor.end - 1` range.
             // The cheap ambient flag short-circuits the modifier-list scan.
+            //
+            // `checkGrammarAccessor` gates on `!(accessor.flags & NodeFlags.Ambient)`.
+            // A member-level `declare` modifier sets that ambient flag (the same
+            // way a `declare class`/`.d.ts` context does), so a body-less
+            // `declare get x()` is accepted and must not get a brace diagnostic —
+            // tsc instead reports TS1031 (`declare` modifier cannot appear on this
+            // kind of element). Mirror both ambient sources here.
             if !self.in_ambient_declaration()
                 && !self
                     .arena
                     .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
             {
                 self.parse_error_at(
                     node_end.saturating_sub(1),
