@@ -121,7 +121,19 @@ impl ParserState {
         // Report on the source-leftmost modifier, matching tsc's iteration of
         // `node.modifiers` in source order. Modifier lists are built by
         // consuming tokens left to right, so the first node is the leftmost.
-        let Some(modifier) = modifiers.nodes.first().and_then(|&idx| self.arena.get(idx)) else {
+        //
+        // The parser threads decorators through this same `modifiers` list (tsc
+        // keeps `node.modifiers` and decorators separate). A decorator on a
+        // `using` declaration is not a TS1491 modifier — tsc reports it (or the
+        // trailing syntax, e.g. TS1134 for `@dec using 1`) elsewhere — so
+        // decorator nodes are skipped here. If the list carries only decorators,
+        // no TS1491 is emitted.
+        let Some(modifier) = modifiers
+            .nodes
+            .iter()
+            .filter_map(|&idx| self.arena.get(idx))
+            .find(|node| node.kind != syntax_kind_ext::DECORATOR)
+        else {
             return;
         };
 

@@ -1779,6 +1779,28 @@ fn bare_using_declaration_does_not_report_ts1491() {
 }
 
 #[test]
+fn decorator_on_using_declaration_does_not_report_ts1491() {
+    // A decorator is not a TS1491 modifier. The parser threads decorators through
+    // the same `modifiers` list it passes to the using-declaration grammar check
+    // (tsc keeps `node.modifiers` and decorators separate), so a decorator-only
+    // `using` must not trip TS1491. tsc reports invalid decorator placement (or
+    // the trailing syntax) elsewhere — e.g. `@dec using 1` yields only TS1134,
+    // never TS1491. Matches conformance test decoratorOnUsing.ts.
+    for source in [
+        "declare function dec<T>(target: T): T;\n@dec\nusing x = d;\n",
+        "declare function dec<T>(target: T): T;\n@dec\nusing 1\n",
+        "declare function dec<T>(target: T): T;\n@dec\nawait using y = d;\n",
+    ] {
+        let diags = collect_using_modifier_diags(source);
+        assert!(
+            !diags.iter().any(|(code, _, _)| *code
+                == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+            "decorator on using must not report TS1491 for {source:?}, got {diags:?}"
+        );
+    }
+}
+
+#[test]
 fn modifiers_on_non_using_variable_statements_do_not_report_ts1491() {
     // The check is `using`-specific: `let`/`const`/`var` accept these modifiers.
     for source in [
