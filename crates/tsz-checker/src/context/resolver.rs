@@ -727,11 +727,29 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         if let Some(def_id) = self.get_existing_def_id(sym_id)
             && matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))
+            && let Some(ctor_def_id) = self.definition_store.get_constructor_def(def_id)
+            && let Some(body) = self.definition_store.get_body(ctor_def_id)
+            // A self-referential `Lazy(class_constructor_def)` body (the
+            // constructor is still resolving) would route back through lazy
+            // resolution downstream; skip it and let `resolve_ref` handle the
+            // in-flight case.
+            && !crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                self.types,
+                body,
+                ctor_def_id,
+            )
+        {
+            return Some(body);
+        }
+        if let Some(def_id) = self.get_existing_def_id(sym_id)
+            && matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))
             && let Some(body) = self.definition_store.get_body(def_id)
             // A self-referential `Lazy(class_def)` body (the class is still
             // resolving) would route back through `resolve_lazy` (instance)
             // downstream; skip it and let `resolve_ref` handle the in-flight case.
-            && crate::query_boundaries::common::lazy_def_id(self.types, body) != Some(def_id)
+            && !crate::query_boundaries::definition_identity::is_lazy_def_identity(
+                self.types, body, def_id,
+            )
         {
             return Some(body);
         }
