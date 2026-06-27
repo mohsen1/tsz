@@ -67,7 +67,7 @@ struct ClassCircularMember {
     name: String,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Emit TS7023 / TS7024 for un-annotated class members whose inferred return
     /// type is circular through a `this.`/`Class.` self-invocation. Runs once
     /// per class, after the members have been checked.
