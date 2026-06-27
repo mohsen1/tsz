@@ -50,11 +50,21 @@ impl ParserState {
                 continue;
             }
 
-            // No comma after this type parameter. If the list is terminated by
-            // `>` (or a compound `>`-token) or EOF, it is simply closing; stop
-            // without an error, matching tsc's `isListTerminator` check in
-            // `parseDelimitedList`.
-            if self.is_greater_than_or_compound() || self.is_token(SyntaxKind::EndOfFileToken) {
+            // No comma after this type parameter. If the current token is a
+            // `isListTerminator(TypeParameters)` token, the list is simply
+            // closing; stop without a `','`-expected error and let
+            // `parse_expected_greater_than` recover. tsc's terminator set for
+            // type parameters is `>`, `(`, `{`, `extends`, `implements`, and
+            // EOF — the non-`>` tokens are present for better error recovery,
+            // e.g. `foo<U extends C<C<T>>(x: U)` where the `(` ends the list and
+            // tsc reports `'>' expected` at the `(` rather than a spurious comma.
+            if self.is_greater_than_or_compound()
+                || self.is_token(SyntaxKind::EndOfFileToken)
+                || self.is_token(SyntaxKind::OpenParenToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
+                || self.is_token(SyntaxKind::ExtendsKeyword)
+                || self.is_token(SyntaxKind::ImplementsKeyword)
+            {
                 break;
             }
 

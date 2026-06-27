@@ -1461,9 +1461,54 @@ fn missing_comma_with_constraint_then_next_type_parameter() {
 }
 
 #[test]
-fn missing_comma_between_type_arguments_in_type_reference() {
-    // The committed type-argument path (type position) recovers identically.
-    assert_missing_comma_recovery("g.ts", "type R = Foo<A B>;", "A B");
+fn type_parameter_list_terminated_by_open_paren_reports_close_gt() {
+    // tsc's `isListTerminator(TypeParameters)` includes `(`, `{`, `extends`,
+    // and `implements`, so a type-parameter list ended by one of these closes
+    // *without* a missing-comma error and `parse_expected_greater_than` reports
+    // `'>' expected` at the offending token. Regression guard for
+    // `assertInWrapSomeTypeParameter.ts`: `foo<U extends C<C<T>>(x: U)` — the
+    // `(` ends the list, so tsc emits a single TS1005 `'>' expected` at the `(`
+    // and never a `','` expected.
+    let source = "class C<T extends C<T>> {\n    foo<U extends C<C<T>>(x: U) {\n        return null;\n    }\n}";
+    // tsc emits exactly one diagnostic for this source: TS1005 `'>' expected.`
+    // anchored at the `(` (byte offset 51 here / line 2 col 26). Pin both the
+    // single-diagnostic count and the offset so the conformance fingerprint
+    // matches exactly and no recovery cascade reappears.
+    let open_paren_offset = source.find('(').expect("source contains `(`") as u32;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected exactly one diagnostic for the type-parameter recovery, got {diags:?}"
+    );
+    let d = &diags[0];
+    assert!(
+        d.code == 1005 && d.message == "'>' expected." && d.start == open_paren_offset,
+        "expected a single TS1005 `'>' expected.` at offset {open_paren_offset}, got {diags:?}"
+    );
+}
+
+#[test]
+fn missing_comma_between_type_arguments_terminates_and_reports_close_gt() {
+    // Unlike type *parameters*, a type-*argument* list does NOT recover a
+    // missing comma: tsc's `isListTerminator(TypeArguments)` is true for every
+    // token except `,`, so the first non-comma token terminates the list and
+    // `parse_expected_greater_than` reports `'>' expected` (never `','`). This
+    // is the behavior the JSX recovery test `jsxUnclosedParserRecovery.ts`
+    // depends on for forms like `<diddy<boolean> bananas="please">`.
+    let (parser, _root) = parse_source("type R = Foo<A B>;");
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 1005 && d.message == "'>' expected."),
+        "expected TS1005 `'>' expected.`, got {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.message != "',' expected."),
+        "type-argument list must not recover a missing comma, got {diags:?}"
+    );
 }
 
 #[test]

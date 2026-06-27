@@ -1441,44 +1441,21 @@ impl ParserState {
         } else {
             while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken)
             {
-                let element_start = self.token_pos();
                 args.push(self.parse_type_argument_in_type_arguments());
 
-                if self.parse_optional(SyntaxKind::CommaToken) {
-                    if self.is_greater_than_or_compound() {
-                        has_trailing_comma = true;
-                    }
-                    continue;
-                }
-
-                // No comma after this type argument. If the list is terminated
-                // by `>` (or a compound `>`-token) or EOF, stop without an error.
-                if self.is_greater_than_or_compound() || self.is_token(SyntaxKind::EndOfFileToken) {
+                // tsc's `isListTerminator(TypeArguments)` returns true for any
+                // token other than `,`, so a type-argument list does NOT recover
+                // a missing separator: the first non-comma token terminates the
+                // list and `parse_expected_greater_than` reports `'>' expected`.
+                // (This differs from type *parameters*, which recover a missing
+                // comma between two element-starting tokens.)
+                if !self.parse_optional(SyntaxKind::CommaToken) {
                     break;
                 }
 
-                // Missing separator between type arguments. Match tsc's
-                // `parseDelimitedList`: emit a single TS1005 `','` expected and
-                // keep parsing the list instead of bailing with `'>' expected`
-                // and a downstream cascade. This is the committed type-argument
-                // path (type references, JSX, and already-committed generic
-                // calls); the speculative call path
-                // `try_parse_type_arguments_for_call` intentionally bails on a
-                // missing comma so `a < b c > d` is not misread as a call.
-                self.error_comma_expected();
-
-                // Continue only when the current token can begin another type;
-                // otherwise break and let `parse_expected_greater_than` recover.
-                if !self.can_token_start_type() {
-                    break;
-                }
-
-                // Progress guard (mirrors tsc's `startPos === getTokenFullStart()`
-                // advance): if the element parse consumed nothing, skip a token so
-                // the loop cannot spin even on a token that `can_token_start_type`
-                // accepts but `parse_type` fails to advance past.
-                if self.token_pos() == element_start {
-                    self.next_token();
+                // The comma we just consumed was trailing if `>` follows.
+                if self.is_greater_than_or_compound() {
+                    has_trailing_comma = true;
                 }
             }
         }
