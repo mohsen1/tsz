@@ -1,6 +1,8 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
-use super::{AttrGroup, JsxAttrInfo, JsxUsage, extract_jsx_import_source, group_jsx_attrs};
+use super::{
+    AttrGroup, JsxAttrInfo, JsxHelper, JsxUsage, extract_jsx_import_source, group_jsx_attrs,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -824,16 +826,17 @@ impl<'a> Printer<'a> {
                     }
                     Some(text)
                 } else {
-                    let mut imports = Vec::new();
-                    if usage.needs_jsx {
-                        imports.push("jsx as _jsx");
-                    }
-                    if usage.needs_jsxs {
-                        imports.push("jsxs as _jsxs");
-                    }
-                    if usage.needs_fragment {
-                        imports.push("Fragment as _Fragment");
-                    }
+                    // Emit the named specifiers in tsc's first-reference (source)
+                    // order rather than a fixed `jsx, jsxs, Fragment` sequence.
+                    let imports: Vec<&str> = usage
+                        .order
+                        .iter()
+                        .map(|helper| match helper {
+                            JsxHelper::Jsx => "jsx as _jsx",
+                            JsxHelper::Jsxs => "jsxs as _jsxs",
+                            JsxHelper::Fragment => "Fragment as _Fragment",
+                        })
+                        .collect();
                     let mut text = String::new();
                     if usage.needs_create_element {
                         text.push_str(&format!(
@@ -882,12 +885,26 @@ impl<'a> Printer<'a> {
                     text.push_str(&file_name_line);
                     Some(text)
                 } else {
-                    let mut imports = Vec::new();
-                    if usage.needs_jsx || usage.needs_jsxs {
-                        imports.push("jsxDEV as _jsxDEV");
-                    }
-                    if usage.needs_fragment {
-                        imports.push("Fragment as _Fragment");
+                    // Dev runtime: `jsx`/`jsxs` both collapse to `jsxDEV`. Emit
+                    // each specifier at its first reference, in source order.
+                    let mut imports: Vec<&str> = Vec::new();
+                    let mut has_dev = false;
+                    let mut has_fragment = false;
+                    for helper in &usage.order {
+                        match helper {
+                            JsxHelper::Jsx | JsxHelper::Jsxs => {
+                                if !has_dev {
+                                    has_dev = true;
+                                    imports.push("jsxDEV as _jsxDEV");
+                                }
+                            }
+                            JsxHelper::Fragment => {
+                                if !has_fragment {
+                                    has_fragment = true;
+                                    imports.push("Fragment as _Fragment");
+                                }
+                            }
+                        }
                     }
                     let mut text = String::new();
                     if usage.needs_create_element {
@@ -909,19 +926,34 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Scan the AST to determine which JSX runtime functions are needed.
+    /// Scan the AST to determine which JSX runtime functions are needed, and in
+    /// what order their automatic-runtime imports must be emitted.
+    ///
+    /// `tsc` inserts each implicit runtime import the first time an element that
+    /// needs it is lowered, walking the source in document order. Because a JSX
+    /// call expression is built only after its children are transformed, the
+    /// effective order is post-order (children before their parent), and a
+    /// fragment references `Fragment` before its element callee (`jsx`/`jsxs`).
+    /// We reproduce that by recording one `(end_pos, helper)` event per lowered
+    /// element, sorting by end position (post-order: a node ends after every node
+    /// it contains; siblings keep source order), and de-duplicating to first use.
     pub(in super::super) fn scan_jsx_usage(&self) -> JsxUsage {
         let mut usage = JsxUsage {
             needs_jsx: false,
             needs_jsxs: false,
             needs_fragment: false,
             needs_create_element: false,
+            order: Vec::new(),
         };
+        // (end position, helper) events; end-position sort yields tsc's post-order
+        // walk while a stable sort keeps each node's intra-node order intact.
+        let mut events: Vec<(u32, JsxHelper)> = Vec::new();
         for i in 0..self.arena.len() {
             let nidx = tsz_parser::parser::NodeIndex(i as u32);
             let Some(node) = self.arena.get(nidx) else {
                 continue;
             };
+            let end = node.end;
             match node.kind {
                 k if k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
                     // Check for key-after-spread -> createElement fallback
@@ -930,9 +962,11 @@ impl<'a> Printer<'a> {
                             usage.needs_create_element = true;
                         } else {
                             usage.needs_jsx = true;
+                            events.push((end, JsxHelper::Jsx));
                         }
                     } else {
                         usage.needs_jsx = true;
+                        events.push((end, JsxHelper::Jsx));
                     }
                 }
                 k if k == syntax_kind_ext::JSX_ELEMENT => {
@@ -949,25 +983,38 @@ impl<'a> Printer<'a> {
                             let children = self.collect_jsx_children(&jsx.children.nodes);
                             if self.jsx_children_need_array(&children) {
                                 usage.needs_jsxs = true;
+                                events.push((end, JsxHelper::Jsxs));
                             } else {
                                 usage.needs_jsx = true;
+                                events.push((end, JsxHelper::Jsx));
                             }
                         }
                     }
                 }
                 k if k == syntax_kind_ext::JSX_FRAGMENT => {
                     usage.needs_fragment = true;
-                    // Fragments also use _jsx or _jsxs
+                    // A fragment references `Fragment` first, then its element
+                    // callee (`_jsx`/`_jsxs`) — both at the same source position,
+                    // pushed in that order so the stable sort preserves it.
+                    events.push((end, JsxHelper::Fragment));
                     if let Some(frag) = self.arena.get_jsx_fragment(node) {
                         let children = self.collect_jsx_children(&frag.children.nodes);
                         if self.jsx_children_need_array(&children) {
                             usage.needs_jsxs = true;
+                            events.push((end, JsxHelper::Jsxs));
                         } else {
                             usage.needs_jsx = true;
+                            events.push((end, JsxHelper::Jsx));
                         }
                     }
                 }
                 _ => {}
+            }
+        }
+        events.sort_by_key(|(end, _)| *end);
+        for (_, helper) in events {
+            if !usage.order.contains(&helper) {
+                usage.order.push(helper);
             }
         }
         usage

@@ -150,7 +150,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// distinct `DeclScoped` ids, the conservative non-collapsing choice — no
     /// over-relate). Only names whose every `DeclScoped` occurrence shares one
     /// surface are stripped.
-    fn build_decl_param_structural_strip(
+    pub(crate) fn build_decl_param_structural_strip(
         &self,
         source: &FunctionShape,
         target: &FunctionShape,
