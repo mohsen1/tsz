@@ -705,16 +705,11 @@ impl<'a> FlowAnalyzer<'a> {
             }
             return None;
         }
-
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
             let unary = self.arena.get_unary_expr(node)?;
-            // `delete o.a` assigns `undefined` to `o.a` (tsc's `getAssignedType`
-            // returns `undefinedType` for a delete operand). The killing-definition
-            // narrowing then reduces the declared read type by `undefined`, which
-            // re-includes `undefined` for an optional property and reports a later
-            // `const after: number = o.a` as TS2322.
+            // `delete o.a` assigns `undefined` (tsc `getAssignedType`); killing-definition narrowing re-includes it for an optional prop, mis-flagging a later read as TS2322.
             if unary.operator == SyntaxKind::DeleteKeyword as u16
                 && self.is_matching_reference(unary.operand, target)
             {
@@ -1783,10 +1778,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    /// Whether a prefix/postfix unary `operator` mutates its operand reference
-    /// for flow purposes: `++`/`--` and `delete`. The binder only records a flow
-    /// `ASSIGNMENT` node for these (and, for `delete`, only with a property-access
-    /// operand), so the targets/affects predicates recognize the same set.
+    /// True if a prefix/postfix unary `operator` (`++`/`--`/`delete`) records an `ASSIGNMENT` flow node.
     const fn is_flow_mutating_unary_operator(operator: u16) -> bool {
         operator == SyntaxKind::PlusPlusToken as u16
             || operator == SyntaxKind::MinusMinusToken as u16
