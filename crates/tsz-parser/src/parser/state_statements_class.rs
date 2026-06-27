@@ -400,6 +400,31 @@ impl ParserState {
                 break;
             }
 
+            // EOF terminates the parameter list (matching tsc's
+            // `isListTerminator`), e.g. a trailing comma at end-of-file
+            // `function f(a,`. Break before the start-of-parameter guard so it
+            // cannot spin on a non-advancing EOF token.
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                break;
+            }
+
+            // TS1138: We are positioned at the start of a parameter slot. When
+            // the current token can begin neither a parameter nor a type — a
+            // list delimiter such as the stray `,` of an empty slot in
+            // `(a, , b)` — tsc emits `Parameter declaration expected.` and skips
+            // the token so the remaining slots keep parsing. Mirror that instead
+            // of falling through to `parse_parameter` (TS1003 for declarations)
+            // or mis-parsing the construct entirely.
+            if !self.is_start_of_parameter() {
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.parse_error_at_current_token(
+                    diagnostic_messages::PARAMETER_DECLARATION_EXPECTED,
+                    diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                );
+                self.next_token();
+                continue;
+            }
+
             // TS1014: A rest parameter must be last in a parameter list
             // Emit at the rest parameter's location (matching tsc), not the next param.
             if seen_rest_parameter && !emitted_rest_error {
