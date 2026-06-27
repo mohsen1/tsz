@@ -136,7 +136,7 @@ attach({ value: 1, fallback: "x" });
     );
 }
 
-/// Plain object-property inference (no NoInfer) already widened the inferred
+/// Plain object-property inference (no `NoInfer`) already widened the inferred
 /// type argument — guard that the result is `number`, not the literal `1`.
 #[test]
 fn plain_object_property_inference_widens_inferred_argument() {
