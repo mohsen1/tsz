@@ -857,17 +857,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
-        // Phase 0: Check `this` parameter for the union.
-        // TSC computes the intersection of all members' `this` types and checks the
-        // calling context against it. A call fails with TS2684 if the `this` context
-        // doesn't satisfy ALL members' `this` requirements.
-        // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
-        // argument errors (TS2345) before `this` context errors (TS2684).
-        // Gate via `receiver_constraining_this_type`: if the intersected
-        // combined `this` reduces to exactly `void`, the receiver check is
-        // skipped (matches tsc's `thisType !== voidType`). Filtering members
-        // *before* intersection would over-relax mixed unions like `void | A`,
-        // since tsc still runs the check on `void & A` (which is not `void`).
+        // Phase 0: check the union's `this` parameter. tsc intersects all members'
+        // `this` and fails with TS2684 (deferred until after TS2345 arg checks).
+        // `receiver_constraining_this_type` skips the check only when the combined
+        // `this` is exactly `void` (filtering before intersection would over-relax).
         let mut deferred_this_error = if let Some(combined_this) = self
             .compute_union_this_type(&members)
             .and_then(|t| receiver_constraining_this_type(Some(t)))
@@ -886,31 +879,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             None
         };
 
-        // Phase 0.5: Check multi-overload union members for compatible signatures.
-        // When multiple union members have multiple overloads, first try to find
-        // compatible signatures across members. If found, validate `this` types.
-        // If not found, fall through to per-member resolution (Phase 2) which
-        // resolves each member's overloads independently — this matches tsc's
-        // behavior for cases like `(A[] | B[]).filter(cb)` where each array type
-        // has overloaded `filter` but per-member resolution succeeds.
+        // Phase 0.5: when union members each declare the called property with an
+        // overload set, try compatible signatures across members (validating
+        // `this`); otherwise fall through to per-member resolution (Phase 2).
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
-
-        // Faithful tsc `getUnionSignatures`: when a member declares the called
-        // property with an overload set (multiple call signatures), the simple
-        // per-position combined-signature path below cannot represent it, so the
-        // union would be wrongly reported not-callable (TS2349). Resolve the call
-        // against the union's combined signature list instead (see
-        // `union_overloaded_member_callable`); it returns `None` to fall through
-        // to the existing per-member logic for the negative/`this`-typed cases.
+        // Faithful tsc `getUnionSignatures`: a member whose called property is an
+        // overload set isn't modeled by the per-position combined signature below
+        // (wrongly reports TS2349); resolve against the union's combined list,
+        // where `None` falls through to per-member / `this`-typed handling.
         if let Some(callable_ty) =
             self.union_overloaded_member_callable(&members, &sig_lists, false)
         {
             let result = self.resolve_call(callable_ty, arg_types);
-            // tsc reports argument errors (TS2345) before `this`-context errors
-            // (TS2684); only surface the deferred union-level `this` mismatch once
-            // the arguments themselves are accepted.
+            // tsc reports TS2345 (arg) before TS2684 (`this`): surface the
+            // deferred union `this` mismatch only after the args are accepted.
             if matches!(result, CallResult::Success(_))
                 && let Some(this_err) = &deferred_this_error
             {
@@ -918,12 +902,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             return result;
         }
-        // `force_not_callable_with_this_mismatch` controls a fallback in
-        // `build_union_call_result` that turns all-this-mismatch failure sets
-        // into a NotCallable result. The 2026-04 fix for TS2349 vs TS2684 in
-        // multi-overload unions now returns NotCallable directly from the
-        // resolve path, so neither flag is set here in this function — but the
-        // build helper still accepts the flag for callers that need it.
+        // `force_*` flags drive a `build_union_call_result` fallback; the 2026-04
+        // TS2349/TS2684 fix returns NotCallable directly here, so both stay unset.
         let force_not_callable_with_this_mismatch = false;
         let force_union_this_type: Option<TypeId> = None;
 
