@@ -1476,7 +1476,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # window; each added a small number of existing-pattern
         # `query_boundaries::common` reads. No new quarantine entry; #8225
         # narrowing remains the removal condition.
-        3078,
+        #
+        # Bumped 3078→3079 for the #14789 TS2820 display-types spelling
+        # suggestion: `find_string_literal_spelling_suggestion_reduced` in
+        # `error_reporter/core_formatting.rs` adds one
+        # `query_boundaries::common::literal_value` string-literal-source guard
+        # so the suggestion scan is gated to literal sources, matching the
+        # existing direct-call pattern already used throughout this file. No new
+        # quarantine entry; #8225 narrowing remains the removal condition.
+        3079,
     ),
 ]
 
