@@ -147,9 +147,13 @@ impl<'a> CheckerState<'a> {
     /// }
     /// ```
     /// Lightweight AST scan: does the function body contain any `throw` statements?
-    /// This is used as a pre-check before the more expensive `function_body_falls_through`
-    /// to avoid triggering type evaluation in simple function bodies that obviously fall through.
-    fn body_contains_throw_or_never_call(&self, body_idx: NodeIndex) -> bool {
+    ///
+    /// This is a syntax-only pre-check; it deliberately does not detect
+    /// never-returning tail calls (e.g. `die(11)`), which require resolving the
+    /// callee's signature. The authoritative reachability answer for the
+    /// `void` vs `never` inference is `function_body_falls_through`, which routes
+    /// expression-statement calls through `call_expression_terminates_control_flow`.
+    fn body_contains_throw(&self, body_idx: NodeIndex) -> bool {
         fn scan_stmts(arena: &tsz_parser::parser::NodeArena, stmts: &[NodeIndex]) -> bool {
             use tsz_parser::parser::syntax_kind_ext;
             for &idx in stmts {
@@ -1019,10 +1023,14 @@ impl<'a> CheckerState<'a> {
             // No return statements found. Check if the body falls through:
             // - If it does (normal implicit return), the return type is `void`
             // - If it doesn't (all paths throw or call never), the return type is `never`
-            // Only call the (potentially expensive) fallthrough checker when the body
-            // could plausibly be non-falling-through, i.e. it contains throw statements.
-            // This avoids triggering unnecessary type evaluation in simple function bodies.
-            let may_not_fall_through = self.body_contains_throw_or_never_call(body_idx);
+            // `function_body_falls_through` is the authoritative reachability answer;
+            // it routes expression-statement calls through
+            // `call_expression_terminates_control_flow`, so a tail never-returning
+            // call (`die(11)`) terminates the body and infers `never`, not `void`.
+            // The throw-only syntax pre-scan never observed those tail calls, which
+            // wrongly short-circuited contextually-typed/inferred bodies to `void`
+            // (#14741). Compute reachability once and reuse it below.
+            let falls_through = self.function_body_falls_through(body_idx);
 
             // Check if function has a return type annotation
             let has_return_type_annotation = if let Some(func_node) = self.ctx.arena.get(body_idx)
@@ -1033,10 +1041,7 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            if has_return_type_annotation
-                && may_not_fall_through
-                && !self.function_body_falls_through(body_idx)
-            {
+            if has_return_type_annotation && !falls_through && self.body_contains_throw(body_idx) {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node(
                     body_idx,
@@ -1067,7 +1072,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            return if !may_not_fall_through || self.function_body_falls_through(body_idx) {
+            return if falls_through {
                 // When contextual return type expects `undefined` (not void/any/unknown),
                 // use `undefined` so `const f: () => undefined = () => {}` doesn't produce TS2322.
                 // tsc applies contextual typing to infer the return type of such lambdas.
