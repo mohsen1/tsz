@@ -437,6 +437,9 @@ path = "tests/await_thenable_this_context_tests.rs"
 name = "await_structural_thenable_object_literal_tests"
 path = "tests/await_structural_thenable_object_literal_tests.rs"
 [[test]]
+name = "instanceof_loop_generic_any_fill_tests"
+path = "tests/instanceof_loop_generic_any_fill_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
@@ -829,6 +832,9 @@ path = "tests/ts2322_empty_array_assertion_source_display_tests.rs"
 [[test]]
 name = "ts2322_pair_disambiguation_widening_tests"
 path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
+[[test]]
+name = "spread_deferred_conditional_apparent_tests"
+path = "tests/spread_deferred_conditional_apparent_tests.rs"
 [[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
