@@ -41,12 +41,27 @@ CACHE_BUCKET="${_TSZ_CI_CACHE_BUCKET:?_TSZ_CI_CACHE_BUCKET is required}"
 CACHE_BUCKET="${CACHE_BUCKET%/}"
 
 ensure_gcs_auth() {
-  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
-    local key_file="/tmp/sccache-gcs-key.json"
-    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
-    chmod 600 "$key_file"
-    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
-    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+    if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+      local key_file="/tmp/sccache-gcs-key.json"
+      printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+      chmod 600 "$key_file"
+      export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+      echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+    fi
+
+    # gsutil from the Cloud SDK does not reliably consume ADC-only JSON key
+    # files. Activate the same key in gcloud, then let gsutil reuse that
+    # account instead of falling through to anonymous GCS requests.
+    if command -v gcloud >/dev/null 2>&1; then
+      if ! gcloud auth activate-service-account \
+        --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
+        echo "error: failed to activate SCCACHE_GCS_KEY_JSON for GCS cache access" >&2
+        return 1
+      fi
+      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
+      echo "gcs-auth: activated service account credentials for gsutil"
+    fi
   fi
 
   # Cloud Run runners can arrive with `gcloud auth` already configured. Make

@@ -990,6 +990,30 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Resolve a global constructor-variable symbol (e.g. the lib `Map`/`Set`
+    /// interface+var) to its instance type for `instanceof` narrowing. The raw
+    /// interface is generic (`Map<K, V>`); tsc narrows `x instanceof Map` to the
+    /// prototype-derived `Map<any, any>`, so fill the interface's type parameters
+    /// with `any`. This matters inside loops, where the `node_types` fast path has
+    /// not yet typed the constructor expression and narrowing reaches the bare
+    /// generic interface (issue #14945). Non-generic globals (`Date`, `RegExp`)
+    /// have zero parameters and resolve to the bare interface unchanged.
+    pub(crate) fn resolve_symbol_to_instance_type(&self, symbol_ref: SymbolRef) -> Option<TypeId> {
+        let lazy = self.resolve_symbol_to_lazy(symbol_ref)?;
+        if let Some(env) = self.type_environment.as_ref() {
+            let env_borrowed = env.borrow();
+            if let Some(def_id) = env_borrowed.symbol_to_def_id(symbol_ref) {
+                let arity = env_borrowed
+                    .get_lazy_type_params(def_id)
+                    .map_or(0, |params| params.len());
+                if arity > 0 {
+                    return Some(self.interner.application(lazy, vec![TypeId::ANY; arity]));
+                }
+            }
+        }
+        Some(lazy)
+    }
+
     /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.
     fn check_array_buffer_is_view(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
         let callee_node = self.arena.get(call.expression)?;
