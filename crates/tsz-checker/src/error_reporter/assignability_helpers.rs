@@ -209,17 +209,41 @@ impl<'a> CheckerState<'a> {
         ) {
             source_str = display;
         }
-        let message = crate::diagnostics::format_message(
-            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        );
+        // TS2820: tsc upgrades a bare TS2322 to a "Did you mean" spelling
+        // suggestion when the source is a near-miss string literal for one of
+        // the target's string-literal members. The simple `TypeMismatch` /
+        // `LiteralTypeMismatch` / `IntrinsicTypeMismatch` reasons route here
+        // (not through `render_failure_reason`), so this emitter must run the
+        // same suggestion scan or the suggestion is silently dropped — e.g.
+        // when the target reduces to a literal union from a type alias,
+        // distributive conditional, or template-`infer` capture. The source and
+        // target displays are identical to the TS2322 form; only the suggestion
+        // clause is appended, matching tsc's TS2820 wording.
+        let (message, code) = match self
+            .find_string_literal_spelling_suggestion_reduced(source_for_display, target_for_display)
+        {
+            Some(suggestion) => (
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                    &[&source_str, &target_str, &suggestion],
+                ),
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+            ),
+            None => (
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ),
+        };
         self.ctx
             .push_diagnostic(crate::diagnostics::Diagnostic::error(
                 self.ctx.file_name.clone(),
                 start,
                 length,
                 message,
-                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                code,
             ));
     }
 
