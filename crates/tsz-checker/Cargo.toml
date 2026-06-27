@@ -2259,3 +2259,7 @@ path = "tests/computed_key_and_iterator_heritage_member_retention_tests.rs"
 [[test]]
 name = "let_var_initializer_assignment_reduced_type_tests"
 path = "tests/let_var_initializer_assignment_reduced_type_tests.rs"
+
+[[test]]
+name = "noinfer_object_property_literal_widening_tests"
+path = "tests/noinfer_object_property_literal_widening_tests.rs"
