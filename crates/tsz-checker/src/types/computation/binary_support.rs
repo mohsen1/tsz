@@ -4,7 +4,8 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::core::{
-    WriteTargetLogicalOperator, WriteTargetLogicalResult,
+    WriteTargetLogicalOperator, WriteTargetLogicalResult, enum_components, evaluate_type_structure,
+    is_keyof_type, type_parameter_constraint,
 };
 use crate::query_boundaries::type_computation::in_operator::{self, InOperatorRhsClassifier};
 use crate::state::CheckerState;
@@ -839,6 +840,16 @@ impl CheckerState<'_> {
             return TypeId::STRING;
         }
 
+        if let Some((_def_id, member_type)) = enum_components(self.ctx.types, type_id) {
+            return self.get_primitive_family(member_type);
+        }
+        if is_keyof_type(self.ctx.types, type_id) {
+            return TypeId::STRING;
+        }
+        if let Some(constraint) = type_parameter_constraint(self.ctx.types, type_id) {
+            return self.get_primitive_family(constraint);
+        }
+
         // Intersections narrow their members; if any member sits in a primitive
         // family, treat the intersection as belonging to that family (e.g.
         // `T & number` should count as number-family for TS2367 widening).
@@ -853,14 +864,15 @@ impl CheckerState<'_> {
             }
         }
 
-        // A union belongs to a primitive family when all of its non-`null`/
-        // `undefined` constituents share one family (`1 | 2`, `"a" | undefined`).
-        // `null`/`undefined` members are ignored — they ride along unwidened in
-        // tsc's display (`number | undefined`) — but a union of *only*
-        // `null`/`undefined`, an empty union, or a union spanning multiple
-        // families has no single family. This mirrors tsc widening
-        // `(1 | undefined) === "x"` operands to `number | undefined` / `string`
-        // while leaving `(1 | undefined) === 2` (same family) as literals.
+        // A union belongs to a primitive family when every primitive member
+        // shares one family (`1 | 2`, `"a" | undefined`). `null`/`undefined`
+        // and non-primitive members are ignored for the family decision: they
+        // ride along unwidened in tsc's display (`number | undefined`,
+        // `Refrigerator | "foo"`). A union of only ignored members, an empty
+        // union, or a union spanning multiple primitive families has no single
+        // family. This mirrors tsc widening `(1 | undefined) === "x"` operands
+        // to `number | undefined` / `string` while leaving `(1 | undefined) === 2`
+        // and `(Refrigerator | "foo") === "bar"` as literals.
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
@@ -871,7 +883,7 @@ impl CheckerState<'_> {
                 }
                 let family = self.get_primitive_family(member);
                 if family == TypeId::ERROR {
-                    return TypeId::ERROR;
+                    continue;
                 }
                 match common {
                     None => common = Some(family),
@@ -880,6 +892,11 @@ impl CheckerState<'_> {
                 }
             }
             return common.unwrap_or(TypeId::ERROR);
+        }
+
+        let evaluated = evaluate_type_structure(self.ctx.types, type_id);
+        if evaluated != type_id {
+            return self.get_primitive_family(evaluated);
         }
 
         TypeId::ERROR // Non-primitive types
