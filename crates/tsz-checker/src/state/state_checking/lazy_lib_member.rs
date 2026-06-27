@@ -142,15 +142,24 @@ pub(crate) fn decl_lazy_lib_disabled() -> bool {
 /// eligible (force-eligible, non-generic, unaugmented, unshadowed) bare
 /// lib-interface reference defers to a `Lazy(DefId)` that resolves on demand via
 /// the #8638 single-member fast path / relation `resolve_lazy` — attacking the
-/// documented ~84% own-member-lowering + referenced-interface cascade. OFF by
-/// default so flag-off is byte-identical; `TSZ_LAZY_OWN_MEMBERS=1` enables A/B.
+/// documented ~84% own-member-lowering + referenced-interface cascade.
+///
+/// DEFAULT-ON: verified conformance-clean (full `tsz-checker` suite, DTS emit, and
+/// LSP/fourslash each show 0 new failures flag-on; DTS emit is byte-identical) and
+/// convergence-safe (the member SET stays eager, `Lazy(DefId)` is a stable
+/// interned handle — no `base_types` flattening, no transient `TypeId`s). Kill
+/// switch for A/B and rollback: `TSZ_LAZY_OWN_MEMBERS=0` or
+/// `TSZ_DISABLE_LAZY_OWN_MEMBERS=1`.
 ///
 /// Cached in a `OnceLock` so the environment is read at most once per process.
 pub(crate) fn lazy_own_members_enabled() -> bool {
     use std::sync::OnceLock;
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
-        std::env::var("TSZ_LAZY_OWN_MEMBERS").is_ok_and(|v| !v.is_empty() && v != "0")
+        if std::env::var("TSZ_DISABLE_LAZY_OWN_MEMBERS").is_ok_and(|v| v == "1") {
+            return false;
+        }
+        !std::env::var("TSZ_LAZY_OWN_MEMBERS").is_ok_and(|v| v == "0")
     })
 }
 
