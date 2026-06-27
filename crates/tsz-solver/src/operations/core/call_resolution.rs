@@ -896,6 +896,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
+
+        // Faithful tsc `getUnionSignatures`: when a member declares the called
+        // property with an overload set (multiple call signatures), the simple
+        // per-position combined-signature path below cannot represent it, so the
+        // union would be wrongly reported not-callable (TS2349). Resolve the call
+        // against the union's combined signature list instead (see
+        // `union_overloaded_member_callable`); it returns `None` to fall through
+        // to the existing per-member logic for the negative/`this`-typed cases.
+        if let Some(callable_ty) =
+            self.union_overloaded_member_callable(&members, &sig_lists, false)
+        {
+            let result = self.resolve_call(callable_ty, arg_types);
+            // tsc reports argument errors (TS2345) before `this`-context errors
+            // (TS2684); only surface the deferred union-level `this` mismatch once
+            // the arguments themselves are accepted.
+            if matches!(result, CallResult::Success(_))
+                && let Some(this_err) = &deferred_this_error
+            {
+                return this_err.clone();
+            }
+            return result;
+        }
         // `force_not_callable_with_this_mismatch` controls a fallback in
         // `build_union_call_result` that turns all-this-mismatch failure sets
         // into a NotCallable result. The 2026-04 fix for TS2349 vs TS2684 in

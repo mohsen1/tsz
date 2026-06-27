@@ -623,6 +623,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         result
     }
 
+    /// Collect each union member's construct-signature list (in member order),
+    /// skipping members that contribute no construct signatures. Mirrors
+    /// [`Self::collect_union_call_signature_lists`] for the `new` path.
+    pub(crate) fn collect_union_construct_signature_lists(
+        &self,
+        members: &[TypeId],
+    ) -> Vec<(usize, Vec<CallSignature>)> {
+        let mut result = Vec::new();
+        for (i, &member) in members.iter().enumerate() {
+            let member = self.normalize_union_member(member);
+            if let Some(TypeData::Callable(callable_id)) = self.interner.lookup(member) {
+                let callable = self.interner.callable_shape(callable_id);
+                if !callable.construct_signatures.is_empty() {
+                    result.push((i, callable.construct_signatures.clone()));
+                }
+            }
+        }
+        result
+    }
+
     /// Check if two non-generic call signatures are structurally compatible for
     /// union signature combination (tsc's `compareSignaturesIdentical` with
     /// `partialMatch=true`, `ignoreReturnTypes=true`).
