@@ -181,6 +181,55 @@ void o;
 }
 
 #[test]
+fn missing_this_member_in_getter_return_still_reports() {
+    let source = r#"
+const o = {
+  get x() { return this.missing; },
+};
+void o;
+"#;
+    assert_eq!(
+        count(source, 7023),
+        1,
+        "a getter return that reads a missing member through `this` is circular"
+    );
+}
+
+#[test]
+fn existing_this_member_in_getter_return_is_clean() {
+    let source = r#"
+const o = {
+  get x() { return this.y; },
+  y: 1,
+};
+void o;
+"#;
+    assert_eq!(
+        count(source, 7023),
+        0,
+        "a getter may read an existing sibling member through `this` without circularity"
+    );
+}
+
+#[test]
+fn this_alias_missing_member_self_reference_still_reports() {
+    let source = r#"
+const o = {
+  get x() {
+    const self = this;
+    return self.missing.deep.x;
+  },
+};
+void o;
+"#;
+    assert_eq!(
+        count(source, 7023),
+        1,
+        "aliases of `this` keep missing-member getter reads circular"
+    );
+}
+
+#[test]
 fn wrapped_this_receiver_self_reference_still_reports() {
     let source = r#"
 const o = {

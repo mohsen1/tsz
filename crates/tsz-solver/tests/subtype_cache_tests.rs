@@ -1036,3 +1036,199 @@ fn this_bearing_verdict_is_shared_under_its_receiver_only() {
         "a different receiver must not be served the other receiver's verdict"
     );
 }
+
+// =============================================================================
+// #14345 scoped structural-strip SOUNDNESS ORACLE
+// =============================================================================
+//
+// These tests pin the soundness of the scoped structural-strip
+// (`build_decl_param_structural_strip`, checking.rs) — the FIRST sound reducer
+// of the #14345 +53 alpha-equiv-through-Application regressions. The strip maps
+// every free `DeclScoped` type parameter in the two compared signature bodies
+// back to its `User`-canonical structural intern (origin erased, surface
+// preserved), keyed BY NAME, with a surface-poison guard: a name whose
+// `DeclScoped` occurrences carry two different surfaces is EXCLUDED.
+//
+// The campaign's over-relate hazard (the LOCALLY-PROVEN-UNSOUND position
+// co-walk, `cowalk_register_reduced_params`) was: two GENUINELY DIFFERENT
+// declarations' params (`T` = Array.element, `U` = Array.map-result) brought to
+// the same structural position inside `Carrier<{ v: P }>` get wrongly related
+// `T <: U`. The strip is NAME-KEYED, so `T` -> `User{T}` and `U` -> `User{U}`
+// stay DISTINCT (different names) — the `T <: U` over-relate is STRUCTURALLY
+// IMPOSSIBLE. These tests port that exact scenario to the strip's mechanism.
+
+/// Build a bare `DeclScoped` type-parameter `TypeId` with the given surface
+/// name and a unique `(file, node)` decl site.
+fn strip_declscoped_param(
+    interner: &crate::intern::TypeInterner,
+    name: &str,
+    file: &str,
+    node: u32,
+) -> crate::types::TypeId {
+    interner.type_param(crate::types::TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::DeclScoped {
+            file: interner.intern_string(file),
+            node,
+        },
+    })
+}
+
+/// A single-param function shape `(x: body) => number` used to drive the strip
+/// over the two reduced bodies.
+fn strip_shape(
+    interner: &crate::intern::TypeInterner,
+    body: crate::types::TypeId,
+) -> crate::types::FunctionShape {
+    let x = interner.intern_string("x");
+    crate::types::FunctionShape::new(
+        vec![crate::types::ParamInfo {
+            name: Some(x),
+            type_id: body,
+            optional: false,
+            rest: false,
+        }],
+        TypeId::NUMBER,
+    )
+}
+
+/// MAKE-OR-BREAK over-relate gate: the strip must NOT collapse two
+/// DIFFERENTLY-NAMED `DeclScoped` params from distinct declarations to one id.
+/// This is the co-walk's defect (`T <: U` over-relate); the name-keyed strip is
+/// structurally immune.
+#[test]
+fn strip_keeps_distinct_named_decl_params_distinct() {
+    let interner = crate::intern::TypeInterner::new();
+
+    // `T` (Array.element) and `U` (Array.map-result): genuinely different
+    // declarations, DIFFERENT names, brought to the same structural position
+    // inside `Carrier<{ v: P }>`.
+    let t = strip_declscoped_param(&interner, "T", "array.ts", 30);
+    let u = strip_declscoped_param(&interner, "U", "array_map.ts", 40);
+    assert_ne!(t, u, "T and U must be distinct interned ids");
+
+    let v = interner.intern_string("v");
+    let carrier = interner.lazy(crate::DefId(7));
+    let source_inner = interner.object(vec![PropertyInfo::new(v, t)]);
+    let target_inner = interner.object(vec![PropertyInfo::new(v, u)]);
+    let source = strip_shape(&interner, interner.application(carrier, vec![source_inner]));
+    let target = strip_shape(&interner, interner.application(carrier, vec![target_inner]));
+
+    let checker = SubtypeChecker::new(&interner);
+    let strip = checker.build_decl_param_structural_strip(&source, &target);
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_canon = strip.get(t_name);
+    let u_canon = strip.get(u_name);
+
+    // Both ARE stripped to their own User-canonical id (the strip fires)...
+    assert!(t_canon.is_some(), "T must strip to its User canonical");
+    assert!(u_canon.is_some(), "U must strip to its User canonical");
+    // ...but to DISTINCT ids — the over-relate (T == U) is structurally
+    // impossible because the strip is name-keyed.
+    assert_ne!(
+        t_canon, u_canon,
+        "the strip must NOT collapse differently-named DeclScoped params to one \
+         id — that is the co-walk's `T <: U` over-relate the strip avoids"
+    );
+}
+
+/// POSITIVE: the strip DOES collapse two SAME-NAMED, SAME-SURFACE `DeclScoped`
+/// params from distinct declarations to ONE `User` id — the genuine
+/// alpha-equivalence (`Carrier<A>` from two decls) that drives the +53
+/// reduction. This is the flag-OFF interning identity, reproduced scoped.
+#[test]
+fn strip_collapses_same_named_alpha_equivalent_decl_params() {
+    let interner = crate::intern::TypeInterner::new();
+
+    // Same name `A`, same surface, DISTINCT decl sites — genuinely
+    // alpha-equivalent. Flag-OFF these intern to ONE `User` id; flag-ON the
+    // stamp splits them; the strip re-collapses them.
+    let a_src = strip_declscoped_param(&interner, "A", "record.ts", 61);
+    let a_tgt = strip_declscoped_param(&interner, "A", "readonly_record.ts", 88);
+    assert_ne!(
+        a_src, a_tgt,
+        "under the stamp, same-name distinct-decl params are DISTINCT ids"
+    );
+
+    let carrier = interner.lazy(crate::DefId(9));
+    let source = strip_shape(&interner, interner.application(carrier, vec![a_src]));
+    let target = strip_shape(&interner, interner.application(carrier, vec![a_tgt]));
+
+    let checker = SubtypeChecker::new(&interner);
+    let strip = checker.build_decl_param_structural_strip(&source, &target);
+
+    let a_name = interner.intern_string("A");
+    let a_canon = strip.get(a_name);
+    assert!(
+        a_canon.is_some(),
+        "same-named alpha-equivalent A must strip to ONE User canonical"
+    );
+    // Both decl sites map to the SAME canonical, so the relation unifies them.
+    let user_a = interner.type_param(crate::types::TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    });
+    assert_eq!(
+        a_canon,
+        Some(user_a),
+        "both distinct-decl A's must collapse to the SAME User-canonical id"
+    );
+}
+
+/// SURFACE-POISON: a name whose two `DeclScoped` occurrences carry DIFFERENT
+/// surfaces (`<A>` vs `<A extends string>`) must be EXCLUDED from the strip
+/// (the conservative non-collapsing choice — a name-keyed substitution cannot
+/// represent the split, so collapsing would be unsound).
+#[test]
+fn strip_excludes_name_with_conflicting_surface() {
+    let interner = crate::intern::TypeInterner::new();
+
+    let a_name = interner.intern_string("A");
+    // Bare `A`.
+    let a_bare = interner.type_param(crate::types::TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::DeclScoped {
+            file: interner.intern_string("a.ts"),
+            node: 1,
+        },
+    });
+    // `A extends string` — SAME name, DIFFERENT surface.
+    let a_constrained = interner.type_param(crate::types::TypeParamInfo {
+        name: a_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::DeclScoped {
+            file: interner.intern_string("b.ts"),
+            node: 2,
+        },
+    });
+
+    let carrier = interner.lazy(crate::DefId(11));
+    let source = strip_shape(&interner, interner.application(carrier, vec![a_bare]));
+    let target = strip_shape(
+        &interner,
+        interner.application(carrier, vec![a_constrained]),
+    );
+
+    let checker = SubtypeChecker::new(&interner);
+    let strip = checker.build_decl_param_structural_strip(&source, &target);
+
+    assert_eq!(
+        strip.get(a_name),
+        None,
+        "a name with two conflicting DeclScoped surfaces must be EXCLUDED \
+         (poisoned) from the strip — not collapsed unsoundly"
+    );
+}

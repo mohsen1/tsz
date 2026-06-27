@@ -462,6 +462,25 @@ impl<'a> CheckerState<'a> {
     // Type Argument Extraction
     // =========================================================================
 
+    /// Whether `type_id` is a non-generic class instance type: a nominal
+    /// `Lazy(DefId)` whose declaring symbol carries the `CLASS` flag. This admits
+    /// class-declared thenables into the structural awaited-type fallback while
+    /// excluding lib `PromiseLike` interfaces, `type` aliases, and bare type
+    /// parameters, which would otherwise corrupt return-context inference.
+    /// Generic class instances are `Application` types handled by the Application
+    /// branch's own structural extraction.
+    fn awaited_operand_is_class_instance(&self, type_id: TypeId) -> bool {
+        let query::PromiseTypeKind::Lazy(def_id) =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        self.ctx
+            .def_to_symbol_id(def_id)
+            .and_then(|sym_id| self.promise_symbol_and_decl_file(sym_id))
+            .is_some_and(|(symbol, _)| symbol.has_any_flags(symbol_flags::CLASS))
+    }
+
     /// Extract the type argument from a Promise<T> or Promise-like type.
     ///
     /// Returns Some(T) if the type is Promise<T>, None otherwise.
@@ -528,12 +547,31 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle Object shapes: when a Promise<T> type annotation gets evaluated to
-        // an Object shape, the Application wrapper is lost. We can still extract T
-        // by looking at the `then` method's `onfulfilled` callback parameter type.
-        // This mirrors tsc's getAwaitedType which structurally inspects thenables.
-        if let query::PromiseTypeKind::Object(_) =
-            query::classify_promise_type(self.ctx.types, return_type)
+        // Structural thenable fallback for a non-generic operand the Application
+        // branch above does not cover. The original gate accepted only `Object`
+        // shapes — the form an object-literal / interface thenable resolves to.
+        // A *class* instance type instead preserves its nominal `Lazy(DefId)`
+        // (see solver `types.rs`), so it never classified as `Object` and its
+        // structural `then` was missed, yielding false `TS2741`/`TS2322` on
+        // class-declared thenables (e.g. neverthrow `class … implements
+        // PromiseLike<…>`). Extend the gate to class-instance `Lazy` defs.
+        //
+        // This must NOT broaden to *all* non-Application types: a lib
+        // `PromiseLike` alias, a `type` alias, or a return-context type parameter
+        // also reaches here, and structurally probing the lib `Promise.then`
+        // signature would rebind the type parameter to `Promise<TResult2>`
+        // (regressing the #10663 / #6581 return-context inference families).
+        // Class instances are discriminated by the `CLASS` symbol flag — lib
+        // `Promise`/`PromiseLike` are interfaces and aliases carry `TYPE_ALIAS`,
+        // so neither is admitted. `extract_awaited_type_from_thenable` still
+        // validates the `then` signature, so a class with no callable `then`
+        // returns `None` and is left unchanged.
+        let operand_is_structural_thenable_shape = matches!(
+            query::classify_promise_type(self.ctx.types, return_type),
+            query::PromiseTypeKind::Object(_)
+        ) || self
+            .awaited_operand_is_class_instance(return_type);
+        if operand_is_structural_thenable_shape
             && let Some(awaited) = self.extract_awaited_type_from_thenable(return_type)
         {
             return Some(awaited);

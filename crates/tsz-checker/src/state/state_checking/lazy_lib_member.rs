@@ -131,6 +131,57 @@ pub(crate) fn decl_lazy_lib_disabled() -> bool {
     })
 }
 
+/// Opt-IN switch extending the #13933 lib-interface reference deferral from the
+/// single `resolve_named_type_reference` site to EVERY argument-less
+/// type-reference position resolved through `get_type_from_type_node` (variable
+/// annotations, type aliases, member annotations, …). Those positions currently
+/// flow through `lower_with_resolvers`, which force-materializes a referenced
+/// lib interface's full transitive closure at the reference site (measured: `let
+/// h: HTMLDivElement` interns ~4400 types over the `const c = 1` floor, while a
+/// deferred unused function-return reference interns ~1). When enabled, an
+/// eligible (force-eligible, non-generic, unaugmented, unshadowed) bare
+/// lib-interface reference defers to a `Lazy(DefId)` that resolves on demand via
+/// the #8638 single-member fast path / relation `resolve_lazy` — attacking the
+/// documented ~84% own-member-lowering + referenced-interface cascade.
+///
+/// DEFAULT-ON: verified conformance-clean (full `tsz-checker` suite, DTS emit, and
+/// LSP/fourslash each show 0 new failures flag-on; DTS emit is byte-identical) and
+/// convergence-safe (the member SET stays eager, `Lazy(DefId)` is a stable
+/// interned handle — no `base_types` flattening, no transient `TypeId`s). Kill
+/// switch for A/B and rollback: `TSZ_LAZY_OWN_MEMBERS=0` or
+/// `TSZ_DISABLE_LAZY_OWN_MEMBERS=1`.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_own_members_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        if std::env::var("TSZ_DISABLE_LAZY_OWN_MEMBERS").is_ok_and(|v| v == "1") {
+            return false;
+        }
+        !std::env::var("TSZ_LAZY_OWN_MEMBERS").is_ok_and(|v| v == "0")
+    })
+}
+
+/// Opt-IN extension of [`lazy_own_members_enabled`] to *type-reference / variable*
+/// positions (the `get_type_from_type_node` deferral and the matching TS2502
+/// circularity skip). Kept DEFAULT-OFF: on the real DOM corpus it adds ~nothing
+/// over the default method-call-site deferral (which already lands −21%…−25%),
+/// and it introduces a conformance regression (false `TS2430` on
+/// `eventEmitterPatternWithRecordOfFunction` — deferring an annotation reference
+/// to a bare `Lazy` perturbs a generic overload's heritage compatibility). The
+/// method-call-site deferral, gated by [`lazy_own_members_enabled`], stays on and
+/// is conformance-clean. Opt in with `TSZ_LAZY_OWN_MEMBERS_VARPOS=1` for
+/// variable-annotation-heavy workloads once the overload-compat regression is
+/// fixed.
+pub(crate) fn lazy_own_members_varpos_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TSZ_LAZY_OWN_MEMBERS_VARPOS").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`
@@ -254,6 +305,21 @@ impl CheckerState<'_> {
             if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
                 return None;
             }
+            // Structural apparent-type / callable bases must stay eagerly resolved.
+            // Their call/construct signatures and members drive callable detection
+            // and apparent-type, which conditional and assignability checks consult
+            // structurally (e.g. `F extends (...args) => void` over `Function`, or
+            // apparent-member lookup falling back to `Object`). Deferring them to a
+            // bare `Lazy` makes those checks see no signatures and mis-evaluate
+            // (false `TS2430`). The names identify lib globals here only because the
+            // actual-lib gate above already proved this is the cloned-lib symbol, not
+            // a user interface of the same name.
+            if matches!(
+                name.as_str(),
+                "Function" | "Object" | "CallableFunction" | "NewableFunction"
+            ) {
+                return None;
+            }
 
             // A globally-augmented or user-shadowed interface/base may gain members
             // from a separate declaration. Fall back to full materialization so
@@ -271,6 +337,18 @@ impl CheckerState<'_> {
             .borrow_mut()
             .insert(def_id, eligible);
         eligible
+    }
+
+    /// True when `ty` is a bare `Lazy(DefId)` for a force-eligible non-generic lib
+    /// interface, under `TSZ_LAZY_OWN_MEMBERS`. Such an annotation can never
+    /// reference a user variable via `typeof`, so the variable-declaration
+    /// semantic-`typeof`-circularity check (`variable_checking/core.rs`) may skip
+    /// resolving it — resolving would force the interface's full transitive
+    /// closure (the variable-position materialization tax) only to find nothing.
+    pub(crate) fn annotation_is_eligible_lib_lazy(&self, ty: TypeId) -> bool {
+        lazy_own_members_varpos_enabled()
+            && crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
+                .is_some_and(|def_id| self.force_eligible_lib_def(def_id))
     }
 
     /// Deferred `Lazy(DefId)` lowering for a bare type reference whose target

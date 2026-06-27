@@ -365,11 +365,17 @@ pub(super) fn check_file_for_parallel<'a>(
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
     // For multi-file projects, use shared L2 cache to avoid redundant computation.
-    let query_cache = if let Some(shared) = shared_query_cache {
+    let mut query_cache = if let Some(shared) = shared_query_cache {
         QueryCache::new_with_shared(&program.type_interner, shared)
     } else {
         QueryCache::new(&program.type_interner)
     };
+    // Attach the SAME shared DefinitionStore the per-file checker uses (installed
+    // by `program_context.apply_to`) so generic-call inference can resolve
+    // cross-arena declaration identity (issue #14344, `TSZ_XARENA_BASE_DECL`).
+    if let Some(store) = program_context.shared_definition_store.as_deref() {
+        query_cache = query_cache.with_definition_store(store);
+    }
 
     // Use the pre-bucketed `resolved_modules_per_file[file_idx]` instead of
     // re-filtering the program-wide cross-file set per file. The bucketed
@@ -557,11 +563,17 @@ where
 
     // One `QueryCache` for the whole loop. Mirrors the per-file
     // construction in `check_file_for_parallel`, but built once.
-    let query_cache = if let Some(shared) = shared_query_cache {
+    let mut query_cache = if let Some(shared) = shared_query_cache {
         QueryCache::new_with_shared(&program.type_interner, shared)
     } else {
         QueryCache::new(&program.type_interner)
     };
+    // Attach the SAME shared DefinitionStore the per-file checker uses so
+    // generic-call inference can resolve cross-arena declaration identity
+    // (issue #14344, `TSZ_XARENA_BASE_DECL`).
+    if let Some(store) = program_context.shared_definition_store.as_deref() {
+        query_cache = query_cache.with_definition_store(store);
+    }
 
     let mut results: Vec<CheckFileResult> = Vec::with_capacity(work_items.len());
     let mut checker: Option<CheckerState> = None;
