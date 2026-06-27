@@ -59,6 +59,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Exact parity with tsc's `tailCount` limit; canonical definition in [`crate::limits`].
     const MAX_TAIL_RECURSION_DEPTH: usize = crate::limits::MAX_TAIL_RECURSION_DEPTH;
 
+    /// Whether a conditional's (resolved) check type *binds* any `this` it
+    /// contains to a concrete instance, so a `this` found in it is determined
+    /// rather than the free contextual `this` of an enclosing declaration.
+    ///
+    /// An object/constructor shape — including the construct/call signature a
+    /// `typeof Class` resolves to, or a concrete class-instance reference
+    /// (`Lazy`/`TypeQuery`) — owns the `this` of its own members: in
+    /// `InstanceType<typeof B>` the check side is `B`'s constructor whose
+    /// construct-signature return is the `B` instance type, and a `clone():
+    /// this` / `self: this` member's `this` is `B`, not free. Such conditionals
+    /// must be evaluated; deferring them leaves `InstanceType<typeof B>` opaque
+    /// and breaks its relation to `B`. A free contextual `this` instead appears
+    /// at expression level (the check type *is* `this`, `this[]`, `keyof this`,
+    /// `A | this`, …), where no enclosing instance shape binds it, so those keep
+    /// deferring as before.
+    fn resolved_check_type_binds_this(&self, check_type: TypeId) -> bool {
+        match self.interner().lookup(check_type) {
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Callable(_)
+                | TypeData::Function(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::Lazy(_),
+            ) => true,
+            Some(TypeData::ReadonlyType(inner)) => self.resolved_check_type_binds_this(inner),
+            _ => false,
+        }
+    }
+
     fn normalize_conditional_object_operand(&mut self, type_id: TypeId) -> TypeId {
         let (shape_id, with_index) = match self.interner().lookup(type_id) {
             Some(TypeData::Object(shape_id)) => (shape_id, false),
@@ -520,11 +550,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => check_type,
             };
 
-            if extends_has_infer
-                && (self.generic_tuple_infer_defer_required(cond.check_type, extends_unwrapped)
-                    || crate::contains_this_type(self.interner(), cond.check_type))
-            {
-                return self.interner().conditional(*cond);
+            if extends_has_infer {
+                // A `this` type in the check side forces deferral only when it is
+                // the *free* contextual `this` of an enclosing class/interface
+                // (e.g. the check type is `this`, `this[]`, `keyof this`, or
+                // `A | this`), because the infer pattern cannot be matched until
+                // `this` is substituted with a concrete instance. A `this` that is
+                // *bound* — already enclosed in a concrete object/constructor
+                // instance type, as in `InstanceType<typeof ClassWithThisMember>`
+                // (whose check side resolves to the class's constructor whose
+                // construct-signature return is the instance type carrying a
+                // `clone(): this` / `self: this` member) — is determined and must
+                // be evaluated, not deferred. Deferring it left the conditional
+                // opaque and made the instance type stop relating to itself,
+                // yielding a spurious TS2322/TS2345 on every fluent
+                // (`this`-returning) class used through `InstanceType<typeof X>`
+                // (Kysely `AlterColumnBuilder` etc.). Computed under
+                // `extends_has_infer` so the `contains_this_type` walk is skipped
+                // on the common infer-free path.
+                let check_has_free_this =
+                    crate::contains_this_type(self.interner(), cond.check_type)
+                        && !self.resolved_check_type_binds_this(check_type);
+                if self.generic_tuple_infer_defer_required(cond.check_type, extends_unwrapped)
+                    || check_has_free_this
+                {
+                    return self.interner().conditional(*cond);
+                }
             }
 
             // Concrete-element fast paths run only when the extends shape contains no
