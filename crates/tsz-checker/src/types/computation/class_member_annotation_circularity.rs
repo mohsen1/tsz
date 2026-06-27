@@ -60,7 +60,7 @@ struct AnnotatedMember {
     type_annotation: NodeIndex,
 }
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Emit TS2502 for class properties whose declared type annotation is
     /// circular through a `typeof Class.m` / `typeof this.m` / `typeof Class[k]`
     /// self-reference. Runs once per class, after its members are checked.
