@@ -163,6 +163,25 @@ pub(crate) fn lazy_own_members_enabled() -> bool {
     })
 }
 
+/// Opt-IN extension of [`lazy_own_members_enabled`] to *type-reference / variable*
+/// positions (the `get_type_from_type_node` deferral and the matching TS2502
+/// circularity skip). Kept DEFAULT-OFF: on the real DOM corpus it adds ~nothing
+/// over the default method-call-site deferral (which already lands −21%…−25%),
+/// and it introduces a conformance regression (false `TS2430` on
+/// `eventEmitterPatternWithRecordOfFunction` — deferring an annotation reference
+/// to a bare `Lazy` perturbs a generic overload's heritage compatibility). The
+/// method-call-site deferral, gated by [`lazy_own_members_enabled`], stays on and
+/// is conformance-clean. Opt in with `TSZ_LAZY_OWN_MEMBERS_VARPOS=1` for
+/// variable-annotation-heavy workloads once the overload-compat regression is
+/// fixed.
+pub(crate) fn lazy_own_members_varpos_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TSZ_LAZY_OWN_MEMBERS_VARPOS").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`
@@ -286,6 +305,21 @@ impl CheckerState<'_> {
             if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
                 return None;
             }
+            // Structural apparent-type / callable bases must stay eagerly resolved.
+            // Their call/construct signatures and members drive callable detection
+            // and apparent-type, which conditional and assignability checks consult
+            // structurally (e.g. `F extends (...args) => void` over `Function`, or
+            // apparent-member lookup falling back to `Object`). Deferring them to a
+            // bare `Lazy` makes those checks see no signatures and mis-evaluate
+            // (false `TS2430`). The names identify lib globals here only because the
+            // actual-lib gate above already proved this is the cloned-lib symbol, not
+            // a user interface of the same name.
+            if matches!(
+                name.as_str(),
+                "Function" | "Object" | "CallableFunction" | "NewableFunction"
+            ) {
+                return None;
+            }
 
             // A globally-augmented or user-shadowed interface/base may gain members
             // from a separate declaration. Fall back to full materialization so
@@ -312,7 +346,7 @@ impl CheckerState<'_> {
     /// resolving it — resolving would force the interface's full transitive
     /// closure (the variable-position materialization tax) only to find nothing.
     pub(crate) fn annotation_is_eligible_lib_lazy(&self, ty: TypeId) -> bool {
-        lazy_own_members_enabled()
+        lazy_own_members_varpos_enabled()
             && crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
                 .is_some_and(|def_id| self.force_eligible_lib_def(def_id))
     }

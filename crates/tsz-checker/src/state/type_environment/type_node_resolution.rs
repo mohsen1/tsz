@@ -269,7 +269,7 @@ impl<'a> CheckerState<'a> {
                 // (generic, globally augmented, user-shadowed, user type) yields
                 // `None` and falls through to the normal full-materialization
                 // path, so flag-off is byte-identical.
-                if crate::state_checking::lazy_lib_member::lazy_own_members_enabled() {
+                if crate::state_checking::lazy_lib_member::lazy_own_members_varpos_enabled() {
                     let deferral_name = self
                         .ctx
                         .arena
