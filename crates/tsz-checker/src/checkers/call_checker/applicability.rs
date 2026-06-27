@@ -62,7 +62,44 @@ impl<'a> CheckerState<'a> {
         let spread_type = self.evaluate_type_with_env(spread_type);
         let spread_type = self.resolve_type_for_property_access(spread_type);
         let spread_type = self.resolve_lazy_type(spread_type);
-        self.evaluate_application_type(spread_type)
+        let spread_type = self.evaluate_application_type(spread_type);
+        self.apparent_type_of_deferred_conditional_spread(spread_type)
+    }
+
+    /// A value typed as a deferred (uninstantiated generic) conditional has no
+    /// tuple/array/iterator shape of its own, so the spread element-extraction
+    /// paths in `candidate_collection` would relate the whole conditional to the
+    /// rest-parameter element and emit a false `TS2345`.
+    ///
+    /// `tsc` iterates such a spread through the conditional's *apparent* type —
+    /// the union of its branch constraints with the true branch's check
+    /// parameter narrowed to `check & extends` (`getApparentType` ->
+    /// `getDefaultConstraintOfConditionalType`). Adopt that apparent type here
+    /// when it is itself iterable, so the existing array/tuple/iterable branches
+    /// recover the real element type. This is scoped to the spread normalization
+    /// path: a non-conditional type, a conditional with no reducible constraint,
+    /// or one whose apparent type is not iterable is left untouched so unrelated
+    /// diagnostics are unchanged.
+    fn apparent_type_of_deferred_conditional_spread(&mut self, spread_type: TypeId) -> TypeId {
+        if !crate::query_boundaries::common::is_conditional_type(self.ctx.types, spread_type) {
+            return spread_type;
+        }
+        let Some(apparent) =
+            crate::query_boundaries::conditional_constraints::conditional_apparent_value_constraint(
+                self.ctx.types,
+                spread_type,
+            )
+        else {
+            return spread_type;
+        };
+        // Only adopt the apparent type when it actually yields an iterable shape;
+        // otherwise the conditional was not standing in for a spreadable value and
+        // the original (deferred) type drives the unchanged diagnostic path.
+        if self.is_iterable_type(apparent) {
+            apparent
+        } else {
+            spread_type
+        }
     }
 
     /// Const object/array literal bindings do not benefit from flow narrowing at

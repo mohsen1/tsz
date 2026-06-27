@@ -15,6 +15,23 @@ pub(super) struct JsxUsage {
     pub(super) needs_jsxs: bool,
     pub(super) needs_fragment: bool,
     pub(super) needs_create_element: bool,
+    /// First-reference (source) order of the automatic-runtime helpers, matching
+    /// the sequence `tsc` uses when it inserts implicit runtime imports: a helper
+    /// enters the list the first time an element needing it is lowered, walked in
+    /// source order (post-order, children before their parent). Used to emit the
+    /// `react/jsx-runtime` named-import specifiers in tsc's order instead of a
+    /// fixed `jsx, jsxs, Fragment` sequence. Issue #14779.
+    pub(super) order: Vec<JsxHelper>,
+}
+
+/// An automatic-runtime helper reference recorded during the JSX usage scan.
+/// `Jsx`/`Jsxs` both collapse to `jsxDEV` under the dev runtime; `Fragment` is
+/// always referenced before the element callee when a fragment is lowered.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum JsxHelper {
+    Jsx,
+    Jsxs,
+    Fragment,
 }
 
 #[derive(Clone)]
