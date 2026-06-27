@@ -289,7 +289,10 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
 
             // Create a per-thread QueryCache for memoized evaluate_type/is_subtype_of calls.
             // Each thread gets its own cache using RefCell/Cell (no atomic overhead).
-            let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner);
+            // Attach the shared DefinitionStore so generic-call inference can resolve
+            // cross-arena declaration identity (issue #14344, `TSZ_XARENA_BASE_DECL`).
+            let query_cache = tsz_solver::construction::QueryCache::new(&program.type_interner)
+                .with_definition_store(&program.definition_store);
 
             // Create checker for this file, using the shared type interner
             let compiler_options = crate::checker::context::CheckerOptions::default();
@@ -586,11 +589,14 @@ impl<'a> ParallelCheckPlan<'a> {
     /// Each thread gets its own `RefCell`/`Cell`-backed cache (no atomic
     /// overhead) for memoized `evaluate_type` / `is_subtype_of` calls.
     fn make_query_cache(&self) -> tsz_solver::construction::QueryCache<'_> {
-        if let Some(ref shared) = self.shared_query_cache {
+        let cache = if let Some(ref shared) = self.shared_query_cache {
             tsz_solver::construction::QueryCache::new_with_shared(&self.program.type_interner, shared)
         } else {
             tsz_solver::construction::QueryCache::new(&self.program.type_interner)
-        }
+        };
+        // Attach the shared DefinitionStore so generic-call inference can resolve
+        // cross-arena declaration identity (issue #14344, `TSZ_XARENA_BASE_DECL`).
+        cache.with_definition_store(&self.program.definition_store)
     }
 
     /// Build a `FileCheckResult` for a lib file at `lib_idx` with the given
@@ -773,7 +779,8 @@ impl<'a> ParallelCheckPlan<'a> {
             return self.lib_file_result(lib_idx, lib_file, Vec::new());
         }
 
-        let query_cache = tsz_solver::construction::QueryCache::new(&self.program.type_interner);
+        let query_cache = tsz_solver::construction::QueryCache::new(&self.program.type_interner)
+            .with_definition_store(&self.program.definition_store);
 
         let mut checker = CheckerState::with_options(
             &lib_file.arena,

@@ -94,10 +94,16 @@ run_conformance() {
   local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total shard_expected_weight
   local shard_weights_file timings_file
   local conformance_args=()
+  local conformance_timeout
   shard_index="$(num_or_zero "$CONFORMANCE_SHARD_INDEX")"
   shard_count="$(num_or_zero "$CONFORMANCE_SHARD_COUNT")"
+  conformance_timeout="$(num_or_zero "${TSZ_CI_CONFORMANCE_TIMEOUT:-240}")"
+  if [[ "$conformance_timeout" -lt 1 ]]; then
+    conformance_timeout=240
+  fi
   shard_weights_file=""
   timings_file="$METRICS_DIR/conformance-timings-${shard_index}.json"
+  conformance_args+=(--timeout "$conformance_timeout")
   if [[ "$shard_count" -lt 1 ]]; then
     shard_count=1
   fi
@@ -127,6 +133,7 @@ run_conformance() {
     shard_expected_weight=0
     conformance_args+=(--timings-file "$timings_file")
   fi
+  echo "Conformance per-test timeout: ${conformance_timeout}s"
 
   set +e
   run_with_heartbeat "conformance" \

@@ -919,6 +919,71 @@ fn ts2367_preserves_same_family_literals_in_display() {
 }
 
 #[test]
+fn ts2367_preserves_literal_against_constrained_type_parameter() {
+    let diags = check_source_diagnostics(
+        r#"function f<T extends "a" | "b">(value: T) {
+    if (value === "x") {}
+}"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected exactly one TS2367, got: {diags:?}"
+    );
+    assert!(
+        relevant[0]
+            .message_text
+            .contains("types 'T' and '\"x\"' have no overlap"),
+        "Expected constrained type-parameter comparison to preserve the literal display, got: {:?}",
+        relevant[0].message_text
+    );
+}
+
+#[test]
+fn ts2367_preserves_literal_against_enum_and_keyof_operands() {
+    let diags = check_source_diagnostics(
+        r#"enum E {
+    a = 1,
+    b = 2,
+}
+declare let e: E;
+if (e !== 0) {}
+
+interface O {
+    a: string;
+    b: string;
+}
+declare let k: keyof O;
+if (k === "c") {}
+"#,
+    );
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        2,
+        "Expected two TS2367 diagnostics, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    let messages: Vec<_> = relevant.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("types 'E' and '0' have no overlap")),
+        "Expected enum comparison to preserve numeric literal display, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("types 'keyof O' and '\"c\"' have no overlap")),
+        "Expected keyof comparison to preserve string literal display, got: {messages:?}"
+    );
+}
+
+#[test]
 fn ts2367_for_object_or_null_constrained_intersection_compared_to_primitive() {
     let diags = check_source_diagnostics(
         r#"function unconstrained<T>(value: T & ({} | null)) {

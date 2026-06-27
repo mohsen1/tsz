@@ -1663,7 +1663,23 @@ impl CheckerState<'_> {
                 match self.resolve_lazy_def_for_type_env(def_id) {
                     Some((inserted, resolved)) => {
                         fully_resolved &= inserted;
-                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                        // Lazy own-member lowering (`TSZ_LAZY_OWN_MEMBERS`): a
+                        // non-generic lib interface is resolved (its member SET is
+                        // now in the env, so `keyof`/index lookups work), but we do
+                        // NOT push its resolved body onto the worklist. That stops
+                        // the transitive walk from resolving every member type's
+                        // body — which would force each member interface's full
+                        // heritage merge (the method-call materialization tax, e.g.
+                        // `document.createElement("div")` forcing HTMLDivElement's
+                        // entire closure). Member types stay `Lazy` and resolve on
+                        // demand (#8638). Inert flag-off.
+                        let keep_members_lazy =
+                            crate::state_checking::lazy_lib_member::lazy_own_members_enabled()
+                                && self.force_eligible_lib_def(def_id);
+                        if resolved != TypeId::ANY
+                            && resolved != TypeId::ERROR
+                            && !keep_members_lazy
+                        {
                             worklist.push(resolved);
                         }
                     }
