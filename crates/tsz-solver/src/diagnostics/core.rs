@@ -213,6 +213,17 @@ pub enum SubtypeFailureReason {
         target_element: TypeId,
         nested_reason: Option<Box<Self>>,
     },
+    /// An unbounded array source provides no value to bind a target tuple's
+    /// required (`TS2623`) or variadic (`TS2624`) element at a given position.
+    ///
+    /// `tsc` reports this when the target carries a rest element — so the
+    /// closed-target arity gate (`Self::TupleArityMismatch`) does *not* fire —
+    /// yet a fixed slot the open-ended source cannot guarantee a value for
+    /// precedes the rest coverage. Closed-target arity gaps (no target rest)
+    /// surface through `Self::TupleArityMismatch` (`TS2620`/`TS2621`) instead.
+    /// `variadic` selects between the required-element message (`TS2623`,
+    /// `false`) and the variadic-element message (`TS2624`, `true`).
+    SourceProvidesNoMatch { position: usize, variadic: bool },
     /// Array element type mismatch.
     ///
     /// Like a single-element tuple, an array relation fails through its element
@@ -708,6 +719,10 @@ pub mod codes {
     pub use dc::TARGET_ALLOWS_ONLY_ELEMENT_S_BUT_SOURCE_MAY_HAVE_MORE;
     pub use dc::TARGET_REQUIRES_ELEMENT_S_BUT_SOURCE_MAY_HAVE_FEWER;
 
+    // Open-array source vs tuple target, required/variadic slot (TS2623/TS2624).
+    pub use dc::SOURCE_PROVIDES_NO_MATCH_FOR_REQUIRED_ELEMENT_AT_POSITION_IN_TARGET as SOURCE_NO_MATCH_REQUIRED_ELEMENT;
+    pub use dc::SOURCE_PROVIDES_NO_MATCH_FOR_VARIADIC_ELEMENT_AT_POSITION_IN_TARGET as SOURCE_NO_MATCH_VARIADIC_ELEMENT;
+
     // Function/call errors
     pub use dc::CANNOT_FIND_NAME;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB as CANNOT_FIND_NAME_TARGET_LIB;
@@ -792,6 +807,17 @@ pub struct PendingDiagnosticBuilder;
 // SubtypeFailureReason to PendingDiagnostic Conversion
 // =============================================================================
 
+/// Diagnostic code for the open-array-source vs tuple-target no-match family:
+/// `TS2624` for a variadic target slot, `TS2623` for a required one. Single
+/// source of truth shared by `diagnostic_code` and `to_diagnostic`.
+const fn source_no_match_code(variadic: bool) -> u32 {
+    if variadic {
+        codes::SOURCE_NO_MATCH_VARIADIC_ELEMENT
+    } else {
+        codes::SOURCE_NO_MATCH_REQUIRED_ELEMENT
+    }
+}
+
 impl SubtypeFailureReason {
     /// Return the primary diagnostic code for this failure reason.
     ///
@@ -835,6 +861,7 @@ impl SubtypeFailureReason {
             | Self::IntersectionTargetMismatch { .. }
             | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::TupleArityMismatch(arity) => arity.diagnostic_code(),
+            Self::SourceProvidesNoMatch { variadic, .. } => source_no_match_code(*variadic),
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
             Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
@@ -1040,6 +1067,15 @@ impl SubtypeFailureReason {
             .with_related(PendingDiagnostic::error(
                 arity.diagnostic_code(),
                 arity.message_args().into_iter().map(|n| n.into()).collect(),
+            )),
+
+            Self::SourceProvidesNoMatch { position, variadic } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source.into(), target.into()],
+            )
+            .with_related(PendingDiagnostic::error(
+                source_no_match_code(*variadic),
+                vec![(*position).into()],
             )),
 
             Self::TupleElementTypeMismatch {

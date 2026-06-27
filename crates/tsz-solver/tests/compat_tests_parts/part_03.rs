@@ -1329,6 +1329,82 @@ fn test_explain_variadic_source_target_requires_more() {
     }
 }
 
+/// An unbounded array source (`number[]`) assigned to a closed tuple that
+/// requires more elements reports the target's required length and the
+/// "source may have fewer" wording (`TS2620`, `TargetRequiresMore`), exactly
+/// like a variadic-tuple source. (#14816)
+#[test]
+fn test_explain_array_source_target_requires_more() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let source = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![
+        TupleElement::fixed(TypeId::NUMBER),
+        TupleElement::fixed(TypeId::NUMBER),
+        TupleElement::fixed(TypeId::NUMBER),
+    ]);
+
+    assert!(!checker.is_assignable(source, target));
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::TupleArityMismatch(crate::TupleArity::TargetRequiresMore {
+            target_min,
+        })) => assert_eq!(target_min, 3),
+        other => panic!("expected TargetRequiresMore {{3}}, got: {other:?}"),
+    }
+}
+
+/// A `readonly` array source reaches the same arity reason as a mutable array
+/// source — the explain branch peels the `readonly` wrapper. The target is also
+/// `readonly` so the readonly-to-mutable short-circuit (TS4104) does not
+/// pre-empt the arity reason. (#14816)
+#[test]
+fn test_explain_readonly_array_source_target_requires_more() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let source = interner.readonly_array(TypeId::NUMBER);
+    let target = interner.readonly_tuple(vec![
+        TupleElement::fixed(TypeId::NUMBER),
+        TupleElement::fixed(TypeId::NUMBER),
+    ]);
+
+    assert!(!checker.is_assignable(source, target));
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::TupleArityMismatch(crate::TupleArity::TargetRequiresMore {
+            target_min,
+        })) => assert_eq!(target_min, 2),
+        other => panic!("expected TargetRequiresMore {{2}}, got: {other:?}"),
+    }
+}
+
+/// An unbounded array source against a tuple with a *leading required* element
+/// and a trailing rest (`[string, ...number[]]`) passes the closed-target
+/// arity gate (the target carries a rest), so tsc instead reports that the
+/// source provides no match for the required element at position 0
+/// (`TS2623`, `SourceProvidesNoMatch { variadic: false }`). (#14816)
+#[test]
+fn test_explain_array_source_no_match_required_element() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let number_rest = interner.array(TypeId::NUMBER);
+    let source = interner.array(TypeId::NUMBER);
+    let target = interner.tuple(vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement::rest(number_rest),
+    ]);
+
+    assert!(!checker.is_assignable(source, target));
+    match checker.explain_failure(source, target) {
+        Some(SubtypeFailureReason::SourceProvidesNoMatch { position, variadic }) => {
+            assert_eq!(position, 0);
+            assert!(!variadic, "a concrete required element reports TS2623, not TS2624");
+        }
+        other => panic!("expected SourceProvidesNoMatch {{0, false}}, got: {other:?}"),
+    }
+}
+
 // ===========================================================================
 // Tests for unknown -> unknown-like union assignability
 // (tsc's `isUnknownLikeUnionType`: a union containing `{}`, `null`, AND

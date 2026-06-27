@@ -219,6 +219,9 @@ path = "tests/tuple_argument_mismatch_elaboration_tests.rs"
 name = "tuple_call_argument_elaboration_tests"
 path = "tests/tuple_call_argument_elaboration_tests.rs"
 [[test]]
+name = "array_source_tuple_target_elaboration_tests"
+path = "tests/array_source_tuple_target_elaboration_tests.rs"
+[[test]]
 name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"
 [[test]]

@@ -455,6 +455,7 @@ impl<'a> CheckerState<'a> {
                     | SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
                     | SubtypeFailureReason::TupleElementMismatch { .. }
                     | SubtypeFailureReason::TupleArityMismatch(_)
+                    | SubtypeFailureReason::SourceProvidesNoMatch { .. }
                     | SubtypeFailureReason::IndexSignatureMismatch { .. }
             ),
         }
@@ -1111,6 +1112,44 @@ impl<'a> CheckerState<'a> {
                     diag
                 } else {
                     Diagnostic::error(file_name, start, length, arity_text, arity_code)
+                }
+            }
+            SubtypeFailureReason::SourceProvidesNoMatch { position, variadic } => {
+                // An unbounded array source provides no value for a required
+                // (`TS2623`) or variadic (`TS2624`) tuple slot whose target
+                // carries a rest element. tsc keeps the `TS2322`/`TS2345`
+                // headline and attaches the position line as the elaboration,
+                // matching the sibling arity rendering above.
+                let (no_match_message, no_match_code) = if *variadic {
+                    (
+                        diagnostic_messages::SOURCE_PROVIDES_NO_MATCH_FOR_VARIADIC_ELEMENT_AT_POSITION_IN_TARGET,
+                        diagnostic_codes::SOURCE_PROVIDES_NO_MATCH_FOR_VARIADIC_ELEMENT_AT_POSITION_IN_TARGET,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::SOURCE_PROVIDES_NO_MATCH_FOR_REQUIRED_ELEMENT_AT_POSITION_IN_TARGET,
+                        diagnostic_codes::SOURCE_PROVIDES_NO_MATCH_FOR_REQUIRED_ELEMENT_AT_POSITION_IN_TARGET,
+                    )
+                };
+                let no_match_text = format_message(no_match_message, &[&position.to_string()]);
+                if depth == 0 {
+                    let (source_str, target_str) =
+                        self.format_top_level_assignability_message_types_at(source, target, idx);
+                    let base = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                    let mut diag = Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        base,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                    diag.push_elaboration(no_match_text, no_match_code, 0);
+                    diag
+                } else {
+                    Diagnostic::error(file_name, start, length, no_match_text, no_match_code)
                 }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
