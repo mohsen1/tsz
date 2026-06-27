@@ -1805,13 +1805,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check properties (if any), excluding private fields.
-        // Sort by name (Atom) to match the merge scan's expectation in check_object_subtype.
-        //
-        // When both callables have construct signatures (class constructors), skip the
-        // `prototype` property. Its type is the instance type which is already validated
-        // by construct signature compatibility — checking it separately can fail when
-        // the target has generic type params that were erased only at the signature level.
+        // Check properties (excluding private `#` fields), sorted by name to match
+        // check_object_subtype's merge scan. When both callables have construct
+        // signatures, skip `prototype` (validated by construct-signature compatibility;
+        // checking it separately fails under signature-level generic erasure).
         let has_construct_sigs =
             !source.construct_signatures.is_empty() && !target.construct_signatures.is_empty();
         let should_skip_prop = |name| {
@@ -1877,19 +1874,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             symbol_index: None,
             symbol: target.symbol,
         };
-        // Both shapes are the property part of callables whose call/construct
-        // signatures already matched above. tsc's `isWeakType` returns false for
-        // any type with a call or construct signature, so the weak-type "no common
-        // property" rule must not fire on these stripped property shapes (e.g.
-        // `{ (): void; extra: number }` <: `{ (): void; name?: string }`). Mark the
-        // direct level so `check_object_subtype` suppresses it; nested property-value
-        // comparisons re-enable it through `in_property_check`.
-        let prev_in_callable_property_check = self.in_callable_property_check;
+        // Weak-type rule off for this stripped property part: a callable target is never weak in tsc. See `in_callable_property_check`.
+        let prev_callable = self.in_callable_property_check;
         self.in_callable_property_check = true;
         let props_ok = self
             .check_object_subtype(&source_shape, None, None, &target_shape, None)
             .is_true();
-        self.in_callable_property_check = prev_in_callable_property_check;
+        self.in_callable_property_check = prev_callable;
         if !props_ok {
             return SubtypeResult::False;
         }
