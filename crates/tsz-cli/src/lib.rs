@@ -56,6 +56,9 @@ mod fs_tests;
 #[path = "../tests/generic_interface_bivariant_param_relation_tests.rs"]
 mod generic_interface_bivariant_param_relation_tests;
 #[cfg(test)]
+#[path = "../tests/global_this_type_member_cli_tests.rs"]
+mod global_this_type_member_cli_tests;
+#[cfg(test)]
 #[path = "../tests/imported_ambient_const_enum_ts2748_cli_tests.rs"]
 mod imported_ambient_const_enum_ts2748_cli_tests;
 #[cfg(test)]
