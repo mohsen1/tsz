@@ -607,37 +607,36 @@ jobs:
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       GITHUB_SHA: ${{ github.sha }}
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      # The dist artifact unblocks conformance/emit/fourslash, so PRs avoid
-      # target-dir uploads. Trusted main runs publish cargo-target-deps only
-      # when Cargo.lock/profile inputs changed and the gate intentionally ran
-      # main CI to refresh the exact shared cache key.
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: ${{ needs.gate.outputs.rust_cache_refresh == 'true' && '1' || '0' }}
-      # Opt-in, default-off broader-refresh for #13747 (constraint: #13733 OOM).
-      # When the `TSZ_CI_REFRESH_WORKSPACE_RLIBS` repo variable is set to '1',
-      # green main builds republish the workspace-rlib (dist-fast) blob on EVERY
-      # source-only push, not only on Cargo.lock/profile changes, so PR
-      # dist-binaries restores a fresher incremental base. Unset → '0' → no
-      # behavior change. gcp-cache.sh bounds this: dist-fast blob only, same
-      # cache key, gated by the MemAvailable cache-save preflight. Flip only
-      # after reading the `cargo-target-deps staleness` marker in dist-binaries
-      # logs and confirming main cache-save RSS headroom.
-      TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS: ${{ vars.TSZ_CI_REFRESH_WORKSPACE_RLIBS || '0' }}
-      # Keep artifact production independent from sccache service hangs. The
-      # dist-fast build is short enough without sccache, and all harness suites
-      # are blocked until this artifact uploads.
-      TSZ_CI_DISABLE_SCCACHE: "1"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Build dist-fast binaries
-        run: scripts/ci/github-suite.sh dist-binaries
-      - name: Pack dist-fast binaries
-        run: tar -C .target/dist-fast -cf dist-fast-binaries.tar tsz tsz-lsp tsz-server tsz-conformance generate-tsc-cache
+      - name: Submit dist-fast build to Cloud Build pool
+        env:
+          # The highmem build normally completes in minutes; keep the timeout
+          # below the job timeout so the GitHub runner has time to download and
+          # publish the dist artifact.
+          CLOUDBUILD_SUBMIT_TIMEOUT: 35m
+        run: |
+          set -euo pipefail
+          dist_artifact_uri="gs://tsz-ci_cloudbuild/dist-fast-binaries/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}.tar"
+          echo "DIST_FAST_ARTIFACT_URI=${dist_artifact_uri}" >> "$GITHUB_ENV"
+          scripts/ci/cloudbuild-submit.sh \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --polling-interval=10 \
+            --config=scripts/cloudbuild/cloudbuild-dist-binaries.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_GITHUB_SHA="${GITHUB_SHA}",_DIST_FAST_ARTIFACT_URI="${dist_artifact_uri}" \
+            .
+      - name: Download dist-fast binaries
+        run: |
+          set -euo pipefail
+          gcloud config set pass_credentials_to_gsutil true >/dev/null
+          gsutil -q cp "$DIST_FAST_ARTIFACT_URI" dist-fast-binaries.tar
       - name: Upload dist-fast binaries
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -646,6 +645,9 @@ jobs:
           retention-days: 1
           if-no-files-found: error
           compression-level: 1
+      - name: Remove staged dist-fast binaries
+        if: always() && env.DIST_FAST_ARTIFACT_URI != ''
+        run: gsutil -q rm "$DIST_FAST_ARTIFACT_URI" || true
 
   lsp-e2e:
     name: lsp-e2e
