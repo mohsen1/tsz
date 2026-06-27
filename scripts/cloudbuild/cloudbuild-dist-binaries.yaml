@@ -1,0 +1,93 @@
+# Cloud Build config for the required dist-fast artifact.
+#
+# `dist-binaries` used to compile directly on the 32 GiB Cloud Run-backed
+# GitHub runner. During cache outages that runner rebuilt from a cold target dir
+# and was SIGKILLed before GitHub could persist step logs, leaving the required
+# `CI Summary` red with only the no-log timeout signature (#14948). Keep the
+# GitHub job as the artifact publisher, but do the Rust compile on the same
+# 128 GiB highmem pool used by the linker-heavy unit exceptions.
+
+substitutions:
+  _DIST_FAST_ARTIFACT_URI: gs://tsz-ci_cloudbuild/dist-fast-binaries/manual-dist-fast-binaries.tar
+  _GITHUB_SHA: unknown
+
+steps:
+  - id: dist-binaries
+    name: gcr.io/google.com/cloudsdktool/google-cloud-cli:slim
+    env:
+      - 'CARGO_BUILD_JOBS=32'
+      - 'CARGO_INCREMENTAL=0'
+      - 'RUST_MIN_STACK=16777216'
+      - 'CARGO_TERM_COLOR=always'
+      - 'CI=true'
+      - 'GITHUB_ACTIONS=true'
+      - 'GITHUB_WORKSPACE=/home/runner/_work/tsz/tsz'
+      - 'TSZ_CI_SUITE=dist-binaries'
+      - '_TSZ_CI_SUITE=dist-binaries'
+      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_DISABLE_SCCACHE=1'
+      - 'TSZ_CI_CACHE_SAVE=0'
+      - 'TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0'
+      - 'TSZ_CI_CACHE_REFRESH_WORKSPACE_RLIBS=0'
+      - 'TSZ_CI_CACHE_BUCKET=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache'
+      - '_TSZ_CI_CACHE_BUCKET=gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache'
+      - 'GITHUB_SHA=${_GITHUB_SHA}'
+      - 'COMMIT_SHA=${_GITHUB_SHA}'
+      - '_DIST_FAST_ARTIFACT_URI=${_DIST_FAST_ARTIFACT_URI}'
+    script: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      export PATH="$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
+
+      apt-get update -qq
+      apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        pkg-config \
+        tar
+
+      if ! command -v cargo >/dev/null 2>&1; then
+        curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+      fi
+
+      cargo --version
+      rustc --version
+      gcloud config set pass_credentials_to_gsutil true >/dev/null
+
+      # `dist-binaries` artifacts are consumed by GitHub Actions shards. Build
+      # from the same workspace path those shards use so compile-time path
+      # fallbacks (for example `CARGO_MANIFEST_DIR`) do not point at Cloud
+      # Build-only `/workspace` paths when the binaries run in Actions.
+      mkdir -p "$GITHUB_WORKSPACE" /home/runner/_work/_temp
+      tar -C /workspace -cf - . | tar -C "$GITHUB_WORKSPACE" -xf -
+      cd "$GITHUB_WORKSPACE"
+
+      # Cloud Build source archives do not include `.git`. Create a cheap
+      # source-only commit before cache restore so later git probes do not run
+      # `git add -A` across restored multi-GB target/cache directories.
+      git init --quiet
+      git config user.email "cloud-build@tsz-ci.iam.gserviceaccount.com"
+      git config user.name "Cloud Build"
+      git add -A
+      git commit -q -m "cloud build source snapshot"
+
+      scripts/ci/github-suite.sh dist-binaries
+      tar -C .target/dist-fast -cf dist-fast-binaries.tar \
+        tsz \
+        tsz-lsp \
+        tsz-server \
+        tsz-conformance \
+        generate-tsc-cache
+      gsutil -q cp dist-fast-binaries.tar "${_DIST_FAST_ARTIFACT_URI}"
+
+options:
+  pool:
+    name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool-highmem
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 2700s
