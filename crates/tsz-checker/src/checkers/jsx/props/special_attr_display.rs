@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
     /// `LegacyRef<T> | undefined`) rather than the evaluated/expanded structural
     /// form. Returns `None` when the property is absent.
     fn jsx_lookup_declared_property_type(&mut self, ty: TypeId, prop_name: &str) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::property_access::PropertyAccessResult;
         match self.resolve_property_access_with_env(ty, prop_name) {
             PropertyAccessResult::Success { type_id, .. }
             | PropertyAccessResult::PossiblyNullOrUndefined {
