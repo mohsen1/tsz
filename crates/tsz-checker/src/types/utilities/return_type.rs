@@ -760,7 +760,43 @@ impl<'a> CheckerState<'a> {
         // the function itself is a `const` initializer.
         let prev_preserve_logical = self.ctx.preserve_logical_operand_literals;
         self.ctx.preserve_logical_operand_literals = false;
+        // A named function/method/accessor's signature is a property of its
+        // *declaration*, independent of whichever expression first forces it to
+        // be computed. Its `getReturnTypeFromBody` literal-widening policy is
+        // therefore decided only from *this* declaration's context (a contextual
+        // `return_context`, a `const` assertion, or a `satisfies` operand) — never
+        // inherited from the outer expression that happened to trigger the
+        // inference. `preserve_literal_types` is exactly such an outer-expression
+        // flag: `return_expression_type` sets it true while typing a non-function
+        // return expression such as `return helper()`. Resolving that call forces
+        // `helper`'s signature to be computed *under* the leaked flag, so a fresh
+        // literal return in `helper` fails to widen (`(): 1` instead of
+        // `(): number`). The leak only surfaces for declarations whose signature
+        // is computed lazily during another body's inference — e.g. a
+        // non-exported namespace-local function reached only through a sibling
+        // call — because top-level and exported declarations are resolved (and
+        // widened) independently first.
+        //
+        // Function expressions / arrows are NOT reset here: they are typed inline
+        // within an expression's contextual flow where the ambient flag is
+        // load-bearing (e.g. an `async () => makePromise()` argument typed under
+        // argument inference). Their nested-widening is already handled at the
+        // function-expression branch of `return_expression_type`.
+        let function_is_named_declaration = self.ctx.arena.get(function_idx).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+            )
+        });
+        let prev_preserve_literals = self.ctx.preserve_literal_types;
+        if function_is_named_declaration {
+            self.ctx.preserve_literal_types = false;
+        }
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
+        self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
 
         // Direct self-recursive functions with no base case return `never`.
