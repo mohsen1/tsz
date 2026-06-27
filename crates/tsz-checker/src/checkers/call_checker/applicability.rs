@@ -62,7 +62,22 @@ impl<'a> CheckerState<'a> {
         let spread_type = self.evaluate_type_with_env(spread_type);
         let spread_type = self.resolve_type_for_property_access(spread_type);
         let spread_type = self.resolve_lazy_type(spread_type);
-        self.evaluate_application_type(spread_type)
+        let spread_type = self.evaluate_application_type(spread_type);
+        // A deferred conditional spread (`...v` where `v: T extends U ? X : Y`)
+        // is not itself array/tuple-shaped, so the spread expansion cannot
+        // extract its iteration element type and would relate the whole
+        // conditional to the parameter (false TS2345). Reduce it to its
+        // branch-union base constraint (`X | Y`, tsc's getBaseConstraintOfType
+        // of a conditional) so the element type is recoverable. (#14946)
+        if let Some(branch_union) =
+            crate::query_boundaries::conditional_constraints::conditional_branch_union_constraint(
+                self.ctx.types,
+                spread_type,
+            )
+        {
+            return branch_union;
+        }
+        spread_type
     }
 
     /// Const object/array literal bindings do not benefit from flow narrowing at
