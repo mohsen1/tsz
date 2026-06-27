@@ -89,3 +89,82 @@ fn new_dot_target_correct_spelling_no_ts17012() {
         "No TS17012 for correctly-spelled new.target: {diagnostics:?}",
     );
 }
+
+/// TS17013's `{0}` placeholder must be substituted with the canonical
+/// meta-property text (`new.target`), not leaked verbatim (#14840).
+#[test]
+fn ts17013_top_level_new_target_substitutes_meta_property_name() {
+    let source = "console.log(new.target);";
+    let diagnostics = check_source_diagnostics(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| {
+            d.code
+                == diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP
+        })
+        .expect("expected TS17013 at top level");
+    assert!(
+        diag.message_text.contains("'new.target'"),
+        "TS17013 must name the meta-property: {diag:?}",
+    );
+    assert!(
+        !diag.message_text.contains("{0}"),
+        "TS17013 must not leak the raw placeholder: {diag:?}",
+    );
+}
+
+/// tsc reports the *canonical* `new.target` even for a misspelled name like
+/// `new.foo` (its `checkNewTargetMetaProperty` hardcodes `"new.target"`).
+#[test]
+fn ts17013_misspelled_new_meta_property_still_names_new_target() {
+    let source = "const x = new.foo;";
+    let diagnostics = check_source_diagnostics(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| {
+            d.code
+                == diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP
+        })
+        .expect("expected TS17013 for new.foo at top level");
+    assert!(
+        diag.message_text.contains("'new.target'") && !diag.message_text.contains("{0}"),
+        "TS17013 for a misspelled meta-property must still name 'new.target': {diag:?}",
+    );
+}
+
+/// A `new.target` in a non-function owner (here a class field initializer) hits
+/// the same invalid-context branch and must substitute the placeholder too.
+#[test]
+fn ts17013_in_class_field_initializer_substitutes_meta_property_name() {
+    let source = "class C { f = new.target; }";
+    let diagnostics = check_source_diagnostics(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| {
+            d.code
+                == diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP
+        })
+        .expect("expected TS17013 in class field initializer");
+    assert!(
+        diag.message_text.contains("'new.target'") && !diag.message_text.contains("{0}"),
+        "TS17013 in a field initializer must name 'new.target': {diag:?}",
+    );
+}
+
+/// `new.target` inside a function body is valid: no TS17013.
+#[test]
+fn ts17013_not_emitted_for_new_target_in_function_body() {
+    let source = "function f() { return new.target; }";
+    let diagnostics = check_source_diagnostics(source);
+    let count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code
+                == diagnostic_codes::META_PROPERTY_IS_ONLY_ALLOWED_IN_THE_BODY_OF_A_FUNCTION_DECLARATION_FUNCTION_EXP
+        })
+        .count();
+    assert_eq!(
+        count, 0,
+        "No TS17013 for new.target in a function body: {diagnostics:?}",
+    );
+}
