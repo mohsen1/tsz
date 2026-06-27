@@ -1638,6 +1638,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if app.args.is_empty() {
             return original_type_id;
         }
+        // An application over an error-like base collapses to that base.
+        // Applying type arguments to the `any`/`error` type (or to an
+        // `UnresolvedTypeName` the resolver could not bind to any `DefId`)
+        // yields that same type, so the relation layer treats the result as
+        // trivially assignable instead of rejecting a live opaque application
+        // (issue #14747). `is_error_type` covers `error`/`UnresolvedTypeName`
+        // through application bases; `any` is checked separately because it is
+        // not an error type. `UnresolvedTypeName` residue that DID resolve
+        // through the merged binder graph never reaches here: it took the
+        // `resolve_application_def_id` path with a real `DefId`.
+        if app.base == TypeId::ANY || crate::visitor::is_error_type(self.interner(), app.base) {
+            return app.base;
+        }
         let base_is_callable = matches!(
             self.interner().lookup(app.base),
             Some(TypeData::Callable(_))
