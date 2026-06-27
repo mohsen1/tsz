@@ -282,6 +282,18 @@ pub struct QueryCache<'a> {
     /// When present, local cache misses fall through to the shared `DashMap` cache,
     /// and local cache inserts are also written to the shared cache.
     shared: Option<&'a SharedQueryCache>,
+    /// Optional shared `DefinitionStore` for cross-arena declaration identity
+    /// (issue #14344).
+    ///
+    /// The `QueryCache` is the `&dyn QueryDatabase` resolver used by generic-call
+    /// inference (`InferenceContext::with_query_db`). Without the store its
+    /// `DefId`-keyed `TypeResolver` methods (`def_to_symbol_id`, `get_def_kind`,
+    /// `get_def_name`, `canonical_def_id`) return trait defaults, so the
+    /// `shared_application_base_def_id` cross-arena base unification that depends
+    /// on them stays dead at the `infer_applications` base-differ site. When
+    /// wired (the production project path), those methods resolve through this
+    /// store. Read-only; never mutated through the `QueryCache`.
+    definition_store: Option<&'a crate::def::DefinitionStore>,
 }
 
 impl<'a> QueryCache<'a> {
@@ -336,7 +348,18 @@ impl<'a> QueryCache<'a> {
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
             shared,
+            definition_store: None,
         }
+    }
+
+    /// Attach a shared `DefinitionStore` so this `QueryCache`'s `DefId`-keyed
+    /// `TypeResolver` methods resolve, enabling cross-arena base unification in
+    /// generic-call inference (issue #14344). Read-only; the store is never
+    /// mutated through here.
+    #[must_use]
+    pub const fn with_definition_store(mut self, store: &'a crate::def::DefinitionStore) -> Self {
+        self.definition_store = Some(store);
+        self
     }
 
     pub fn clear(&self) {
@@ -1280,6 +1303,49 @@ impl TypeResolver for QueryCache<'_> {
 
     fn get_readonly_array_base_type(&self) -> Option<TypeId> {
         self.interner.get_readonly_array_base_type()
+    }
+
+    /// Resolve `DefId` identity/metadata through the attached `DefinitionStore`.
+    ///
+    /// The `QueryCache` is the `&dyn QueryDatabase` resolver used by generic-call
+    /// inference. Historically it had NO `DefinitionStore`, so these `DefId`-keyed
+    /// resolver methods silently returned trait defaults in inference: the
+    /// `shared_application_base_def_id` cross-arena base unification (via
+    /// `defs_are_equivalent` -> `def_to_symbol_id` `SymbolId` equality) and the
+    /// variance-computation paths that depend on them were dead, leaving
+    /// cross-arena generic-call inference unable to pair type-args (issue #14344;
+    /// the fp-ts `unknown`-widening FP family). Wiring the store re-enables them.
+    ///
+    /// Gated behind `TSZ_XARENA_BASE_DECL` (default-OFF) so flag-OFF stays
+    /// byte-parity with the historical store-less behavior until the change is
+    /// proven on full conformance.
+    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
+        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
+            return None;
+        }
+        self.definition_store?.get_symbol_id(def_id).map(SymbolId)
+    }
+
+    fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
+        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
+            return None;
+        }
+        self.definition_store?.get_kind(def_id)
+    }
+
+    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
+        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
+            return None;
+        }
+        self.definition_store?.get(def_id).map(|info| info.name)
+    }
+
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
+            return def_id;
+        }
+        self.definition_store
+            .map_or(def_id, |store| store.canonical_def_id(def_id))
     }
 }
 
