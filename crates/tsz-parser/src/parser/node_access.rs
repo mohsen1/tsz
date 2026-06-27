@@ -657,6 +657,21 @@ impl NodeArenaInner {
         (self.get_variable_declaration_flags(node_idx) & node_flags::CONST) != 0
     }
 
+    /// Returns `true` if a `VARIABLE_DECLARATION` node is `const`-like, i.e.
+    /// declared with `const`, `using`, or `await using`.
+    ///
+    /// Mirrors tsc's `isVarConstLike`: all three forms share immutable,
+    /// must-initialize binding semantics, so grammar checks such as the ambient
+    /// const-initializer restriction (TS1254) apply uniformly. The `CONST` bit
+    /// alone is insufficient — plain `using` sets only the `USING` bit (4),
+    /// while `await using` (6 = `CONST | USING`) already carries `CONST`.
+    #[must_use]
+    pub fn is_var_const_like_declaration(&self, node_idx: NodeIndex) -> bool {
+        use super::flags::node_flags;
+        (self.get_variable_declaration_flags(node_idx) & (node_flags::CONST | node_flags::USING))
+            != 0
+    }
+
     /// Get accessor data (get/set accessor).
     #[inline]
     #[must_use]
