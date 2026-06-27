@@ -584,33 +584,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         continue;
                     }
                     let var_info = &member_vars[info.member_var_index];
-                    let previous_extra_initializers = if self.use_static_blocks {
-                        self.previous_decorated_element_extra_initializers(
-                            decorated_members,
-                            member_vars,
-                            info.member_var_index,
-                        )
-                        .or_else(|| {
-                            decorated_members[info.member_var_index]
-                                .is_static
-                                .then_some(*static_extra_initializers_var)
-                                .filter(|_| has_static_method)
-                        })
-                    } else {
-                        self.previous_decorated_element_extra_initializers(
-                            decorated_members,
-                            member_vars,
-                            info.member_var_index,
-                        )
-                        .or_else(|| {
-                            self.previous_auto_accessor_extra_initializers(
-                                &auto_accessor_infos,
-                                decorated_members,
-                                member_vars,
-                                info,
-                            )
-                        })
-                    };
+                    let previous_extra_initializers = self.preceding_extra_initializers_to_flush(
+                        decorated_members,
+                        member_vars,
+                        info.member_var_index,
+                        has_instance_method,
+                        has_static_method,
+                        instance_extra_initializers_var,
+                        static_extra_initializers_var,
+                    );
                     self.emit_decorated_auto_accessor_member(
                         member,
                         info,
@@ -642,23 +624,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         .as_deref()
                         .unwrap_or("_initializers");
 
-                    // Group by static/instance for chaining
-                    let same_group: Vec<usize> = field_infos
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, f)| {
-                            decorated_members[f.member_var_index].is_static == is_static
-                        })
-                        .map(|(idx, _)| idx)
-                        .collect();
-                    let group_idx = same_group
-                        .iter()
-                        .position(|&idx| {
-                            decorated_members[field_infos[idx].member_var_index].member_idx
-                                == member_idx
-                        })
-                        .unwrap_or(0);
-
                     let init_arg = if fi.initializer_text.is_empty() {
                         ", void 0".to_string()
                     } else {
@@ -666,28 +631,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     };
 
                     let init_receiver = if is_static { *_class_alias } else { "this" };
-                    let group_extra_initializers = if is_static {
-                        has_static_method.then_some(*static_extra_initializers_var)
-                    } else {
-                        has_instance_method.then_some(*instance_extra_initializers_var)
-                    };
-                    let run_init_expr = if group_idx == 0 {
-                        if let Some(extra_var) = group_extra_initializers {
-                            format!(
-                                "({run_init}({init_receiver}, {extra_var}), {run_init}({init_receiver}, {init_var}{init_arg}))"
-                            )
-                        } else {
-                            format!("{run_init}({init_receiver}, {init_var}{init_arg})")
-                        }
-                    } else {
-                        let prev_fi = &field_infos[same_group[group_idx - 1]];
-                        let prev_extra = member_vars[prev_fi.member_var_index]
-                            .extra_initializers_var
-                            .as_deref()
-                            .unwrap_or("_extra");
+                    // Flush the immediately-preceding decorated instance/static
+                    // field-or-accessor's extra initializers before this field's
+                    // value; the first member in the group flushes the shared
+                    // `_instanceExtraInitializers` / `_staticExtraInitializers`.
+                    let run_init_expr = if let Some(prev_extra) = self
+                        .preceding_extra_initializers_to_flush(
+                            decorated_members,
+                            member_vars,
+                            fi.member_var_index,
+                            has_instance_method,
+                            has_static_method,
+                            instance_extra_initializers_var,
+                            static_extra_initializers_var,
+                        ) {
                         format!(
                             "({run_init}({init_receiver}, {prev_extra}), {run_init}({init_receiver}, {init_var}{init_arg}))"
                         )
+                    } else {
+                        format!("{run_init}({init_receiver}, {init_var}{init_arg})")
                     };
 
                     self.push_leading_member_comment(member_idx, indent, out);

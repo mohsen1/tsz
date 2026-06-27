@@ -261,6 +261,9 @@ path = "tests/ts2371_binding_pattern_default_tests.rs"
 name = "return_type_literal_union_widening_tests"
 path = "tests/return_type_literal_union_widening_tests.rs"
 [[test]]
+name = "namespace_local_inferred_return_widening_tests"
+path = "tests/namespace_local_inferred_return_widening_tests.rs"
+[[test]]
 name = "block_body_callback_literal_widening_tests"
 path = "tests/block_body_callback_literal_widening_tests.rs"
 [[test]]
@@ -439,6 +442,9 @@ path = "tests/await_structural_thenable_object_literal_tests.rs"
 [[test]]
 name = "instanceof_loop_generic_any_fill_tests"
 path = "tests/instanceof_loop_generic_any_fill_tests.rs"
+[[test]]
+name = "weak_callable_target_assignability_tests"
+path = "tests/weak_callable_target_assignability_tests.rs"
 [[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"

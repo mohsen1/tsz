@@ -858,6 +858,7 @@ impl LspServer {
             None => return,
         };
 
+        let mut tsconfig_changed = false;
         for change in changes {
             let uri = match change.get("uri").and_then(|u| u.as_str()) {
                 Some(u) => u,
@@ -865,6 +866,10 @@ impl LspServer {
             };
             let change_type = change.get("type").and_then(|t| t.as_u64()).unwrap_or(0);
             let file_name = Self::uri_to_file_name(uri);
+
+            if file_name.ends_with("tsconfig.json") || file_name.ends_with("jsconfig.json") {
+                tsconfig_changed = true;
+            }
 
             match change_type {
                 1 => {
@@ -898,6 +903,17 @@ impl LspServer {
                 }
                 _ => {}
             }
+        }
+
+        // A tsconfig edit can change the effective `target`/`lib`, which governs
+        // the installed standard library. Re-read configs and refresh the lib
+        // set so global resolution tracks the new lib level.
+        if tsconfig_changed {
+            let roots: Vec<String> = self.project.workspace_roots().to_vec();
+            for root in &roots {
+                self.project.load_tsconfig(root);
+            }
+            self.refresh_libs();
         }
 
         self.maybe_evict_under_memory_pressure();
@@ -1110,6 +1126,8 @@ impl LspServer {
                 for root in &roots {
                     self.project.load_tsconfig(root);
                 }
+                // Reloaded tsconfig may change the effective lib level.
+                self.refresh_libs();
                 let discovered = self.project.discover_files(&roots);
                 self.show_message(
                     3, // Info
