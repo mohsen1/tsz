@@ -185,3 +185,15 @@ fn inherited_member_name_is_not_a_self_reference() {
          class Tango extends Sierra { y: typeof this.x; }",
     );
 }
+
+#[test]
+fn this_indexed_access_chain_is_not_a_self_reference() {
+    // `this[K]` indexes the polymorphic `this` type (a type variable), so `tsc`
+    // produces a deferred indexed-access type and never resolves it into the
+    // member: the mutually-keyed chain stays clean (no TS2502), unlike a
+    // concrete `Class[K]` index. Matches conformance
+    // `circularIndexedAccessErrors.ts` (class `C2`).
+    assert_no_ts2502("class Uniform { x: this[\"y\"]; y: this[\"z\"]; z: this[\"x\"]; }");
+    // Even a direct self-keyed `this[K]` is deferred and clean.
+    assert_no_ts2502("class Victor { x: this[\"x\"]; }");
+}

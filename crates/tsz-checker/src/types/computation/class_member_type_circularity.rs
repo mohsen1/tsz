@@ -3,8 +3,8 @@
 //! `tsc` reports TS2502 when a class property's declared type annotation
 //! resolves, directly or indirectly, back to that property's own type. The
 //! self-reference travels through a `typeof Class.member` / `typeof this.member`
-//! query, or a `(typeof Class)[K]` / `Class[K]` / `this[K]` indexed access whose
-//! key resolves to a member:
+//! query, or a `(typeof Class)[K]` / `Class[K]` indexed access on a concrete
+//! object type whose key resolves to a member:
 //!
 //! ```ts
 //! declare const s: unique symbol;
@@ -253,8 +253,10 @@ impl CheckerState<'_> {
         Some((target_static, MemberKey::Named(name)))
     }
 
-    /// `(typeof Class)[K]` / `Class[K]` / `this[K]` -> the member identified by
-    /// `K` on the side selected by the object type.
+    /// `(typeof Class)[K]` / `Class[K]` -> the member identified by `K` on the
+    /// side selected by the object type. A `this[K]` access is a deferred
+    /// indexed access (object type is the `this` type variable) and is not a
+    /// self-reference, matching `tsc`.
     fn indexed_access_member_reference(
         &self,
         object_idx: NodeIndex,
@@ -269,12 +271,22 @@ impl CheckerState<'_> {
     }
 
     /// Which side of the enclosing class an indexed-access object type denotes:
-    /// `typeof Class` -> static, the class instance type reference -> instance,
-    /// `this` -> the referencing member's own side. `None` for any other object.
+    /// `typeof Class` -> static, the class instance type reference -> instance.
+    /// `None` for any other object.
+    ///
+    /// A `this[K]` access is intentionally *not* a self-reference edge: the
+    /// object type is the polymorphic `this` type, a type variable, so `tsc`
+    /// produces a **deferred** indexed-access type and never resolves it into
+    /// the member during type-annotation resolution. It therefore reports no
+    /// TS2502 for `this[K]` (e.g. the mutually-keyed
+    /// `x: this["y"]; y: this["z"]; z: this["x"]` chain stays clean), unlike a
+    /// concrete `Class[K]` / `(typeof Class)[K]` index, which resolves eagerly.
+    /// The eager `typeof this.member` query is still caught via
+    /// `type_query_member_reference`.
     fn indexed_object_static_side(
         &self,
         object_idx: NodeIndex,
-        current_is_static: bool,
+        _current_is_static: bool,
         class_sym: Option<SymbolId>,
     ) -> Option<bool> {
         let object_idx = crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type(
@@ -295,10 +307,6 @@ impl CheckerState<'_> {
             && self.identifier_resolves_to_class(type_ref.type_name, class_sym)
         {
             return Some(false);
-        }
-
-        if node.kind == syntax_kind_ext::THIS_TYPE {
-            return Some(current_is_static);
         }
 
         None
