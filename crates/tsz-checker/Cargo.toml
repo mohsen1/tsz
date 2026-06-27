@@ -827,6 +827,9 @@ path = "tests/ts2322_empty_array_assertion_source_display_tests.rs"
 name = "ts2322_pair_disambiguation_widening_tests"
 path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
 [[test]]
+name = "spread_deferred_conditional_apparent_tests"
+path = "tests/spread_deferred_conditional_apparent_tests.rs"
+[[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 [[test]]
