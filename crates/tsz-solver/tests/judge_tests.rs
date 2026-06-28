@@ -262,6 +262,49 @@ fn test_caching() {
     assert_eq!(judge.cache_statistics().subtype_entries, 1);
 }
 
+#[test]
+fn test_evaluate_caches_stable_result() {
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
+
+    let no_infer_number = interner.no_infer(TypeId::NUMBER);
+
+    assert_eq!(judge.cache_statistics().eval_entries, 0);
+    assert_eq!(judge.evaluate(no_infer_number), TypeId::NUMBER);
+
+    let populated = judge.cache_statistics();
+    assert_eq!(populated.eval_entries, 1);
+
+    assert_eq!(judge.evaluate(no_infer_number), TypeId::NUMBER);
+    assert_eq!(
+        judge.cache_statistics().eval_entries,
+        populated.eval_entries
+    );
+}
+
+#[test]
+fn test_non_stable_evaluation_result_is_not_cached() {
+    let setup = JudgeSetup::new();
+    let interner = &setup.interner;
+    let judge = setup.judge();
+
+    let no_infer_string = interner.no_infer(TypeId::STRING);
+
+    assert_eq!(
+        judge.record_evaluation_result(no_infer_string, TypeId::ERROR, false),
+        TypeId::ERROR
+    );
+    assert_eq!(judge.cache_statistics().eval_entries, 0);
+
+    assert_eq!(
+        judge.record_evaluation_result(no_infer_string, TypeId::STRING, true),
+        TypeId::STRING
+    );
+    assert_eq!(judge.cache_statistics().eval_entries, 1);
+    assert_eq!(judge.evaluate(no_infer_string), TypeId::STRING);
+}
+
 // =============================================================================
 // Primitive Subtyping Tests
 // =============================================================================

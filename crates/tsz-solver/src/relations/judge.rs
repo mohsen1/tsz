@@ -50,6 +50,7 @@
 
 use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::request::EvaluationRequest;
 use crate::objects::index_signatures::IndexKind;
 use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{
@@ -290,6 +291,13 @@ impl<'a> DefaultJudge<'a> {
         }
     }
 
+    fn record_evaluation_result(&self, input: TypeId, result: TypeId, stable: bool) -> TypeId {
+        if stable {
+            self.eval_cache.borrow_mut().insert(input, result);
+        }
+        result
+    }
+
     /// Get the underlying database.
     pub fn db(&self) -> &'a dyn TypeDatabase {
         self.db
@@ -344,12 +352,10 @@ impl<'a> DefaultJudge<'a> {
 
         // Create evaluator and evaluate
         let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
-        let result = evaluator.evaluate(type_id);
+        let request = EvaluationRequest::new(type_id);
+        let (result, stable) = evaluator.evaluate_request_memo_result(request);
 
-        // Cache the result
-        self.eval_cache.borrow_mut().insert(type_id, result);
-
-        result
+        self.record_evaluation_result(type_id, result, stable)
     }
 
     /// Instantiate a generic type with type arguments.
