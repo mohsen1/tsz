@@ -456,7 +456,7 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             .chain(shape.symbol_index.iter())
             .map(|idx| idx.value_type)
             .chain(shape.properties.iter().map(|p| p.type_id))
-            .all(|value| value.is_any())
+            .all(TypeId::is_any)
     }
 
     /// Check if any source type is assignable to a homomorphic mapped type.
