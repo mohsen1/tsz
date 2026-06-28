@@ -51,7 +51,7 @@ fn narrowing_false_positives(diagnostics: &[Diagnostic]) -> Vec<(u32, String)> {
     diagnostics
         .iter()
         .filter(|d| d.code == PROPERTY_DOES_NOT_EXIST || d.code == TYPE_NOT_ASSIGNABLE)
-        .map(|d| (d.code, d.message_text.to_string()))
+        .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
 
@@ -234,7 +234,7 @@ fn in_operator_wrong_branch_access_still_reports_ts2339() {
         "expected TS2339 for `.r` on the narrowed `L<X>` branch, got: {:?}",
         diags
             .iter()
-            .map(|d| (d.code, d.message_text.to_string()))
+            .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>(),
     );
 }
@@ -252,7 +252,7 @@ fn in_operator_genuinely_absent_property_still_reports_ts2339() {
         "expected TS2339 for the genuinely-absent `missing` property, got: {:?}",
         diags
             .iter()
-            .map(|d| (d.code, d.message_text.to_string()))
+            .map(|d| (d.code, d.message_text.clone()))
             .collect::<Vec<_>>(),
     );
 }
