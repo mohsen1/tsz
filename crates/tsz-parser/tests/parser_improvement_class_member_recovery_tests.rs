@@ -585,26 +585,12 @@ fn accessor_nonsemicolon_body_emits_brace_expected_not_semicolon() {
     }
 }
 
-#[test]
-fn accessor_bodyless_signature_emits_brace_expected_at_signature_end() {
-    // Mechanism 2: a body-less signature where ASI applies. TS1005 anchors at the
-    // last character of the signature — the `;` when present, otherwise the `)`.
-    let cases = [
-        ("class C { get x(); }", ";"),
-        ("class Pair { get first(); }", ";"),
-        ("class C { set x(v); }", ";"),
-        ("class C { get x() }", ")"),
-    ];
-    for (source, anchor_token) in cases {
-        let (parser, _root) = parse_source(source);
-        let anchor = source.find(anchor_token).unwrap() as u32;
-        assert!(
-            has_diag_at(&parser, diagnostic_codes::EXPECTED, "'{' expected.", anchor),
-            "expected TS1005 `'{{' expected` at the signature end for {source:?}, got {:?}",
-            parser.get_diagnostics()
-        );
-    }
-}
+// NOTE: body-less accessors where ASI applies (`get x();`, `get x()` before
+// `}`/EOF) are tsc's `checkGrammarAccessor` (checker-layer) mechanism, not a
+// parser diagnostic — tsz mirrors it in the checker. Emitting TS1005 in the
+// parser too double-counts it (the #14958 conformance regression), so there is
+// no parser-level assertion for that case here; it is covered end-to-end by the
+// conformance suite (e.g. `abstractPropertyNegative.ts`).
 
 #[test]
 fn accessor_with_brace_body_emits_no_brace_diagnostic() {

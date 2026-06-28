@@ -860,8 +860,7 @@ impl ParserState {
     ///
     /// Returns `NodeIndex::NONE` for a body-less accessor; otherwise the parsed
     /// (possibly empty, recovered) block.
-    fn parse_accessor_body(&mut self, modifiers: &Option<NodeList>) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
+    fn parse_accessor_body(&mut self, _modifiers: &Option<NodeList>) -> NodeIndex {
         // Clear static block flag - accessor creates a new function boundary
         let saved_flags = self.context_flags;
         self.context_flags &= !CONTEXT_FLAG_STATIC_BLOCK;
@@ -870,42 +869,15 @@ impl ParserState {
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
         } else if self.can_parse_semicolon() {
-            // Capture the accessor node end as `tsc` computes it: a trailing `;`
-            // is consumed into the node, otherwise the node ends at the `)` /
-            // return type (the start of the current token's leading trivia).
-            let node_end = if self.is_token(SyntaxKind::SemicolonToken) {
-                self.token_end()
-            } else {
-                self.token_full_start()
-            };
+            // Mechanism 2: a body-less accessor (`get x();`, or before `}` / EOF /
+            // a line break where ASI applies). tsc accepts the parse here and lets
+            // `checkGrammarAccessor` report TS1005 `'{' expected` for any
+            // non-ambient, non-abstract accessor. tsz's checker already mirrors
+            // `checkGrammarAccessor`, so emitting TS1005 in the parser as well
+            // double-counts the diagnostic (the ambient/abstract gating likewise
+            // lives in the checker) — see the #14958 regression. Accept the
+            // body-less signature and leave the brace diagnostic to the checker.
             self.parse_semicolon();
-
-            // Mechanism 2: a non-ambient, non-abstract accessor must have a brace
-            // body. Anchor TS1005 at the final character of the signature, length
-            // one, matching `checkGrammarAccessor`'s `accessor.end - 1` range.
-            // The cheap ambient flag short-circuits the modifier-list scan.
-            //
-            // `checkGrammarAccessor` gates on `!(accessor.flags & NodeFlags.Ambient)`.
-            // A member-level `declare` modifier sets that ambient flag (the same
-            // way a `declare class`/`.d.ts` context does), so a body-less
-            // `declare get x()` is accepted and must not get a brace diagnostic —
-            // tsc instead reports TS1031 (`declare` modifier cannot appear on this
-            // kind of element). Mirror both ambient sources here.
-            if !self.in_ambient_declaration()
-                && !self
-                    .arena
-                    .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
-                && !self
-                    .arena
-                    .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
-            {
-                self.parse_error_at(
-                    node_end.saturating_sub(1),
-                    1,
-                    "'{' expected.",
-                    diagnostic_codes::EXPECTED,
-                );
-            }
             NodeIndex::NONE
         } else {
             // Mechanism 1: delegate to `parse_block`, which reports TS1005
