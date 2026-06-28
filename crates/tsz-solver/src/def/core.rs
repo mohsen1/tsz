@@ -730,6 +730,37 @@ impl DefinitionStore {
         self.definitions.get(&id).and_then(|info| info.symbol_id)
     }
 
+    fn decl_site_key(&self, id: DefId) -> Option<(DefKind, Atom, usize, u32, u32)> {
+        let info = self.definitions.get(&id)?;
+        let file_id = info.file_id?;
+        if file_id == Self::NON_PROGRAM_FILE_SENTINEL {
+            return None;
+        }
+        let (span_start, _) = info.span?;
+        Some((
+            info.kind,
+            info.name,
+            info.type_params.len(),
+            file_id,
+            span_start,
+        ))
+    }
+
+    /// Whether two `DefId`s came from the same binder declaration site.
+    ///
+    /// This is deliberately narrower than [`Self::canonical_def_id`]: it does
+    /// not chase aliases or pick a representative. It only recognizes the same
+    /// `(file, declaration-node)` entry re-created in different arenas, with
+    /// kind/name/arity guards to avoid treating unrelated declarations as one.
+    pub fn defs_have_same_decl_site(&self, a: DefId, b: DefId) -> bool {
+        if a == b {
+            return true;
+        }
+        self.decl_site_key(a)
+            .zip(self.decl_site_key(b))
+            .is_some_and(|(a_key, b_key)| a_key == b_key)
+    }
+
     /// Check if a `DefId` exists.
     pub fn contains(&self, id: DefId) -> bool {
         self.definitions.contains_key(&id)
