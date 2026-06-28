@@ -267,6 +267,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.transformer.set_es_module_interop(es_module_interop);
+    }
+
     pub(crate) fn set_const_enum_facts(
         &mut self,
         values: FxHashMap<String, Vec<ScopedConstEnum>>,

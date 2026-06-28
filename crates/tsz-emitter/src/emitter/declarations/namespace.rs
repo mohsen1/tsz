@@ -83,6 +83,7 @@ impl<'a> Printer<'a> {
             let system_export_fold = self.pending_system_namespace_export_fold.take();
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter

@@ -89,6 +89,9 @@ pub struct AstToIr<'a> {
     dynamic_import_promise_counter: Cell<u32>,
     /// Original module kind when this converter runs inside a module wrapper.
     module_kind: ModuleKind,
+    /// Whether `esModuleInterop` is enabled. Controls whether dynamic `import()`
+    /// lowering wraps `require(...)` in the `__importStar` helper.
+    es_module_interop: bool,
     target_es5: bool,
     /// Static block recovery mode where bare `await` identifiers are emitted
     /// as recovered `yield` tokens, matching `tsc` downlevel emit.
@@ -140,6 +143,7 @@ impl<'a> AstToIr<'a> {
             hoisted_temps: RefCell::new(Vec::new()),
             dynamic_import_promise_counter: Cell::new(1),
             module_kind: ModuleKind::None,
+            es_module_interop: false,
             target_es5: false,
             emit_await_as_yield: false,
             trailing_comment_limit: Cell::new(None),
@@ -200,6 +204,11 @@ impl<'a> AstToIr<'a> {
 
     pub const fn with_module_kind(mut self, module_kind: ModuleKind) -> Self {
         self.module_kind = module_kind;
+        self
+    }
+
+    pub const fn with_es_module_interop(mut self, es_module_interop: bool) -> Self {
+        self.es_module_interop = es_module_interop;
         self
     }
 
@@ -803,6 +812,7 @@ impl<'a> AstToIr<'a> {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
             transformer.set_module_kind(self.module_kind);
+            transformer.set_es_module_interop(self.es_module_interop);
             transformer.set_target_es5(self.target_es5);
             transformer
                 .dynamic_import_promise_counter
@@ -1632,6 +1642,7 @@ impl<'a> AstToIr<'a> {
         let mut transformer = AsyncES5Transformer::new(self.arena);
         transformer.set_temp_var_counter(self.temp_var_counter.get());
         transformer.set_module_kind(self.module_kind);
+        transformer.set_es_module_interop(self.es_module_interop);
         transformer.set_target_es5(self.target_es5);
         transformer
             .dynamic_import_promise_counter

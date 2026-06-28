@@ -1343,6 +1343,7 @@ impl<'a> AsyncES5Transformer<'a> {
     ) -> bool {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_es_module_interop(self.es_module_interop);
         class_transformer.set_target_es5(self.target_es5);
         if let Some(source_text) = self.source_text {
             class_transformer.set_source_text(source_text);
@@ -1423,6 +1424,7 @@ impl<'a> AsyncES5Transformer<'a> {
     ) -> Option<ES5ClassFactoryParts> {
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_es_module_interop(self.es_module_interop);
         class_transformer.set_target_es5(self.target_es5);
         let class_ir =
             class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;

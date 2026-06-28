@@ -946,6 +946,24 @@ impl<'a> Printer<'a> {
         tighter_than_conditional || is_sequence
     }
 
+    /// Opens the `__importStar` wrapper for a dynamic-import require when
+    /// `esModuleInterop` is on; a no-op otherwise. Goes through `write_helper`
+    /// (which schedules the prologue), so it cannot reuse the string-form
+    /// `emit_utils::import_star_wrap`. Paired with `write_dynamic_import_star_close`.
+    fn write_dynamic_import_star_open(&mut self) {
+        if self.ctx.options.es_module_interop {
+            self.write_helper("__importStar");
+            self.write("(");
+        }
+    }
+
+    /// Closes the wrapper opened by `write_dynamic_import_star_open`.
+    fn write_dynamic_import_star_close(&mut self) {
+        if self.ctx.options.es_module_interop {
+            self.write(")");
+        }
+    }
+
     /// Emit the CommonJS branch of a downlevel dynamic import as a Promise.
     ///
     /// Cases by specifier shape, matching tsc:
@@ -972,9 +990,14 @@ impl<'a> Printer<'a> {
         } else {
             self.emit_dynamic_import_template_specifier(first);
         }
+        // tsc only wraps the dynamic `require` in `__importStar` when
+        // `esModuleInterop` is enabled; with interop off it emits a bare
+        // `require(...)` (see `createImportCallExpressionCommonJS`).
         self.write("}`).then(s => ");
-        self.write_helper("__importStar");
-        self.write("(require(s)))");
+        self.write_dynamic_import_star_open();
+        self.write("require(s)");
+        self.write_dynamic_import_star_close();
+        self.write(")");
     }
 
     fn first_dynamic_import_argument(
@@ -1006,19 +1029,20 @@ impl<'a> Printer<'a> {
         first_arg: Option<NodeIndex>,
         temp: Option<&str>,
     ) {
-        if self.ctx.target_es5 {
-            self.write("Promise.resolve().then(function () { return ");
-            self.write_helper("__importStar");
-            self.write("(require(");
-            self.emit_dynamic_import_require_specifier(first_arg, temp);
-            self.write(")); })");
+        // `__importStar` only wraps the `require` when `esModuleInterop` is on;
+        // otherwise tsc emits a bare `require(...)` in the CJS dynamic-import form.
+        let es5 = self.ctx.target_es5;
+        self.write(if es5 {
+            "Promise.resolve().then(function () { return "
         } else {
-            self.write("Promise.resolve().then(() => ");
-            self.write_helper("__importStar");
-            self.write("(require(");
-            self.emit_dynamic_import_require_specifier(first_arg, temp);
-            self.write(")))");
-        }
+            "Promise.resolve().then(() => "
+        });
+        self.write_dynamic_import_star_open();
+        self.write("require(");
+        self.emit_dynamic_import_require_specifier(first_arg, temp);
+        self.write(")");
+        self.write_dynamic_import_star_close();
+        self.write(if es5 { "; })" } else { ")" });
     }
 
     fn emit_dynamic_import_amd_branch(&mut self, first_arg: Option<NodeIndex>, temp: Option<&str>) {
@@ -1045,9 +1069,16 @@ impl<'a> Printer<'a> {
         self.write(&resolve);
         self.write(", ");
         self.write(&reject);
-        self.write("); }).then(");
-        self.write_helper("__importStar");
-        self.write(")");
+        // tsc appends `.then(__importStar)` to the AMD dynamic-import promise
+        // only when `esModuleInterop` is on (`createImportCallExpressionAMD`);
+        // with interop off it returns the bare `new Promise(...)`.
+        if self.ctx.options.es_module_interop {
+            self.write("); }).then(");
+            self.write_helper("__importStar");
+            self.write(")");
+        } else {
+            self.write("); })");
+        }
     }
 
     fn emit_dynamic_import_require_specifier(

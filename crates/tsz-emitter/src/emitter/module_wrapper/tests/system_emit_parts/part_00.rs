@@ -253,6 +253,7 @@ fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
     let options = PrinterOptions {
         module: ModuleKind::UMD,
         target: ScriptTarget::ES2015,
+        es_module_interop: true,
         ..Default::default()
     };
     let ctx = EmitContext::with_options(options.clone());
@@ -294,6 +295,7 @@ fn umd_es5_class_method_dynamic_import_uses_loader_branch() {
     let options = PrinterOptions {
         module: ModuleKind::UMD,
         target: ScriptTarget::ES5,
+        es_module_interop: true,
         ..Default::default()
     };
     let ctx = EmitContext::with_options(options.clone());
@@ -378,6 +380,7 @@ import(path);
         PrinterOptions {
             module: ModuleKind::AMD,
             target: ScriptTarget::ES2015,
+            es_module_interop: true,
             ..Default::default()
         },
     );

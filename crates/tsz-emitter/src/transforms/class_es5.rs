@@ -190,6 +190,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_module_kind(module_kind);
     }
 
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.transformer.set_es_module_interop(es_module_interop);
+    }
+
     pub fn set_async_generator_inner_name_counts(
         &mut self,
         counts: rustc_hash::FxHashMap<String, u32>,
