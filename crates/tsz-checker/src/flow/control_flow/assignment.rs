@@ -687,11 +687,16 @@ impl<'a> FlowAnalyzer<'a> {
             }
             return None;
         }
-
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
             let unary = self.arena.get_unary_expr(node)?;
+            // `delete o.a` assigns `undefined` (tsc `getAssignedType`); killing-definition narrowing re-includes it for an optional prop, mis-flagging a later read as TS2322.
+            if unary.operator == SyntaxKind::DeleteKeyword as u16
+                && self.is_matching_reference(unary.operand, target)
+            {
+                return Some(TypeId::UNDEFINED);
+            }
             if (unary.operator == SyntaxKind::PlusPlusToken as u16
                 || unary.operator == SyntaxKind::MinusMinusToken as u16)
                 && self.is_matching_reference(unary.operand, target)
@@ -1755,6 +1760,13 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
+    /// True if a prefix/postfix unary `operator` (`++`/`--`/`delete`) records an `ASSIGNMENT` flow node.
+    const fn is_flow_mutating_unary_operator(operator: u16) -> bool {
+        operator == SyntaxKind::PlusPlusToken as u16
+            || operator == SyntaxKind::MinusMinusToken as u16
+            || operator == SyntaxKind::DeleteKeyword as u16
+    }
+
     pub(crate) fn assignment_affects_reference_node(
         &self,
         assignment_node: NodeIndex,
@@ -1775,8 +1787,7 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
             return self.arena.get_unary_expr(node).is_some_and(|unary| {
-                (unary.operator == SyntaxKind::PlusPlusToken as u16
-                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                Self::is_flow_mutating_unary_operator(unary.operator)
                     && self.assignment_affects_reference(unary.operand, target)
             });
         }
@@ -1839,8 +1850,7 @@ impl<'a> FlowAnalyzer<'a> {
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
             return self.arena.get_unary_expr(node).is_some_and(|unary| {
-                (unary.operator == SyntaxKind::PlusPlusToken as u16
-                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                Self::is_flow_mutating_unary_operator(unary.operator)
                     && self.assignment_targets_reference_internal(unary.operand, target)
             });
         }
