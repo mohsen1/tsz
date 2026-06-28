@@ -491,9 +491,17 @@ impl<'a> CheckerState<'a> {
             && prop.type_annotation.is_none()
             && !is_private_in_ambient
             && !is_static_prototype
-            // Constructor-flow inference only applies to instance properties; a
-            // concrete inferred type suppresses the implicit-any error.
-            && (is_static || is_abstract || ctor_flow_type.is_none())
+            // Constructor-flow inference only applies to instance properties. A
+            // concrete inferred type suppresses the implicit-any error; so does
+            // *any* constructor assignment to the property even when inference
+            // yields no concrete type (accessor auto-properties, values that
+            // widen to `any`, or `null`/`undefined`-only assignments), matching
+            // tsc, which takes the property's type from constructor flow in all
+            // of those cases.
+            && (is_static
+                || is_abstract
+                || (ctor_flow_type.is_none()
+                    && !self.property_assigned_in_enclosing_class_constructor(prop.name)))
             // TSC also suppresses TS7008 for static properties assigned in class
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static

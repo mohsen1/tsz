@@ -158,6 +158,7 @@ impl TypingRequest {
 
     /// Builder: set or clear the contextual type.
     #[inline]
+    #[must_use]
     pub const fn contextual_opt(mut self, ty: Option<TypeId>) -> Self {
         self.contextual_type = ty;
         self
@@ -186,6 +187,7 @@ impl TypingRequest {
 
     /// Builder: set read intent.
     #[inline]
+    #[must_use]
     pub const fn read(mut self) -> Self {
         self.flow = FlowIntent::Read;
         self

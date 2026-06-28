@@ -185,9 +185,32 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_class_at(class_idx)
-            .map(|class| self.class_has_base(class))
-            .unwrap_or(false);
+            .is_some_and(|class| self.class_has_base(class));
         self.infer_property_type_from_constructor_flow(&member_nodes, prop_name, requires_super)
+    }
+
+    /// Whether the named instance property is assigned via `this.<name> = ...`
+    /// anywhere in the enclosing class constructor (regardless of the assigned
+    /// value's type, including element-access `this["name"] = ...`, `accessor`
+    /// auto-properties, and `null`/`undefined`-only assignments).
+    ///
+    /// `tsc` suppresses the implicit-any member error (`TS7008`) for any
+    /// instance property assigned in the constructor — the property's type then
+    /// comes from constructor-flow analysis. Constructor-flow *type* inference
+    /// ([`infer_property_type_from_enclosing_constructor_flow`]) can return
+    /// `None` for cases that are nonetheless assigned (accessor properties,
+    /// values that widen to `any`, `null`-only assignments), so the `TS7008`
+    /// suppression must consult this assignment predicate as well to avoid
+    /// false positives.
+    pub(crate) fn property_assigned_in_enclosing_class_constructor(
+        &mut self,
+        prop_name: NodeIndex,
+    ) -> bool {
+        let Some(key) = self.property_key_from_name(prop_name) else {
+            return false;
+        };
+        self.summarize_enclosing_class_initialization()
+            .is_some_and(|summary| summary.constructor_assigned_fields.contains(&key))
     }
 
     /// Check if a static property is assigned via `this.<prop> = ...` in any

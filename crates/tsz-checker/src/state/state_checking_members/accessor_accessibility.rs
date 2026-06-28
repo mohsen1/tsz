@@ -8,7 +8,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Check if a setter has a paired getter with the same name in the class.
     ///
     /// TSC infers setter parameter types from the getter return type, so a setter

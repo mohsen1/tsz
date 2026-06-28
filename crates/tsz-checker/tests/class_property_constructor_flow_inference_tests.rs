@@ -185,10 +185,14 @@ const bad: string = d.tag;
 }
 
 #[test]
-fn null_only_assignment_stays_any_and_reports_ts7008() {
-    // When every assignment only ever produces `null`, tsc widens the flow type
-    // back to `any` and reports TS7008 — and there is no spurious cascade from a
-    // bare `null` field type.
+fn null_only_constructor_assignment_does_not_report_ts7008() {
+    // A field whose only constructor assignment produces `null` is still
+    // *assigned* in the constructor, so — like tsc — no implicit-any member
+    // error fires. (tsc infers the flow type `null` under strictNullChecks;
+    // tsz's constructor-flow inference declines to commit to a bare nullish
+    // type and leaves the field implicit `any`, but in neither compiler is
+    // TS7008 reported, because the property is constructor-assigned.) The bare
+    // field type must not cascade into a spurious assignment error here.
     let codes = check_strict(
         r#"
 class Nully {
@@ -201,13 +205,56 @@ const s: string = ny.z;
     );
     assert_eq!(
         count(&codes, TS7008),
-        1,
-        "null-only field stays implicit any: {codes:?}"
+        0,
+        "constructor-assigned field does not report implicit any: {codes:?}"
+    );
+}
+
+#[test]
+fn accessor_assigned_in_constructor_does_not_report_ts7008() {
+    // Regression guard: an `accessor` auto-property assigned in the constructor
+    // is constructor-flow typed by tsc and reports no implicit-any error, even
+    // though tsz's `infer_property_type_from_constructor_flow` excludes accessor
+    // members (returning `None`). The TS7008 suppression must therefore also
+    // honor the "assigned in constructor" predicate, not just a concrete
+    // inferred type. Witness family: controlFlowAutoAccessor1,
+    // classAttributeInferenceTemplate.
+    let codes = check_strict(
+        r#"
+class WithAccessor {
+  accessor handle;
+  constructor(seed: number) { this.handle = seed; }
+}
+"#,
     );
     assert_eq!(
-        count(&codes, TS2322),
+        count(&codes, TS7008),
         0,
-        "any field is assignable, no cascade: {codes:?}"
+        "constructor-assigned accessor is not implicit any: {codes:?}"
+    );
+}
+
+#[test]
+fn constructor_assignment_of_untyped_value_does_not_report_ts7008() {
+    // A field assigned in the constructor from an implicit-`any` parameter is
+    // still constructor-assigned: tsc takes the flow type and reports no
+    // implicit-any *member* error (TS7008) on the field. Witness: overloadTag2's
+    // private `#b`, assigned `this.#b = b` where `b` is implicitly `any`.
+    // (noImplicitAny is on under `check_strict`, so a spurious member TS7008
+    // would surface here; the parameter's own TS7006 is irrelevant to this
+    // count.)
+    let codes = check_strict(
+        r#"
+class Holder {
+  field;
+  constructor(value) { this.field = value; }
+}
+"#,
+    );
+    assert_eq!(
+        count(&codes, TS7008),
+        0,
+        "constructor-assigned field from any value reports no member implicit-any: {codes:?}"
     );
 }
 
