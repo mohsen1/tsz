@@ -849,6 +849,62 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
 
+                // When the return type is an intersection (`{ ... } & D`) whose
+                // only inference placeholder is a bare, return-only conjunct `D`,
+                // the original-direction `constrain_types` above records only an
+                // upper bound `D <: ctx`. If `D` carries a `D extends C = C`
+                // default, resolution then treats "default + upper-bounds-only" as
+                // "no inference happened" and falls back to the default, dropping
+                // the contextual target (false TS2322/TS2741). tsc instead infers a
+                // single naked type-variable conjunct of an intersection target
+                // from the whole contextual source (`inferToMultipleTypes`,
+                // `typeVariableCount === 1`). Seed the contextual type as a
+                // `ReturnType` candidate (a lower bound) so the default applies
+                // only when no contextual type exists. Restricted to exactly one
+                // return-only naked conjunct with no other placeholder-bearing
+                // conjunct, matching tsc's single-type-variable intersection rule.
+                if let Some(TypeData::Intersection(members_id)) =
+                    self.interner.lookup(return_type_with_placeholders)
+                {
+                    let members = self.interner.type_list(members_id);
+                    let mut naked_return_only_var: Option<InferenceVar> = None;
+                    let mut blocked = false;
+                    for &member in members.iter() {
+                        if let Some(&var) = var_map.get(&member) {
+                            // A bare naked type-variable conjunct. Skip seeding when
+                            // a direct argument already owns it, or when more than
+                            // one naked conjunct exists (ambiguous, not tsc's
+                            // single-type-variable case).
+                            if round1_direct_seed_vars.contains(&var)
+                                || naked_return_only_var.is_some()
+                            {
+                                blocked = true;
+                                break;
+                            }
+                            naked_return_only_var = Some(var);
+                        } else {
+                            placeholder_visited.clear();
+                            if self.type_contains_placeholder(
+                                member,
+                                &var_map,
+                                &mut placeholder_visited,
+                            ) {
+                                // Another conjunct nests a placeholder; structural
+                                // inference owns it, so leave the original direction.
+                                blocked = true;
+                                break;
+                            }
+                        }
+                    }
+                    if !blocked && let Some(var) = naked_return_only_var {
+                        infer_ctx.add_candidate(
+                            var,
+                            ctx_type,
+                            crate::types::InferencePriority::ReturnType,
+                        );
+                    }
+                }
+
                 // When the return type is a union containing a single placeholder
                 // (e.g., `E | null`), the structural constrain_types adds the
                 // contextual type as an upper bound for E. But for contextual return
