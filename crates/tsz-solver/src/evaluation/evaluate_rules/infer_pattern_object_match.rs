@@ -120,6 +120,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_props: &[PropertyInfo],
         pattern_props: &[PropertyInfo],
         pattern: TypeId,
+        this_arg: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
@@ -133,11 +134,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .find(|prop| prop.name == pattern_prop.name);
             let source_type = match source_prop {
                 Some(source_prop) => {
-                    if self.type_contains_infer(pattern_prop.type_id) {
+                    let raw = if self.type_contains_infer(pattern_prop.type_id) {
                         source_prop.type_id
                     } else {
                         self.optional_property_type(source_prop)
-                    }
+                    };
+                    // A member whose declared type references the polymorphic
+                    // `this` (e.g. `self(): this`) must be read through its
+                    // receiver before `infer` matching: tsc's
+                    // `getTypeWithThisArgument` binds `this` to the matched
+                    // source object so `T extends { self(): infer S } ? S : F`
+                    // infers `S = receiver` (true branch) instead of leaving an
+                    // unbound `ThisType` that collects no candidate and falls to
+                    // the false branch. The quick `contains_this_type` guard
+                    // keeps the common (no-`this`) path allocation-free.
+                    self.bind_member_this(raw, this_arg)
                 }
                 None => {
                     if !pattern_prop.optional {
@@ -169,6 +180,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true
     }
 
+    /// Bind the polymorphic `this` in a member's declared type to the receiver
+    /// it is read from (`this_arg`), mirroring tsc's `getTypeWithThisArgument`.
+    ///
+    /// Used on the `infer`-extraction path so a `this`-returning member
+    /// (`self(): this`) contributes its concrete receiver as the `infer`
+    /// candidate. The quick `contains_this_type` probe keeps the common
+    /// (no-`this`) member read free of substitution work.
+    fn bind_member_this(&self, member_type: TypeId, this_arg: TypeId) -> TypeId {
+        if member_type.is_intrinsic()
+            || this_arg.is_intrinsic()
+            || !crate::contains_this_type(self.interner(), member_type)
+        {
+            return member_type;
+        }
+        crate::instantiation::instantiate::substitute_this_type(
+            self.interner(),
+            member_type,
+            this_arg,
+        )
+    }
+
     /// Helper for matching object type patterns.
     pub(crate) fn match_infer_object_pattern(
         &self,
@@ -190,6 +222,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &source_shape.properties,
                     &pattern_shape.properties,
                     pattern,
+                    source,
                     bindings,
                     visited,
                     checker,
@@ -468,6 +501,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &source_shape.properties,
                     &pattern_shape.properties,
                     pattern,
+                    source,
                     bindings,
                     visited,
                     checker,
