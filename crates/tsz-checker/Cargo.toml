@@ -587,6 +587,9 @@ path = "tests/this_array_field_method_param_14512_tests.rs"
 name = "this_rooted_discriminant_narrowing_tests"
 path = "tests/this_rooted_discriminant_narrowing_tests.rs"
 [[test]]
+name = "switch_union_literal_discriminant_coverage_tests"
+path = "tests/switch_union_literal_discriminant_coverage_tests.rs"
+[[test]]
 name = "keyless_object_record_inference_tests"
 path = "tests/keyless_object_record_inference_tests.rs"
 [[test]]

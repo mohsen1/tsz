@@ -1588,6 +1588,19 @@ impl<'a> NarrowingContext<'a> {
         // Put excluded values into a HashSet for O(1) lookup
         let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
 
+        // Union of every excluded literal. A member whose discriminant property
+        // is itself a union of literals (`{ kind: "a" | "b" }`) is only excluded
+        // when the handled cases collectively cover ITS WHOLE range, i.e. when
+        // its property type is a subtype of this union. Per-literal checks alone
+        // never match (`("a" | "b") <: "a"` is false), so the member would
+        // wrongly survive into the default/post-switch flow. Gate on a genuine
+        // union (`members.len() > 1`) to mirror tsc, which only narrows a switch
+        // discriminant when the subject type is a union: a lone non-union object
+        // (`{ kind: "a" | "b" | "c" }` with no sibling member) is NOT narrowed
+        // away by switch coverage, so it must be kept (tsc emits TS2322 there).
+        let multi_member_union = members.len() > 1;
+        let excluded_union = self.db.union_from_slice(excluded_values);
+
         let mut remaining: Vec<TypeId> = Vec::with_capacity(members.len());
 
         for &member in &members {
@@ -1637,6 +1650,20 @@ impl<'a> NarrowingContext<'a> {
                         return false; // Exclude
                     }
                 }
+
+                // Union-coverage exclusion: the per-literal checks above miss a
+                // discriminant property that is itself a union of literals, even
+                // when the handled cases cover every value it can take. Exclude
+                // the member when its property type is a subtype of the union of
+                // ALL excluded literals (every value it can hold was handled).
+                // Partial coverage is preserved: `("a" | "b") <: ("a" | "c")` is
+                // false, so the member survives, matching tsc.
+                if multi_member_union
+                    && self.is_subtype_for_narrowing(resolved_prop_type, excluded_union)
+                {
+                    return false; // Exclude
+                }
+
                 true // Keep
             };
 
