@@ -437,3 +437,90 @@ fn issue_14216_export_alias_collides_local_class_no_ts2552_ts2749() {
          class constructor. Actual: {diagnostics:#?}"
     );
 }
+
+/// #14944 (TS2339, narrowing/loop): a discriminated-union variable narrowed by
+/// `switch (x._tag)` inside a `while (true)` loop and reassigned within a case to
+/// a value of the full union must keep the per-case narrowing; the loop back-edge
+/// join must not re-introduce the full union into the narrowed case branch.
+#[test]
+fn issue_14944_while_switch_discriminant_loop_backedge_no_ts2339() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Node = { _tag: 'A'; left: Node } | { _tag: 'B'; value: number };
+function walk(start: Node): number {
+  let cursor = start;
+  while (true) {
+    switch (cursor._tag) {
+      case 'A': cursor = cursor.left; break;
+      case 'B': return cursor.value;
+    }
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "no TS2339 expected — `case 'A'` narrows `cursor` to the `_tag: 'A'` member, \
+         so `cursor.left` is valid; the loop back-edge must not leak the full union \
+         into the narrowed branch. Actual: {diagnostics:#?}"
+    );
+}
+
+/// #14944 (adjacent, varied binders): same defect reached through an interface
+/// union alias (`Tree = A | B`) whose recursive `left` field is the self-alias.
+/// Renaming the binders (`Tree`/`walk`/`cursor`) keeps the structural shape and
+/// guards against a name-scoped fix.
+#[test]
+fn issue_14944_interface_union_alias_recursive_field_no_ts2339() {
+    let d = compile_and_get_diagnostics(
+        r#"
+interface Leaf { _tag: 'A'; left: Tree }
+interface Done { _tag: 'B'; value: number }
+type Tree = Leaf | Done;
+function descend(root: Tree): number {
+  let node = root;
+  while (true) {
+    switch (node._tag) {
+      case 'A': node = node.left; break;
+      case 'B': return node.value;
+    }
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        !has_error(&d, 2339),
+        "no TS2339 expected — `case 'A'` narrows `node` to the recursive `_tag: 'A'` \
+         member each iteration; the loop-widened-receiver recheck must not fire when \
+         the narrowed receiver is already a subtype of `node.left`. Actual: {d:#?}"
+    );
+}
+
+/// #14944 (negative control): a genuine self-recursive *widening* assignment
+/// (`x = x.length` widens `string` with `number`) must still report TS2339 the
+/// next iteration, because `.length` is missing on the `number` arm and the
+/// first-pass receiver (`string`) is NOT a subtype of the assigned value
+/// (`number`). This pins that the fix narrows the heuristic rather than disabling
+/// it.
+#[test]
+fn issue_14944_genuine_widening_self_assignment_still_errors() {
+    let d = compile_and_get_diagnostics(
+        r#"
+function f(x: string | number) {
+  if (typeof x === "number") return;
+  while (true) {
+    x.length;
+    x = x.length;
+  }
+}
+export {};
+"#,
+    );
+    assert!(
+        has_error(&d, 2339),
+        "TS2339 expected — `x = x.length` widens `x` to `string | number`, and `.length` \
+         is missing on the `number` arm. Actual: {d:#?}"
+    );
+}
