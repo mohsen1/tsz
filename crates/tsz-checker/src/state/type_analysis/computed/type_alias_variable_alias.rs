@@ -1365,16 +1365,39 @@ impl<'a> CheckerState<'a> {
                                 node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                             });
 
-                        let allow_namespace_default = self
-                            .source_file_import_uses_system_default_namespace_fallback(module_name)
-                            || (!self.ctx.compiler_options.module.is_node_module()
-                                && self.ctx.allow_synthetic_default_imports()
-                                && !is_import_equals_alias
-                                && export_equals_type.is_some())
-                            || (self.ctx.compiler_options.module.is_node_module()
+                        // The synthetic `default` member is a real part of the
+                        // *namespace* shape only for CJS-interop namespace imports
+                        // (an ESM file importing a CJS module under node resolution)
+                        // and the `System`-module default fallback. For a plain
+                        // `export = X` module imported with `import * as ns` under
+                        // `allowSyntheticDefaultImports` in a non-node module, tsc
+                        // binds `ns` to `X` directly: `ns.a`/`ns(...)` work and
+                        // `ns.default` does NOT exist. That synthetic `default`
+                        // belongs only to the *default-import* resolution path, not
+                        // the namespace type, so it must not turn the namespace into a
+                        // `{ default: X }` wrapper.
+                        let system_default_namespace_fallback = self
+                            .source_file_import_uses_system_default_namespace_fallback(module_name);
+                        let node_esm_imports_cjs_synthetic_default =
+                            self.ctx.compiler_options.module.is_node_module()
                                 && self.ctx.file_is_esm == Some(true)
                                 && !self.module_is_esm(module_name)
-                                && self.module_can_use_synthetic_default_import(module_name));
+                                && self.module_can_use_synthetic_default_import(module_name);
+                        let export_equals_synthetic_default =
+                            !self.ctx.compiler_options.module.is_node_module()
+                                && self.ctx.allow_synthetic_default_imports()
+                                && !is_import_equals_alias
+                                && export_equals_type.is_some();
+                        // True only when the synthetic `default` is part of the
+                        // namespace shape itself (CJS-interop / `System`), as opposed
+                        // to the non-node `export =` synthetic-default that belongs to
+                        // default-import resolution.
+                        let namespace_default_belongs_to_namespace_shape =
+                            system_default_namespace_fallback
+                                || node_esm_imports_cjs_synthetic_default;
+                        let allow_namespace_default = system_default_namespace_fallback
+                            || export_equals_synthetic_default
+                            || node_esm_imports_cjs_synthetic_default;
 
                         // Namespace imports in CJS-fallback mode need a synthetic
                         // required `default` that points to the module object surface.
@@ -1461,12 +1484,16 @@ impl<'a> CheckerState<'a> {
                             }
                             if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 // For namespace imports of `export =` non-module values:
-                                // - Callable/constructable types (functions, classes): wrap
-                                //   with `{ default: value }` under allowSyntheticDefaultImports
-                                //   so that `ns.default()` works (tsc behavior).
-                                // - Non-callable primitives (`number | undefined`, etc.):
-                                //   return the export= type directly so narrowing works
-                                //   (e.g., `if (b0) x = b0` narrows `number | undefined`).
+                                // - CJS-interop / `System` namespace imports
+                                //   (callable/constructable or object-like targets): wrap
+                                //   with `{ default: value }` so that `ns.default(...)`
+                                //   works (tsc's node ESM-imports-CJS / `System` shape).
+                                // - Plain non-node `export = X` under
+                                //   allowSyntheticDefaultImports, and non-callable
+                                //   primitives: return the export= type directly. tsc
+                                //   binds `import * as ns` to `X` itself (`ns.a`/`ns(...)`
+                                //   work, `ns.default` does not exist), and narrowing on a
+                                //   `number | undefined` export= stays intact.
                                 let is_object_like =
                                     crate::query_boundaries::dispatch::is_object_like_type(
                                         self.ctx.types,
@@ -1477,7 +1504,9 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types,
                                         export_equals_type,
                                     );
-                                if allow_namespace_default && (is_object_like || is_callable_like) {
+                                if namespace_default_belongs_to_namespace_shape
+                                    && (is_object_like || is_callable_like)
+                                {
                                     return (namespace_type, Vec::new());
                                 }
                                 return (export_equals_type, Vec::new());
