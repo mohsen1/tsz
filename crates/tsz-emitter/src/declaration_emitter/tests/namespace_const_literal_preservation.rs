@@ -5,7 +5,7 @@
 //! (`: number`).
 //!
 //! Owner: `crates/tsz-emitter/src/declaration_emitter/helpers/literal_initializers.rs`
-//! (`const_literal_initializer_text_deep_inner` PropertyAccess branch +
+//! (`const_literal_initializer_text_deep_inner` `PropertyAccess` branch +
 //! `const_variable_initializer_for_symbol` annotation guard).
 //!
 //! Regression: #14772.
