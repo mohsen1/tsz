@@ -93,3 +93,48 @@ fn reset_clears_typed_and_legacy_termination_state() {
     assert_eq!(evaluator.limit_epoch, 0);
     assert_eq!(evaluator.app_body_limit_epoch, 0);
 }
+
+#[test]
+fn depth_marker_for_request_records_depth_verdict() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.mark_depth_exceeded_for_request();
+
+    assert_eq!(
+        evaluator.request_termination_kind,
+        Some(TerminationKind::DepthExceeded)
+    );
+    let result = request_result_verdict(TypeId::ERROR, evaluator.request_termination_kind);
+    assert_eq!(
+        result.termination(),
+        Termination::Incomplete {
+            kind: TerminationKind::DepthExceeded,
+            partial: TypeId::ERROR,
+        }
+    );
+    assert_eq!(result.into_type_id(), TypeId::ERROR);
+}
+
+#[test]
+fn raw_depth_marker_allows_specific_fuel_verdict() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.mark_depth_exceeded();
+    evaluator.note_request_termination(TerminationKind::FuelExhausted);
+
+    assert_eq!(
+        evaluator.request_termination_kind,
+        Some(TerminationKind::FuelExhausted)
+    );
+    let result = request_result_verdict(TypeId::ERROR, evaluator.request_termination_kind);
+    assert_eq!(
+        result.termination(),
+        Termination::Incomplete {
+            kind: TerminationKind::FuelExhausted,
+            partial: TypeId::ERROR,
+        }
+    );
+    assert_eq!(result.into_type_id(), TypeId::ERROR);
+}

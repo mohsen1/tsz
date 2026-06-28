@@ -892,7 +892,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             if let Some(result) = self.try_fast_index_large_union(&members) {
                 return Some(result);
             }
-            self.evaluator.mark_depth_exceeded();
+            self.evaluator.mark_depth_exceeded_for_request();
             return Some(TypeId::ERROR);
         }
         let mut results = Vec::new();
