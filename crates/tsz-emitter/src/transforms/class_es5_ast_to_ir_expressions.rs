@@ -9,6 +9,7 @@ use super::{AstToIr, IRNode, IRPrinter, get_identifier_text};
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::base::NodeList;
+use tsz_parser::parser::node::AccessExprData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -30,6 +31,15 @@ pub(super) enum OptionalChainTail {
         index: Box<IRNode>,
         arguments: Vec<IRNode>,
     },
+}
+
+/// Which short-circuit-assignment operator is being lowered. `||=`/`&&=` reuse
+/// the corresponding logical operator; `??=` lowers to the nullish ternary.
+#[derive(Clone, Copy)]
+pub(super) enum LogicalAssign {
+    Or,
+    And,
+    Nullish,
 }
 
 impl OptionalChainTail {
@@ -129,6 +139,23 @@ impl<'a> AstToIr<'a> {
             if node.is_optional_chain()
                 && let Some(optional_call) =
                     self.try_convert_optional_method_call(call.expression, args.clone())
+            {
+                return optional_call;
+            }
+
+            // Optional *call* token `R?.(args)`: the `?.` is on the call itself,
+            // not the access (e.g. `o.m?.()`, `f?.()`, `o[k]?.()`). The access
+            // therefore carries no `?.`, so `try_convert_optional_method_call`
+            // above returns `None` and a plain call would silently drop the
+            // optionality. A callee that is itself an optional chain
+            // (`o?.m?.()`) carries the chain flag and is left to the existing
+            // path. Rule keys on the chain flag + the call's own `?.`, never on a
+            // receiver spelling.
+            if node.is_optional_chain()
+                && let Some(callee_node) = self.arena.get(call.expression)
+                && !callee_node.is_optional_chain()
+                && let Some(optional_call) =
+                    self.try_convert_optional_call_token(call.expression, &args)
             {
                 return optional_call;
             }
@@ -869,6 +896,383 @@ impl<'a> AstToIr<'a> {
         self.private_postfix_mutation_ir(receiver_idx, &clean, unary.operator, true)
     }
 
+    /// Capture an expression for use as a nullish/optional guard operand.
+    ///
+    /// A side-effect-free expression is returned as `(expr, expr)` so it can be
+    /// referenced inline more than once; any other expression is captured once
+    /// into a hoisted temp, returning `((_t = expr), _t)` — the first element
+    /// performs the assignment, the second reads the temp. The expression is
+    /// converted before the temp is allocated so a nested chain allocates its
+    /// temps first, matching `tsc`'s innermost-first order.
+    fn capture_for_guard(&self, expr_idx: NodeIndex) -> (IRNode, IRNode) {
+        let expr = self.convert_expression(expr_idx);
+        if crate::transforms::emit_utils::is_simple_copiable_expression(self.arena, expr_idx) {
+            (expr.clone(), expr)
+        } else {
+            let temp = self.generate_hoisted_temp();
+            (
+                IRNode::assign(IRNode::id(temp.clone()), expr).paren(),
+                IRNode::id(temp),
+            )
+        }
+    }
+
+    /// Build the `(reference, target)` pair for one component (base or index) of
+    /// a captured access. When `temp` is set the component is read once into the
+    /// temp (`reference` = `(_t = expr)` or `_t = expr`, `target` = `_t`); when
+    /// it is absent the component is side-effect-free, converted once and shared
+    /// by both. `paren` wraps the captured assignment (a base capture
+    /// `(_a = base).p` needs it; an index capture `base[_b = idx]` does not).
+    fn temp_ref_and_target(
+        &self,
+        temp: &Option<String>,
+        expr_idx: NodeIndex,
+        paren: bool,
+    ) -> (IRNode, IRNode) {
+        match temp {
+            Some(t) => {
+                let assign =
+                    IRNode::assign(IRNode::id(t.clone()), self.convert_expression(expr_idx));
+                let reference = if paren { assign.paren() } else { assign };
+                (reference, IRNode::id(t.clone()))
+            }
+            None => {
+                let expr = self.convert_expression(expr_idx);
+                (expr.clone(), expr)
+            }
+        }
+    }
+
+    /// `head !== null && tail !== void 0` — the "is non-nullish" test used by
+    /// `??`/`??=` (whose true branch keeps the value).
+    fn non_nullish_test(head: IRNode, tail: IRNode) -> IRNode {
+        IRNode::logical_and(
+            IRNode::binary(head, "!==", IRNode::NullLiteral),
+            IRNode::binary(tail, "!==", IRNode::Undefined),
+        )
+    }
+
+    /// `head === null || tail === void 0` — the "is nullish" short-circuit test
+    /// used by optional calls (whose true branch is `void 0`).
+    fn nullish_short_circuit_test(head: IRNode, tail: IRNode) -> IRNode {
+        IRNode::logical_or(
+            IRNode::binary(head, "===", IRNode::NullLiteral),
+            IRNode::binary(tail, "===", IRNode::Undefined),
+        )
+    }
+
+    /// Lower `left ?? right` to the non-ES2020 ternary
+    /// `left !== null && left !== void 0 ? left : right` (mirroring the main
+    /// emitter's `emit_nullish_coalescing_expression`). A side-effecting `left`
+    /// is captured once; `right` is converted afterwards so a nested `??`
+    /// allocates its temps first, matching `tsc`'s innermost-first order.
+    fn lower_nullish_coalescing(&self, left_idx: NodeIndex, right_idx: NodeIndex) -> IRNode {
+        let (guard_head, body) = self.capture_for_guard(left_idx);
+        let right = self.convert_expression(right_idx);
+        IRNode::ConditionalExpr {
+            condition: Box::new(Self::non_nullish_test(guard_head, body.clone())),
+            when_true: Box::new(body),
+            when_false: Box::new(right),
+        }
+    }
+
+    /// Lower `target ||= v` / `target &&= v` / `target ??= v` for a plain
+    /// (non-private) target. Returns `None` for `=`/arithmetic/`**=` compounds,
+    /// for private-field targets (handled by `private_exp_or_logical_compound_ir`
+    /// earlier), and for `super`-based targets, so the caller falls through.
+    fn lower_plain_logical_assignment(
+        &self,
+        operator_token: u16,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> Option<IRNode> {
+        let kind = if operator_token == SyntaxKind::BarBarEqualsToken as u16 {
+            LogicalAssign::Or
+        } else if operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16 {
+            LogicalAssign::And
+        } else if operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16 {
+            LogicalAssign::Nullish
+        } else {
+            return None;
+        };
+
+        // `(v) ||= 1` assigns to `v`; unwrap the redundant parens so the lowered
+        // reference reads `v`, not `(v)` (matching tsc).
+        let left_idx = self.unwrap_parenthesized_target(left_idx);
+        let left_node = self.arena.get(left_idx)?;
+        let is_property = left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+        let is_element = left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+
+        if is_property || is_element {
+            let access = self.arena.get_access_expr(left_node)?;
+            // Private-field targets are owned by the private compound path.
+            if is_property
+                && self
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                return None;
+            }
+            // `super.x ??= v` cannot be captured into a temp here.
+            if self
+                .arena
+                .get(access.expression)
+                .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16)
+            {
+                return None;
+            }
+            return Some(self.lower_logical_assignment_access(access, is_element, kind, right_idx));
+        }
+
+        // Identifier / `this` target: lowered inline with no temp.
+        Some(self.lower_logical_assignment_ident(left_idx, kind, right_idx))
+    }
+
+    /// Strip redundant parentheses around an assignment target.
+    fn unwrap_parenthesized_target(&self, mut idx: NodeIndex) -> NodeIndex {
+        while let Some(node) = self.arena.get(idx)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+            && paren.expression.is_some()
+        {
+            idx = paren.expression;
+        }
+        idx
+    }
+
+    /// Lower `T ||= v` / `T &&= v` / `T ??= v` for an identifier/`this` target.
+    ///
+    /// - `T ||= v` → `T || (T = v)`
+    /// - `T &&= v` → `T && (T = v)`
+    /// - `T ??= v` → `T !== null && T !== void 0 ? T : (T = v)`
+    fn lower_logical_assignment_ident(
+        &self,
+        left_idx: NodeIndex,
+        kind: LogicalAssign,
+        right_idx: NodeIndex,
+    ) -> IRNode {
+        let target = self.convert_expression(left_idx);
+        let rhs = self.convert_expression(right_idx);
+        let assign = IRNode::assign(target.clone(), rhs).paren();
+        match kind {
+            LogicalAssign::Or => IRNode::logical_or(target, assign),
+            LogicalAssign::And => IRNode::logical_and(target, assign),
+            LogicalAssign::Nullish => IRNode::ConditionalExpr {
+                condition: Box::new(Self::non_nullish_test(target.clone(), target.clone())),
+                when_true: Box::new(target),
+                when_false: Box::new(assign),
+            },
+        }
+    }
+
+    /// Lower `recv.p ||= v` / `recv[i] &&= v` / `recv.p ??= v` for a
+    /// property/element-access target. A side-effecting base (or element index)
+    /// is captured into a temp so it is evaluated once; the captured reference
+    /// and the write-back target share those temps. Temp allocation is
+    /// innermost-first (base, then index, then the `??=` value capture) to match
+    /// `tsc`'s ordering. Mirrors the main emitter's
+    /// `emit_logical_assignment_access`.
+    fn lower_logical_assignment_access(
+        &self,
+        access: &AccessExprData,
+        is_element: bool,
+        kind: LogicalAssign,
+        right_idx: NodeIndex,
+    ) -> IRNode {
+        let base_simple = crate::transforms::emit_utils::is_simple_copiable_expression(
+            self.arena,
+            access.expression,
+        );
+        let index_simple = !is_element
+            || crate::transforms::emit_utils::is_simple_copiable_expression(
+                self.arena,
+                access.name_or_argument,
+            );
+        let fully_simple = base_simple && index_simple;
+
+        let base_temp = if base_simple {
+            None
+        } else {
+            Some(self.generate_hoisted_temp())
+        };
+        let index_temp = if is_element && !index_simple {
+            Some(self.generate_hoisted_temp())
+        } else {
+            None
+        };
+
+        // The base reference is parenthesized when captured (`(_a = base).p`);
+        // an element index assignment is not (`base[_b = idx]`).
+        let (ref_base, target_base) = self.temp_ref_and_target(&base_temp, access.expression, true);
+
+        let (reference, target) = if is_element {
+            let (ref_index, target_index) =
+                self.temp_ref_and_target(&index_temp, access.name_or_argument, false);
+            (
+                IRNode::elem(ref_base, ref_index),
+                IRNode::elem(target_base, target_index),
+            )
+        } else {
+            let name = get_identifier_text(self.arena, access.name_or_argument).unwrap_or_default();
+            (
+                IRNode::prop(ref_base, name.clone()),
+                IRNode::prop(target_base, name),
+            )
+        };
+
+        match kind {
+            LogicalAssign::Or => {
+                let rhs = self.convert_expression(right_idx);
+                IRNode::logical_or(reference, IRNode::assign(target, rhs).paren())
+            }
+            LogicalAssign::And => {
+                let rhs = self.convert_expression(right_idx);
+                IRNode::logical_and(reference, IRNode::assign(target, rhs).paren())
+            }
+            LogicalAssign::Nullish => {
+                let value_temp = self.generate_hoisted_temp();
+                let captured = IRNode::assign(IRNode::id(value_temp.clone()), reference).paren();
+                let condition = Self::non_nullish_test(captured, IRNode::id(value_temp.clone()));
+                let rhs = self.convert_expression(right_idx);
+                // tsc parenthesizes the write-back only for a fully-simple
+                // target; a temp-captured target is left bare.
+                let assign = if fully_simple {
+                    IRNode::assign(target, rhs).paren()
+                } else {
+                    IRNode::assign(target, rhs)
+                };
+                IRNode::ConditionalExpr {
+                    condition: Box::new(condition),
+                    when_true: Box::new(IRNode::id(value_temp)),
+                    when_false: Box::new(assign),
+                }
+            }
+        }
+    }
+
+    /// Lower an optional *call* token `R?.(args)` — the `?.` is on the call, not
+    /// the access. Returns `None` for a `super`- or private-member callee so the
+    /// existing paths handle them.
+    fn try_convert_optional_call_token(
+        &self,
+        callee_idx: NodeIndex,
+        args: &[IRNode],
+    ) -> Option<IRNode> {
+        let callee_node = self.arena.get(callee_idx)?;
+        let is_property = callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION;
+        let is_element = callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+
+        if is_property || is_element {
+            let access = self.arena.get_access_expr(callee_node)?;
+            // `super.m?.()` cannot capture `super`; leave it to the existing path.
+            if self
+                .arena
+                .get(access.expression)
+                .is_some_and(|n| n.kind == SyntaxKind::SuperKeyword as u16)
+            {
+                return None;
+            }
+            // `recv.#m?.()` is owned by the private-member call path.
+            if is_property
+                && self
+                    .arena
+                    .get(access.name_or_argument)
+                    .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                return None;
+            }
+            return Some(self.lower_optional_call_with_receiver(access, is_element, args));
+        }
+
+        // Bare callee `f?.(args)` (identifier, call result, parenthesized, …):
+        // no receiver, so the guarded false branch is a plain `f(args)`.
+        Some(self.lower_optional_call_bare(callee_idx, args))
+    }
+
+    /// Lower `f?.(args)` where `f` has no receiver:
+    /// `f === null || f === void 0 ? void 0 : f(args)` (capturing `f` into a temp
+    /// when it is not side-effect-free).
+    fn lower_optional_call_bare(&self, callee_idx: NodeIndex, args: &[IRNode]) -> IRNode {
+        let (guard_head, body) = self.capture_for_guard(callee_idx);
+        IRNode::ConditionalExpr {
+            condition: Box::new(Self::nullish_short_circuit_test(guard_head, body.clone())),
+            when_true: Box::new(IRNode::Undefined),
+            when_false: Box::new(IRNode::call(body, args.to_vec())),
+        }
+    }
+
+    /// Lower `recv.m?.(args)` / `recv[k]?.(args)` where the call carries `?.`.
+    /// The member is captured into a temp (so it is read once) and invoked with
+    /// `.call(recv, args)` to preserve `recv` as the `this` receiver:
+    /// - simple `recv`:
+    ///   `(_a = recv.m) === null || _a === void 0 ? void 0 : _a.call(recv, args)`
+    /// - other `recv`:
+    ///   `(_b = (_a = recv).m) === null || _b === void 0 ? void 0 : _b.call(_a, args)`
+    fn lower_optional_call_with_receiver(
+        &self,
+        access: &AccessExprData,
+        is_element: bool,
+        args: &[IRNode],
+    ) -> IRNode {
+        let receiver_simple = crate::transforms::emit_utils::is_simple_copiable_expression(
+            self.arena,
+            access.expression,
+        );
+
+        let (member, call_receiver, func_temp) = if receiver_simple {
+            // The receiver is side-effect-free, so convert it once and reuse it
+            // both as the member base and as the `.call` `this`.
+            let receiver = self.convert_expression(access.expression);
+            let func_temp = self.generate_hoisted_temp();
+            let member_access = self.build_member(receiver.clone(), access, is_element);
+            (
+                IRNode::assign(IRNode::id(func_temp.clone()), member_access).paren(),
+                receiver,
+                func_temp,
+            )
+        } else {
+            // Receiver temp first (inner), then the function-value temp.
+            let this_temp = self.generate_hoisted_temp();
+            let func_temp = self.generate_hoisted_temp();
+            let recv_capture = IRNode::assign(
+                IRNode::id(this_temp.clone()),
+                self.convert_expression(access.expression),
+            )
+            .paren();
+            let member_access = self.build_member(recv_capture, access, is_element);
+            (
+                IRNode::assign(IRNode::id(func_temp.clone()), member_access).paren(),
+                IRNode::id(this_temp),
+                func_temp,
+            )
+        };
+
+        let condition = Self::nullish_short_circuit_test(member, IRNode::id(func_temp.clone()));
+        let mut call_args = Vec::with_capacity(args.len() + 1);
+        call_args.push(call_receiver);
+        call_args.extend(args.iter().cloned());
+        IRNode::ConditionalExpr {
+            condition: Box::new(condition),
+            when_true: Box::new(IRNode::Undefined),
+            when_false: Box::new(IRNode::call(
+                IRNode::prop(IRNode::id(func_temp), "call"),
+                call_args,
+            )),
+        }
+    }
+
+    /// Build `object.name` (property) or `object[index]` (element) from a
+    /// pre-built object IR node and the access's member node.
+    fn build_member(&self, object: IRNode, access: &AccessExprData, is_element: bool) -> IRNode {
+        if is_element {
+            IRNode::elem(object, self.convert_expression(access.name_or_argument))
+        } else {
+            let name = get_identifier_text(self.arena, access.name_or_argument).unwrap_or_default();
+            IRNode::prop(object, name)
+        }
+    }
+
     pub(super) fn convert_binary_expression(&self, idx: NodeIndex) -> IRNode {
         let node = self
             .arena
@@ -930,6 +1334,22 @@ impl<'a> AstToIr<'a> {
             // compound assignment. See `private_exp_or_logical_compound_ir`.
             if let Some(lowered) =
                 self.private_exp_or_logical_compound_ir(bin.operator_token, bin.left, bin.right)
+            {
+                return lowered;
+            }
+
+            // Nullish coalescing (`??`) and logical/nullish compound assignment
+            // (`||=`/`&&=`/`??=`) on a plain (non-private) target are ES2020/
+            // ES2021 syntax that an ES5/ES3 runtime cannot parse. This converter
+            // only ever runs for sub-ES2015 class bodies, so always downlevel
+            // them here — the IR printer would otherwise re-emit the raw operator
+            // verbatim, producing invalid output. Private targets are handled
+            // above and never reach this point.
+            if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16 {
+                return self.lower_nullish_coalescing(bin.left, bin.right);
+            }
+            if let Some(lowered) =
+                self.lower_plain_logical_assignment(bin.operator_token, bin.left, bin.right)
             {
                 return lowered;
             }
@@ -1642,5 +2062,165 @@ mod optional_chain_in_class_member_tests {
             !output.contains("__classPrivateFieldSet(this, _Acc_v_set, __classPrivateFieldGet"),
             "Accessor `&&=` must not be folded to an always-write set.\nOutput:\n{output}"
         );
+    }
+
+    // ====================================================================
+    // ES2020/ES2021 operator downlevel inside ES5 class member bodies.
+    //
+    // Structural rule: when the ES5 class-IR converter sees nullish
+    // coalescing (`??`), a logical/nullish compound assignment
+    // (`||=`/`&&=`/`??=`) on a non-private target, or an optional *call*
+    // token (`?.()`), it must apply the same downlevel the main emitter
+    // applies at sub-ES2015 targets — the IR printer would otherwise re-emit
+    // the raw operator, which is invalid ES5. The rules key on the operator
+    // token / `?.` chain flag, never on a receiver spelling, so these tests
+    // vary class/member/binder names.
+    // ====================================================================
+
+    #[test]
+    fn nullish_coalescing_in_method_downlevels() {
+        // `x ?? 0` — simple operand, no temp.
+        let output = emit_es5("class C {\n    a(x?: number) { return x ?? 0; }\n}\n");
+        assert!(
+            output.contains("return x !== null && x !== void 0 ? x : 0;"),
+            "`x ?? 0` must downlevel to the nullish ternary.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("??"),
+            "No raw `??` may survive at ES5.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_coalescing_side_effecting_operand_captures_temp() {
+        // A side-effecting left operand is captured once via `(_a = ...)`.
+        let output =
+            emit_es5("class Reader {\n    read(make: () => number) { return make() ?? 7; }\n}\n");
+        assert!(
+            output.contains("(_a = make()) !== null && _a !== void 0 ? _a : 7"),
+            "A side-effecting `??` operand must be captured once.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _a;"),
+            "The capture temp must be hoisted.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn logical_or_assignment_in_method_downlevels() {
+        // `v ||= 1` → `v || (v = 1)`.
+        let output = emit_es5("class C {\n    c(v: any) { v ||= 1; }\n}\n");
+        assert!(
+            output.contains("v || (v = 1);"),
+            "`v ||= 1` must downlevel to `v || (v = 1)`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("||="),
+            "No raw `||=` may survive.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn logical_and_assignment_in_method_downlevels() {
+        // `v &&= 3` → `v && (v = 3)`. Distinct binder name (anti-hardcoding).
+        let output = emit_es5("class Gate {\n    flip(flag: any) { flag &&= 3; }\n}\n");
+        assert!(
+            output.contains("flag && (flag = 3);"),
+            "`flag &&= 3` must downlevel to `flag && (flag = 3)`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_assignment_in_method_downlevels() {
+        // `v ??= 2` → `v !== null && v !== void 0 ? v : (v = 2)`.
+        let output = emit_es5("class C {\n    d(v: any) { v ??= 2; }\n}\n");
+        assert!(
+            output.contains("v !== null && v !== void 0 ? v : (v = 2);"),
+            "`v ??= 2` must downlevel to the nullish-assignment ternary.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("??="),
+            "No raw `??=` may survive.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nullish_assignment_on_property_target_captures_value_temp() {
+        // `this.p ??= 5` (simple receiver) → value-temp capture, parenthesized
+        // write-back.
+        let output = emit_es5("class Box {\n    fill() { this.p ??= 5; }\n}\n");
+        assert!(
+            output.contains("(_a = this.p) !== null && _a !== void 0 ? _a : (this.p = 5);"),
+            "`this.p ??= 5` must capture the read into a value temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn logical_or_assignment_on_property_target() {
+        // `this.p ||= 1` → `this.p || (this.p = 1)`.
+        let output = emit_es5("class Box {\n    seed() { this.p ||= 1; }\n}\n");
+        assert!(
+            output.contains("this.p || (this.p = 1);"),
+            "`this.p ||= 1` must downlevel to `this.p || (this.p = 1)`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn optional_call_token_on_method_preserves_receiver() {
+        // `o.m?.()` → capture the function value and invoke via `.call(o)`.
+        let output = emit_es5("class C {\n    b(o: { m?: () => void }) { return o.m?.(); }\n}\n");
+        assert!(
+            output.contains("(_a = o.m) === null || _a === void 0 ? void 0 : _a.call(o)"),
+            "`o.m?.()` must guard the function value and preserve `this` via `.call(o)`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("o.m()"),
+            "The optional-call token must not be dropped to a plain call.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn optional_call_token_on_bare_callee_uses_plain_call() {
+        // `f?.()` — no receiver, so no `.call`.
+        let output = emit_es5("class C {\n    run(f?: () => void) { return f?.(); }\n}\n");
+        assert!(
+            output.contains("f === null || f === void 0 ? void 0 : f()"),
+            "`f?.()` must guard the callee and invoke it plainly.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn optional_call_token_on_element_access_preserves_receiver() {
+        // `o["k"]?.()` → element-access function value + `.call(o)`.
+        let output = emit_es5("class C {\n    pick(o: any) { return o[\"k\"]?.(); }\n}\n");
+        assert!(
+            output.contains("(_a = o[\"k\"]) === null || _a === void 0 ? void 0 : _a.call(o)"),
+            "`o[\"k\"]?.()` must guard the element function value and preserve `this`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn class_member_downlevel_matches_top_level_downlevel() {
+        // Parity anchor: the SAME expression lowered at the top level (the main
+        // emitter path, which is byte-parity-tested against tsc) and inside a
+        // class member body (this converter) must produce the identical operator
+        // form. Compares the lowered fragment, ignoring the surrounding wrapper.
+        for expr in ["x ?? 0", "v ||= 1", "v ??= 2"] {
+            let top = emit_es5(&format!(
+                "function host(x?: any, v?: any) {{ return ({expr}); }}\n"
+            ));
+            let member = emit_es5(&format!(
+                "class Host {{ run(x?: any, v?: any) {{ return ({expr}); }} }}\n"
+            ));
+            // Both must downlevel away the raw operator.
+            assert!(
+                !top.contains("??") && !top.contains("||="),
+                "top-level `{expr}` should downlevel.\nOutput:\n{top}"
+            );
+            assert!(
+                !member.contains("??") && !member.contains("||="),
+                "class-member `{expr}` should downlevel.\nOutput:\n{member}"
+            );
+        }
     }
 }
