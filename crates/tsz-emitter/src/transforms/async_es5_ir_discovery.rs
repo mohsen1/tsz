@@ -68,6 +68,36 @@ impl AsyncES5Transformer<'_> {
             .any(|child| self.contains_for_await_recursive(child))
     }
 
+    /// True when the sub-tree at `idx` contains an explicit `return` statement
+    /// in the current function scope (not inside a nested function/class). In
+    /// an async generator every explicit `return` lowers to a
+    /// `yield __await(...)` suspension, so its presence forces the
+    /// `__generator` state machine even when the body has no `await`/`yield`.
+    /// The implicit end-of-body completion does not count — tsc emits those
+    /// async generators linearly.
+    pub(super) fn contains_explicit_return_recursive(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+            return true;
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| self.contains_explicit_return_recursive(child))
+    }
+
     pub(super) fn contains_array_spread_recursive(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;

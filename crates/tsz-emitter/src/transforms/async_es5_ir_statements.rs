@@ -114,96 +114,47 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret) = self.arena.get_return_statement(node) {
-                    if ret.expression.is_none() {
-                        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                            IRNode::GeneratorOp {
-                                opcode: opcodes::RETURN,
-                                value: None,
-                                comment: Some("return".to_string().into()),
-                            },
-                        ))));
-                    } else if self.is_suspension_expression(ret.expression) {
-                        // return await/yield expr; -> yield, then return _a.sent()
-                        self.process_await_expression(
+                    let has_expr = ret.expression.is_some();
+                    // Lower the operand (emitting any inner suspensions as their
+                    // own cases). A bare `return;` carries the implicit
+                    // `undefined` with no suspension.
+                    let (value, had_suspension) = if has_expr {
+                        self.lower_return_value(
                             ret.expression,
+                            cases,
+                            current_statements,
+                            current_label,
+                        )
+                    } else {
+                        (IRNode::Undefined, false)
+                    };
+
+                    if self.async_generator_mode {
+                        // An async generator awaits its return value before
+                        // resolving the iterator result — even the implicit
+                        // `undefined` of a bare `return;`. Re-mark the value as
+                        // an await (the `.apply` form when it depends on a
+                        // resumed `_a.sent()`), yield it, then return the
+                        // resolved value.
+                        let awaited = if had_suspension {
+                            self.wrap_await_apply(value)
+                        } else {
+                            self.wrap_await_value(value)
+                        };
+                        self.push_generator_yield(
+                            opcodes::YIELD,
+                            awaited,
+                            "yield",
                             cases,
                             current_statements,
                             current_label,
                         );
-
-                        // After the yield resumes, return the sent value
-                        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                            IRNode::GeneratorOp {
-                                opcode: opcodes::RETURN,
-                                value: Some(Box::new(IRNode::GeneratorSent)),
-                                comment: Some("return".to_string().into()),
-                            },
-                        ))));
-                    } else if self.contains_await_recursive(ret.expression) {
-                        let value = if let Some(lowered_comma) = self
-                            .lower_return_comma_before_suspension(
-                                ret.expression,
-                                cases,
-                                current_statements,
-                                current_label,
-                            ) {
-                            lowered_comma
-                        } else if let Some(lowered_object) = self
-                            .lower_object_literal_before_suspension(
-                                ret.expression,
-                                cases,
-                                current_statements,
-                                current_label,
-                            )
-                        {
-                            lowered_object
-                        } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
-                            ret.expression,
-                            cases,
-                            current_statements,
-                            current_label,
-                        ) {
-                            lowered_call
-                        } else if let Some(lowered_array) = self
-                            .lower_array_literal_before_suspension(
-                                ret.expression,
-                                cases,
-                                current_statements,
-                                current_label,
-                            )
-                        {
-                            lowered_array
-                        } else if let Some(lowered_access) = self
-                            .lower_element_access_object_before_suspension(
-                                ret.expression,
-                                cases,
-                                current_statements,
-                                current_label,
-                            )
-                        {
-                            lowered_access
-                        } else {
-                            self.emit_nested_suspension(
-                                ret.expression,
-                                cases,
-                                current_statements,
-                                current_label,
-                            );
-                            self.expression_to_ir(ret.expression)
-                        };
-                        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                            IRNode::GeneratorOp {
-                                opcode: opcodes::RETURN,
-                                value: Some(Box::new(value)),
-                                comment: Some("return".to_string().into()),
-                            },
-                        ))));
+                        self.push_generator_return_sent(current_statements);
                     } else {
-                        let value = self.expression_to_ir(ret.expression);
                         current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                             IRNode::GeneratorOp {
                                 opcode: opcodes::RETURN,
-                                value: Some(Box::new(value)),
+                                value: has_expr.then(|| Box::new(value)),
                                 comment: Some("return".to_string().into()),
                             },
                         ))));
@@ -1051,19 +1002,9 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             );
 
-            let awaited_delegated_value = IRNode::CallExpr {
-                callee: Box::new(IRNode::PropertyAccess {
-                    object: Box::new(IRNode::RuntimeHelper("__await".into())),
-                    property: "apply".into(),
-                }),
-                arguments: vec![
-                    IRNode::Undefined,
-                    IRNode::ArrayLiteral(vec![IRNode::GeneratorSent]),
-                ],
-            };
             self.push_generator_yield(
                 opcodes::YIELD,
-                awaited_delegated_value,
+                self.wrap_async_generator_await_sent(),
                 "yield",
                 cases,
                 current_statements,
@@ -1092,7 +1033,11 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements,
                 current_label,
             );
-            IRNode::GeneratorSent
+            // Re-mark the awaited result as an await before re-yielding it, so
+            // the `__asyncGenerator` runtime can tell an await-resolution apart
+            // from a yielded value. Mirrors the `yield*` branch above; a bare
+            // `GeneratorSent` here corrupts the async-iterator protocol.
+            self.wrap_async_generator_await_sent()
         } else {
             self.wrap_async_generator_await(yield_expr.expression)
         };
@@ -1138,14 +1083,120 @@ impl<'a> AsyncES5Transformer<'a> {
         *current_label = self.state.next_label();
     }
 
+    /// Pushes `return [2 /*return*/, _a.sent()]`: returns the value resolved at
+    /// the immediately preceding suspension. Used by the async-generator
+    /// return-await lowering after the `yield __await(...)` it pairs with.
+    pub(in crate::transforms) fn push_generator_return_sent(
+        &self,
+        current_statements: &mut Vec<IRNode>,
+    ) {
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::RETURN,
+                value: Some(Box::new(IRNode::GeneratorSent)),
+                comment: Some("return".to_string().into()),
+            },
+        ))));
+    }
+
+    /// Lowers a `return <expr>` operand into an IR value, emitting any inner
+    /// suspensions as their own cases first. Returns the value plus whether a
+    /// suspension was emitted while computing it (so the async-generator
+    /// return-await path can pick the `__await.apply` vs `__await` wrapper).
+    pub(in crate::transforms) fn lower_return_value(
+        &mut self,
+        expression: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> (IRNode, bool) {
+        if self.is_suspension_expression(expression) {
+            // return await/yield expr; -> yield, then the resumed sent value.
+            self.process_await_expression(expression, cases, current_statements, current_label);
+            (IRNode::GeneratorSent, true)
+        } else if self.contains_await_recursive(expression) {
+            let value = if let Some(lowered_comma) = self.lower_return_comma_before_suspension(
+                expression,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_comma
+            } else if let Some(lowered_object) = self.lower_object_literal_before_suspension(
+                expression,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_object
+            } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+                expression,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_call
+            } else if let Some(lowered_array) = self.lower_array_literal_before_suspension(
+                expression,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_array
+            } else if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
+                expression,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_access
+            } else {
+                self.emit_nested_suspension(expression, cases, current_statements, current_label);
+                self.expression_to_ir(expression)
+            };
+            (value, true)
+        } else {
+            (self.expression_to_ir(expression), false)
+        }
+    }
+
     pub(in crate::transforms) fn wrap_async_generator_await(
         &self,
         expression: NodeIndex,
     ) -> IRNode {
+        self.wrap_await_value(self.expression_to_ir(expression))
+    }
+
+    /// Builds `__await(value)`: marks an expression evaluated at the start of a
+    /// case as an await for the `__asyncGenerator` runtime.
+    pub(in crate::transforms) fn wrap_await_value(&self, value: IRNode) -> IRNode {
         IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__await".into())),
-            arguments: vec![self.expression_to_ir(expression)],
+            arguments: vec![value],
         }
+    }
+
+    /// Builds `__await.apply(void 0, [value])`: re-marks a value that was
+    /// computed *after* a suspension resumed (so it embeds `_a.sent()`) as an
+    /// await. tsc uses the `.apply` form — rather than a direct `__await(value)`
+    /// call — whenever the awaited operand depends on a resumed sent value, so
+    /// the `__asyncGenerator` runtime keeps await/yield framing.
+    pub(in crate::transforms) fn wrap_await_apply(&self, value: IRNode) -> IRNode {
+        IRNode::CallExpr {
+            callee: Box::new(IRNode::PropertyAccess {
+                object: Box::new(IRNode::RuntimeHelper("__await".into())),
+                property: "apply".into(),
+            }),
+            arguments: vec![IRNode::Undefined, IRNode::ArrayLiteral(vec![value])],
+        }
+    }
+
+    /// `__await.apply(void 0, [_a.sent()])` — the common re-await of the value
+    /// resumed at the immediately preceding suspension point (the `yield*`
+    /// delegate result and the inner `yield await x` result both flow through
+    /// this).
+    pub(in crate::transforms) fn wrap_async_generator_await_sent(&self) -> IRNode {
+        self.wrap_await_apply(IRNode::GeneratorSent)
     }
 
     pub(in crate::transforms) fn process_variable_declaration(
