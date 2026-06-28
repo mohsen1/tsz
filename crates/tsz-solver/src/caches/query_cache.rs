@@ -1311,7 +1311,7 @@ impl TypeResolver for QueryCache<'_> {
     /// inference. Historically it had NO `DefinitionStore`, so these `DefId`-keyed
     /// resolver methods silently returned trait defaults in inference: the
     /// `shared_application_base_def_id` cross-arena base unification (via
-    /// `defs_are_equivalent` -> `def_to_symbol_id` `SymbolId` equality) and the
+    /// `defs_are_equivalent` declaration-site/`SymbolId` equality) and the
     /// variance-computation paths that depend on them were dead, leaving
     /// cross-arena generic-call inference unable to pair type-args (issue #14344;
     /// the fp-ts `unknown`-widening FP family). Wiring the store re-enables them.
@@ -1346,6 +1346,23 @@ impl TypeResolver for QueryCache<'_> {
         }
         self.definition_store
             .map_or(def_id, |store| store.canonical_def_id(def_id))
+    }
+
+    fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
+        if a == b {
+            return true;
+        }
+        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
+            return false;
+        }
+        let Some(store) = self.definition_store else {
+            return false;
+        };
+        store.defs_have_same_decl_site(a, b)
+            || store
+                .get_symbol_id(a)
+                .zip(store.get_symbol_id(b))
+                .is_some_and(|(sa, sb)| sa == sb)
     }
 }
 

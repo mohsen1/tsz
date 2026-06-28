@@ -982,7 +982,15 @@ export const PROJECT_ROW_DEFINITIONS = [
     ref: "704c8cf7e76f1ce49301a5f943e51303c0db0058",
     guard_set: "canary",
     benchmark_set: "canary",
-    perf_timed: true,
+    // Not perf-timed: this canary app compiles green for compatibility, but its
+    // vs-tsgo perf benchmark errors (the merged row is `winner: "error"` with no
+    // tsz/tsgo timing pair). #14478 demoted it required -> canary/advisory but
+    // left perf_timed:true, so the publish gate's --require-green-project-timing-pairs
+    // kept demanding a timing pair the row cannot produce, blocking ~70% of Bench
+    // publishes ("1 green perf-timed project row(s) missing tsz/tsgo timing pairs:
+    // infisical-project"). Compat (green/red) is still tracked via the application
+    // compat gate; only the unprovable perf-timing requirement is removed.
+    perf_timed: false,
     category: "application",
   },
   {
