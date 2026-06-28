@@ -4,7 +4,8 @@ use crate::context::CheckerOptions;
 use crate::module_resolution::build_module_resolution_maps;
 use crate::state::CheckerState;
 use crate::test_utils::{
-    check_js_source_diagnostics, check_source, check_source_codes, check_source_strict_codes,
+    check_js_source_diagnostics, check_source, check_source_codes, check_source_strict,
+    check_source_strict_codes,
 };
 use std::sync::Arc;
 use tsz_binder::BinderState;
@@ -183,6 +184,56 @@ function useThisAssert() {
     assert!(
         !codes.contains(&2322),
         "explicitly annotated assertion receiver should narrow value, got {codes:?}"
+    );
+}
+
+/// Assert that the single TS1225 diagnostic covers exactly the asserted
+/// identifier `expected_ident` in `source`. Returns the diagnostic span as a
+/// substring of the source so callers see what was actually flagged.
+fn assert_ts1225_points_at(source: &str, expected_ident: &str) {
+    let diagnostics = check_source_strict(source);
+    let ts1225: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 1225)
+        .collect();
+    assert_eq!(
+        ts1225.len(),
+        1,
+        "expected exactly one TS1225 for {source:?}, got {diagnostics:#?}"
+    );
+    let diagnostic = ts1225[0];
+    let start = diagnostic.start as usize;
+    let end = start + diagnostic.length as usize;
+    let flagged = &source[start..end];
+    assert_eq!(
+        flagged, expected_ident,
+        "TS1225 should flag the asserted identifier {expected_ident:?}, but flagged {flagged:?} in {source:?}"
+    );
+}
+
+#[test]
+fn ts1225_asserts_predicate_points_at_identifier_not_keyword() {
+    // Regression (#14808): for an assertion predicate naming a non-parameter,
+    // tsc points TS1225 at the asserted identifier; tsz previously pointed at
+    // the `asserts` keyword (the start of the whole TYPE_PREDICATE node).
+    assert_ts1225_points_at("function bad(x: unknown): asserts y is string {}", "y");
+}
+
+#[test]
+fn ts1225_asserts_bare_predicate_points_at_identifier() {
+    // Bare `asserts X` (no `is T`) takes the same code path and must also
+    // flag the identifier rather than the `asserts` keyword.
+    assert_ts1225_points_at("function bad(x: unknown): asserts zzz {}", "zzz");
+}
+
+#[test]
+fn ts1225_plain_predicate_still_points_at_identifier() {
+    // A plain `X is T` predicate (no `asserts`) already flagged the identifier;
+    // the fix must not regress it. Binder name varied (`q`) to keep the check
+    // structural rather than keyed on a specific identifier.
+    assert_ts1225_points_at(
+        "function bad(x: unknown): q is string { return true; }",
+        "q",
     );
 }
 
