@@ -1,4 +1,7 @@
 use super::*;
+use crate::caches::db::TypeApplicationEvalCache;
+use crate::caches::query_cache::QueryCache;
+use crate::evaluation::result::TerminationKind;
 use crate::intern::TypeInterner;
 use crate::types::TypeId;
 
@@ -262,5 +265,32 @@ fn opaque_application_check_type_defers_instead_of_taking_true_branch() {
         ),
         "opaque-application check type must keep the conditional deferred, got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn incomplete_request_verdict_blocks_conditional_branch_persistent_write() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+
+    let mut complete = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    assert_eq!(
+        complete.conditional_subtype_relation(TypeId::STRING, TypeId::UNKNOWN),
+        BranchRelation::Holds
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::UNKNOWN, false),
+        Some(true)
+    );
+
+    let mut incomplete = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    incomplete.simulate_incomplete_request_verdict_for_test(TerminationKind::QueryOpBudget);
+    assert_eq!(
+        incomplete.conditional_subtype_relation(TypeId::NUMBER, TypeId::UNKNOWN),
+        BranchRelation::Holds
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::UNKNOWN, false),
+        None
     );
 }
