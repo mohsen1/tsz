@@ -1562,6 +1562,18 @@ impl ParserState {
         let mut all_modifiers = prefix_modifiers;
         all_modifiers.push(declare_modifier);
 
+        // Consume any redundant `declare` modifiers (`declare declare const x`).
+        // tsc reports TS1030 ("'declare' modifier already seen") at each extra
+        // `declare` keyword and parses the trailing ambient declaration as usual.
+        while self.is_token(SyntaxKind::DeclareKeyword) {
+            let dup_modifier = self.consume_modifier_with_error(
+                SyntaxKind::DeclareKeyword,
+                "'declare' modifier already seen.",
+                tsz_common::diagnostics::diagnostic_codes::MODIFIER_ALREADY_SEEN,
+            );
+            all_modifiers.push(dup_modifier);
+        }
+
         // Parse the inner declaration based on what follows 'declare'
         let saved_flags = self.context_flags;
         self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;

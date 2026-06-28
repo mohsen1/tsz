@@ -51,6 +51,22 @@ impl ParserState {
                 }
                 _ => self.parse_expression_statement(),
             }
+        } else if self.look_ahead_is_abstract_before_var_or_function() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            // `abstract` before a variable or function declaration
+            // (`abstract const x = 1;`, `abstract function f() {}`): tsc parses
+            // `abstract` as a modifier and reports TS1242 at the keyword, then
+            // parses the trailing declaration with the (invalid) modifier — it
+            // does NOT degrade to an identifier expression (which would give a
+            // spurious TS2304). Route through the shared modifier-prefixed
+            // statement parser so the declaration is still produced.
+            let abstract_start = self.token_pos();
+            let abstract_modifier = self.consume_modifier_with_error(
+                SyntaxKind::AbstractKeyword,
+                "'abstract' modifier can only appear on a class, method, or property declaration.",
+                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+            );
+            self.parse_accessor_modified_statement(abstract_start, vec![abstract_modifier])
         } else {
             // When 'abstract' at statement level is followed by '@' on the same line,
             // tsc emits TS1434 "Unexpected keyword or identifier." at the 'abstract' position,
@@ -411,6 +427,15 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token(); // skip `declare`
+        // A statement may begin with a run of redundant `declare` keywords
+        // (`declare declare const x`). tsc treats each extra `declare` as a
+        // modifier (TS1030) and still parses the trailing ambient declaration,
+        // so skip the run here and classify by what ultimately follows. ASI
+        // still applies between consecutive `declare` keywords.
+        while self.is_token(SyntaxKind::DeclareKeyword) && !self.scanner.has_preceding_line_break()
+        {
+            self.next_token();
+        }
         let is_decl = if self.scanner.has_preceding_line_break() {
             false
         } else if self.is_token(SyntaxKind::ImportKeyword) {
@@ -543,6 +568,40 @@ impl ParserState {
     /// Look ahead to see if "abstract" is followed by another declaration keyword.
     pub(crate) fn look_ahead_is_abstract_declaration(&mut self) -> bool {
         look_ahead_is_abstract_declaration(&mut self.scanner, self.current_token)
+    }
+
+    /// Emit a grammar diagnostic for a misplaced or duplicated modifier keyword
+    /// at the current token, consume it, and return the modifier token node.
+    /// Shared by the statement-leading recovery paths (a duplicated `declare`,
+    /// a stray `abstract` before a variable/function declaration).
+    pub(crate) fn consume_modifier_with_error(
+        &mut self,
+        kind: SyntaxKind,
+        message: &str,
+        code: u32,
+    ) -> NodeIndex {
+        let start = self.token_pos();
+        let end = self.token_end();
+        self.parse_error_at(start, end - start, message, code);
+        self.next_token();
+        self.arena.add_token(kind as u16, start, end)
+    }
+
+    /// Look ahead to see if `abstract` is followed by a variable or function
+    /// declaration keyword (`var`/`let`/`const`/`function`) on the same line.
+    /// These are reserved words, so the following construct is unambiguously a
+    /// declaration where `abstract` is a misplaced modifier (TS1242), not an
+    /// expression that happens to start with the identifier `abstract`.
+    pub(crate) fn look_ahead_is_abstract_before_var_or_function(&mut self) -> bool {
+        look_ahead_is_on_same_line(&mut self.scanner, self.current_token, |token| {
+            matches!(
+                token,
+                SyntaxKind::VarKeyword
+                    | SyntaxKind::LetKeyword
+                    | SyntaxKind::ConstKeyword
+                    | SyntaxKind::FunctionKeyword
+            )
+        })
     }
 
     /// Look ahead to see if "accessor" is followed by a declaration keyword.
