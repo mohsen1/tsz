@@ -1504,8 +1504,31 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.types,
                                         export_equals_type,
                                     );
-                                if namespace_default_belongs_to_namespace_shape
-                                    && (is_object_like || is_callable_like)
+                                // Non-node CJS interop (`esModuleInterop` /
+                                // `allowSyntheticDefaultImports`) namespace import of an
+                                // `export = X` whose target symbol IS a module/variable
+                                // (so it does not take the TS2497 path) and whose value
+                                // is callable/constructable: tsc wraps the namespace as
+                                // `{ default: X }` via `getTypeWithSyntheticDefault`,
+                                // gated on the export= type having call/construct
+                                // signatures. A function/class-only `export =` (the
+                                // TS2497 path, `export_equals_target_is_not_module_or_variable`)
+                                // stays the value so `ns(...)` / `new ns()` work; a plain
+                                // non-callable object `export =` (no signatures) also
+                                // stays the value so `ns.a` resolves (issue #14810). This
+                                // is the `esModuleInteropPrettyErrorRelatedInformation`
+                                // case (`declare function foo(); declare namespace foo {};
+                                // export = foo;`): the merged namespace makes the symbol a
+                                // module, so `import * as foo` is `{ default: () => void }`.
+                                let export_equals_target_is_module_or_variable = !self
+                                    .export_equals_target_is_not_module_or_variable(&exports_table);
+                                let export_equals_interop_callable_default =
+                                    export_equals_synthetic_default
+                                        && export_equals_target_is_module_or_variable
+                                        && is_callable_like;
+                                if (namespace_default_belongs_to_namespace_shape
+                                    && (is_object_like || is_callable_like))
+                                    || export_equals_interop_callable_default
                                 {
                                     return (namespace_type, Vec::new());
                                 }
