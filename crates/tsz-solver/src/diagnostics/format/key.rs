@@ -35,8 +35,17 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(record_display) = self.format_in_operator_record(&shape) {
                     return record_display.into();
                 }
-                // Use display properties (pre-widened literal types) when enabled.
+                // Use display properties (the as-written, pre-widened literal
+                // types) only for a *fresh* object literal. Display properties
+                // encode the literal spellings of a fresh object literal
+                // expression; `widen_type` copies them onto the widened
+                // (non-fresh) result so a fresh source still renders its
+                // literals. A non-fresh object reached as a `typeof x` query
+                // result (or any other regular/widened type) must render its
+                // canonical widened shape — `tsc` shows `{ x: number; }` for
+                // `typeof obj` of `const obj = { x: 1 }`, not `{ x: 1; }`.
                 if self.use_display_properties
+                    && shape.flags.contains(ObjectFlags::FRESH_LITERAL)
                     && let Some(display_props) = self.interner.get_display_properties(type_id)
                 {
                     return self.format_object(display_props.as_slice()).into();
@@ -55,6 +64,7 @@ impl<'a> TypeFormatter<'a> {
                     return name.into();
                 }
                 if self.use_display_properties
+                    && shape.flags.contains(ObjectFlags::FRESH_LITERAL)
                     && let Some(display_props) = self.interner.get_display_properties(type_id)
                 {
                     let mut display_shape = shape.as_ref().clone();

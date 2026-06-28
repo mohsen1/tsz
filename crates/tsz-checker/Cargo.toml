@@ -2302,3 +2302,7 @@ path = "tests/let_var_initializer_assignment_reduced_type_tests.rs"
 [[test]]
 name = "noinfer_object_property_literal_widening_tests"
 path = "tests/noinfer_object_property_literal_widening_tests.rs"
+
+[[test]]
+name = "typeof_object_literal_widened_display_tests"
+path = "tests/typeof_object_literal_widened_display_tests.rs"

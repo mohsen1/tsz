@@ -34,9 +34,13 @@ foo(c);
         .find(|d| d.code == 2345)
         .expect("expected TS2345");
 
+    // The argument `c` is a `const`-bound object literal whose value type is the
+    // widened (non-fresh) `{ x: number; }` — `tsc` renders that widened shape in
+    // the TS2345 source (verified against tsc 5.9.3: `Argument of type
+    // '{ x: number; }' ...`), not the as-written `{ x: 1; }` literal surface.
     assert!(
         diag.message_text.contains(
-            "Argument of type '{ x: 1; }' is not assignable to parameter of type '{ xy: number; }'."
+            "Argument of type '{ x: number; }' is not assignable to parameter of type '{ xy: number; }'."
         ),
         "expected remapped constraint shape in TS2345, got: {diag:?}"
     );
