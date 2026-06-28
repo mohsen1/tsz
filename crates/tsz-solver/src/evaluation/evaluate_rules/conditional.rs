@@ -520,11 +520,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 _ => check_type,
             };
 
-            if extends_has_infer
-                && (self.generic_tuple_infer_defer_required(cond.check_type, extends_unwrapped)
-                    || crate::contains_this_type(self.interner(), cond.check_type))
-            {
-                return self.interner().conditional(*cond);
+            if extends_has_infer {
+                // A check-side `this` forces deferral only when it is a *free*
+                // contextual `this`; a *bound* `this` enclosed in a concrete
+                // object/constructor instance (e.g. `InstanceType<typeof C>`)
+                // is determined and must be evaluated, else fluent
+                // `this`-returning classes get spurious TS2322/TS2345 (Kysely
+                // `AlterColumnBuilder`). See `resolved_check_type_binds_this`.
+                let check_has_free_this =
+                    crate::contains_this_type(self.interner(), cond.check_type)
+                        && !self.resolved_check_type_binds_this(check_type);
+                if self.generic_tuple_infer_defer_required(cond.check_type, extends_unwrapped)
+                    || check_has_free_this
+                {
+                    return self.interner().conditional(*cond);
+                }
             }
 
             // Concrete-element fast paths run only when the extends shape contains no

@@ -758,9 +758,17 @@ impl<'a> CheckerState<'a> {
                 }
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let name_text = self.ctx.types.resolve_atom(*name);
+                // Report on the asserted identifier, not the whole predicate node.
+                // For an `asserts X is T` / `asserts X` predicate the TYPE_PREDICATE
+                // node begins at the `asserts` modifier, so `node.pos` points at the
+                // keyword while tsc points at the named identifier. The
+                // `parameter_name` node always spans exactly that identifier (for a
+                // plain `X is T` predicate it coincides with `node.pos`, so this is a
+                // no-op there). Mirrors the rest-parameter branch below.
+                let error_node = self.ctx.arena.get(data.parameter_name).unwrap_or(node);
                 self.ctx.error(
-                    node.pos,
-                    node.end.saturating_sub(node.pos),
+                    error_node.pos,
+                    error_node.end.saturating_sub(error_node.pos),
                     diagnostic_messages::CANNOT_FIND_PARAMETER.replace("{0}", &name_text),
                     diagnostic_codes::CANNOT_FIND_PARAMETER,
                 );
