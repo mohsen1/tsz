@@ -1593,3 +1593,26 @@ fn test_const_enum_element_access_string_member_normalizes() {
         "const enum CE[\"Y\"] must normalize to CE.Y: {output}"
     );
 }
+
+#[test]
+fn test_enum_division_dts_is_float_value() {
+    // ECMAScript `/` is float division; `.d.ts` member values must carry the
+    // true fractional constant (regression: 10/4 -> 2 instead of 2.5).
+    let result = emit_dts("export enum RE {\n    A = 10 / 4,\n    B = 7 / 2,\n    C = 8 / 4,\n}\n");
+    assert!(
+        result.contains("A = 2.5") && result.contains("B = 3.5") && result.contains("C = 2"),
+        "enum division .d.ts values must be float quotients: {result}"
+    );
+}
+
+#[test]
+fn test_const_enum_division_dts_is_float_value() {
+    let result =
+        emit_dts("export const enum CE {\n    A = 10 / 4,\n    D = 1 / 3,\n    F = 100 / 8,\n}\n");
+    assert!(
+        result.contains("A = 2.5")
+            && result.contains("D = 0.3333333333333333")
+            && result.contains("F = 12.5"),
+        "const enum division .d.ts values must be float quotients: {result}"
+    );
+}
