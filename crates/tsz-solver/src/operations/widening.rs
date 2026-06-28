@@ -51,11 +51,25 @@ fn readonly_property_preserves_top_level_type(
     db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    matches!(
-        db.lookup(type_id),
-        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_))
-    ) || type_id == TypeId::BOOLEAN_TRUE
-        || type_id == TypeId::BOOLEAN_FALSE
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_)) => true,
+        // A union whose members are *all* themselves preservable top-level
+        // literals/unit types (`-1 | 0 | 1`, `"a" | "b"`) is preserved as a
+        // whole: tsc's `getWidenedType` never widens a regular literal union on
+        // a `readonly`/non-widening property. This mirrors the member-by-member
+        // union distribution in the main widen path, where literal members are
+        // already kept — without it, a non-widening property carrying a literal
+        // union (e.g. `comparison: x as -1 | 0 | 1`) would widen to its base
+        // primitive (`number`) and produce false TS2322/TS2345.
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members
+                    .iter()
+                    .all(|&member| readonly_property_preserves_top_level_type(db, member))
+        }
+        _ => type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE,
+    }
 }
 
 /// Public API to widen a literal type to its primitive.
