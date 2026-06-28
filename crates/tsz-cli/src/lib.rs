@@ -92,5 +92,8 @@ mod tsc_compat_tests;
 #[path = "../tests/tuple_interface_extends_array_numeric_member_cli_tests.rs"]
 mod tuple_interface_extends_array_numeric_member_cli_tests;
 #[cfg(test)]
+#[path = "../tests/unresolved_import_type_application_cli_tests.rs"]
+mod unresolved_import_type_application_cli_tests;
+#[cfg(test)]
 #[path = "../tests/watch_tests.rs"]
 mod watch_tests;

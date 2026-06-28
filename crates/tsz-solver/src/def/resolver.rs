@@ -190,6 +190,20 @@ pub trait TypeResolver {
         false
     }
 
+    /// Whether this `DefId` backs an `import` alias whose module failed to
+    /// resolve (its `TS2307` was already reported).
+    ///
+    /// `tsc` substitutes the permissive `error`/`any` type for a reference
+    /// whose target symbol could not be resolved, so applying type arguments
+    /// to such a reference (`Gen<{...}>` from `import { Gen } from "missing"`)
+    /// must collapse to `any` rather than survive as a live structural
+    /// `Application` the relation layer then rejects. The default `false`
+    /// keeps non-checker resolvers (which have no module-resolution surface)
+    /// on the existing opaque-application behavior.
+    fn is_unresolved_import_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
     /// resolver has access to a wider binder graph than the lowering pass
     /// did. Used by the type evaluator to recover from

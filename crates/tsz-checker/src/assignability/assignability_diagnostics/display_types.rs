@@ -25,6 +25,33 @@ impl<'a> CheckerState<'a> {
             source_idx,
             diag_idx,
             false,
+            false,
+        )
+    }
+
+    /// Like `check_assignable_or_report_at_with_display_types`, but renders the
+    /// target VERBATIM (alias name and `| null | undefined` preserved) instead of
+    /// through the nullish-stripping `AssignmentTarget` role. Used for JSX
+    /// framework special attributes (`key`/`ref`), which `tsc` elaborates with
+    /// their full declared apparent type. `check_target` drives the relation;
+    /// `display_target` is shown in the message.
+    pub(crate) fn check_assignable_or_report_at_with_verbatim_target_display(
+        &mut self,
+        source: TypeId,
+        check_target: TypeId,
+        display_target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        self.check_assignable_or_report_at_with_display_types_and_options(
+            source,
+            check_target,
+            source,
+            display_target,
+            source_idx,
+            diag_idx,
+            false,
+            true,
         )
     }
 
@@ -47,9 +74,11 @@ impl<'a> CheckerState<'a> {
             source_idx,
             diag_idx,
             true,
+            false,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check_assignable_or_report_at_with_display_types_and_options(
         &mut self,
         source: TypeId,
@@ -59,6 +88,7 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         diag_idx: NodeIndex,
         skip_source_elaboration: bool,
+        verbatim_target: bool,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
@@ -83,6 +113,19 @@ impl<'a> CheckerState<'a> {
         if !skip_source_elaboration
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
+            return false;
+        }
+
+        // Framework special-attribute (`key`/`ref`) targets are rendered verbatim
+        // so the declared alias and `| null | undefined` survive. `tsc` shows the
+        // plain "Type X is not assignable to type Y" form here (no nested reason),
+        // so skip the reason-based elaboration entirely.
+        if verbatim_target {
+            self.error_type_not_assignable_at_with_verbatim_target(
+                source_for_display,
+                target_for_display,
+                diag_idx,
+            );
             return false;
         }
 

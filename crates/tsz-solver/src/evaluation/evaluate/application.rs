@@ -339,6 +339,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
+                // A genuinely-unresolved import alias (`TS2307`) collapses to
+                // `any` rather than staying opaque: the classification is final,
+                // not a registration-window artifact (issue #14747, mirrors the
+                // bodyless `else` branch below).
+                if self.resolver.is_unresolved_import_def(def_id) {
+                    return ApplicationEvalOutcome::Computed(TypeId::ANY);
+                }
                 // Generic def with registered params but no body: the def is
                 // mid-registration (or owned by a file whose checker has not
                 // published it yet). The opaque result is a registration-window
@@ -474,6 +481,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 ApplicationEvalOutcome::Computed(original_type_id)
             }
+        } else if self.resolver.is_unresolved_import_def(def_id) {
+            // The base def backs an `import` alias whose module failed to
+            // resolve (`TS2307`). Unlike the registration-window cases below,
+            // this classification is final — the module is genuinely missing —
+            // so the application collapses to `any`, matching `tsc`'s error-type
+            // substitution for a reference whose target failed to resolve. This
+            // mirrors the no-type-argument path, where the checker already
+            // poisons a bare unresolved-import reference to `any`; without it
+            // `Gen<{...}>` from `import { Gen } from "missing"` survives as a
+            // live structural application the relation layer rejects (false
+            // `TS2322`/`TS2345`/`TS2353` cascade, issue #14747). The result is
+            // stable, so it is NOT tainted with `mark_unresolved_def_seen`.
+            crate::evaluation::eval_materialization_probe::record_application_body_path(
+                crate::evaluation::eval_materialization_probe::ApplicationBodyPath::OpaqueNoRegisteredBody,
+            );
+            ApplicationEvalOutcome::Computed(TypeId::ANY)
         } else {
             // Neither type parameters nor a body are registered for the base
             // def (e.g. an import-alias `DefId` that was never forwarded to

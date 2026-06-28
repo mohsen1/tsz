@@ -147,9 +147,13 @@ impl<'a> CheckerState<'a> {
     /// }
     /// ```
     /// Lightweight AST scan: does the function body contain any `throw` statements?
-    /// This is used as a pre-check before the more expensive `function_body_falls_through`
-    /// to avoid triggering type evaluation in simple function bodies that obviously fall through.
-    fn body_contains_throw_or_never_call(&self, body_idx: NodeIndex) -> bool {
+    ///
+    /// This is a syntax-only pre-check; it deliberately does not detect
+    /// never-returning tail calls (e.g. `die(11)`), which require resolving the
+    /// callee's signature. The authoritative reachability answer for the
+    /// `void` vs `never` inference is `function_body_falls_through`, which routes
+    /// expression-statement calls through `call_expression_terminates_control_flow`.
+    fn body_contains_throw(&self, body_idx: NodeIndex) -> bool {
         fn scan_stmts(arena: &tsz_parser::parser::NodeArena, stmts: &[NodeIndex]) -> bool {
             use tsz_parser::parser::syntax_kind_ext;
             for &idx in stmts {
@@ -217,6 +221,61 @@ impl<'a> CheckerState<'a> {
             return scan_stmts(self.ctx.arena, &block.statements.nodes);
         }
         false
+    }
+
+    /// Lightweight, syntax-only check: can the body's terminal statement plausibly
+    /// fail to fall through (e.g. a never-returning tail call `die(11)`, a
+    /// structured `if`/`switch`/`try`, or a jump statement)?
+    ///
+    /// This gates the (potentially evaluation-triggering)
+    /// `function_body_falls_through` query. When the body's last statement is a
+    /// trivially-falling-through statement (a variable/function/class declaration,
+    /// a non-call expression statement, etc.), the body provably falls through, so
+    /// the return type is `void` and we must NOT run the reachability query —
+    /// doing so would evaluate flow-sensitive receivers (e.g. evolving
+    /// implicit-`any` arrays) prematurely and suppress their `TS7005`/`TS7034`
+    /// diagnostics. A never-returning tail call always appears as the terminal
+    /// expression statement, so it is preserved here (#14741).
+    fn body_tail_may_terminate_control_flow(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return false;
+        }
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+        let Some(&last_idx) = block.statements.nodes.last() else {
+            return false;
+        };
+        let Some(last) = self.ctx.arena.get(last_idx) else {
+            return false;
+        };
+        match last.kind {
+            syntax_kind_ext::THROW_STATEMENT
+            | syntax_kind_ext::RETURN_STATEMENT
+            | syntax_kind_ext::BREAK_STATEMENT
+            | syntax_kind_ext::CONTINUE_STATEMENT
+            | syntax_kind_ext::IF_STATEMENT
+            | syntax_kind_ext::SWITCH_STATEMENT
+            | syntax_kind_ext::TRY_STATEMENT
+            | syntax_kind_ext::BLOCK
+            | syntax_kind_ext::LABELED_STATEMENT
+            | syntax_kind_ext::WHILE_STATEMENT
+            | syntax_kind_ext::DO_STATEMENT
+            | syntax_kind_ext::FOR_STATEMENT => true,
+            syntax_kind_ext::EXPRESSION_STATEMENT => self
+                .ctx
+                .arena
+                .get_expression_statement(last)
+                .and_then(|stmt| self.ctx.arena.get(stmt.expression))
+                .is_some_and(|expr| {
+                    expr.kind == syntax_kind_ext::CALL_EXPRESSION
+                        || expr.kind == syntax_kind_ext::NEW_EXPRESSION
+                }),
+            _ => false,
+        }
     }
 
     pub fn function_body_falls_through(&mut self, body_idx: NodeIndex) -> bool {
@@ -1055,10 +1114,20 @@ impl<'a> CheckerState<'a> {
             // No return statements found. Check if the body falls through:
             // - If it does (normal implicit return), the return type is `void`
             // - If it doesn't (all paths throw or call never), the return type is `never`
-            // Only call the (potentially expensive) fallthrough checker when the body
-            // could plausibly be non-falling-through, i.e. it contains throw statements.
-            // This avoids triggering unnecessary type evaluation in simple function bodies.
-            let may_not_fall_through = self.body_contains_throw_or_never_call(body_idx);
+            // `function_body_falls_through` is the authoritative reachability
+            // answer; it routes expression-statement calls through
+            // `call_expression_terminates_control_flow`, so a tail never-returning
+            // call (`die(11)`) terminates the body and infers `never`, not `void`
+            // (#14741). But that query can evaluate flow-sensitive receivers (e.g.
+            // `x.push(...)` on an evolving implicit-`any` array), so running it on
+            // bodies that obviously fall through prematurely freezes those types
+            // and drops `TS7005`/`TS7034`. Gate it behind a cheap syntax pre-check:
+            // a `throw` anywhere, or a terminal statement that can plausibly
+            // terminate control flow (the never-returning tail call lives there).
+            // Otherwise the body provably falls through and returns `void`.
+            let may_not_fall_through = self.body_contains_throw(body_idx)
+                || self.body_tail_may_terminate_control_flow(body_idx);
+            let falls_through = !may_not_fall_through || self.function_body_falls_through(body_idx);
 
             // Check if function has a return type annotation
             let has_return_type_annotation = if let Some(func_node) = self.ctx.arena.get(body_idx)
@@ -1069,10 +1138,7 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            if has_return_type_annotation
-                && may_not_fall_through
-                && !self.function_body_falls_through(body_idx)
-            {
+            if has_return_type_annotation && !falls_through && self.body_contains_throw(body_idx) {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node(
                     body_idx,
@@ -1103,7 +1169,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            return if !may_not_fall_through || self.function_body_falls_through(body_idx) {
+            // A bare `return;` (`saw_empty`) means the body explicitly returns
+            // `void`/`undefined`, never `never` — even though it does not fall off
+            // the end. Only bodies with no `return` whose every path throws or
+            // calls a never-returning function infer `never`.
+            return if falls_through || saw_empty {
                 // When contextual return type expects `undefined` (not void/any/unknown),
                 // use `undefined` so `const f: () => undefined = () => {}` doesn't produce TS2322.
                 // tsc applies contextual typing to infer the return type of such lambdas.
