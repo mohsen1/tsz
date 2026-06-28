@@ -230,6 +230,10 @@ mod decorator_tests;
 mod modifier_ordering_tests;
 
 #[cfg(test)]
+#[path = "../../tests/statement_leading_modifier_recovery_tests.rs"]
+mod statement_leading_modifier_recovery_tests;
+
+#[cfg(test)]
 #[path = "../../tests/parse_diagnostic_order_tests.rs"]
 mod parse_diagnostic_order_tests;
 
