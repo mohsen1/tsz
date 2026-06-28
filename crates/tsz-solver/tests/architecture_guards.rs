@@ -240,8 +240,11 @@ fn evaluation_engine_keeps_request_stage_boundary() {
         query_cache_rs
             .contains("use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};")
             && query_cache_rs.contains("request.cache_key()")
-            && query_cache_rs.contains("evaluate_request_result(request).into_type_id()"),
-        "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and unwrap EvaluationResult only at the cache compatibility edge"
+            && query_cache_rs.contains("evaluate_request_memo_result(request)")
+            && query_cache_rs.contains("is_stable_for_depth_agnostic_cache()")
+            && !query_cache_rs
+                .contains("evaluation_result.is_complete() && !evaluator.recursion_limit_hit()"),
+        "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and consume EvaluationMemoResult stability instead of rebuilding termination predicates"
     );
 }
 

@@ -36,6 +36,23 @@ const PROJECT_COMPATIBILITY_ROW_SET = new Set([
 ]);
 const BENCHMARK_RUNNER = "scripts/bench/bench-vs-tsgo.sh";
 
+// The bench-canaries and bench-applications shards are OPTIONAL: they are
+// excluded from the required-shard completeness gate in bench.yml (the same
+// `bench-results-bench-(canaries|applications).json` exclusion lives there) and
+// the readiness gate only blocks on required rows. A flaky optional shard must
+// therefore never fail the merge step either: its runner-signature defects are
+// advisory, not publish-blocking. Classify by shard.label first (authoritative
+// when present) and fall back to the shard artifact filename so a shard that is
+// SO broken it dropped its shard.label is still recognised as optional.
+const OPTIONAL_SHARD_LABELS = new Set(["bench-canaries", "bench-applications"]);
+const OPTIONAL_SHARD_FILE_PATTERN = /^bench-results-bench-(canaries|applications)\.json$/;
+
+function isOptionalShard(file, payload) {
+  const label = payload?.shard?.label;
+  if (typeof label === "string" && OPTIONAL_SHARD_LABELS.has(label)) return true;
+  return OPTIONAL_SHARD_FILE_PATTERN.test(path.basename(file));
+}
+
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
 }
@@ -269,11 +286,21 @@ function collectFixtureSourceFailures(rowName, fixtureSources) {
 }
 
 function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
-  const failures = [];
+  const blocking = [];
+  const advisory = [];
+  // Route a per-shard signature defect to advisory for the optional
+  // (canary/application) shards and blocking for the required ones.
+  const optionalFiles = new Set(
+    payloads.filter(({ file, payload }) => isOptionalShard(file, payload)).map(({ file }) => path.basename(file)),
+  );
+  const push = (basename, message) => {
+    (optionalFiles.has(basename) ? advisory : blocking).push(message);
+  };
   const seenShardLabels = new Map();
 
   for (const { file, payload } of payloads) {
     const basename = path.basename(file);
+    const failures = { push: (message) => push(basename, message) };
     const environment = payload.runner_environment;
     if (!environment || typeof environment !== "object") {
       failures.push(`${basename}: missing runner_environment`);
@@ -339,10 +366,17 @@ function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
   }
 
   for (const warning of runnerEnvironmentWarnings.filter(isFatalRunnerEnvironmentWarning)) {
-    failures.push(`${warning.file}: runner_environment mismatch (${warning.mismatched_fields.join(", ")})`);
+    // warning.file is already a basename (validateRunnerEnvironmentConsistency).
+    // A required shard diverging from the baseline runner is a measurement
+    // integrity failure (blocking); an optional shard that legitimately ran on a
+    // different runner is advisory.
+    push(
+      warning.file,
+      `${warning.file}: runner_environment mismatch (${warning.mismatched_fields.join(", ")})`,
+    );
   }
 
-  return failures;
+  return { blocking, advisory };
 }
 
 function measurementProfileSignature(profile) {
@@ -640,12 +674,21 @@ function main() {
     .filter(({ profile }) => profile && typeof profile === "object");
   const measurementProfile = measurementProfiles[0]?.profile ?? null;
   const measurementProfileWarnings = validateMeasurementProfileConsistency(measurementProfiles);
-  const runnerSignatureFailures = requireRunnerSignature
+  const { blocking: runnerSignatureBlocking, advisory: runnerSignatureAdvisory } = requireRunnerSignature
     ? collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings)
-    : [];
-  if (runnerSignatureFailures.length > 0) {
-    console.error("Benchmark runner signature validation failed:");
-    for (const failure of runnerSignatureFailures) {
+    : { blocking: [], advisory: [] };
+  if (runnerSignatureAdvisory.length > 0) {
+    // Optional canary/application shard signature defects must NOT block
+    // publishing the required benchmark timings (a flaky optional shard once
+    // froze the whole benchmark site). Surface them as annotations and continue.
+    console.warn("::warning::Benchmark runner signature validation found advisory gaps on optional shards; publishing required timing data anyway:");
+    for (const failure of runnerSignatureAdvisory) {
+      console.warn(`  - ${failure}`);
+    }
+  }
+  if (runnerSignatureBlocking.length > 0) {
+    console.error("Benchmark runner signature validation failed (blocking):");
+    for (const failure of runnerSignatureBlocking) {
       console.error(`  - ${failure}`);
     }
     process.exit(1);
@@ -662,6 +705,7 @@ function main() {
       runner_environment_warnings: runnerEnvironmentWarnings,
       measurement_profile_warnings: measurementProfileWarnings,
       project_compatibility_advisory: compatAdvisory,
+      runner_signature_advisory: runnerSignatureAdvisory,
       dropped_empty_shards: droppedEmptyShards.map(({ file, payload }) => ({
         file: path.basename(file),
         error: shardStubError(payload),

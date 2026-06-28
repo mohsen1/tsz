@@ -25,6 +25,7 @@ use crate::diagnostics::display_provenance::{
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationResult;
 use crate::evaluation::result::TerminationKind;
 #[cfg(test)]
@@ -510,21 +511,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Drain the evaluator's internal cache, returning all intermediate results.
-    /// This allows callers to persist intermediate evaluation results
-    /// (e.g., from recursive mapped type expansion) into a longer-lived cache.
-    ///
-    /// Callers persisting these into a cache whose key does not capture the
-    /// ambient stack depth must filter out limit-truncated entries via
-    /// [`take_tainted`](Self::take_tainted).
+    /// This is for callers that inspect or discard entries. Callers persisting
+    /// results into a cache whose key does not capture the ambient stack depth
+    /// should use [`drain_stable_cache`](Self::drain_stable_cache).
     pub fn drain_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
         self.cache.drain()
     }
 
-    /// Take the set of cache entries whose values are limit-truncated
-    /// stack-context artifacts (see the `tainted` field). Pair with
-    /// [`drain_cache`](Self::drain_cache) to persist only stable entries.
-    pub(crate) fn take_tainted(&mut self) -> FxHashSet<TypeId> {
-        std::mem::take(&mut self.tainted)
+    /// Drain only cache entries whose values are stable functions of their
+    /// input `TypeId`.
+    ///
+    /// This filters out entries whose values are limit-truncated stack-context
+    /// artifacts, which must not be persisted into evaluator caches keyed only
+    /// by `TypeId`.
+    pub fn drain_stable_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
+        let tainted = std::mem::take(&mut self.tainted);
+        self.cache
+            .drain()
+            .filter(move |(type_id, _)| !tainted.contains(type_id))
     }
 
     /// Whether `type_id`'s memoized value is a limit-truncated artifact.
@@ -566,6 +570,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.def_depth.clear();
         self.def_eval_stack.clear();
         self.real_instantiation_depth_count = 0;
+        self.silent_depth_bailed = false;
+        self.deep_recursion_seen = false;
+        self.request_termination_kind = None;
+        self.limit_epoch = 0;
+        self.app_body_limit_epoch = 0;
+        self.unresolved_def_seen = false;
     }
 
     /// Evaluate a normalized request, applying option-sensitive configuration
@@ -603,12 +613,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(crate) fn evaluate_request_memo_result(
         &mut self,
         request: EvaluationRequest,
-    ) -> (TypeId, bool) {
+    ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        (
-            result.into_type_id(),
-            !result.is_incomplete() && !self.recursion_limit_hit(),
-        )
+        EvaluationMemoResult::for_depth_agnostic_memo(result, self.recursion_limit_hit())
     }
 
     // =========================================================================
@@ -782,6 +789,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(crate) const fn mark_depth_exceeded(&mut self) {
         self.guard.mark_exceeded();
         self.note_limit_event();
+    }
+
+    /// Mark a depth-style guard bail and surface the typed request verdict.
+    ///
+    /// Use this for producers whose own bailout reason is
+    /// [`TerminationKind::DepthExceeded`]. Producers with a more specific typed
+    /// verdict, such as fuel exhaustion, should keep using
+    /// [`Self::mark_depth_exceeded`] and then record their specific kind.
+    #[inline]
+    pub(crate) fn mark_depth_exceeded_for_request(&mut self) {
+        self.mark_depth_exceeded();
+        self.note_request_termination(TerminationKind::DepthExceeded);
     }
 
     /// Record that a recursion/depth/iteration/divergence limit just fired.
@@ -1167,8 +1186,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // catch because cycle detection fires first. Flag depth_exceeded so
                 // the checker can emit TS2589.
                 if self.flag_depth_on_app_cycle && matches!(key, Some(TypeData::Application(_))) {
-                    self.guard.mark_exceeded();
-                    self.note_limit_event();
+                    self.mark_depth_exceeded_for_request();
                     return TypeId::ERROR;
                 }
                 return type_id;
@@ -1176,6 +1194,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::DepthExceeded => {
                 // Depth-bounded run (see `deep_recursion_seen`).
                 self.mark_deep_recursion_seen();
+                self.note_request_termination(TerminationKind::DepthExceeded);
                 // The per-`TypeId` guard's depth limit is structural — it caps the
                 // type-tree walk to protect the stack, not the instantiation chain.
                 // tsc's `instantiationDepth` (the source of TS2589) is mirrored by

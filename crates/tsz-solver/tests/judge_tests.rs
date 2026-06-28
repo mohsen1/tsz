@@ -292,13 +292,22 @@ fn test_non_stable_evaluation_result_is_not_cached() {
     let no_infer_string = interner.no_infer(TypeId::STRING);
 
     assert_eq!(
-        judge.record_evaluation_result(no_infer_string, TypeId::ERROR, false),
+        judge.record_evaluation_result(
+            no_infer_string,
+            crate::evaluation::result::EvaluationMemoResult::new(
+                crate::evaluation::result::EvaluationResult::complete(TypeId::ERROR),
+                false,
+            ),
+        ),
         TypeId::ERROR
     );
     assert_eq!(judge.cache_statistics().eval_entries, 0);
 
     assert_eq!(
-        judge.record_evaluation_result(no_infer_string, TypeId::STRING, true),
+        judge.record_evaluation_result(
+            no_infer_string,
+            crate::evaluation::result::EvaluationMemoResult::cached(TypeId::STRING),
+        ),
         TypeId::STRING
     );
     assert_eq!(judge.cache_statistics().eval_entries, 1);

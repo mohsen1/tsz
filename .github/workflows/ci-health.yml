@@ -520,3 +520,34 @@ jobs:
             echo "::warning::bench artifact absent or could not be parsed — bench did not complete for latest main"
           fi
           exit 0
+
+  bench-latest-freshness:
+    name: bench-latest-freshness
+    runs-on: ubuntu-latest
+    # Advisory by design: a monitoring job must not red the health workflow.
+    # The SIGNAL is a single deduplicated tracking issue (--file-issue), not a
+    # red run — mirroring main-red-sentinel. This closes the freeze blind spot:
+    # bench-artifact-readiness above inspects a freshly merged ARTIFACT and gates
+    # on source-commit currency, so it stays green while the PUBLISHED
+    # latest.json silently stops advancing (the 46-commit freeze went unnoticed
+    # for half a day for exactly this reason).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Detect stale published benchmark data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Threshold is 9h, not the 6h script default: the perf cadence is 3h but
+          # runs queue for hours on the contended self-hosted pool, so 9h (~3
+          # missed cadences) avoids false alarms during normal long queueing while
+          # still catching a real freeze within a few hours. --file-issue opens /
+          # updates / closes one deduplicated tracking issue; no --strict so a
+          # transient fetch blip never reds this advisory job.
+          node scripts/bench/check-latest-freshness.mjs --file-issue --max-age-hours 9 \
+            | tee -a "${GITHUB_STEP_SUMMARY}"

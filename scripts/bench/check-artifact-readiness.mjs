@@ -7,7 +7,8 @@
  *   1 — artifact present, one or more required rows are missing, the
  *       --require-green release gate found non-green required rows, the
  *       --require-clean-metadata gate found artifact metadata warnings,
- *       --require-application-compat found missing/incomplete application rows,
+ *       --require-application-compat found missing/incomplete benchmark_set:"required"
+ *       application rows (canary application gaps are advisory, never blocking),
  *       --require-green-project-timing-pairs found green perf-timed rows
  *       missing tsz/tsgo timing pairs,
  *       or the --require-source-current gate found a stale artifact source commit
@@ -74,6 +75,22 @@ const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
 // pair is advisory, while a future required perf-timed row still blocks.
 function isBlockingTimedRow(name) {
   return REQUIRED_MEASURED_ROW_SET.has(name);
+}
+
+// Application compatibility rows are real apps cloned + installed by the
+// optional, best-effort bench-applications shard (their compat lands from that
+// shard or, as a fallback, a matching-CI compat artifact). BOTH sources can
+// legitimately be absent for a given run: a flaky package-manager install, or a
+// workflow_dispatch Bench with no matching main CI push run — the exact failure
+// that froze the public site when infisical's only compat source vanished
+// (#15004 dropped infisical from the perf-timed shard, so it stopped being
+// benched, and that run's matching-CI compat was absent, leaving the row
+// entirely missing). Mirror the perf-timing split (isBlockingTimedRow): a
+// canary application row with missing/incomplete/duplicate compat is advisory
+// (reported, never publish-blocking), while a future benchmark_set:"required"
+// application row still blocks the publish.
+function isBlockingApplicationRow(name) {
+  return PROJECT_ROWS_BY_NAME[name]?.benchmark_set === "required";
 }
 
 const args = process.argv.slice(2);
@@ -382,19 +399,37 @@ function analyzeArtifact(artifact, expectedCommit) {
     (row) => !isBlockingTimedRow(row.name),
   );
 
+  const applicationMissing = applicationRows.filter((r) => r.state === "missing");
+  const applicationIncomplete = applicationRows.filter((r) => (
+    r.state !== "missing" &&
+    r.duplicate_count <= 1 &&
+    r.metadata_complete !== true
+  ));
+  const applicationDuplicates = applicationRows.filter((r) => r.duplicate_count > 1);
+  // Every application-compat gap, tagged with the kind of gap, then split into
+  // publish-blocking (benchmark_set:"required") and advisory (canary) buckets so
+  // a flaky canary app install can never freeze the public benchmark site while
+  // a required application row still gates the publish.
+  const applicationGaps = [
+    ...applicationMissing.map((r) => ({ ...r, gap_kind: "missing" })),
+    ...applicationIncomplete.map((r) => ({ ...r, gap_kind: "incomplete" })),
+    ...applicationDuplicates.map((r) => ({ ...r, gap_kind: "duplicate" })),
+  ];
+  const blockingApplicationGaps = applicationGaps.filter((r) => isBlockingApplicationRow(r.name));
+  const advisoryApplicationGaps = applicationGaps.filter((r) => !isBlockingApplicationRow(r.name));
+
   return {
     measurementProfile: measurementProfileStatus(artifact),
     validationWarnings: analyzeValidationWarnings(artifact),
     sourceFreshness: analyzeSourceFreshness(artifact, expectedCommit),
     rows,
     applicationRows,
-    applicationMissing: applicationRows.filter((r) => r.state === "missing"),
-    applicationIncomplete: applicationRows.filter((r) => (
-      r.state !== "missing" &&
-      r.duplicate_count <= 1 &&
-      r.metadata_complete !== true
-    )),
-    applicationDuplicates: applicationRows.filter((r) => r.duplicate_count > 1),
+    applicationMissing,
+    applicationIncomplete,
+    applicationDuplicates,
+    applicationGaps,
+    blockingApplicationGaps,
+    advisoryApplicationGaps,
     greenTimedRowsMissingTimingPairs,
     blockingTimedRowsMissingTimingPairs,
     advisoryTimedRowsMissingTimingPairs,
@@ -432,6 +467,8 @@ function buildJson({
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  blockingApplicationGaps,
+  advisoryApplicationGaps,
   greenTimedRowsMissingTimingPairs,
   blockingTimedRowsMissingTimingPairs,
   advisoryTimedRowsMissingTimingPairs,
@@ -498,6 +535,11 @@ function buildJson({
       tsgo_ms: r.tsgo_ms,
     })) ?? [],
     advisory_project_timing_pair_gaps: advisoryTimedRowsMissingTimingPairs?.length ?? 0,
+    // Only benchmark_set:"required" application rows missing/incomplete compat
+    // block the publish; canary application gaps are reported but never freeze
+    // latest.json. gh-pages.yml gates on blocking_application_compatibility_gaps.
+    blocking_application_compatibility_gaps: blockingApplicationGaps?.length ?? 0,
+    advisory_application_compatibility_gaps: advisoryApplicationGaps?.length ?? 0,
     application_compatibility: applicationRows
       ? {
           required: requireApplicationCompat,
@@ -507,9 +549,13 @@ function buildJson({
           missing: applicationMissing?.length ?? 0,
           incomplete: applicationIncomplete?.length ?? 0,
           duplicates: applicationDuplicates?.length ?? 0,
+          blocking_gaps: blockingApplicationGaps?.length ?? 0,
+          advisory_gaps: advisoryApplicationGaps?.length ?? 0,
           missing_rows: applicationMissing?.map((r) => r.name) ?? [],
           incomplete_rows: applicationIncomplete?.map((r) => ({ name: r.name, state: r.state })) ?? [],
           duplicate_rows: applicationDuplicates?.map((r) => ({ name: r.name, count: r.duplicate_count })) ?? [],
+          blocking_gap_rows: blockingApplicationGaps?.map((r) => ({ name: r.name, state: r.state, gap_kind: r.gap_kind })) ?? [],
+          advisory_gap_rows: advisoryApplicationGaps?.map((r) => ({ name: r.name, state: r.state, gap_kind: r.gap_kind })) ?? [],
         }
       : null,
     green: green?.length ?? 0,
@@ -630,6 +676,8 @@ function buildReport({
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  blockingApplicationGaps,
+  advisoryApplicationGaps,
   greenTimedRowsMissingTimingPairs,
   blockingTimedRowsMissingTimingPairs,
   advisoryTimedRowsMissingTimingPairs,
@@ -695,14 +743,24 @@ function buildReport({
     lines.push("");
   }
 
-  if (applicationMissing.length > 0 || applicationIncomplete.length > 0 || applicationDuplicates.length > 0) {
-    lines.push(
-      `### Application compatibility gaps (${applicationMissing.length + applicationIncomplete.length + applicationDuplicates.length})`,
-      "",
-    );
-    for (const r of applicationMissing) lines.push(`- \`${r.name}\`: missing compatibility row`);
-    for (const r of applicationIncomplete) lines.push(`- \`${r.name}\`: incomplete compatibility metadata`);
-    for (const r of applicationDuplicates) lines.push(`- \`${r.name}\`: duplicate compatibility row (${r.duplicate_count})`);
+  const blockingAppGaps = blockingApplicationGaps ?? [];
+  const advisoryAppGaps = advisoryApplicationGaps ?? [];
+  const gapText = (r) =>
+    r.gap_kind === "missing"
+      ? "missing compatibility row"
+      : r.gap_kind === "duplicate"
+        ? `duplicate compatibility row (${r.duplicate_count})`
+        : "incomplete compatibility metadata";
+  if (blockingAppGaps.length > 0) {
+    lines.push(`### 🚫 Required application compatibility gaps (${blockingAppGaps.length})`, "");
+    for (const r of blockingAppGaps) lines.push(`- \`${r.name}\`: ${gapText(r)} (blocks publish)`);
+    lines.push("");
+  }
+  if (advisoryAppGaps.length > 0) {
+    lines.push(`### Canary application compatibility gaps (advisory, ${advisoryAppGaps.length})`, "");
+    for (const r of advisoryAppGaps) {
+      lines.push(`- \`${r.name}\`: ${gapText(r)}; reported only, never blocks publish`);
+    }
     lines.push("");
   }
 
@@ -800,6 +858,8 @@ if (artifactAbsent || parseError) {
         applicationMissing: null,
         applicationIncomplete: null,
         applicationDuplicates: null,
+        blockingApplicationGaps: null,
+        advisoryApplicationGaps: null,
         greenTimedRowsMissingTimingPairs: null,
         blockingTimedRowsMissingTimingPairs: null,
         advisoryTimedRowsMissingTimingPairs: null,
@@ -826,6 +886,8 @@ const {
   applicationMissing,
   applicationIncomplete,
   applicationDuplicates,
+  blockingApplicationGaps,
+  advisoryApplicationGaps,
   greenTimedRowsMissingTimingPairs,
   blockingTimedRowsMissingTimingPairs,
   advisoryTimedRowsMissingTimingPairs,
@@ -854,6 +916,8 @@ if (jsonOutput) {
       applicationMissing,
       applicationIncomplete,
       applicationDuplicates,
+      blockingApplicationGaps,
+      advisoryApplicationGaps,
       greenTimedRowsMissingTimingPairs,
       blockingTimedRowsMissingTimingPairs,
       advisoryTimedRowsMissingTimingPairs,
@@ -884,19 +948,25 @@ if (missing.length > 0 || duplicates.length > 0) {
   process.exit(1);
 }
 
-if (requireApplicationCompat && (
-  applicationMissing.length > 0 ||
-  applicationIncomplete.length > 0 ||
-  applicationDuplicates.length > 0
-)) {
-  const gaps = [
-    ...applicationMissing.map((r) => `${r.name} (missing)`),
-    ...applicationIncomplete.map((r) => `${r.name} (incomplete)`),
-    ...applicationDuplicates.map((r) => `${r.name} (${r.duplicate_count} duplicates)`),
-  ];
+if (requireApplicationCompat && advisoryApplicationGaps.length > 0) {
+  // Canary application rows (every category:"application" row today) are real
+  // apps installed by the optional best-effort bench-applications shard; a
+  // flaky install or an absent matching-CI compat artifact legitimately leaves
+  // one missing/incomplete. Surface it but never block the publish — exactly as
+  // a missing canary perf-timing pair is advisory. A single such gap (infisical)
+  // froze the public benchmark site; this keeps latest.json flowing.
   process.stderr.write(
-    `bench-artifact-readiness: application compatibility incomplete for ${gaps.length} row(s): ` +
-      gaps.join(", ") + "\n",
+    `::warning::bench-artifact-readiness: ${advisoryApplicationGaps.length} canary application ` +
+      `compatibility gap(s) (advisory, not blocking publish): ` +
+      advisoryApplicationGaps.map((r) => `${r.name} (${r.gap_kind})`).join(", ") + "\n",
+  );
+}
+
+if (requireApplicationCompat && blockingApplicationGaps.length > 0) {
+  process.stderr.write(
+    `bench-artifact-readiness: application compatibility incomplete for ` +
+      `${blockingApplicationGaps.length} required row(s): ` +
+      blockingApplicationGaps.map((r) => `${r.name} (${r.gap_kind})`).join(", ") + "\n",
   );
   process.exit(1);
 }

@@ -390,10 +390,12 @@ fn clean_evaluation_after_unrelated_bail_is_not_tainted() {
         !evaluator.is_tainted(keyof_obj),
         "a clean sibling evaluation must not be marked as a truncated artifact"
     );
-    let tainted = evaluator.take_tainted();
+    let stable_entries = evaluator.drain_stable_cache().collect::<Vec<_>>();
     assert!(
-        tainted.is_empty(),
-        "no node in this run was truncated; tainted set must be empty"
+        stable_entries
+            .iter()
+            .any(|(key, value)| *key == keyof_obj && *value == result),
+        "a clean sibling evaluation must remain available from the stable drain"
     );
 }
 
@@ -484,6 +486,60 @@ fn reading_a_tainted_memo_entry_taints_the_consumer() {
     assert!(
         evaluator.is_tainted(consumer),
         "artifact-dependence must propagate through memo reads"
+    );
+}
+
+#[test]
+fn drain_stable_cache_filters_tainted_entries() {
+    let interner = TypeInterner::new();
+
+    let def = DefId(80);
+    let lazy_m = interner.lazy(def);
+    let mapped_ty = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("S"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        },
+        constraint: interner.keyof(lazy_m),
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+    let resolver = RecursiveDefResolver {
+        defs: vec![(def, mapped_ty)],
+    };
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &resolver);
+    let _ = evaluator.evaluate(mapped_ty);
+    assert!(
+        evaluator.is_tainted(mapped_ty),
+        "the recursive mapped type cache entry must be tainted"
+    );
+
+    let key = interner.intern_string("stable");
+    let object = interner.object(vec![PropertyInfo::new(key, TypeId::STRING)]);
+    let keyof_object = interner.keyof(object);
+    let stable_result = evaluator.evaluate(keyof_object);
+    assert_ne!(stable_result, keyof_object);
+    assert!(
+        !evaluator.is_tainted(keyof_object),
+        "an unrelated clean evaluation in the same run must stay stable"
+    );
+
+    let stable_entries = evaluator.drain_stable_cache().collect::<Vec<_>>();
+    assert!(
+        !stable_entries.iter().any(|(key, _)| *key == mapped_ty),
+        "stable drain must filter limit-truncated artifacts"
+    );
+    assert!(
+        stable_entries
+            .iter()
+            .any(|(key, value)| *key == keyof_object && *value == stable_result),
+        "stable drain must keep clean intermediates from the same limit-hit run"
     );
 }
 

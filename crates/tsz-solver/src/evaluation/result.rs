@@ -145,9 +145,81 @@ impl EvaluationResult {
     }
 }
 
+/// Evaluation result plus the verdict for depth-agnostic memo publication.
+///
+/// #14346 is moving cache eligibility from loose evaluator flags into typed
+/// result boundaries. A fresh-evaluator memo has two pieces of information:
+/// the request's [`EvaluationResult`] and whether legacy stack-context taint
+/// still makes the collapsed value unsafe to store in a depth-agnostic cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EvaluationMemoResult {
+    result: EvaluationResult,
+    stable_for_depth_agnostic_cache: bool,
+}
+
+impl EvaluationMemoResult {
+    /// Construct a memo result from a typed evaluation result and the legacy
+    /// recursion-limit backstop.
+    pub(crate) const fn for_depth_agnostic_memo(
+        result: EvaluationResult,
+        legacy_recursion_limit_hit: bool,
+    ) -> Self {
+        Self {
+            result,
+            stable_for_depth_agnostic_cache: result.is_complete() && !legacy_recursion_limit_hit,
+        }
+    }
+
+    /// Construct a memo result with an explicit stability verdict.
+    pub(crate) const fn new(
+        result: EvaluationResult,
+        stable_for_depth_agnostic_cache: bool,
+    ) -> Self {
+        Self {
+            result,
+            stable_for_depth_agnostic_cache,
+        }
+    }
+
+    /// Construct a completed memo result read from a cache that stores only
+    /// stable entries.
+    pub(crate) const fn cached(type_id: TypeId) -> Self {
+        Self {
+            result: EvaluationResult::complete(type_id),
+            stable_for_depth_agnostic_cache: true,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn evaluation_result(self) -> EvaluationResult {
+        self.result
+    }
+
+    pub(crate) const fn type_id(self) -> TypeId {
+        self.result.type_id()
+    }
+
+    /// Return the collapsed value and its depth-agnostic cache stability verdict.
+    pub(crate) const fn into_type_id_and_stability(self) -> (TypeId, bool) {
+        (self.into_type_id(), self.stable_for_depth_agnostic_cache)
+    }
+
+    /// Whether this result can be stored in caches whose key does not capture
+    /// ambient recursion depth/fuel state.
+    pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
+        self.stable_for_depth_agnostic_cache
+    }
+
+    /// Collapse to the request's `TypeId` while preserving today's behavior for
+    /// callers that are not yet verdict-aware.
+    pub(crate) const fn into_type_id(self) -> TypeId {
+        self.result.into_type_id()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{EvaluationResult, Termination, TerminationKind};
+    use super::{EvaluationMemoResult, EvaluationResult, Termination, TerminationKind};
     use crate::types::TypeId;
 
     #[test]
@@ -181,6 +253,38 @@ mod tests {
                 kind: TerminationKind::DepthExceeded,
                 partial: TypeId::NUMBER,
             }
+        );
+    }
+
+    #[test]
+    fn memo_result_stability_requires_complete_result_and_clean_legacy_backstop() {
+        let complete = EvaluationResult::complete(TypeId::STRING);
+        let stable = EvaluationMemoResult::for_depth_agnostic_memo(complete, false);
+
+        assert_eq!(stable.evaluation_result(), complete);
+        assert_eq!(stable.type_id(), TypeId::STRING);
+        assert_eq!(stable.into_type_id(), TypeId::STRING);
+        assert!(stable.is_stable_for_depth_agnostic_cache());
+
+        let legacy_tainted = EvaluationMemoResult::for_depth_agnostic_memo(complete, true);
+        assert!(!legacy_tainted.is_stable_for_depth_agnostic_cache());
+
+        let incomplete =
+            EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
+        let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(incomplete, false);
+        assert_eq!(typed_tainted.into_type_id(), TypeId::NUMBER);
+        assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
+    }
+
+    #[test]
+    fn cached_memo_result_is_stable_and_complete() {
+        let cached = EvaluationMemoResult::cached(TypeId::BOOLEAN);
+
+        assert_eq!(cached.type_id(), TypeId::BOOLEAN);
+        assert!(cached.is_stable_for_depth_agnostic_cache());
+        assert_eq!(
+            cached.evaluation_result().termination(),
+            Termination::Complete
         );
     }
 }
