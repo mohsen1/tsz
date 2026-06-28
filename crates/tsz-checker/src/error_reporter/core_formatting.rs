@@ -1523,6 +1523,53 @@ impl<'a> CheckerState<'a> {
             .map(|s| format!("\"{s}\""))
     }
 
+    /// Find a TS2820 spelling suggestion for a target that may still be a
+    /// type-alias application, conditional, or other deferred form rather than
+    /// an already-flattened string-literal union.
+    ///
+    /// `find_string_literal_spelling_suggestion` only enumerates members of a
+    /// *literal* `Union` node. tsc, however, computes the suggestion against the
+    /// reduced target (`getReducedType`), so a target like
+    /// `Strip<"prefix_a" | "prefix_b">` (a distributive conditional that
+    /// captures literals via a template-`infer`) must first be evaluated to its
+    /// `"a" | "b"` union before the near-miss scan can see the candidates. This
+    /// walks the raw target, its environment-evaluated form, and its
+    /// display-deep-reduced form, returning the first suggestion any of them
+    /// yields. Structural throughout — no alias/name/text matching.
+    pub(crate) fn find_string_literal_spelling_suggestion_reduced(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<String> {
+        // A suggestion is only ever produced for a string-literal source, so
+        // skip the (cached but non-trivial) target reduction work entirely for
+        // the overwhelmingly common non-literal-source assignment failures.
+        if !matches!(
+            crate::query_boundaries::common::literal_value(self.ctx.types, source),
+            Some(tsz_solver::LiteralValue::String(_))
+        ) {
+            return None;
+        }
+        if let Some(suggestion) = self.find_string_literal_spelling_suggestion(source, target) {
+            return Some(suggestion);
+        }
+        let evaluated = self.evaluate_type_with_env(target);
+        if evaluated != target
+            && let Some(suggestion) =
+                self.find_string_literal_spelling_suggestion(source, evaluated)
+        {
+            return Some(suggestion);
+        }
+        let deep_reduced = {
+            let env = self.ctx.type_env.borrow();
+            tsz_solver::deep_reduce_for_display(self.ctx.types, &*env, evaluated)
+        };
+        if deep_reduced != evaluated && deep_reduced != target {
+            return self.find_string_literal_spelling_suggestion(source, deep_reduced);
+        }
+        None
+    }
+
     pub(in crate::error_reporter) fn format_ts2820_target_display(
         &mut self,
         target: TypeId,

@@ -1484,7 +1484,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # It is an existing request-shaped boundary helper already used
         # throughout the checker — no new quarantine entry. Removal condition
         # remains #8225.
-        3079,
+        #
+        # Bumped 3079→3080 for the #14789 TS2820 display-types spelling
+        # suggestion: `find_string_literal_spelling_suggestion_reduced` in
+        # `error_reporter/core_formatting.rs` adds one
+        # `query_boundaries::common::literal_value` string-literal-source guard
+        # so the suggestion scan is gated to literal sources, matching the
+        # existing direct-call pattern already used throughout this file. No new
+        # quarantine entry; #8225 narrowing remains the removal condition.
+        #
+        # Merge reconciliation: #14787 (main) and #14789 (this branch) each add
+        # one independent `query_boundaries::common` reference over the shared
+        # 3078 base, so the live merged count is 3080.
+        3080,
     ),
 ]
 
@@ -1504,7 +1516,13 @@ WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
     (
         "Workspace Clippy suppressions must not grow (#9446)",
         [ROOT / "crates"],
-        10,
+        # Bumped 10 -> 11 for the JSX special-attribute display split: the new
+        # `check_assignable_or_report_at_with_display_types_and_options` helper
+        # legitimately takes eight explicit parameters (real + display source /
+        # target, two node indices, two display-policy flags), which with the
+        # receiver exceeds the workspace `too-many-arguments-threshold = 8`, so
+        # a single `#[allow(clippy::too_many_arguments)]` is required.
+        11,
     ),
 ]
 

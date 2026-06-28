@@ -148,6 +148,51 @@ impl<'a> CheckerState<'a> {
         target_for_display: TypeId,
         anchor_idx: NodeIndex,
     ) {
+        self.error_type_not_assignable_at_with_display_types_impl(
+            source_for_display,
+            target_for_display,
+            anchor_idx,
+            false,
+        );
+    }
+
+    /// Like `error_type_not_assignable_at_with_display_types`, but renders the
+    /// target VERBATIM via `format_type_diagnostic` — preserving any type-alias
+    /// name and `| null | undefined` members instead of routing through the
+    /// `AssignmentTarget` role, which strips nullish and expands aliases.
+    ///
+    /// `tsc` applies that stripping only to ordinary write-position props; for the
+    /// JSX framework special attributes (`key`/`ref`) it elaborates the full
+    /// declared apparent type from the merged `IntrinsicAttributes` /
+    /// `IntrinsicClassAttributes` object (`Key | null | undefined`,
+    /// `LegacyRef<HTMLDivElement> | undefined`). The source keeps the same
+    /// role-based rendering as the standard emitter so its widening is unchanged.
+    pub(crate) fn error_type_not_assignable_at_with_verbatim_target(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        self.error_type_not_assignable_at_with_display_types_impl(
+            source_for_display,
+            target_for_display,
+            anchor_idx,
+            true,
+        );
+    }
+
+    /// Shared body for the `..._with_display_types` and `..._with_verbatim_target`
+    /// emitters. They differ only in how the TARGET is rendered: the role-based
+    /// path strips nullish / expands aliases (tsc's ordinary write-position
+    /// display), while `verbatim_target` keeps the declared form via
+    /// `format_type_diagnostic` (tsc's framework special-attribute display).
+    fn error_type_not_assignable_at_with_display_types_impl(
+        &mut self,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        anchor_idx: NodeIndex,
+        verbatim_target: bool,
+    ) {
         let (start, length) = self
             .resolve_diagnostic_anchor(
                 anchor_idx,
@@ -178,27 +223,27 @@ impl<'a> CheckerState<'a> {
                 target_for_display,
             )
             .is_some();
-        let (mut source_str, target_str) = if source_is_function_like || target_is_function_like {
-            (
-                self.format_type_diagnostic(source_for_display),
-                self.format_type_diagnostic(target_for_display),
-            )
+        let function_like = source_is_function_like || target_is_function_like;
+        let mut source_str = if function_like {
+            self.format_type_diagnostic(source_for_display)
         } else {
-            (
-                self.format_type_for_diagnostic_role(
-                    source_for_display,
-                    DiagnosticTypeDisplayRole::AssignmentSource {
-                        target: target_for_display,
-                        anchor_idx,
-                    },
-                ),
-                self.format_type_for_diagnostic_role(
-                    target_for_display,
-                    DiagnosticTypeDisplayRole::AssignmentTarget {
-                        source: source_for_display,
-                        anchor_idx,
-                    },
-                ),
+            self.format_type_for_diagnostic_role(
+                source_for_display,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target: target_for_display,
+                    anchor_idx,
+                },
+            )
+        };
+        let target_str = if verbatim_target || function_like {
+            self.format_type_diagnostic(target_for_display)
+        } else {
+            self.format_type_for_diagnostic_role(
+                target_for_display,
+                DiagnosticTypeDisplayRole::AssignmentTarget {
+                    source: source_for_display,
+                    anchor_idx,
+                },
             )
         };
         if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
@@ -209,17 +254,41 @@ impl<'a> CheckerState<'a> {
         ) {
             source_str = display;
         }
-        let message = crate::diagnostics::format_message(
-            crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        );
+        // TS2820: tsc upgrades a bare TS2322 to a "Did you mean" spelling
+        // suggestion when the source is a near-miss string literal for one of
+        // the target's string-literal members. The simple `TypeMismatch` /
+        // `LiteralTypeMismatch` / `IntrinsicTypeMismatch` reasons route here
+        // (not through `render_failure_reason`), so this emitter must run the
+        // same suggestion scan or the suggestion is silently dropped — e.g.
+        // when the target reduces to a literal union from a type alias,
+        // distributive conditional, or template-`infer` capture. The source and
+        // target displays are identical to the TS2322 form; only the suggestion
+        // clause is appended, matching tsc's TS2820 wording.
+        let (message, code) = match self
+            .find_string_literal_spelling_suggestion_reduced(source_for_display, target_for_display)
+        {
+            Some(suggestion) => (
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+                    &[&source_str, &target_str, &suggestion],
+                ),
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+            ),
+            None => (
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            ),
+        };
         self.ctx
             .push_diagnostic(crate::diagnostics::Diagnostic::error(
                 self.ctx.file_name.clone(),
                 start,
                 length,
                 message,
-                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                code,
             ));
     }
 

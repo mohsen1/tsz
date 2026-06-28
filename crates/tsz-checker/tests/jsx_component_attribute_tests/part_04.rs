@@ -378,3 +378,136 @@ function App() {
         "React.ReactType in function with inferred return type should not emit TS2786, got: {diags:?}"
     );
 }
+
+/// Build a React-like JSX lib whose framework attribute aliases use the given
+/// names, so the same structural scenario can be exercised with `Key`/`LegacyRef`
+/// and with renamed aliases (proving the fix keys on `IntrinsicAttributes` /
+/// `IntrinsicClassAttributes` membership, not on the alias spelling).
+fn jsx_key_ref_lib(key_alias: &str, ref_alias: &str, element_iface: &str) -> String {
+    format!(
+        r#"
+declare namespace React {{
+  type {key_alias} = string | number | bigint;
+  interface RefObject<T> {{ current: T | null; }}
+  type RefCallback<T> = (instance: T | null) => void;
+  type Ref<T> = RefCallback<T> | RefObject<T> | null;
+  type {ref_alias}<T> = string | Ref<T>;
+  interface Attributes {{
+    key?: {key_alias} | null | undefined;
+  }}
+  interface ClassAttributes<T> extends Attributes {{
+    ref?: {ref_alias}<T> | undefined;
+  }}
+}}
+declare module "react" {{
+  export = React;
+}}
+interface {element_iface} {{ tagName: string; }}
+declare namespace JSX {{
+  interface Element {{}}
+  interface IntrinsicAttributes extends React.Attributes {{}}
+  interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {{}}
+  interface IntrinsicElements {{
+    div: {{ onClick?: string | undefined }} & React.ClassAttributes<{element_iface}>;
+  }}
+}}
+"#
+    )
+}
+
+fn jsx_key_ref_diags(lib: &str) -> Vec<(u32, String)> {
+    let source = r#"
+import * as React from "react";
+const k = <div key={true} />;
+const r = <div ref={5} />;
+const o = <div onClick={5} />;
+"#;
+    cross_file_jsx_diagnostics_with_options_and_default_libs(
+        lib,
+        source,
+        CheckerOptions {
+            jsx_mode: JsxMode::React,
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            ..CheckerOptions::default()
+        },
+        true,
+    )
+}
+
+/// #14818: tsc checks JSX `key`/`ref` as members of the merged
+/// `IntrinsicAttributes` / `IntrinsicClassAttributes` object, so its TS2322
+/// target keeps the property's full declared apparent type — alias name intact
+/// and `| null | undefined` retained. tsz used to strip nullish and expand the
+/// alias (the ordinary write-position-prop display). The `onClick` control must
+/// still strip `| undefined` (matching tsc) to prove ordinary props are
+/// unaffected.
+#[test]
+fn jsx_intrinsic_key_ref_ts2322_target_preserves_declared_optional_type() {
+    let lib = jsx_key_ref_lib("Key", "LegacyRef", "HTMLDivElement");
+    let diags = jsx_key_ref_diags(&lib);
+
+    assert!(
+        has_code_with_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Type 'boolean' is not assignable to type 'Key | null | undefined'.",
+        ),
+        "key target should preserve `Key | null | undefined`, got: {diags:?}"
+    );
+    // The `ref` target keeps the `LegacyRef<…>` alias wrapper and the trailing
+    // `| undefined`, instead of the previously-expanded `string | RefObject<…> |
+    // ((instance: …) => void)` structural form with nullish dropped. (The alias
+    // TYPE ARGUMENT renders structurally here only because this minimal lib's
+    // element interface is tiny; that is a pre-existing, orthogonal display
+    // behavior — the raw declared property type already carried a structural arg
+    // before this fix — so the assertion intentionally does not pin it.)
+    assert!(
+        messages_for_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .iter()
+            .any(
+                |m| m.starts_with("Type 'number' is not assignable to type 'LegacyRef<")
+                    && m.ends_with("> | undefined'.")
+            ),
+        "ref target should preserve the `LegacyRef<…> | undefined` alias + nullish, got: {diags:?}"
+    );
+    // Control: an ordinary optional prop still strips `| undefined`, matching tsc.
+    assert!(
+        has_code_with_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Type 'number' is not assignable to type 'string'.",
+        ),
+        "ordinary `onClick?: string | undefined` should still display `string`, got: {diags:?}"
+    );
+}
+
+/// Sister test: rename the framework attribute aliases (`Key` → `ReactKey`,
+/// `LegacyRef` → `DomRef`) and the element interface. The TS2322 targets must
+/// follow the renamed aliases, proving the display is driven by
+/// `IntrinsicAttributes` / `IntrinsicClassAttributes` membership and the declared
+/// property type — not by the literal alias spelling `Key`/`LegacyRef`.
+#[test]
+fn jsx_intrinsic_key_ref_ts2322_target_follows_renamed_alias_structurally() {
+    let lib = jsx_key_ref_lib("ReactKey", "DomRef", "DivEl");
+    let diags = jsx_key_ref_diags(&lib);
+
+    assert!(
+        has_code_with_message(
+            &diags,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            "Type 'boolean' is not assignable to type 'ReactKey | null | undefined'.",
+        ),
+        "key target should follow renamed alias `ReactKey | null | undefined`, got: {diags:?}"
+    );
+    assert!(
+        messages_for_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .iter()
+            .any(
+                |m| m.starts_with("Type 'number' is not assignable to type 'DomRef<")
+                    && m.ends_with("> | undefined'.")
+            ),
+        "ref target should follow renamed alias `DomRef<…> | undefined`, got: {diags:?}"
+    );
+}
