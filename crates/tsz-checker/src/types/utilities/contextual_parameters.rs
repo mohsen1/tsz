@@ -1089,6 +1089,49 @@ impl<'a> CheckerState<'a> {
             return expected;
         }
 
+        // A contextual type extracted across a module/arena boundary can arrive
+        // as a bare, unresolved reference (`UnresolvedTypeName`/`Lazy`): an
+        // imported alias body (`type Write<…> = (set: Setter, …) => …`)
+        // references `Setter` whose name is in scope only in the *declaring*
+        // file, so the lowering pass left it `UnresolvedTypeName("Setter")` with
+        // no contextual signature of its own. Resolve such a reference through
+        // the env once so the signature-shaped normalization below — and the
+        // rest-tuple contextual parameter extraction it feeds — sees the real
+        // callable shape. Without this the contextually-typed callback rest
+        // parameter (`(...setArgs) =>`) falls back to `any`, which then
+        // spuriously trips the TS2556 spread gate (#14746). Guarded on the
+        // deferred-reference kinds and on the absence of a directly available
+        // contextual signature, so non-deferred contextual types are untouched.
+        if (crate::query_boundaries::spread::unresolved_type_name_atom(self.ctx.types, expected)
+            .is_some()
+            || crate::query_boundaries::common::is_lazy_type(self.ctx.types, expected))
+            && crate::query_boundaries::checkers::call::get_contextual_signature(
+                self.ctx.types,
+                expected,
+            )
+            .is_none()
+        {
+            // The `TypeEnvironment` resolver only answers names it was seeded
+            // with, so a bare cross-module `UnresolvedTypeName` stays opaque
+            // there. Evaluate through the `CheckerContext` resolver, which walks
+            // the merged binder graph and recovers the declaring-file symbol.
+            let evaluated =
+                crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                    self.ctx.types,
+                    &self.ctx,
+                    expected,
+                );
+            if evaluated != expected
+                && crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    evaluated,
+                )
+                .is_some()
+            {
+                return self.normalize_contextual_signature_with_env(evaluated);
+            }
+        }
+
         let Some(mut shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             expected,
