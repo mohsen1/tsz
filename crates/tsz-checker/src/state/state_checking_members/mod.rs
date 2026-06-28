@@ -1,5 +1,6 @@
 //! Declaration and statement checking (member submodules).
 
+mod accessor_accessibility;
 mod ambient_signature_checks;
 mod class_expression_initializers;
 mod class_member_checks;
