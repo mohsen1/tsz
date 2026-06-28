@@ -287,6 +287,18 @@ impl<'a> CheckerState<'a> {
             }
             tgt_str =
                 self.canonicalize_assignment_numeric_literal_union_display(target, source, tgt_str);
+            // A source union whose top-level `null`/`undefined` was stripped by
+            // the target-only display policy can collapse to the target's
+            // display (e.g. `string[] | undefined` rendered as `string[]`).
+            // `tsc` keeps the source nullish; restore it so the duplicate-name
+            // TS2719 gate below does not misfire where `tsc` reports a plain
+            // TS2322.
+            if let Some(restored) = self.source_display_preserving_nullish_if_collapsed_to_target(
+                source, target, &src_str, &tgt_str,
+            ) {
+                src_str = restored;
+            }
+
             // TS2719: when both types display identically but are different,
             // emit "Two different types with this name exist" instead of TS2322.
             let authoritative_src = self.authoritative_assignability_def_name(source);
