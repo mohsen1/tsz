@@ -1244,6 +1244,9 @@ path = "tests/ts2344_class_constructor_constraint_call.rs"
 name = "ts2344_class_constructor_constraint_expr"
 path = "tests/ts2344_class_constructor_constraint_expr.rs"
 [[test]]
+name = "instance_type_this_member_class_tests"
+path = "tests/instance_type_this_member_class_tests.rs"
+[[test]]
 name = "ts2344_class_constructor_constraint_visibility"
 path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 [[test]]

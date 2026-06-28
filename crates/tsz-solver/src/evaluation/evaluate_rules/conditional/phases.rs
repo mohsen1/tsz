@@ -188,6 +188,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Whether a conditional's (resolved) check type *binds* any `this` it
+    /// contains to a concrete instance, so a `this` found in it is determined
+    /// rather than the free contextual `this` of an enclosing declaration.
+    ///
+    /// An object/constructor shape — including the construct/call signature a
+    /// `typeof Class` resolves to, or a concrete class-instance reference
+    /// (`Lazy`/`TypeQuery`) — owns the `this` of its own members: in
+    /// `InstanceType<typeof B>` the check side is `B`'s constructor whose
+    /// construct-signature return is the `B` instance type, and a `clone():
+    /// this` / `self: this` member's `this` is `B`, not free. Such conditionals
+    /// must be evaluated; deferring them leaves `InstanceType<typeof B>` opaque
+    /// and breaks its relation to `B`. A free contextual `this` instead appears
+    /// at expression level (the check type *is* `this`, `this[]`, `keyof this`,
+    /// `A | this`, …), where no enclosing instance shape binds it, so those keep
+    /// deferring as before.
+    pub(super) fn resolved_check_type_binds_this(&self, check_type: TypeId) -> bool {
+        match self.interner().lookup(check_type) {
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Callable(_)
+                | TypeData::Function(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::Lazy(_),
+            ) => true,
+            Some(TypeData::ReadonlyType(inner)) => self.resolved_check_type_binds_this(inner),
+            _ => false,
+        }
+    }
+
     /// Decide whether a conditional with an `infer`-bearing extends pattern and a
     /// generic-tuple check type must stay deferred.
     ///
