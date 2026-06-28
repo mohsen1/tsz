@@ -1028,6 +1028,35 @@ mod tests {
     use crate::types::TupleElement;
 
     #[test]
+    fn void_and_undefined_are_assertion_comparable_both_directions() {
+        let db = TypeInterner::new();
+        // `void` and `undefined` overlap in tsc's comparable relation, in both
+        // assertion directions.
+        assert!(types_are_comparable_for_assertion(
+            &db,
+            TypeId::VOID,
+            TypeId::UNDEFINED
+        ));
+        assert!(types_are_comparable_for_assertion(
+            &db,
+            TypeId::UNDEFINED,
+            TypeId::VOID
+        ));
+        // The rule stays scoped to void/undefined — unrelated primitives stay
+        // incomparable.
+        assert!(!types_are_comparable_for_assertion(
+            &db,
+            TypeId::UNDEFINED,
+            TypeId::STRING
+        ));
+        assert!(!types_are_comparable_for_assertion(
+            &db,
+            TypeId::VOID,
+            TypeId::NUMBER
+        ));
+    }
+
+    #[test]
     fn singleton_predicate_excludes_base_primitives() {
         let interner = TypeInterner::new();
         // Base primitives cannot hold a top-level singleton: source literals

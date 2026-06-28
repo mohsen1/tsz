@@ -550,6 +550,9 @@ mod ts2352_disjoint_literal_property_tests;
 #[path = "../tests/ts2352_intersection_assertion_tests.rs"]
 mod ts2352_intersection_assertion_tests;
 #[cfg(test)]
+#[path = "../tests/ts2352_void_undefined_assertion_tests.rs"]
+mod ts2352_void_undefined_assertion_tests;
+#[cfg(test)]
 #[path = "../tests/ts2353_tests.rs"]
 mod ts2353_tests;
 #[cfg(test)]

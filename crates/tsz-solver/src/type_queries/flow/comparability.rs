@@ -172,6 +172,21 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // `void` and `undefined` overlap in tsc's comparable relation: `tsc`'s
+    // `isSimpleTypeRelatedTo` relates an `undefined` source to a `void` target,
+    // and `checkAssertionWorker` runs comparability in both directions, so an
+    // assertion between `void` and `undefined` (either way) is accepted. tsz's
+    // assertion descent only checks one direction at a given nesting level, so
+    // the rule is made mutual here. It is consulted at every recursion level —
+    // both as top-level operands and in the contravariant callback-parameter
+    // descent reached via `signature_param_types_are_comparable_for_assertion`
+    // — which is the position the zustand `Thenable -> Promise` cast trips:
+    // `then(cb: (v: undefined) => unknown)` vs `then(onfulfilled?: (value: void)
+    // => unknown)` compares `undefined` against `void`.
+    if is_void_undefined_overlap(source, target) {
+        return true;
+    }
+
     if type_param_primitive_comparable_with_constraint(db, target, source)
         || type_param_primitive_comparable_with_constraint(db, source, target)
     {
@@ -356,6 +371,22 @@ fn deferred_conditional_assertion_constraint(
         }
     }
     None
+}
+
+/// `void` and `undefined` are mutually comparable for the TS2352 assertion
+/// relation. tsc's `isSimpleTypeRelatedTo` relates an `undefined` source to a
+/// `void` target, and the assertion check (`checkAssertionWorker`) runs
+/// comparability in both directions, so an assertion `void as undefined` or
+/// `undefined as void` — at the top level or nested in a shared property /
+/// element / callback parameter — is accepted. This is a value-domain overlap
+/// (both inhabit only the `undefined` value), distinct from the
+/// primitive-vs-literal widening handled by `is_primitive_comparable`, so it is
+/// checked directly and independent of variance position.
+const fn is_void_undefined_overlap(a: TypeId, b: TypeId) -> bool {
+    matches!(
+        (a, b),
+        (TypeId::VOID, TypeId::UNDEFINED) | (TypeId::UNDEFINED, TypeId::VOID)
+    )
 }
 
 fn type_param_primitive_comparable_with_constraint(
