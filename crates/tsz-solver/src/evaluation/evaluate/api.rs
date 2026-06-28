@@ -2,6 +2,7 @@
 
 use crate::construction::TypeDatabase;
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{ConditionalType, MappedType, TypeId};
 
@@ -55,8 +56,17 @@ pub fn evaluate_type_with_request(
     interner: &dyn TypeDatabase,
     request: EvaluationRequest,
 ) -> TypeId {
+    evaluate_type_result_with_request(interner, request).into_type_id()
+}
+
+/// Convenience function for full type evaluation with explicit request options,
+/// preserving the typed termination verdict.
+pub fn evaluate_type_result_with_request(
+    interner: &dyn TypeDatabase,
+    request: EvaluationRequest,
+) -> EvaluationResult {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate_request_result(request).into_type_id()
+    evaluator.evaluate_request_result(request)
 }
 
 /// Convenience function for evaluating mapped types.

@@ -160,8 +160,9 @@ pub mod computation {
     pub use crate::evaluation::evaluate::{
         TypeEvaluator, evaluate_conditional, evaluate_index_access,
         evaluate_index_access_with_options, evaluate_keyof, evaluate_mapped, evaluate_type,
-        evaluate_type_with_request,
+        evaluate_type_result_with_request, evaluate_type_with_request,
     };
+    pub use crate::evaluation::result::{EvaluationResult, Termination, TerminationKind};
 
     // Instantiation
     pub use crate::instantiation::application::ApplicationEvaluator;
@@ -310,7 +311,8 @@ pub use diagnostics::{SubtypeFailureReason, TupleArity};
 #[allow(unused_imports)]
 pub(crate) use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
-    evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
+    evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_result_with_request,
+    evaluate_type_with_request,
 };
 #[cfg(test)]
 pub(crate) use operations::compound_assignment::{
