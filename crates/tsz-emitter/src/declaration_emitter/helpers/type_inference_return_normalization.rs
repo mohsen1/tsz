@@ -22,7 +22,7 @@ impl DeclarationEmitter<'_> {
         // type-level widening. Done before the member-qualified text paths below
         // so methods/functions emit `E`, not `E.A`.
         if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
-            && let Some(type_text) = self.returned_enum_member_widened_base_text(return_expr)
+            && let Some(type_text) = self.enum_member_access_widened_base_text(return_expr)
         {
             return Some(type_text);
         }
@@ -1122,8 +1122,7 @@ impl DeclarationEmitter<'_> {
                     // return is equivalent to `return undefined` with
                     // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
                     "void".to_string()
-                } else if let Some(text) =
-                    self.returned_enum_member_widened_base_text(ret.expression)
+                } else if let Some(text) = self.enum_member_access_widened_base_text(ret.expression)
                 {
                     // A returned enum-member literal widens to its parent enum,
                     // so multiple `return E.A` branches collapse to `E` (matching
