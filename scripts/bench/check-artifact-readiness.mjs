@@ -56,9 +56,25 @@ const REQUIRED_MEASURED_ROWS = REQUIRED_PROJECT_ROWS.filter(
     !BENCH_RUNNER_EXCLUDED_ROWS.has(name) &&
     PROJECT_ROWS_BY_NAME[name]?.category !== "application",
 );
+const REQUIRED_MEASURED_ROW_SET = new Set(REQUIRED_MEASURED_ROWS);
 const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application")
   .map((row) => row.name);
+
+// A green perf-timed row missing its tsz/tsgo timing pair only blocks the public
+// publish when the row is part of the required publish completeness set. Every
+// `perf_timed` row today is a canary/advisory shard (external libraries and
+// application canaries) that is intentionally outside that gate (see the
+// REQUIRED_MEASURED_ROWS note above and the optional-shard contract in
+// project-rows.mjs). A canary perf benchmark legitimately errors or is skipped
+// from time to time; treating that as publish-blocking froze the whole
+// benchmark site for ~half a day when one green canary application row
+// (infisical) produced no timing pair. #15004 demoted that single row to
+// perf_timed:false; this guard generalizes the rule so any flaky canary timing
+// pair is advisory, while a future required perf-timed row still blocks.
+function isBlockingTimedRow(name) {
+  return REQUIRED_MEASURED_ROW_SET.has(name);
+}
 
 const args = process.argv.slice(2);
 
@@ -359,6 +375,12 @@ function analyzeArtifact(artifact, expectedCommit) {
         hasGreenCompatibilityEvidence(sourceRow) &&
         !hasSuccessfulTimingPair(sourceRow);
     });
+  const blockingTimedRowsMissingTimingPairs = greenTimedRowsMissingTimingPairs.filter(
+    (row) => isBlockingTimedRow(row.name),
+  );
+  const advisoryTimedRowsMissingTimingPairs = greenTimedRowsMissingTimingPairs.filter(
+    (row) => !isBlockingTimedRow(row.name),
+  );
 
   return {
     measurementProfile: measurementProfileStatus(artifact),
@@ -374,6 +396,8 @@ function analyzeArtifact(artifact, expectedCommit) {
     )),
     applicationDuplicates: applicationRows.filter((r) => r.duplicate_count > 1),
     greenTimedRowsMissingTimingPairs,
+    blockingTimedRowsMissingTimingPairs,
+    advisoryTimedRowsMissingTimingPairs,
     successfulProjectTimingPairs: rows.filter((row) => (
       row.state === "green" &&
       hasSuccessfulTimingPair(row)
@@ -409,6 +433,8 @@ function buildJson({
   applicationIncomplete,
   applicationDuplicates,
   greenTimedRowsMissingTimingPairs,
+  blockingTimedRowsMissingTimingPairs,
+  advisoryTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -459,7 +485,19 @@ function buildJson({
       state: r.state,
       tsz_ms: r.tsz_ms,
       tsgo_ms: r.tsgo_ms,
+      blocking: isBlockingTimedRow(r.name),
     })) ?? [],
+    // Only required perf-timed rows missing a timing pair block the publish;
+    // canary/advisory perf-timed rows are reported but never freeze latest.json.
+    blocking_project_timing_pair_gaps: blockingTimedRowsMissingTimingPairs?.length ?? 0,
+    blocking_project_timing_pair_gap_rows: blockingTimedRowsMissingTimingPairs?.map((r) => ({
+      name: r.name,
+      label: r.label,
+      state: r.state,
+      tsz_ms: r.tsz_ms,
+      tsgo_ms: r.tsgo_ms,
+    })) ?? [],
+    advisory_project_timing_pair_gaps: advisoryTimedRowsMissingTimingPairs?.length ?? 0,
     application_compatibility: applicationRows
       ? {
           required: requireApplicationCompat,
@@ -593,6 +631,8 @@ function buildReport({
   applicationIncomplete,
   applicationDuplicates,
   greenTimedRowsMissingTimingPairs,
+  blockingTimedRowsMissingTimingPairs,
+  advisoryTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -666,10 +706,19 @@ function buildReport({
     lines.push("");
   }
 
-  if (greenTimedRowsMissingTimingPairs.length > 0) {
-    lines.push(`### Green perf-timed rows missing timing (${greenTimedRowsMissingTimingPairs.length})`, "");
-    for (const r of greenTimedRowsMissingTimingPairs) {
-      lines.push(`- \`${r.name}\`: compatibility is green but no tsz/tsgo timing pair was recorded`);
+  const blockingGaps = blockingTimedRowsMissingTimingPairs ?? [];
+  const advisoryGaps = advisoryTimedRowsMissingTimingPairs ?? [];
+  if (blockingGaps.length > 0) {
+    lines.push(`### 🚫 Required perf-timed rows missing timing (${blockingGaps.length})`, "");
+    for (const r of blockingGaps) {
+      lines.push(`- \`${r.name}\`: required row is green but no tsz/tsgo timing pair was recorded (blocks publish)`);
+    }
+    lines.push("");
+  }
+  if (advisoryGaps.length > 0) {
+    lines.push(`### Canary perf-timed rows missing timing (advisory, ${advisoryGaps.length})`, "");
+    for (const r of advisoryGaps) {
+      lines.push(`- \`${r.name}\`: green compat but no tsz/tsgo timing pair; charted only when timed, never blocks publish`);
     }
     lines.push("");
   }
@@ -752,6 +801,8 @@ if (artifactAbsent || parseError) {
         applicationIncomplete: null,
         applicationDuplicates: null,
         greenTimedRowsMissingTimingPairs: null,
+        blockingTimedRowsMissingTimingPairs: null,
+        advisoryTimedRowsMissingTimingPairs: null,
         missing: null,
         red: null,
         yellow: null,
@@ -776,6 +827,8 @@ const {
   applicationIncomplete,
   applicationDuplicates,
   greenTimedRowsMissingTimingPairs,
+  blockingTimedRowsMissingTimingPairs,
+  advisoryTimedRowsMissingTimingPairs,
   successfulProjectTimingPairs,
   missing,
   red,
@@ -802,6 +855,8 @@ if (jsonOutput) {
       applicationIncomplete,
       applicationDuplicates,
       greenTimedRowsMissingTimingPairs,
+      blockingTimedRowsMissingTimingPairs,
+      advisoryTimedRowsMissingTimingPairs,
       successfulProjectTimingPairs,
       missing,
       red,
@@ -881,10 +936,23 @@ if (successfulProjectTimingPairs.length < requiredProjectTimingPairs) {
   process.exit(1);
 }
 
-if (requireGreenProjectTimingPairs && greenTimedRowsMissingTimingPairs.length > 0) {
+if (requireGreenProjectTimingPairs && advisoryTimedRowsMissingTimingPairs.length > 0) {
+  // Canary/advisory perf-timed rows missing a timing pair are surfaced but never
+  // block the publish: the website only charts a perf-timed row once it is both
+  // green and timed, so a missing canary pair simply omits that row from the
+  // chart. A single such gap previously froze the whole benchmark site for half
+  // a day; this keeps the latest.json publish flowing.
   process.stderr.write(
-    `bench-artifact-readiness: ${greenTimedRowsMissingTimingPairs.length} green perf-timed project row(s) ` +
-      `missing tsz/tsgo timing pairs: ${greenTimedRowsMissingTimingPairs.map((r) => r.name).join(", ")}\n`,
+    `::warning::bench-artifact-readiness: ${advisoryTimedRowsMissingTimingPairs.length} canary perf-timed project row(s) ` +
+      `missing tsz/tsgo timing pairs (advisory, not blocking publish): ` +
+      `${advisoryTimedRowsMissingTimingPairs.map((r) => r.name).join(", ")}\n`,
+  );
+}
+
+if (requireGreenProjectTimingPairs && blockingTimedRowsMissingTimingPairs.length > 0) {
+  process.stderr.write(
+    `bench-artifact-readiness: ${blockingTimedRowsMissingTimingPairs.length} required perf-timed project row(s) ` +
+      `missing tsz/tsgo timing pairs: ${blockingTimedRowsMissingTimingPairs.map((r) => r.name).join(", ")}\n`,
   );
   process.exit(1);
 }
