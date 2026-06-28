@@ -688,6 +688,7 @@ impl<'a> CheckerState<'a> {
             | SubtypeFailureReason::TypeArgumentMismatch { .. }
             | SubtypeFailureReason::TupleElementTypeMismatch { .. }
             | SubtypeFailureReason::TupleElementMismatch { .. }
+            | SubtypeFailureReason::SourceProvidesNoMatch { .. }
             | SubtypeFailureReason::TupleArityMismatch(_) => {
                 // These reasons relate same-shaped containers whose differing
                 // *component* is the cause (array element types, same-generic type
@@ -850,6 +851,7 @@ impl<'a> CheckerState<'a> {
                 | R::TupleElementTypeMismatch { .. }
                 | R::TupleElementMismatch { .. }
                 | R::TupleArityMismatch(_)
+                | R::SourceProvidesNoMatch { .. }
                 | R::ArrayElementMismatch { .. }
                 | R::IndexSignatureMismatch { .. }
                 | R::ReturnTypeMismatch { .. }

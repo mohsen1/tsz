@@ -813,6 +813,7 @@ impl<'a> CheckerState<'a> {
             reason,
             tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                | tsz_solver::SubtypeFailureReason::SourceProvidesNoMatch { .. }
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::MissingProperty { .. }
                 | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
@@ -933,6 +934,7 @@ impl<'a> CheckerState<'a> {
                 // before drilling the arity leaf.
                 | tsz_solver::SubtypeFailureReason::TupleElementMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::TupleArityMismatch(_)
+                | tsz_solver::SubtypeFailureReason::SourceProvidesNoMatch { .. }
                 | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::IndexSignatureMismatch { .. }
                 | tsz_solver::SubtypeFailureReason::ReturnTypeMismatch { .. }
