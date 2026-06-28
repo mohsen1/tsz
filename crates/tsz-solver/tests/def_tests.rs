@@ -102,6 +102,65 @@ fn test_definition_store_semantic_def_overlays_override_base_without_losing_base
 }
 
 #[test]
+fn definition_store_decl_site_equivalence_matches_same_file_node() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+    let name = interner.intern_string("Box");
+
+    let mut first = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    first.file_id = Some(7);
+    first.span = Some((42, 42));
+    first.symbol_id = Some(100);
+    let first = store.register(first);
+
+    let mut second = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    second.file_id = Some(7);
+    second.span = Some((42, 42));
+    second.symbol_id = Some(200);
+    let second = store.register(second);
+
+    assert!(
+        store.defs_have_same_decl_site(first, second),
+        "same (file,node) declaration must converge despite arena-local symbols"
+    );
+}
+
+#[test]
+fn definition_store_decl_site_equivalence_keeps_distinct_decls_apart() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+    let name = interner.intern_string("Box");
+
+    let mut base = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    base.file_id = Some(7);
+    base.span = Some((42, 42));
+    let base = store.register(base);
+
+    let mut different_node = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    different_node.file_id = Some(7);
+    different_node.span = Some((43, 43));
+    let different_node = store.register(different_node);
+    assert!(!store.defs_have_same_decl_site(base, different_node));
+
+    let mut different_name =
+        DefinitionInfo::interface(interner.intern_string("OtherBox"), Vec::new(), Vec::new());
+    different_name.file_id = Some(7);
+    different_name.span = Some((42, 42));
+    let different_name = store.register(different_name);
+    assert!(!store.defs_have_same_decl_site(base, different_name));
+
+    let mut non_program_a = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    non_program_a.file_id = Some(DefinitionStore::NON_PROGRAM_FILE_SENTINEL);
+    non_program_a.span = Some((42, 42));
+    let non_program_a = store.register(non_program_a);
+    let mut non_program_b = DefinitionInfo::interface(name, Vec::new(), Vec::new());
+    non_program_b.file_id = Some(DefinitionStore::NON_PROGRAM_FILE_SENTINEL);
+    non_program_b.span = Some((42, 42));
+    let non_program_b = store.register(non_program_b);
+    assert!(!store.defs_have_same_decl_site(non_program_a, non_program_b));
+}
+
+#[test]
 fn test_definition_store_interface() {
     let interner = create_test_interner();
     let store = DefinitionStore::new();
