@@ -121,7 +121,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // answer a sibling read would observe.
         let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
-            || self.request_termination_kind.is_some()
+            || self.has_incomplete_request_verdict()
             || self.recursion_limit_hit()
             || self.unresolved_def_seen()
             || (self.interner.is_union_too_complex() && !union_too_complex_before)
@@ -515,7 +515,7 @@ mod tests {
             .with_query_db(&cache)
             .with_closed_eval_writes();
         incomplete.cache.insert(incomplete_node, TypeId::BOOLEAN);
-        incomplete.request_termination_kind = Some(TerminationKind::DepthExceeded);
+        incomplete.simulate_incomplete_request_verdict_for_test(TerminationKind::DepthExceeded);
         incomplete.commit_closed_eval_writes(false);
         assert_eq!(cache.lookup_closed_eval_cache(incomplete_node, false), None);
     }
