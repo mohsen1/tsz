@@ -885,10 +885,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let sig_lists = self.collect_union_call_signature_lists(&members);
         let has_multi_overload_members =
             sig_lists.iter().filter(|(_, sigs)| sigs.len() > 1).count();
-        // Faithful tsc `getUnionSignatures`: a member whose called property is an
-        // overload set isn't modeled by the per-position combined signature below
-        // (wrongly reports TS2349); resolve against the union's combined list,
-        // where `None` falls through to per-member / `this`-typed handling.
+        // Faithful tsc `getUnionSignatures`: an overloaded member's property isn't modeled
+        // by the per-position combined path below (TS2349); resolve against the union's combined list (`None` falls through).
         if let Some(callable_ty) =
             self.union_overloaded_member_callable(&members, &sig_lists, false)
         {
@@ -1609,8 +1607,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut this_mismatch_count: usize = 0;
         let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
         let mut all_this_mismatches_identical = true;
+        // Snapshot incoming generic-instantiation params so a *failed* overload attempt's `cache_generic_result` `unknown[]` params can't leak into the winner/caller; a generic winner re-populates them (#14963).
+        let saved_instantiated_params = self.last_instantiated_params.clone();
 
         for sig in &callable.call_signatures {
+            self.last_instantiated_params
+                .clone_from(&saved_instantiated_params);
             // Convert CallSignature to FunctionShape
             let func = FunctionShape {
                 params: sig.params.clone(),
@@ -1622,7 +1624,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 is_method: sig.is_method,
             };
             tracing::debug!("resolve_callable_call: signature = {sig:?}");
-
             match self.resolve_function_call(&func, arg_types) {
                 CallResult::Success(ret) => return CallResult::Success(ret),
                 CallResult::ArgumentTypeMismatch {

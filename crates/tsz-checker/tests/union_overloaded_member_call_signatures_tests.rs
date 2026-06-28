@@ -25,6 +25,14 @@ fn check(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn check_messages(source: &str) -> Vec<(u32, String)> {
+    let libs = load_default_lib_files();
+    check_source_with_libs_code_messages(source, "test.ts", strict_checker_options(), &libs)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
 fn count(codes: &[u32], code: u32) -> usize {
     codes.iter().filter(|&&c| c == code).count()
 }
@@ -182,6 +190,50 @@ dispatcher.run("nope")
         1,
         "an argument matching no overload must report TS2345, got: {codes:?}"
     );
+}
+
+/// Mirror of `conformance/types/union/unionTypeCallSignatures2.ts`: a union of
+/// three callable interfaces, each with an overload set that includes a generic
+/// `<T>(x: T[]): T[]` and string-accepting overloads. The combined union
+/// signatures must include a signature accepting a bare `string`, so calling
+/// with a string argument resolves cleanly (no spurious TS2345 against the
+/// generic `unknown[]`). Binder names are varied to exercise the structural
+/// rule rather than the fixture's `A`/`B`/`C` identifiers. Each of the three
+/// member orderings is checked because `getUnionSignatures` is order sensitive.
+#[test]
+fn union_of_three_overloaded_callables_accepts_string_argument() {
+    // Members mirror interfaces A/B/C of unionTypeCallSignatures2.ts.
+    const ALPHA: &str = "  (x: number): number;\n  \
+        (x: string, y?: string): boolean;\n  (x: Date): void;\n  <T>(x: T[]): T[];";
+    const BETA: &str = "  (x: number): number;\n  (x: string): string;\n  \
+        (x: Date): void;\n  <T>(x: T[]): T[];";
+    const GAMMA: &str = "  (x: string, ...y: string[]): number;\n  \
+        (x: number, s?: string): number;\n  <T>(x: T[]): T[];";
+
+    for order in [
+        ["Alpha", "Beta", "Gamma"],
+        ["Gamma", "Beta", "Alpha"],
+        ["Beta", "Alpha", "Gamma"],
+    ] {
+        let source = format!(
+            "interface Alpha {{\n{ALPHA}\n}}\n\
+             interface Beta {{\n{BETA}\n}}\n\
+             interface Gamma {{\n{GAMMA}\n}}\n\
+             declare const f: {a} | {b} | {c};\n\
+             const n = f(42);\n\
+             const s = f(\"abc\");\n\
+             const a = f([true, false]);\n",
+            a = order[0],
+            b = order[1],
+            c = order[2],
+        );
+        let diags = check_messages(&source);
+        assert!(
+            diags.is_empty(),
+            "union {order:?} of overloaded callables must accept number/string/array \
+             arguments with no diagnostic, got: {diags:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

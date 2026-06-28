@@ -110,7 +110,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                     _ => OverloadedMember::Many,
                 };
             }
-            for signature in list.iter() {
+            for signature in *list {
                 // Only process signatures whose parameter list isn't already
                 // represented in the result (tsc `findMatchingSignature` guard).
                 let already_present = match &result {
@@ -140,7 +140,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             }
         }
 
-        let no_common_signature = result.as_ref().is_none_or(|r| r.is_empty());
+        let no_common_signature = result.as_ref().is_none_or(Vec::is_empty);
         // Second pass runs only when no single signature subsumes every member and
         // at most one member is overloaded.
         if let (true, OverloadedMember::None | OverloadedMember::One(_)) =
@@ -362,10 +362,10 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
         };
 
         CallSignature {
-            type_params: if !left.type_params.is_empty() {
-                left.type_params.clone()
-            } else {
+            type_params: if left.type_params.is_empty() {
                 right.type_params.clone()
+            } else {
+                left.type_params.clone()
             },
             params,
             this_type,
