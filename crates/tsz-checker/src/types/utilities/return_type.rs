@@ -499,7 +499,11 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> TypeId {
         if self.return_contribution_is_widenable(expr_idx, type_id, return_context) {
-            return self.widen_return_contribution_preserving_const(expr_idx, type_id);
+            let widened = self.widen_return_contribution_preserving_const(expr_idx, type_id);
+            // The primitive-literal widener skips `TypeData::Enum`, so a fresh
+            // enum-member return (`() => E.A`) must additionally widen to its
+            // parent enum. No-op for the already-widened primitive/object result.
+            return self.widen_enum_member_type(widened);
         }
         type_id
     }
@@ -539,7 +543,15 @@ impl<'a> CheckerState<'a> {
         }) {
             return false;
         }
-        self.is_fresh_literal_expression(expr_idx)
+        // An enum-member access (`return E.A`) is a fresh enum literal in tsc:
+        // `getReturnTypeFromBody` widens it to the parent enum (`E`), exactly as
+        // a fresh primitive literal widens to its base (`return "x"` → `string`).
+        // The carve-outs above (a pinning contextual return, `preserve_literal_types`,
+        // an `as const` assertion, a conditional deferred to union collapse) already
+        // returned, so enum members observe the same preservation rules. The widen
+        // itself runs through `widen_enum_member_type` at each widenable site,
+        // since the primitive literal widener leaves `TypeData::Enum` untouched.
+        self.is_fresh_literal_expression(expr_idx) || self.is_enum_member_type_for_widening(type_id)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal
@@ -1480,13 +1492,18 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 return_type,
                             ) {
-                            (
+                            // A widenable non-literal contribution is widened here
+                            // (fresh object/array structure via `widen_const_initializer`)
+                            // and its enum-member leaf is folded to the parent enum —
+                            // an enum member is `TypeData::Enum`, not a literal, so it
+                            // takes this branch rather than the deferred single-literal
+                            // collapse below.
+                            let widened =
                                 crate::query_boundaries::widening::widen_const_initializer(
                                     self.ctx.types,
                                     return_type,
-                                ),
-                                None,
-                            )
+                                );
+                            (self.widen_enum_member_type(widened), None)
                         } else {
                             (return_type, widenable.then_some(return_data.expression))
                         };
