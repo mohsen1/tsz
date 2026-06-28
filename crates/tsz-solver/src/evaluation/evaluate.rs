@@ -791,6 +791,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.note_limit_event();
     }
 
+    /// Mark a depth-style guard bail and surface the typed request verdict.
+    ///
+    /// Use this for producers whose own bailout reason is
+    /// [`TerminationKind::DepthExceeded`]. Producers with a more specific typed
+    /// verdict, such as fuel exhaustion, should keep using
+    /// [`Self::mark_depth_exceeded`] and then record their specific kind.
+    #[inline]
+    pub(crate) fn mark_depth_exceeded_for_request(&mut self) {
+        self.mark_depth_exceeded();
+        self.note_request_termination(TerminationKind::DepthExceeded);
+    }
+
     /// Record that a recursion/depth/iteration/divergence limit just fired.
     ///
     /// Bumping the monotonic `limit_epoch` is how a later
@@ -1174,8 +1186,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // catch because cycle detection fires first. Flag depth_exceeded so
                 // the checker can emit TS2589.
                 if self.flag_depth_on_app_cycle && matches!(key, Some(TypeData::Application(_))) {
-                    self.guard.mark_exceeded();
-                    self.note_limit_event();
+                    self.mark_depth_exceeded_for_request();
                     return TypeId::ERROR;
                 }
                 return type_id;
@@ -1183,6 +1194,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::DepthExceeded => {
                 // Depth-bounded run (see `deep_recursion_seen`).
                 self.mark_deep_recursion_seen();
+                self.note_request_termination(TerminationKind::DepthExceeded);
                 // The per-`TypeId` guard's depth limit is structural — it caps the
                 // type-tree walk to protect the stack, not the instantiation chain.
                 // tsc's `instantiationDepth` (the source of TS2589) is mirrored by
