@@ -290,6 +290,17 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             }
         }
 
+        // An all-`any` index-signature source (e.g. `Record<keyof T, any>`
+        // reduced to its `{ [x: string]: any }` index shape) supplies `any` for
+        // every property a still-generic homomorphic mapped target demands.
+        // tsc's `any`-propagation accepts it regardless of whether each deferred
+        // per-key access `target[K]` resolves, so handle it before the
+        // unbounded-key veto below (which would otherwise reject the source for
+        // not mentioning `T`).
+        if self.any_valued_index_source_satisfies_homomorphic_mapped(source, mapped_id) {
+            return SubtypeResult::True;
+        }
+
         // A homomorphic mapped target `{ [K in keyof T]: ... }` over a bare,
         // unresolved type parameter `T` has an *unbounded* required key-set: a
         // concrete instantiation of `T` may carry members its constraint does not
@@ -395,6 +406,57 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
     fn source_correlated_with_type_param(&self, source: TypeId, tp_id: TypeId) -> bool {
         // Short-circuiting containment walk (no full type-set allocation).
         crate::visitor::contains_type_by_id(self.interner, source, tp_id)
+    }
+
+    /// Whether `source` yields `any` for every key it carries — it has at least
+    /// one index signature and every index-signature value type and declared
+    /// property type is exactly `any`.
+    ///
+    /// Such a source (e.g. `Record<keyof T, any>` reduced to its
+    /// `{ [x: string]: any }` index shape) supplies `any` for every property a
+    /// still-generic homomorphic mapped target `{ [K in keyof T]: ... }` demands,
+    /// so `tsc`'s `any`-propagation makes the relation hold regardless of how
+    /// each deferred per-key access `target[K]` resolves: the source no longer
+    /// mentions `T`, yet `any` is assignable to every target property value.
+    ///
+    /// Gated to exactly `any` — an `unknown`/concrete index value still fails the
+    /// ordinary structural comparison — and disabled in Sound Mode alongside the
+    /// other `any`-propagation index waivers (see
+    /// [`Self::target_string_index_any_waives_missing_index`]).
+    fn any_valued_index_source_satisfies_homomorphic_mapped(
+        &mut self,
+        source: TypeId,
+        mapped_id: MappedTypeId,
+    ) -> bool {
+        if self.disable_method_bivariance {
+            return false;
+        }
+        if self.generic_homomorphic_key_param(mapped_id).is_none() {
+            return false;
+        }
+        let source = self.evaluate_type(source);
+        let Some(shape_id) = object_with_index_shape_id(self.interner, source)
+            .or_else(|| object_shape_id(self.interner, source))
+        else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        // A property-only object cannot cover the unbounded key set a homomorphic
+        // mapped target over a bare type parameter demands.
+        if shape.string_index.is_none()
+            && shape.number_index.is_none()
+            && shape.symbol_index.is_none()
+        {
+            return false;
+        }
+        shape
+            .string_index
+            .iter()
+            .chain(shape.number_index.iter())
+            .chain(shape.symbol_index.iter())
+            .map(|idx| idx.value_type)
+            .chain(shape.properties.iter().map(|p| p.type_id))
+            .all(|value| value.is_any())
     }
 
     /// Check if any source type is assignable to a homomorphic mapped type.
