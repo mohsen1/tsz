@@ -2179,15 +2179,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.no_unchecked_indexed_access,
             || {
                 let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
-                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
                 // Pass query_db to share the application evaluation cache across
                 // evaluations, so the same generic type produces the same
                 // ObjectShapeId and structural subtype checks stay stable.
                 if let Some(db) = self.query_db {
                     evaluator = evaluator.with_query_db(db);
                 }
-                let result = evaluator.evaluate(type_id);
-                (result, !evaluator.recursion_limit_hit())
+                let request = crate::evaluation::request::EvaluationRequest::new(type_id)
+                    .with_no_unchecked_indexed_access(self.no_unchecked_indexed_access);
+                evaluator.evaluate_request_memo_result(request)
             },
         ) else {
             return (type_id, false);

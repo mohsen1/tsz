@@ -593,6 +593,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         request_result_verdict(type_id, self.request_termination_kind)
     }
 
+    /// Evaluate a request for a depth-agnostic memo and report whether the
+    /// collapsed `TypeId` is stable enough to store.
+    ///
+    /// A typed incomplete verdict catches guard bails that the legacy sticky
+    /// flags did not fully model (for example fuel/query-budget bails). The
+    /// legacy [`Self::recursion_limit_hit`] backstop remains until #14346 makes
+    /// the typed verdict the sole owner for every recursion taint class.
+    pub(crate) fn evaluate_request_memo_result(
+        &mut self,
+        request: EvaluationRequest,
+    ) -> (TypeId, bool) {
+        let result = self.evaluate_request_result(request);
+        (
+            result.into_type_id(),
+            !result.is_incomplete() && !self.recursion_limit_hit(),
+        )
+    }
+
     // =========================================================================
     // Accessor methods for evaluate_rules modules
     // =========================================================================

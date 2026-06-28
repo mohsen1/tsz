@@ -178,6 +178,23 @@ mod tests {
     }
 
     #[test]
+    fn non_stable_fresh_result_is_returned_but_not_memoized() {
+        reset_query_memo();
+        let t = TypeId(8);
+
+        let first = memoized_eval(t, false, || (TypeId(80), false));
+
+        assert_eq!(first, Some(TypeId(80)));
+        assert_eq!(query_memo_get(t, false), None);
+
+        let second = memoized_eval(t, false, || (TypeId(81), true));
+
+        assert_eq!(second, Some(TypeId(81)));
+        assert_eq!(query_memo_get(t, false), Some(TypeId(81)));
+        reset_query_memo();
+    }
+
+    #[test]
     fn reentry_of_active_type_is_rejected() {
         let t = TypeId(4242);
         let outer = CrossEvalExpansionGuard::enter(t).expect("first entry succeeds");

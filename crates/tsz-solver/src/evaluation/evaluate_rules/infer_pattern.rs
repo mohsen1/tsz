@@ -1705,14 +1705,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return (type_id, false);
             };
             let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-            evaluator.set_no_unchecked_indexed_access(nuia);
             if let Some(query_db) = self.query_db() {
                 evaluator = evaluator.with_query_db(query_db);
             }
-            let result = evaluator.evaluate(type_id);
-            // Memoize only stable results — a recursion/budget bail is a
-            // stack-context artifact that must not be reused as the answer.
-            (result, !evaluator.recursion_limit_hit())
+            let request = crate::evaluation::request::EvaluationRequest::new(type_id)
+                .with_no_unchecked_indexed_access(nuia);
+            evaluator.evaluate_request_memo_result(request)
         })
         .unwrap_or(type_id)
     }
