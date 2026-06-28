@@ -898,6 +898,75 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
+                // #14797: a generic-parameter receiver `T extends I` whose
+                // interface constraint `I` has a *callable* member returning
+                // polymorphic `this` (`clone(): this`, or a `self: () => this`
+                // property). The solver materializes the `Lazy(DefId)` interface
+                // constraint with `this` already bound to the interface type — so
+                // unlike the class-instance constraint (which keeps `this`
+                // polymorphic), `prop_type`'s return collapsed to `I`, drawing a
+                // false `TS2322` on `return n.clone()`. Re-materialize the
+                // constraint *suppressing* `this` binding so the member keeps its
+                // polymorphic `this`, then rebind it to the receiver type
+                // parameter. Gated on a callable member that lost its `this` so
+                // ordinary type-parameter property reads do no extra work.
+                if (crate::query_boundaries::common::get_call_signatures(self.ctx.types, prop_type)
+                    .is_some_and(|sigs| !sigs.is_empty())
+                    || crate::query_boundaries::property_access::is_function_type(
+                        self.ctx.types,
+                        prop_type,
+                    ))
+                    && !crate::query_boundaries::common::contains_this_type(
+                        self.ctx.types,
+                        prop_type,
+                    )
+                    && crate::query_boundaries::state::checking::is_type_parameter_like(
+                        self.ctx.types,
+                        object_type_for_access,
+                    )
+                    && let Some(constraint) =
+                        crate::query_boundaries::property_access::type_parameter_constraint(
+                            self.ctx.types,
+                            object_type_for_access,
+                        )
+                {
+                    let suppressed = {
+                        let env = self.ctx.type_env.borrow();
+                        crate::query_boundaries::state::type_environment::evaluate_type_suppressing_this(
+                            self.ctx.types,
+                            &*env,
+                            constraint,
+                        )
+                    };
+                    if suppressed != constraint {
+                        let raw =
+                            crate::query_boundaries::property_access::resolve_property_access_raw_this(
+                                self.ctx.types,
+                                suppressed,
+                                self.ctx.types.intern_string(property_name),
+                            );
+                        if let PropertyAccessResult::Success {
+                            type_id: raw_type, ..
+                        } = raw
+                            && crate::query_boundaries::common::contains_this_type(
+                                self.ctx.types,
+                                raw_type,
+                            )
+                        {
+                            // Rebind to the *receiver type parameter* itself
+                            // (`object_type_for_access`), not the generic
+                            // `this_substitution_target`: this recovery only runs
+                            // for a type-parameter receiver, whose polymorphic
+                            // `this` is exactly that type parameter.
+                            prop_type = crate::query_boundaries::common::substitute_this_type(
+                                self.ctx.types,
+                                raw_type,
+                                object_type_for_access,
+                            );
+                        }
+                    }
+                }
+
                 if skip_flow_narrowing
                     && from_index_signature
                     && crate::query_boundaries::state::checking::is_type_parameter_like(
