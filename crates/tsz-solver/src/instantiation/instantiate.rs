@@ -104,12 +104,22 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
-    pub(crate) const fn with_query_db(mut self, _query_db: Option<&'a dyn QueryDatabase>) -> Self {
+    pub(crate) fn with_query_db(mut self, query_db: Option<&'a dyn QueryDatabase>) -> Self {
         // Keep the resolver-aware `QueryDatabase` at the outer cache boundary.
         // Nested instantiation evaluation must stay resolver-less: routing
         // `evaluate_*` through query-backed semantic helpers is not cache-only
         // and can change inference/conformance behavior.
-        self.query_db = None;
+        //
+        // #14345 dormant re-reduce: when `TSZ_INST_RESOLVER_REREDUCE=1`,
+        // thread the resolver-aware db through so the gated re-reduce sites in
+        // `instantiate_index_access`/`instantiate_conditional` can resolve the
+        // cross-arena `Lazy` base instead of re-deferring resolver-less. The OFF
+        // path is byte-identical to the prior unconditional `None`.
+        if inst_resolver_rereduce_enabled() {
+            self.query_db = query_db;
+        } else {
+            self.query_db = None;
+        }
         self
     }
 
