@@ -229,6 +229,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         result
     }
 
+    /// Rebind a source member's polymorphic `this` to the receiver it is read
+    /// from — tsc's `getTypeWithThisArgument`, applied at each member read.
+    ///
+    /// When a conditional `R extends { m(): infer S } ? S : F` matches a method
+    /// (or property) whose declared type references the polymorphic `this`
+    /// (e.g. `class Node { self(): this }`), tsc binds `this` to the matched
+    /// receiver before inferring from the member, so `S = R` and the true branch
+    /// is taken. Without the rebinding the member surfaces an unsubstituted
+    /// `ThisType`, which collects no candidate and drops the conditional to its
+    /// false branch — a false positive when the (correct) receiver value is
+    /// assigned to the result (issue #14785).
+    ///
+    /// `receiver` is the concrete source the member was read from (the object,
+    /// the whole intersection, or the individual union member). Types that do
+    /// not mention `this` are returned unchanged, so this is a no-op on the
+    /// overwhelmingly common path. This is the single owner of the rebinding
+    /// policy; the indexed-access read path (`bind_property_this`) delegates
+    /// here with its own receiver.
+    pub(crate) fn bind_member_this(&self, member_type: TypeId, receiver: TypeId) -> TypeId {
+        if member_type.is_intrinsic() || !crate::contains_this_type(self.interner(), member_type) {
+            return member_type;
+        }
+        // Thread the evaluator's `query_db` so the `(member_type, receiver)`
+        // substitution is memoized project-wide (the key is meaningful because
+        // `receiver` is concrete); this is the single chokepoint for the
+        // `getTypeWithThisArgument` rebinding shared with `bind_property_this`.
+        crate::instantiation::instantiate::substitute_this_type_cached(
+            self.interner(),
+            self.query_db(),
+            member_type,
+            receiver,
+        )
+    }
+
     fn type_contains_infer_inner(&self, type_id: TypeId, walk: &mut InferContainsWalk) -> bool {
         if type_id.is_intrinsic() {
             return false;
