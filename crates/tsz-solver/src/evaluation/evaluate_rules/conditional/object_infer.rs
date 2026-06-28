@@ -342,14 +342,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.interner().lookup(source) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
-                if let Some(found) = self.property_candidate(&shape.properties, prop_name, optional)
+                if let Some(found) =
+                    self.property_candidate(&shape.properties, prop_name, source, optional)
                 {
                     return found;
                 }
             }
             Some(TypeData::Callable(callable_id)) => {
                 let shape = self.interner().callable_shape(callable_id);
-                if let Some(found) = self.property_candidate(&shape.properties, prop_name, optional)
+                if let Some(found) =
+                    self.property_candidate(&shape.properties, prop_name, source, optional)
                 {
                     return found;
                 }
@@ -370,7 +372,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match self.interner().lookup(source) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
-                self.property_candidate(&shape.properties, prop_name, optional)
+                self.property_candidate(&shape.properties, prop_name, source, optional)
                     .unwrap_or(absent)
             }
             Some(TypeData::Callable(callable_id)) => {
@@ -379,7 +381,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // E.g., `typeof MyClass extends { defaultProps: infer D }` should
                 // find `defaultProps` in the class constructor's static properties.
                 let shape = self.interner().callable_shape(callable_id);
-                self.property_candidate(&shape.properties, prop_name, optional)
+                self.property_candidate(&shape.properties, prop_name, source, optional)
                     .unwrap_or(absent)
             }
             Some(TypeData::Union(members)) => {
@@ -506,6 +508,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &self,
         properties: &[PropertyInfo],
         prop_name: Atom,
+        receiver: TypeId,
         _optional: bool,
     ) -> Option<InferPropertyResolution> {
         // When the pattern property is PRESENT in the source, the inference
@@ -518,10 +521,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // — so `W extends { prop?: infer T } ? T : never` over `{ prop?: C }`
         // infers `T = C`, not `C | undefined`. Adding `undefined` here corrupted
         // `T['member']` (TS2339) and constrained-infer constraint checks (TS2344).
+        // Rebind a `this`-typed source property (e.g. `class C { node: this }`)
+        // to the receiver before it becomes the inference candidate, matching
+        // tsc's `getTypeWithThisArgument` (issue #14785). Without this a bare
+        // `this`-typed property would surface an unsubstituted `ThisType`.
         properties
             .iter()
             .find(|prop| prop.name == prop_name)
-            .map(|prop| InferPropertyResolution::Candidate(prop.type_id))
+            .map(|prop| {
+                InferPropertyResolution::Candidate(self.bind_member_this(prop.type_id, receiver))
+            })
     }
 
     /// Handle nested object infer pattern
@@ -563,7 +572,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     .properties
                                     .iter()
                                     .find(|prop| prop.name == inner_name)
-                                    .map(|prop| prop.type_id)
+                                    // Rebind a nested `this`-typed property to the
+                                    // receiver (issue #14785).
+                                    .map(|prop| {
+                                        self.bind_member_this(prop.type_id, check_unwrapped)
+                                    })
                             }
                             _ => None,
                         }
@@ -606,7 +619,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     else {
                         return self.evaluate(cond.false_type);
                     };
-                    inferred_members.push(inner_prop.type_id);
+                    // Rebind a nested `this`-typed property to its union member
+                    // receiver before collecting the candidate (issue #14785).
+                    inferred_members
+                        .push(self.bind_member_this(inner_prop.type_id, member_unwrapped));
                 }
                 if inferred_members.is_empty() {
                     None

@@ -654,18 +654,12 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
     /// reduced form, breaking both the assignability gateway and `Equal`-style
     /// identity checks. `self.object_type` is the concrete object/intersection
     /// shape the property was looked up on, i.e. exactly that receiver.
+    ///
+    /// Shares the `getTypeWithThisArgument` rebinding policy with the
+    /// infer-candidate path via [`TypeEvaluator::bind_member_this`]
+    /// (the `== UNDEFINED` short-circuit is subsumed by its intrinsic guard).
     fn bind_property_this(&mut self, result: TypeId) -> TypeId {
-        if result == TypeId::UNDEFINED
-            || result.is_intrinsic()
-            || !crate::contains_this_type(self.evaluator.interner(), result)
-        {
-            return result;
-        }
-        crate::instantiation::instantiate::substitute_this_type(
-            self.evaluator.interner(),
-            result,
-            self.object_type,
-        )
+        self.evaluator.bind_member_this(result, self.object_type)
     }
 
     /// Merge an intersection receiver's full property set into one object and
