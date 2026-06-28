@@ -194,3 +194,90 @@ fn async_es5_catch_clause_nested_pattern() {
         "a nested catch pattern chains access through the caught-value temp.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_generator_yield_await_re_marks_awaited_value() {
+    // Issue #14765: `yield await p` in an async generator lowered to the ES5
+    // `__generator` state machine must re-mark the awaited result as an await
+    // (`__await.apply(void 0, [_a.sent()])`) before re-yielding it. A bare
+    // `_a.sent()` at the middle label corrupts the async-iterator protocol.
+    let output = transform_async_generator_inner_and_print(
+        "async function* ag(p: Promise<number>) { yield await p; }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, __await(p)];"),
+        "The inner await must still yield `__await(p)`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, __await.apply(void 0, [_a.sent()])];"),
+        "`yield await p` must re-mark the awaited value with `__await.apply(void 0, [_a.sent()])`, not bare `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_return_value_is_awaited() {
+    // An async generator awaits its return value: `return expr` lowers to
+    // `yield __await(expr)` then `return _a.sent()`. tsz previously dropped the
+    // wrapper and emitted a bare `return [2, expr]`.
+    let output = transform_async_generator_inner_and_print(
+        "async function* ag(x: number) { return x; }",
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, __await(x)];"),
+        "An async generator must await its return value via `yield __await(x)`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [2 /*return*/, _a.sent()];"),
+        "The awaited return value must resolve to the resumed `_a.sent()`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return [2 /*return*/, x];"),
+        "The bare un-awaited return must not survive.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_bare_return_awaits_void() {
+    // Even a bare `return;` awaits the implicit `undefined`.
+    let output = transform_async_generator_inner_and_print(
+        "async function* ag() { foo(); return; }",
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, __await(void 0)];")
+            && output.contains("return [2 /*return*/, _a.sent()];"),
+        "A bare `return;` in an async generator awaits `void 0`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_implicit_completion_stays_linear() {
+    // No explicit return and no await/yield: tsc emits the body linearly with
+    // a plain `return [2 /*return*/]`, no state machine and no await wrap.
+    let output = transform_async_generator_inner_and_print(
+        "async function* ag() { foo(); }",
+    );
+    assert!(
+        !output.contains("switch (_a.label)") && output.contains("return [2 /*return*/];"),
+        "An async generator with no explicit return stays linear.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_yield_await_then_return_keeps_protocol_labels() {
+    // The adjacent case from #14765: `const r = yield await p; return r;` shows
+    // the same dropped wrapper, and the shifted labels collapse the
+    // return-await. Both must be present once the wrapper is restored.
+    let output = transform_async_generator_inner_and_print(
+        "async function* ag(p: Promise<number>) { const r = yield await p; return r; }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, __await.apply(void 0, [_a.sent()])];"),
+        "The `yield await` result must be re-awaited before re-yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return [4 /*yield*/, _a.sent()];\n            case 1: return [4 /*yield*/, _a.sent()];"),
+        "The middle label must not collapse to a bare sent value.\nOutput:\n{output}"
+    );
+}

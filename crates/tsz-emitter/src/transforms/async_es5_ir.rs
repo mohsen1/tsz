@@ -475,7 +475,12 @@ impl<'a> AsyncES5Transformer<'a> {
             self.collect_binding_name(param.name, &mut param_binding_names);
         }
 
-        let has_yield = self.body_contains_await(body_idx);
+        // An async generator's return value is awaited, so every explicit
+        // `return` becomes a `yield __await(...)` suspension. Force the
+        // `__generator` state machine when the body has any explicit return,
+        // even with no source-level `await`/`yield`.
+        let has_yield =
+            self.body_contains_await(body_idx) || self.contains_explicit_return_recursive(body_idx);
         self.state.has_await = has_yield;
         self.state.captures_arguments =
             tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
