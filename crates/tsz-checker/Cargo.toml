@@ -249,6 +249,9 @@ path = "tests/identity_alias_union_arm_inference_tests.rs"
 name = "recursive_array_utility_inference_tests"
 path = "tests/recursive_array_utility_inference_tests.rs"
 [[test]]
+name = "record_any_index_to_homomorphic_mapped_tests"
+path = "tests/record_any_index_to_homomorphic_mapped_tests.rs"
+[[test]]
 name = "recursive_tuple_mapped_index_tests"
 path = "tests/recursive_tuple_mapped_index_tests.rs"
 [[test]]
