@@ -1017,7 +1017,7 @@ fn sole_ts2367_message(source: &str) -> String {
             .map(|d| (d.code, d.message_text.as_str()))
             .collect::<Vec<_>>()
     );
-    relevant[0].message_text.to_string()
+    relevant[0].message_text.clone()
 }
 
 #[test]
