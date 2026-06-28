@@ -765,6 +765,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.is_exceeded() || self.silent_depth_bailed || self.deep_recursion_seen
     }
 
+    /// Whether the current top-level request has already recorded a typed
+    /// `Termination::Incomplete` verdict. Cache writers that publish outside
+    /// this evaluator must treat such results as partial even when the legacy
+    /// recursion-limit backstop has not fired (for example query-budget bails).
+    #[inline]
+    pub(crate) const fn has_incomplete_request_verdict(&self) -> bool {
+        self.request_termination_kind.is_some()
+    }
+
     /// Mark the guard as exceeded, causing subsequent evaluations to bail out.
     ///
     /// Used when an external condition (e.g. mapped key count or distribution
@@ -868,6 +877,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[cfg(test)]
     pub(crate) const fn simulate_unrelated_recursion_bail_for_test(&mut self) {
         self.mark_deep_recursion_seen();
+    }
+
+    /// Test hook: simulate a request that has already produced a typed
+    /// incomplete verdict without also setting the legacy recursion-limit flags.
+    /// This lets cache-boundary tests prove they consult the typed channel
+    /// directly rather than passing only because `recursion_limit_hit` is true.
+    #[cfg(test)]
+    pub(crate) const fn simulate_incomplete_request_verdict_for_test(
+        &mut self,
+        kind: TerminationKind,
+    ) {
+        self.request_termination_kind = Some(kind);
     }
 
     /// Global thread-local depth counter for cross-evaluator stack overflow
