@@ -45,13 +45,20 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(binder) = self.binder
             && let Some(symbol_id) = binder.get_node_symbol(access.expression)
-            && let Some(symbol) = binder.symbols.get(symbol_id)
-            && symbol.flags & tsz_binder::symbol_flags::ENUM != 0
-            && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
         {
-            return Some(expr_idx);
+            // The binder resolved the base, so trust it and skip the source-file
+            // scan below: only an enum *object* symbol names enum members, and
+            // any other resolution (including a local that shadows a same-named
+            // top-level enum) means this is not an enum access.
+            let is_enum = binder.symbols.get(symbol_id).is_some_and(|symbol| {
+                symbol.flags & tsz_binder::symbol_flags::ENUM != 0
+                    && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
+            });
+            return is_enum.then_some(expr_idx);
         }
 
+        // The binder attached no symbol to the base: fall back to a source-file
+        // scan for a same-named enum declaration.
         let source_file_idx = self.current_source_file_idx?;
         let source_file_node = self.arena.get(source_file_idx)?;
         let source_file = self.arena.get_source_file(source_file_node)?;
@@ -146,10 +153,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let binder = self.binder?;
-        let sym_id = self.access_reference_symbol(expr_idx)?;
-        let symbol = binder.symbols.get(sym_id)?;
-        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
+        if !self.access_resolves_to_enum_member(expr_idx) {
             return None;
         }
 
@@ -157,6 +161,27 @@ impl<'a> DeclarationEmitter<'a> {
         // slice: this normalizes `E["B"]` to `E.B` and prevents parenthesis /
         // non-null punctuation from leaking into the declaration output.
         self.enum_member_access_canonical_text(expr_idx)
+    }
+
+    /// Whether `expr_idx` is a member-access that resolves (via the binder) to a
+    /// genuine enum-*member* symbol — as opposed to a reverse mapping (`E[0]`),
+    /// the enum object itself, or a non-enum access. Shared by the enum-member
+    /// initializer path and the enum-member widening fallback so the binder
+    /// resolution + `ENUM_MEMBER` flag check lives in one place.
+    pub(in crate::declaration_emitter) fn access_resolves_to_enum_member(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.access_reference_symbol(expr_idx) else {
+            return false;
+        };
+        binder
+            .symbols
+            .get(sym_id)
+            .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0)
     }
 
     /// Resolve a value reference or namespace-qualified property-access chain
@@ -328,37 +353,48 @@ impl<'a> DeclarationEmitter<'a> {
         self.get_source_slice(base_node.pos, base_node.end)
     }
 
-    /// Widen a single returned enum-member access (`return E.A`, `() => E.A`) to
-    /// its parent enum name (`E`) for an inferred declaration return type.
+    /// Widen a single enum-member access expression (`E.A`, `E["A"]`) to its
+    /// parent enum name (`E`) for an inferred declaration type. Shared by the
+    /// return-position paths (`return E.A`, `() => E.A`) and the array-element
+    /// path (`[E.A, E.B]` -> `E[]`).
     ///
-    /// tsc's `getReturnTypeFromBody` runs the aggregated return type through
-    /// `getWidenedType`, which widens a fresh enum-member literal to its parent
-    /// enum exactly as a fresh primitive literal widens to its base. The checker
-    /// already does this at the type level; this is the declaration-emit analog
-    /// for the AST-text return paths (class methods, arrow expression bodies,
-    /// returned local callables) that render the returned expression directly
-    /// rather than printing the solver return type.
+    /// tsc widens a fresh enum-member literal to its parent enum exactly as a
+    /// fresh primitive literal widens to its base — `getReturnTypeFromBody`
+    /// applies `getWidenedType` to the aggregated return type, and an
+    /// (un-asserted) array literal widens each fresh element type the same way.
+    /// The checker already does this at the type level; this is the
+    /// declaration-emit analog for the AST-text paths that render the access
+    /// expression directly rather than printing the solver type.
     ///
-    /// The gate is the returned expression's solver type being a *literal* enum
-    /// member (`is_literal_enum_member`), so a reverse mapping (`E[0]`, type
-    /// `string`) is excluded and only a genuine member literal widens. Returns
-    /// `None` when the expression is not a widenable enum member, so const
-    /// initializers and explicit annotations (handled by their own paths) are
-    /// never reached here.
-    pub(in crate::declaration_emitter) fn returned_enum_member_widened_base_text(
+    /// The gate confirms the access names a genuine enum *member*, so a reverse
+    /// mapping (`E[0]`, type `string`) is excluded and only a real member widens.
+    /// When the checker populated a solver type it is preferred
+    /// (`is_literal_enum_member`); otherwise the binder symbol's `ENUM_MEMBER`
+    /// flag is used, so the widening is deterministic even in declaration-only
+    /// contexts that carry no solver types. Returns `None` when the expression is
+    /// not a widenable enum member, so callers fall back to general inference.
+    pub(in crate::declaration_emitter) fn enum_member_access_widened_base_text(
         &self,
-        return_expr: NodeIndex,
+        expr_idx: NodeIndex,
     ) -> Option<String> {
         // Cheap syntactic gate first: only an `Enum.Member` / `Enum["Member"]`
         // access can widen. `simple_enum_access_base_name_text` rejects every
-        // other return shape (literals, calls, objects) before the solver type
-        // lookup below runs, so the common non-enum return pays no type query.
-        let base_name = self.simple_enum_access_base_name_text(return_expr)?;
-        let interner = self.type_interner?;
-        let type_id = self.get_node_type_or_names(&[return_expr])?;
-        // Confirm a *literal* member, so a reverse mapping (`E[0]`, type `string`)
-        // is excluded and only a genuine member literal widens to its parent enum.
-        tsz_solver::type_queries::is_literal_enum_member(interner, type_id).then_some(base_name)
+        // other shape (literals, calls, objects) before the gates below run, so
+        // the common non-enum expression pays no symbol/type lookup.
+        let base_name = self.simple_enum_access_base_name_text(expr_idx)?;
+        if let Some(interner) = self.type_interner
+            && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
+        {
+            // A *literal* member widens; a reverse mapping (`E[0]`, type
+            // `string`) does not.
+            return tsz_solver::type_queries::is_literal_enum_member(interner, type_id)
+                .then_some(base_name);
+        }
+        // No solver type available: fall back to the binder symbol — the access
+        // must resolve to a genuine enum-member symbol (not a reverse mapping or
+        // the enum object itself).
+        self.access_resolves_to_enum_member(expr_idx)
+            .then_some(base_name)
     }
 
     /// Inferred return-type text for a single returned expression, widening a
@@ -371,7 +407,7 @@ impl<'a> DeclarationEmitter<'a> {
         return_expr: NodeIndex,
         depth: u32,
     ) -> Option<String> {
-        self.returned_enum_member_widened_base_text(return_expr)
+        self.enum_member_access_widened_base_text(return_expr)
             .or_else(|| self.declaration_summary_primitive_expression_type_text(return_expr, depth))
             .or_else(|| self.infer_fallback_type_text_at(return_expr, depth))
     }

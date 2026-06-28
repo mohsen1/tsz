@@ -131,7 +131,11 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             let elem_type = self
-                .preferred_expression_type_text(elem_idx)
+                // Widen a fresh enum-member element to its parent enum first
+                // (`[E.A, E.B]` -> `E[]`, mixed enums -> `(A | B)[]`), matching
+                // tsc's per-element literal widening, before general inference.
+                .enum_member_access_widened_base_text(elem_idx)
+                .or_else(|| self.preferred_expression_type_text(elem_idx))
                 .or_else(|| {
                     self.get_node_type_or_names(&[elem_idx])
                         .map(|type_id| self.print_type_id(type_id))

@@ -1724,6 +1724,81 @@ var d = {
 }
 
 #[test]
+fn test_const_array_of_enum_members_widens_element_to_enum_type() {
+    // tsc widens each fresh enum-member element of an un-asserted array literal
+    // to its parent enum, so a single-enum array infers `E[]` (not a union of
+    // member literals `(E.A | E.B)[]` or a single-member `E.A[]`).
+    let output = emit_dts_with_binding(
+        r#"
+enum Dir { Up, Down }
+export const all = [Dir.Up, Dir.Down];
+export const some = [Dir.Up];
+export const one = Dir.Up;
+"#,
+    );
+
+    assert!(
+        output.contains("const all: Dir[];"),
+        "Expected multi-member array to widen to enum type: {output}"
+    );
+    assert!(
+        output.contains("const some: Dir[];"),
+        "Expected single-member array to widen to enum type: {output}"
+    );
+    // A non-array single member must stay a member literal (unchanged).
+    assert!(
+        output.contains("const one = Dir.Up;"),
+        "Expected non-array single member to keep its literal value: {output}"
+    );
+    assert!(
+        !output.contains("Dir.Up |") && !output.contains("Dir.Up[]"),
+        "Did not expect member-literal element types to leak: {output}"
+    );
+}
+
+#[test]
+fn test_const_array_of_enum_members_inside_merged_namespace_keeps_enum_reference() {
+    // Inside a namespace merged with the same enum, the element must render as
+    // the enum type `Dir` — never the bare member name (`(Up | Down)[]`), which
+    // is not a standalone type and would emit an invalid `.d.ts`.
+    let output = emit_dts_with_binding(
+        r#"
+enum Dir { Up, Down }
+namespace Dir {
+  export const all = [Dir.Up, Dir.Down];
+}
+"#,
+    );
+
+    assert!(
+        output.contains("const all: Dir[];"),
+        "Expected namespace-merged array to widen to enum type: {output}"
+    );
+    assert!(
+        !output.contains("(Up | Down)") && !output.contains("Up |"),
+        "Did not expect bare member names in namespace-merged array element: {output}"
+    );
+}
+
+#[test]
+fn test_const_array_of_mixed_enum_members_unions_enum_types() {
+    // Members of two different enums widen independently, yielding a union of
+    // the enum types `(A | B)[]` (not a union of member literals).
+    let output = emit_dts_with_binding(
+        r#"
+enum A2 { X }
+enum B2 { Y }
+export const mixed = [A2.X, B2.Y];
+"#,
+    );
+
+    assert!(
+        output.contains("const mixed: (A2 | B2)[];"),
+        "Expected mixed-enum array to union the parent enum types: {output}"
+    );
+}
+
+#[test]
 fn test_nested_namespace_enum_value_typeof_uses_relative_reference() {
     let output = emit_dts_with_binding(
         r#"
