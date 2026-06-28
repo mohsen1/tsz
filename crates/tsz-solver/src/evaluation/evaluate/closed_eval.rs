@@ -121,8 +121,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // answer a sibling read would observe.
         let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
-            || self.has_incomplete_request_verdict()
-            || self.recursion_limit_hit()
+            || !self.request_state_is_depth_agnostic_cache_stable()
             || self.unresolved_def_seen()
             || (self.interner.is_union_too_complex() && !union_too_complex_before)
         {
@@ -491,11 +490,10 @@ mod tests {
         assert_eq!(limited.try_closed_eval_read(keyof), None);
     }
 
-    /// A closed-eval write is publishable only when the request completed. The
-    /// legacy `recursion_limit_hit` backstop remains below this gate, but an
-    /// explicit typed incomplete verdict is already enough to reject the write.
+    /// A closed-eval write is publishable only when the shared request-state
+    /// stability gate reports the result is complete and untainted.
     #[test]
-    fn incomplete_request_verdict_blocks_closed_eval_write() {
+    fn request_state_stability_gate_blocks_closed_eval_write() {
         let interner = TypeInterner::new();
         let cache = QueryCache::new(&interner);
 
@@ -518,6 +516,20 @@ mod tests {
         incomplete.simulate_incomplete_request_verdict_for_test(TerminationKind::DepthExceeded);
         incomplete.commit_closed_eval_writes(false);
         assert_eq!(cache.lookup_closed_eval_cache(incomplete_node, false), None);
+
+        let legacy_tainted_node = interner.index_access(TypeId::STRING, TypeId::NUMBER);
+        let mut legacy_tainted = TypeEvaluator::new(&cache)
+            .with_query_db(&cache)
+            .with_closed_eval_writes();
+        legacy_tainted
+            .cache
+            .insert(legacy_tainted_node, TypeId::STRING);
+        legacy_tainted.simulate_unrelated_recursion_bail_for_test();
+        legacy_tainted.commit_closed_eval_writes(false);
+        assert_eq!(
+            cache.lookup_closed_eval_cache(legacy_tainted_node, false),
+            None
+        );
     }
 
     /// The substitution-independent cache is eligible for `IndexAccess`/`KeyOf`
