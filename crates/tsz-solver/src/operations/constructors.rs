@@ -351,6 +351,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
 
+        // Faithful tsc `getUnionSignatures` for the construct path: when a member
+        // declares an overloaded construct signature, the per-position combined
+        // path below cannot represent it and the union would be wrongly reported
+        // not-constructable (TS2351). Resolve `new` against the union's combined
+        // construct-signature list instead (see `union_overloaded_member_callable`);
+        // it returns `None` to fall through to the existing per-member logic for the
+        // negative/`this`-typed cases.
+        let construct_lists = self.collect_union_construct_signature_lists(&members);
+        if let Some(callable_ty) =
+            self.union_overloaded_member_callable(&members, &construct_lists, true)
+        {
+            return self.resolve_new(callable_ty, arg_types);
+        }
+
         // Compute a combined construct signature when all members have exactly one
         // non-generic construct signature. Intersects param types (contravariant)
         // and unions return types.
