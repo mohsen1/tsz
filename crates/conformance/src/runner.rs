@@ -947,6 +947,16 @@ impl Runner {
                         &mut compile_result,
                     );
 
+                    // A degenerate pinned cache cannot be a faithful baseline
+                    // (tsc halted at config validation, or the cache is a
+                    // documented partial). tsz still ran above so crashes are
+                    // already caught; only the comparison is unscored. See
+                    // `degenerate_cache_reason` and #14991.
+                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
+                        debug!("degenerate-cache pass for {}: {reason}", path.display());
+                        return Ok((TestResult::Pass, file_preview.take()));
+                    }
+
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
                         &compile_result,
@@ -1105,6 +1115,13 @@ impl Runner {
                         ..compile_result
                     };
 
+                    // A degenerate pinned cache cannot be a faithful baseline;
+                    // see the variant path and `degenerate_cache_reason` (#14991).
+                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
+                        debug!("degenerate-cache pass for {}: {reason}", path.display());
+                        return Ok((TestResult::Pass, file_preview.take()));
+                    }
+
                     // UTF-16 path historically drops the resolved options from the
                     // failure record — preserve that behavior by passing an empty map.
                     let outcome = compare_diagnostics(
@@ -1235,6 +1252,13 @@ impl Runner {
                             .collect(),
                         ..compile_result
                     };
+
+                    // A degenerate pinned cache cannot be a faithful baseline;
+                    // see the variant path and `degenerate_cache_reason` (#14991).
+                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
+                        debug!("degenerate-cache pass for {}: {reason}", path.display());
+                        return Ok((TestResult::Pass, file_preview.take()));
+                    }
 
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
@@ -1412,6 +1436,87 @@ mod tests {
         assert!(is_compiler_option_config_diagnostic_code(5101));
         assert!(is_compiler_option_config_diagnostic_code(5107));
         assert!(!is_compiler_option_config_diagnostic_code(2322));
+    }
+
+    fn tsc_result(codes: Vec<u32>, fps: Vec<DiagnosticFingerprint>) -> TscResult {
+        TscResult {
+            metadata: FileMetadata {
+                mtime_ms: 0,
+                size: 0,
+                typescript_version: Some("6.0.3".to_string()),
+            },
+            error_codes: codes,
+            diagnostic_fingerprints: fps,
+        }
+    }
+
+    #[test]
+    fn degenerate_cache_reason_detects_config_validation_halt() {
+        // tsc halts on a deprecated/removed option (e.g. target=ES5,
+        // alwaysStrict=false): the pinned cache holds only the TS5107 config
+        // diagnostic and never type-checks the file. tsz keeps parsing and may
+        // emit correct downstream diagnostics (TS1005 for a body-less accessor),
+        // which must not be scored against the empty filtered baseline.
+        let result = tsc_result(
+            vec![5107],
+            vec![fp(
+                5107,
+                "tsconfig.json",
+                "Option 'target=ES5' is deprecated",
+            )],
+        );
+        assert!(degenerate_cache_reason("compiler/giant.ts", &result).is_some());
+        // The cache key is irrelevant for the cache-shape rule: the same halt
+        // shape is degenerate under any binder/test name.
+        assert!(degenerate_cache_reason("compiler/renamed.ts", &result).is_some());
+    }
+
+    #[test]
+    fn degenerate_cache_reason_ignores_empty_cache() {
+        // An empty cache means tsc checked the file and found nothing — NOT a
+        // halt. tsz's extra diagnostics there are genuine regressions (false
+        // positives on a clean file) and must still be scored.
+        let result = tsc_result(vec![], vec![]);
+        assert!(degenerate_cache_reason("compiler/clean.ts", &result).is_none());
+    }
+
+    #[test]
+    fn degenerate_cache_reason_ignores_mixed_config_and_file_diagnostics() {
+        // A config diagnostic alongside a file-level diagnostic means tsc
+        // warned but did NOT halt — the file was type-checked, so the
+        // comparison is real and must not be skipped.
+        let result = tsc_result(
+            vec![5101, 2322],
+            vec![fp(2322, "a.ts", "Type 'x' is not assignable to type 'y'.")],
+        );
+        assert!(degenerate_cache_reason("compiler/x.ts", &result).is_none());
+    }
+
+    #[test]
+    fn degenerate_cache_reason_detects_documented_partial_cache() {
+        // Salsa partial cache: file-level grammar codes only (not a config
+        // halt), but documented as degenerate against the upstream baseline.
+        let result = tsc_result(
+            vec![8009, 8012],
+            vec![fp(
+                8009,
+                "plainJSGrammarErrors.js",
+                "The 'const' modifier can only be used in TypeScript files.",
+            )],
+        );
+        assert!(
+            degenerate_cache_reason("conformance/salsa/plainJSGrammarErrors.ts", &result).is_some()
+        );
+        // The same diagnostic shape for a different, unlisted test is NOT
+        // degenerate — only the documented entry is exempt.
+        assert!(degenerate_cache_reason("conformance/salsa/otherJsTest.ts", &result).is_none());
+        // The registry entry also matches when the cache key is an absolute or
+        // prefixed path ending in the relative key.
+        assert!(degenerate_cache_reason(
+            "TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts",
+            &result
+        )
+        .is_some());
     }
 
     #[test]
