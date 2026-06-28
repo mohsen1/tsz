@@ -347,12 +347,27 @@ impl<'a> CheckerState<'a> {
                     .provided_attrs
                     .push((attr_name.clone(), TypeId::ANY));
 
+                // The TS2322 target display for a framework special attribute
+                // (`key`/`ref`) is its full declared apparent type — alias intact,
+                // `| null | undefined` retained — to match tsc. Computed at most
+                // once per attribute and only inside the special-attribute branch
+                // below (the membership probe evaluates the JSX framework
+                // interfaces, so ordinary props must not trigger it), then reused
+                // by whichever emission path reports the mismatch — including the
+                // ordinary-prop fall-through further down for `key`.
+                let mut special_attr_display: Option<TypeId> = None;
+
                 // Skip type-checking 'key' and 'ref' against component props.
                 // These are special JSX attributes managed by IntrinsicAttributes /
                 // IntrinsicClassAttributes, not by component props directly.
                 // Checking them against the props type produces false positives when the
                 // props type is an unevaluated application (e.g. DetailedHTMLProps<...>).
                 if attr_name == "key" || attr_name == "ref" {
+                    special_attr_display = self.jsx_special_attr_display_target_type(
+                        &attr_name,
+                        ctx.props_type,
+                        opts.special_attr_component_type,
+                    );
                     let mut expected_special_type = self
                         .get_jsx_special_attribute_expected_type(
                             &attr_name,
@@ -452,13 +467,23 @@ impl<'a> CheckerState<'a> {
                         entry.1 = attr_value_type;
                     }
                     if let Some(expected_type) = expected_special_type {
+                        // tsc displays `key`/`ref` mismatches with the property's
+                        // full declared apparent type (alias intact,
+                        // `| null | undefined` retained) because it checks them as
+                        // members of the merged IntrinsicAttributes /
+                        // IntrinsicClassAttributes object. The relation still runs on
+                        // the normalized `expected_type`; only the display differs
+                        // (carried by `special_attr_display`).
                         if attr_data.initializer.is_none() {
                             if !crate::query_boundaries::checkers::jsx::props_are_assignable(
                                 self,
                                 TypeId::BOOLEAN_TRUE,
                                 expected_type,
                             ) {
-                                let target_str = self.format_type(expected_type);
+                                let target_str = match special_attr_display {
+                                    Some(display) => self.format_type_diagnostic(display),
+                                    None => self.format_type(expected_type),
+                                };
                                 let message = format_message(
                                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                                     &["boolean", &target_str],
@@ -470,16 +495,27 @@ impl<'a> CheckerState<'a> {
                                 );
                                 outcome.has_prop_type_error = true;
                             }
-                        } else if attr_value_type != TypeId::ANY
-                            && attr_value_type != TypeId::ERROR
-                            && !self.check_assignable_or_report_at(
-                                attr_value_type,
-                                expected_type,
-                                value_node_idx,
-                                attr_data.name,
-                            )
+                        } else if attr_value_type != TypeId::ANY && attr_value_type != TypeId::ERROR
                         {
-                            outcome.has_prop_type_error = true;
+                            let assignable = match special_attr_display {
+                                Some(display) => self
+                                    .check_assignable_or_report_at_with_verbatim_target_display(
+                                        attr_value_type,
+                                        expected_type,
+                                        display,
+                                        value_node_idx,
+                                        attr_data.name,
+                                    ),
+                                None => self.check_assignable_or_report_at(
+                                    attr_value_type,
+                                    expected_type,
+                                    value_node_idx,
+                                    attr_data.name,
+                                ),
+                            };
+                            if !assignable {
+                                outcome.has_prop_type_error = true;
+                            }
                         }
                     } else if attr_name == "ref" && !ctx.props_has_type_params {
                         let attrs_type =
@@ -977,6 +1013,22 @@ impl<'a> CheckerState<'a> {
                             )
                         {
                             result
+                        } else if let Some(special_display) = special_attr_display {
+                            // A framework special attribute (`key`/`ref`) that fell
+                            // through to ordinary prop checking (its JSX namespace
+                            // exposes no usable special surface). tsc still displays
+                            // the full declared apparent type — alias intact,
+                            // `| null | undefined` retained — so render it verbatim.
+                            // `special_attr_display` was computed once in the
+                            // special-attribute branch above; ordinary props leave it
+                            // `None` so they keep their existing stripped display.
+                            self.check_assignable_or_report_at_with_verbatim_target_display(
+                                actual_type,
+                                expected_type,
+                                special_display,
+                                value_node_idx,
+                                attr_data.name,
+                            )
                         } else {
                             self.check_assignable_or_report_at_with_display_types(
                                 actual_type,

@@ -59,7 +59,9 @@ impl<'a> CheckerState<'a> {
         Some(ty)
     }
 
-    fn get_intrinsic_class_attributes_lazy_type(&mut self) -> Option<TypeId> {
+    pub(in crate::checkers_domain::jsx) fn get_intrinsic_class_attributes_lazy_type(
+        &mut self,
+    ) -> Option<TypeId> {
         let jsx_sym_id = self.get_jsx_namespace_type()?;
         let lib_binders = self.get_lib_binders();
         let symbol = self
