@@ -271,14 +271,23 @@ impl<'a> AstToIr<'a> {
     }
 
     fn dynamic_import_commonjs_branch(&self, specifier: &str) -> String {
-        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
+        // This converter lowers ES5 class bodies, so the callback is the
+        // `function` form (target_es5 is true here).
+        crate::transforms::emit_utils::dynamic_import_cjs_form(
+            specifier,
+            self.target_es5,
+            self.es_module_interop,
+        )
     }
 
     fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
         let id = self.dynamic_import_promise_counter.get();
         self.dynamic_import_promise_counter.set(id + 1);
-        format!(
-            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+        crate::transforms::emit_utils::dynamic_import_amd_form(
+            specifier,
+            id,
+            self.target_es5,
+            self.es_module_interop,
         )
     }
 

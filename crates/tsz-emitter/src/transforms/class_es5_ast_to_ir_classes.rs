@@ -6,6 +6,7 @@ impl<'a> AstToIr<'a> {
     pub(super) fn convert_class_declaration(&self, idx: NodeIndex) -> IRNode {
         let mut transformer = ES5ClassTransformer::new(self.arena);
         transformer.set_module_kind(self.module_kind);
+        transformer.set_es_module_interop(self.es_module_interop);
         transformer.set_target_es5(self.target_es5);
         transformer.set_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get());
         transformer.set_indent_base(self.class_transformer_indent_base);

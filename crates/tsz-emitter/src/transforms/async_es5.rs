@@ -154,6 +154,10 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.transformer.set_es_module_interop(es_module_interop);
+    }
+
     pub const fn set_target_es5(&mut self, es5: bool) {
         self.transformer.set_target_es5(es5);
     }

@@ -123,6 +123,10 @@ pub struct NamespaceES5Transformer<'a> {
     arena: &'a NodeArena,
     is_commonjs: bool,
     module_kind: ModuleKind,
+    /// Whether `esModuleInterop` is enabled, threaded into nested async/class
+    /// converters so dynamic `import()` lowering wraps `require(...)` in
+    /// `__importStar` only when interop is on.
+    es_module_interop: bool,
     target_es5: bool,
     source_text: Option<&'a str>,
     comment_ranges: Vec<tsz_common::comments::CommentRange>,
@@ -171,6 +175,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             arena,
             is_commonjs: false,
             module_kind: ModuleKind::None,
+            es_module_interop: false,
             target_es5: false,
             source_text: None,
             comment_ranges: Vec::new(),
@@ -197,6 +202,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             arena,
             is_commonjs,
             module_kind: ModuleKind::None,
+            es_module_interop: false,
             source_text: None,
             comment_ranges: Vec::new(),
             prior_exported_vars: std::collections::HashSet::new(),
@@ -259,6 +265,10 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Set `CommonJS` mode
     pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
+    }
+
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.es_module_interop = es_module_interop;
     }
 
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
@@ -1430,6 +1440,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let func_decl = if func_data.is_async && !func_data.asterisk_token {
             let mut async_transformer = AsyncES5Transformer::new(self.arena);
             async_transformer.set_module_kind(self.module_kind);
+            async_transformer.set_es_module_interop(self.es_module_interop);
             async_transformer.set_target_es5(self.target_es5);
             if let Some(src) = self.source_text {
                 async_transformer.set_source_text(src);
@@ -1494,6 +1505,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
         class_transformer.set_module_kind(self.module_kind);
+        class_transformer.set_es_module_interop(self.es_module_interop);
         class_transformer.set_target_es5(self.target_es5);
         // Classes in namespace are nested one level deeper than top-level
         class_transformer.set_indent_base(1);
