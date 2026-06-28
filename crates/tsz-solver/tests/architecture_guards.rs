@@ -207,6 +207,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     // The public staged entry points live in the `evaluate/api.rs` submodule
     // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
+    let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
+    let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
     let iteration_incomplete_tests =
         read_solver_test("evaluate_tests_parts/iteration_exceeded_incomplete.rs");
@@ -261,6 +263,15 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && iteration_incomplete_tests.contains("request_result_for_test(TypeId::ERROR)")
             && !iteration_incomplete_tests.contains("evaluator.request_termination_kind"),
         "typed request-verdict tests must consume EvaluationResult through the evaluator boundary instead of reading the raw request_termination_kind slot"
+    );
+    assert!(
+        result_rs.contains("fn unstable_complete(type_id: TypeId) -> Self")
+            && cross_eval_guard_rs.contains("EvaluationMemoResult::unstable_complete(TypeId(80))")
+            && infer_pattern_rs.contains("EvaluationMemoResult::unstable_complete(type_id)")
+            && !cross_eval_guard_rs
+                .contains("EvaluationMemoResult::new(EvaluationResult::complete")
+            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete"),
+        "unstable complete memo results must use the named EvaluationMemoResult boundary instead of rebuilding the stability bit by hand"
     );
 }
 
