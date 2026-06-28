@@ -2044,6 +2044,94 @@ fn test_hover_jsdoc_link_is_name_independent() {
 }
 
 #[test]
+fn test_hover_enum_member_value_variable_keeps_member_type() {
+    // const e = E.A  =>  tsserver: `const e: E.A` (variable type, not value)
+    let source = "enum E { A, B, C }\nconst e = E.A;\ne;";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info for e");
+    assert_eq!(info.display_string, "const e: E.A");
+}
+
+#[test]
+fn test_hover_enum_member_access_shows_constant_value() {
+    // hover on the `.A` member access  =>  tsserver: `(enum member) E.A = 0`
+    let source = "enum E { A, B, C }\nconst e = E.A;\ne;";
+    let info = get_hover_at(source, 1, 12).expect("Should find hover info for member A");
+    assert_eq!(info.display_string, "(enum member) E.A = 0");
+}
+
+#[test]
+fn test_hover_enum_member_access_shows_later_member_value() {
+    // Auto-incremented members carry their own constant value.
+    let source = "enum E { A, B, C }\nconst e = E.C;\ne;";
+    let info = get_hover_at(source, 1, 12).expect("Should find hover info for member C");
+    assert_eq!(info.display_string, "(enum member) E.C = 2");
+}
+
+#[test]
+fn test_hover_string_enum_member_access_shows_string_value() {
+    // String enum members show the quoted string value.
+    let source = "enum F { X = \"x\", Y = \"y\" }\nconst f = F.X;\nf;";
+    let info = get_hover_at(source, 1, 12).expect("Should find hover info for member X");
+    assert_eq!(info.display_string, "(enum member) F.X = \"x\"");
+}
+
+#[test]
+fn test_hover_explicit_numeric_enum_member_value() {
+    let source = "enum E { A = 5, B = 10 }\nconst e = E.B;\ne;";
+    let info = get_hover_at(source, 1, 12).expect("Should find hover info for member B");
+    assert_eq!(info.display_string, "(enum member) E.B = 10");
+}
+
+#[test]
+fn test_hover_const_enum_member_access_shows_constant_value() {
+    let source = "const enum E { A, B, C }\nconst e = E.B;\ne;";
+    let info = get_hover_at(source, 1, 12).expect("Should find hover info for const enum member");
+    assert_eq!(info.display_string, "(enum member) E.B = 1");
+}
+
+#[test]
+fn test_hover_async_promise_result() {
+    // const q = ag()  =>  tsserver: `const q: Promise<number>`
+    let lib = Arc::new(LibFile::from_source(
+        "lib.es2022.d.ts".to_string(),
+        "interface Promise<T> { then(): void; }\n\
+         interface PromiseConstructor { resolve(): Promise<void>; }\n\
+         declare var Promise: PromiseConstructor;"
+            .to_string(),
+    ));
+    let source = "async function ag(): Promise<number> { return 1; }\nconst q = ag();\nq;";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &[Arc::clone(&lib)]);
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&lib.arena),
+        binder: Arc::clone(&lib.binder),
+    }];
+    let provider = HoverProvider::with_options_and_lib_contexts(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        FullProviderOptions {
+            strict: true,
+            sound_mode: false,
+            checker_options: None,
+            lib_contexts: &lib_contexts,
+        },
+    );
+    let mut cache = None;
+    let info = provider
+        .get_hover(root, Position::new(2, 0), &mut cache)
+        .expect("Expected hover for q");
+    assert_eq!(info.display_string, "const q: Promise<number>");
+}
+
+#[test]
 fn test_hover_jsdoc_multiple_links_all_expanded() {
     let source = "/** Use {@link Foo} or {@link Bar} for this. */\nfunction f() {}\nf();";
     let info = get_hover_at(source, 2, 0).expect("Should find hover info");

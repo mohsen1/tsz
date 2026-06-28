@@ -93,6 +93,25 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format the underlying constant value of an enum member type for
+    /// quick-info display, matching tsserver (`(enum member) E.A = 0`).
+    ///
+    /// tsserver's quick-info writer prints an enum member's *constant value*
+    /// after `=`, not the member's type. [`Self::format_type`] would render the
+    /// member *type* (`E.A`), so quick-info surfaces (hover, completion detail)
+    /// must resolve the underlying literal first. Returns the value spelling of
+    /// the member's underlying literal (`0`, `"x"`); returns `None` for
+    /// non-enum-member types and for computed members whose underlying value is
+    /// not a compile-time literal — tsc omits the `= value` suffix in that case.
+    pub fn format_enum_member_value(&self, type_id: TypeId) -> Option<String> {
+        let underlying =
+            crate::query_boundaries::common::enum_member_type(self.ctx.types, type_id)?;
+        if !crate::query_boundaries::common::is_literal_type(self.ctx.types, underlying) {
+            return None;
+        }
+        Some(self.format_type(underlying))
+    }
+
     /// Format a type without following `display_alias` for `Object` /
     /// `ObjectWithIndex` types. Used by diagnostic paths (e.g. JS prototype
     /// `Foo.prototype.X = ...` writes) that must show the literal's

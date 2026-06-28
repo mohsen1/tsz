@@ -14,6 +14,16 @@ use tsz_common::position::Range;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 
+/// Append an enum member's constant value as ` = value`, matching tsserver
+/// quick-info (`(enum member) E.A = 0`). Computed members without a
+/// compile-time literal value (`value` is `None`) show no `= value` suffix.
+fn enum_member_display(qualified: String, value: Option<&str>) -> String {
+    match value {
+        Some(v) => format!("{qualified} = {v}"),
+        None => qualified,
+    }
+}
+
 impl<'a> HoverProvider<'a> {
     /// Get hover information at the given position.
     ///
@@ -187,6 +197,15 @@ impl<'a> HoverProvider<'a> {
             type_string = annotation;
         }
 
+        // tsserver quick-info prints an enum member's constant value (`= 0`),
+        // not its type (`E.A`). Resolve the underlying literal while the checker
+        // is still borrowed; `None` for computed members drops the `= value`.
+        let enum_member_value = if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0 {
+            checker.format_enum_member_value(type_id)
+        } else {
+            None
+        };
+
         // Extract and save the updated cache for future queries
         *type_cache = Some(checker.extract_cache());
 
@@ -197,7 +216,13 @@ impl<'a> HoverProvider<'a> {
         let kind_modifiers = self.get_kind_modifiers(symbol, decl_node_idx);
 
         // 7. Construct the display string matching tsserver format
-        let display_string = self.build_display_string(symbol, &kind, &type_string, decl_node_idx);
+        let display_string = self.build_display_string(
+            symbol,
+            &kind,
+            &type_string,
+            decl_node_idx,
+            enum_member_value.as_deref(),
+        );
 
         // 8. Extract Documentation (JSDoc)
         let raw_documentation = if decl_node_idx.is_some() {
@@ -296,13 +321,31 @@ impl<'a> HoverProvider<'a> {
             let is_enum_member = member_symbol
                 .map(|s| s.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0)
                 .unwrap_or(false);
-            Some((type_string, container_name, is_enum_member))
+            // tsserver quick-info prints an enum member's constant value
+            // (`= 0`), not its type (`E.A`). Resolve the underlying literal
+            // here while the checker is still borrowed.
+            let enum_member_value = if is_enum_member {
+                checker.format_enum_member_value(member_type_id)
+            } else {
+                None
+            };
+            Some((
+                type_string,
+                container_name,
+                is_enum_member,
+                enum_member_value,
+            ))
         });
 
-        if let Some((type_string, container_name, is_enum_member)) = binder_result {
+        if let Some((type_string, container_name, is_enum_member, enum_member_value)) =
+            binder_result
+        {
             *type_cache = Some(checker.extract_cache());
             let display_string = if is_enum_member {
-                format!("(enum member) {container_name}.{name} = {type_string}")
+                enum_member_display(
+                    format!("(enum member) {container_name}.{name}"),
+                    enum_member_value.as_deref(),
+                )
             } else {
                 format!("(property) {container_name}.{name}: {type_string}")
             };
@@ -719,6 +762,7 @@ impl<'a> HoverProvider<'a> {
         kind: &str,
         type_string: &str,
         decl_node_idx: NodeIndex,
+        enum_member_value: Option<&str>,
     ) -> String {
         use tsz_binder::symbol_flags;
         let f = symbol.flags;
@@ -813,13 +857,13 @@ impl<'a> HoverProvider<'a> {
         }
         if f & symbol_flags::ENUM_MEMBER != 0 {
             let parent_name = self.get_parent_name(decl_node_idx);
-            if let Some(parent) = parent_name {
-                return format!(
-                    "(enum member) {}.{} = {}",
-                    parent, symbol.escaped_name, type_string
-                );
-            }
-            return format!("(enum member) {} = {}", symbol.escaped_name, type_string);
+            // tsserver shows the member's constant value (`= 0`). For computed
+            // members without a compile-time literal it shows no `= value`.
+            let qualified = match parent_name {
+                Some(parent) => format!("(enum member) {}.{}", parent, symbol.escaped_name),
+                None => format!("(enum member) {}", symbol.escaped_name),
+            };
+            return enum_member_display(qualified, enum_member_value);
         }
         if f & symbol_flags::PROPERTY != 0 {
             let mut type_string = type_string.to_string();
