@@ -1820,3 +1820,66 @@ b(1);
         "Expected instantiated callback typedef to stay callable, got: {codes:?}"
     );
 }
+
+#[test]
+fn ts7006_no_false_positive_object_method_param_from_compatible_union_annotation() {
+    // Regression for #14744 (jotai `createJSONStorage`).
+    // When a variable annotation is a UNION of object types whose members declare
+    // the same method with IDENTICAL parameter types (differing only in return
+    // type), tsc contextually types the object-literal method's parameters from
+    // the union. tsz previously emitted spurious TS7006 because discriminant
+    // narrowing over the union computed the arrow initializer's type with no
+    // contextual type before the real contextual pass ran. Binder names are
+    // deliberately varied from the upstream witness to avoid name-coupling.
+    let diags = check_source_diagnostics(
+        r#"
+interface Remote<Payload> { fetchEntry: (slot: string, seed: Payload) => Promise<Payload> }
+interface Local<Payload>  { fetchEntry: (slot: string, seed: Payload) => Payload }
+
+function build<Payload>() {
+    const backend: Remote<Payload> | Local<Payload> = {
+        fetchEntry: (slot, seed) => {
+            return seed;
+        },
+    };
+    return backend;
+}
+"#,
+    );
+    let ts7006 = diagnostics_with_code(&diags, 7006);
+    assert_eq!(
+        ts7006.len(),
+        0,
+        "Expected no TS7006 for object-method params contextually typed by a compatible union, got: {:?}",
+        diagnostic_messages(&ts7006)
+    );
+}
+
+#[test]
+fn ts7006_still_emitted_for_object_method_param_from_incompatible_union_annotation() {
+    // Adjacent negative for #14744 / #5840: when the union members disagree on a
+    // parameter position's type, that position has no agreed contextual type, so
+    // tsc (and tsz) keep the implicit-any TS7006 there. The fix for #14744 must
+    // not silence this case.
+    let diags = check_source_diagnostics(
+        r#"
+interface ByName<Payload>  { lookup: (handle: string, seed: Payload) => Promise<Payload> }
+interface ByIndex<Payload> { lookup: (handle: number, seed: Payload) => Payload }
+
+function build<Payload>() {
+    const provider: ByName<Payload> | ByIndex<Payload> = {
+        lookup: (handle, seed) => {
+            return seed;
+        },
+    };
+    return provider;
+}
+"#,
+    );
+    let ts7006 = diagnostics_with_code(&diags, 7006);
+    assert!(
+        ts7006.iter().any(|d| d.message_text.contains("handle")),
+        "Expected TS7006 on the disagreeing param `handle` for an incompatible union, got: {:?}",
+        diagnostic_messages(&ts7006)
+    );
+}
