@@ -2180,8 +2180,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             || {
                 let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
                 // Pass query_db to share the application evaluation cache across
-                // evaluations, so the same generic type produces the same
-                // ObjectShapeId and structural subtype checks stay stable.
+                // evaluations, keeping structural subtype checks stable.
                 if let Some(db) = self.query_db {
                     evaluator = evaluator.with_query_db(db);
                 }
@@ -2192,9 +2191,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) else {
             return (type_id, false);
         };
-        let result = memo_result.into_type_id();
-        let stable = memo_result.is_stable_for_depth_agnostic_cache();
-        self.eval_cache.insert(cache_key, (result, stable));
-        (result, stable)
+        let entry = memo_result.into_type_id_and_stability();
+        self.eval_cache.insert(cache_key, entry);
+        entry
     }
 }
