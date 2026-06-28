@@ -973,6 +973,27 @@ impl<'a> CheckerState<'a> {
         formatter.format(ty).into_owned()
     }
 
+    /// Format an assignability-message type while rendering a composite
+    /// (`Object` / `Union` / `Intersection`) structurally instead of repainting
+    /// it with a coincidentally-shaped non-generic type-alias name.
+    ///
+    /// Used when the operand came from an inline / anonymous composite annotation
+    /// (`const x: { a: number } = …`, `… : { a: number } | { b: string }`): tsc
+    /// spells the alias name only when the reference carried an `aliasSymbol`, so
+    /// an anonymous annotation must render the structural shape. Nominal shapes
+    /// (interfaces / classes) and generic applications keep their names.
+    pub(crate) fn format_type_for_assignability_message_anonymous_composite_structural(
+        &mut self,
+        ty: TypeId,
+    ) -> String {
+        self.ensure_relation_input_ready(ty);
+        let mut formatter = self
+            .ctx
+            .create_assignability_type_formatter()
+            .with_anonymous_composite_structural();
+        formatter.format(ty).into_owned()
+    }
+
     pub(crate) fn format_assignability_type_for_message_preserving_nullish(
         &mut self,
         ty: TypeId,

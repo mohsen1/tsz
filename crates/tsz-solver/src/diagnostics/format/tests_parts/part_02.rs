@@ -1738,3 +1738,100 @@ fn source_position_deep_finite_chain_is_not_short_circuited() {
     // tier (1 or 2), and crucially the call returns at all.
     assert!(tier <= 2, "finite application chain must resolve to a valid tier");
 }
+
+// =================================================================
+// Anonymous composite structural display (#14827)
+// =================================================================
+//
+// Structural interning collapses an inline annotation (`{ a: number }`) and a
+// coincidentally-shaped non-generic type-alias body (`type A = { a: number }`)
+// onto one `TypeId`, so the reverse `find_def_for_type` / `find_def_by_shape`
+// lookup cannot prove the source referenced the alias. tsc spells the alias
+// name only when the reference carried an `aliasSymbol`; an inline annotation
+// carries none and is rendered structurally. The `with_anonymous_composite_structural`
+// mode lets callers that know the operand came from an inline composite
+// annotation suppress the unsound alias-name repaint.
+#[test]
+fn anonymous_composite_structural_object_alias_renders_structurally() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let body = db.object(vec![PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER)]);
+    let def = crate::def::DefinitionInfo::type_alias(db.intern_string("A"), vec![], body);
+    let def_id = def_store.register(def);
+    def_store.register_type_to_def(body, def_id);
+
+    // Default: a direct alias reference keeps the alias name.
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(body), "A");
+
+    // Anonymous-composite mode: inline annotation renders structurally.
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_anonymous_composite_structural();
+    assert_eq!(fmt.format(body), "{ a: number; }");
+}
+
+#[test]
+fn anonymous_composite_structural_union_members_render_structurally() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let a_body = db.object(vec![PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER)]);
+    let a_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("A"),
+        vec![],
+        a_body,
+    ));
+    def_store.register_type_to_def(a_body, a_def);
+
+    let b_body = db.object(vec![PropertyInfo::new(db.intern_string("b"), TypeId::STRING)]);
+    let b_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("B"),
+        vec![],
+        b_body,
+    ));
+    def_store.register_type_to_def(b_body, b_def);
+
+    // Format the alias bodies through a union node. The anonymous-composite
+    // mode must render every member's structural shape and never repaint a
+    // member with its coincidental non-generic alias name (`A` / `B`).
+    let union = db.union(vec![a_body, b_body]);
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_anonymous_composite_structural();
+    let rendered = fmt.format(union);
+    assert!(
+        rendered.contains("a: number") && rendered.contains("b: string"),
+        "members should render structurally; got: {rendered}"
+    );
+    assert!(
+        !rendered
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|tok| tok == "A" || tok == "B"),
+        "no member should be repainted with its alias name; got: {rendered}"
+    );
+}
+
+#[test]
+fn anonymous_composite_structural_preserves_interface_name() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    // A nominal interface is registered against the same structural shape. The
+    // anonymous-composite mode must NOT strip its name: nominal types are not
+    // subject to the alias-provenance unsoundness.
+    let body = db.object(vec![PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER)]);
+    let def = crate::def::DefinitionInfo::interface(
+        db.intern_string("Named"),
+        vec![],
+        vec![PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER)],
+    );
+    let def_id = def_store.register(def);
+    def_store.register_type_to_def(body, def_id);
+
+    let mut fmt = TypeFormatter::new(&db)
+        .with_def_store(&def_store)
+        .with_anonymous_composite_structural();
+    assert_eq!(fmt.format(body), "Named");
+}

@@ -44,7 +44,12 @@ impl<'a> CheckerState<'a> {
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
-            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
+            let tgt_str = if depth == 0 {
+                self.anonymous_composite_annotation_target_display(idx, target)
+                    .unwrap_or_else(|| self.recursive_non_generic_alias_body_name(target_type))
+            } else {
+                self.recursive_non_generic_alias_body_name(target_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&display_src_str, &tgt_str],
@@ -882,7 +887,12 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = self.recursive_non_generic_alias_body_name(target_type);
+            let tgt_str = if depth == 0 {
+                self.anonymous_composite_annotation_target_display(idx, target)
+                    .unwrap_or_else(|| self.recursive_non_generic_alias_body_name(target_type))
+            } else {
+                self.recursive_non_generic_alias_body_name(target_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],

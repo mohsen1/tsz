@@ -138,7 +138,16 @@ impl<'a> TypeFormatter<'a> {
             // that happens to share the same interned shape.
             let skip_for_computed_alias = def.kind == DefKind::TypeAlias
                 && def.body.is_some_and(|b| def_store.is_computed_body(b));
-            if !skip_for_empty_alias && !skip_for_computed_alias {
+            // An inline / anonymous object annotation shares its interned shape
+            // with a coincidentally-shaped non-generic type-alias body. When the
+            // caller knows the operand came from an anonymous composite
+            // annotation, render the structural shape rather than repainting it
+            // with the unrelated alias name (tsc's `aliasSymbol` policy). Nominal
+            // shapes (interfaces / classes) resolve through `shape.symbol` above
+            // and never reach this reverse-by-shape fallback.
+            let skip_for_anonymous_composite =
+                self.anonymous_composite_structural && def.kind == DefKind::TypeAlias;
+            if !skip_for_empty_alias && !skip_for_computed_alias && !skip_for_anonymous_composite {
                 return Some(self.format_def_name(&def));
             }
         }

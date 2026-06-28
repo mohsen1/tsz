@@ -502,6 +502,82 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve a source/target identifier expression to its declared type
+    /// annotation node (`(arena, annotation_idx)`), mirroring the symbol
+    /// resolution used by `declared_type_annotation_text_for_expression` but
+    /// returning the AST node rather than its source text. Used to classify
+    /// whether the annotation was written inline (`{ a: number }`) or as a named
+    /// reference, which decides alias-name display per tsc's `aliasSymbol` policy.
+    pub(in crate::error_reporter) fn declared_type_annotation_node_for_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(&tsz_parser::NodeArena, NodeIndex)> {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self
+            .resolve_identifier_symbol(expr_idx)
+            .or_else(|| self.ctx.binder.node_symbols.get(&expr_idx.0).copied())?;
+        self.declared_type_annotation_node_for_symbol(sym_id)
+    }
+
+    /// True when `annotation_idx` is an inline / anonymous *composite* type
+    /// annotation — a type literal (`{ … }`), or a union/intersection whose
+    /// constituents are all themselves anonymous composites — with no named
+    /// type-reference constituent.
+    ///
+    /// tsc attaches an `aliasSymbol` (and spells the alias name) only when the
+    /// annotation referenced an alias; an annotation written inline carries none
+    /// and is rendered structurally. A *mixed* union/intersection (some member is
+    /// a named reference) returns `false` so the established per-name display path
+    /// keeps the reference members' names rather than over-suppressing them.
+    pub(in crate::error_reporter) fn annotation_is_anonymous_structural_composite(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        Self::annotation_is_anonymous_structural_composite_at(arena, annotation_idx, 0)
+    }
+
+    fn annotation_is_anonymous_structural_composite_at(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        let Some(node) = arena.get(annotation_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::annotation_is_anonymous_structural_composite_at(
+                        arena,
+                        wrapped.type_node,
+                        depth + 1,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => true,
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                arena.get_composite_type(node).is_some_and(|composite| {
+                    !composite.types.nodes.is_empty()
+                        && composite.types.nodes.iter().all(|&member_idx| {
+                            Self::annotation_is_anonymous_structural_composite_at(
+                                arena,
+                                member_idx,
+                                depth + 1,
+                            )
+                        })
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {
         let Some((annotation_arena, annotation_idx)) =
             self.declared_type_annotation_node_for_symbol(sym_id)

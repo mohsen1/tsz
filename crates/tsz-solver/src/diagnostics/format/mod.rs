@@ -148,6 +148,23 @@ pub struct TypeFormatter<'a> {
     /// shows the literal's structural shape regardless of any
     /// constructor-prototype symbol aliasing recorded by the type system.
     skip_object_display_alias: bool,
+    /// When true, do not name a *composite* `Object` / `ObjectWithIndex` /
+    /// `Union` / `Intersection` type by a reverse lookup to a **non-generic
+    /// type-alias** definition (`find_def_for_type` / `find_def_by_shape`).
+    ///
+    /// Structural interning collapses an inline annotation (`{ a: number }`) and
+    /// a coincidentally-shaped alias body (`type A = { a: number }`) onto one
+    /// `TypeId`, so the reverse lookup cannot tell whether the source actually
+    /// referenced the alias. tsc spells the alias name only when the reference's
+    /// `aliasSymbol` is set; an inline / anonymous annotation carries none and is
+    /// rendered structurally. Callers that know the operand came from an inline
+    /// (non-reference) composite annotation set this flag so the shape renders
+    /// structurally instead of being repainted with the unrelated alias name.
+    ///
+    /// Nominal shapes are unaffected: interfaces / classes resolve through their
+    /// shape symbol stamp, and generic applications keep their `Name<Args>`
+    /// surface — only the unsound non-generic-type-alias redirect is suppressed.
+    anonymous_composite_structural: bool,
     /// When true, preserve a longer generic alias prefix while eliding nested
     /// structural object branches. Used for long property receiver diagnostics.
     long_property_receiver_display: bool,
@@ -649,6 +666,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
             skip_object_display_alias: false,
+            anonymous_composite_structural: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
@@ -943,6 +961,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_for_intersections: false,
             capitalize_primitive_intersection_members: false,
             skip_object_display_alias: false,
+            anonymous_composite_structural: false,
             long_property_receiver_display: false,
             long_property_receiver_object_elision_end_depth: 26,
             expand_scalar_mapped_alias_applications: false,
@@ -1150,6 +1169,15 @@ impl<'a> TypeFormatter<'a> {
     /// alias to a named symbol (e.g. a JS constructor's `prototype` property).
     pub const fn with_skip_object_display_alias(mut self) -> Self {
         self.skip_object_display_alias = true;
+        self
+    }
+
+    /// Render a composite type (`Object` / `ObjectWithIndex` / `Union` /
+    /// `Intersection`) structurally instead of repainting it with a coincidental
+    /// non-generic type-alias name reached through the reverse `find_def_for_type`
+    /// / `find_def_by_shape` lookup. See [`Self::anonymous_composite_structural`].
+    pub const fn with_anonymous_composite_structural(mut self) -> Self {
+        self.anonymous_composite_structural = true;
         self
     }
 
@@ -1522,10 +1550,25 @@ impl<'a> TypeFormatter<'a> {
                 );
             let unproven_primitive_key_union_alias =
                 def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
+            // An inline / anonymous composite annotation shares its interned
+            // `TypeId` with a coincidentally-shaped non-generic type-alias body,
+            // so the reverse `find_def_for_type` lookup cannot prove the source
+            // referenced the alias. When the caller knows the operand came from an
+            // anonymous composite annotation, render the structural shape instead
+            // of the unrelated alias name (matching tsc's `aliasSymbol` policy).
+            let anonymous_composite_structural_skip = self.anonymous_composite_structural
+                && matches!(
+                    &key,
+                    TypeData::Object(_)
+                        | TypeData::ObjectWithIndex(_)
+                        | TypeData::Union(_)
+                        | TypeData::Intersection(_)
+                );
             let skip_alias = if !def_kind_matches_type_shape {
                 true
             } else if def.kind == DefKind::TypeAlias {
-                self.skip_type_alias_def_ids.contains(&def_id)
+                anonymous_composite_structural_skip
+                        || self.skip_type_alias_def_ids.contains(&def_id)
                         || def.body.is_some_and(|b| def_store.is_computed_body(b))
                         // A non-generic alias whose tuple body was built by
                         // flattening a fixed-tuple spread (`type T = [...[a, b], c]`)
