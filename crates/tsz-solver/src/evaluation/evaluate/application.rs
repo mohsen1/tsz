@@ -383,7 +383,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // path cannot refine it and only widens the observable surface of
             // this special case.
             if resolved == TypeId::UNKNOWN {
+                // Reducing `Alias<Args>` to canonical `unknown` requires the
+                // base def to be a *positively confirmed* type alias in THIS
+                // evaluation's resolver context. A thin cross-arena
+                // registration — where the resolver knows the `DefId` exists but
+                // not its `DefKind` (`ctx.is_type_alias_def` is false) — is a
+                // not-yet-materialized placeholder, never proof of a genuine
+                // `type C = unknown`. Without this gate a lib
+                // distributive-conditional alias (`Exclude`, `NonNullable`, …)
+                // resolved consumer-first carries a placeholder `unknown` body
+                // AND a lost lib file-origin in the consuming arena, so
+                // `is_genuine_unknown_alias_body`'s file-origin check alone
+                // misclassifies it as genuine and collapses
+                // `Exclude<T | undefined, undefined>` to bare `unknown` (false
+                // `TS2571`, issue #14740). Keeping the application opaque lets a
+                // later pass expand the real conditional body. The narrower gate
+                // lives here (the evaluator's reduction) rather than in the
+                // shared `is_genuine_unknown_alias_body` predicate, which the
+                // relation layer also consumes for deferred `unknown`-returning
+                // members (#13212 / #14595).
                 let genuine_unknown_body = genuine_unknown_alias_reduction_enabled()
+                    && ctx.is_type_alias_def
                     && self
                         .resolver
                         .is_genuine_unknown_alias_body(def_id, self.interner);

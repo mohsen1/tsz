@@ -1545,9 +1545,23 @@ impl<'a> CheckerState<'a> {
                 };
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
+                // A function-like initializer (arrow / function expression) can never be a
+                // unit/literal type, so it is irrelevant to discriminant narrowing. Computing
+                // its type bare here — before the real contextual pass over the object literal
+                // — would prematurely check the function with no contextual type and emit a
+                // spurious TS7006 for parameters that the contextual union member would have
+                // typed. Skip the bare probe for those initializers.
+                let initializer_is_function_like =
+                    self.ctx.arena.get(prop.initializer).is_some_and(|node| {
+                        node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    });
                 let unit_lit = self
                     .literal_type_from_initializer(prop.initializer)
                     .or_else(|| {
+                        if initializer_is_function_like {
+                            return None;
+                        }
                         let initializer_type = self.get_type_of_node(prop.initializer);
                         common::is_unit_type(self.ctx.types, initializer_type)
                             .then_some(initializer_type)

@@ -1103,6 +1103,21 @@ impl<'a> CheckerState<'a> {
                 {
                     let analyzer = self.flow_analyzer_for_property_reads();
                     if analyzer.is_matching_reference(binary.left, access.expression) {
+                        // Only a *widening* self-recursive assignment drops the
+                        // property next iteration. When the narrowed first-pass
+                        // receiver is already a subtype of the assigned-back value
+                        // (`receiver_type <: property_type`), `union2` re-introduces
+                        // only the variable's own declared/flow union, which the
+                        // loop's per-iteration narrowing at this site (e.g. a
+                        // `switch (x._tag)` discriminant guarding a recursive
+                        // `x = x.child`) re-derives every pass — so the property
+                        // never actually goes missing (#14944). The genuine case
+                        // this heuristic targets escapes the receiver's domain
+                        // (`x = x.length` widening `string` with `number`, where
+                        // `string` is not a subtype of `number`) and still fires.
+                        if self.is_subtype_of(receiver_type, property_type) {
+                            return false;
+                        }
                         let loop_receiver_type = self
                             .ctx
                             .types

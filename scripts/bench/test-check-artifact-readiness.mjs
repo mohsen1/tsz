@@ -33,6 +33,16 @@ const PERF_TIMED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
 const NON_PERF_TIMED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application" && row.perf_timed !== true)
   .map((row) => row.name);
+// --require-application-compat only HARD-BLOCKS on benchmark_set:"required"
+// application rows. Canary application rows (every category:"application" row
+// today) are real apps installed by the optional best-effort bench-applications
+// shard, so a missing/incomplete one is advisory, never publish-blocking.
+const CANARY_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application" && row.benchmark_set === "canary")
+  .map((row) => row.name);
+const REQUIRED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application" && row.benchmark_set === "required")
+  .map((row) => row.name);
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -465,24 +475,40 @@ withTempDir((dir) => {
 console.log("✅ --require-project-timing-pairs fails all-crashed project artifacts");
 
 // ---------------------------------------------------------------------------
-// Test: --require-application-compat fails the public publish gate when the
-// benchmark artifact has timing rows but no application compatibility rows.
+// Test: --require-application-compat surfaces absent application compatibility
+// rows but, because every application row today is benchmark_set:"canary", does
+// NOT block the publish — they are advisory. The compat for these real apps
+// comes from the optional best-effort bench-applications shard / matching-CI
+// artifact, either of which can legitimately be absent. (When a future
+// benchmark_set:"required" application row is added, its gap WOULD block; see
+// blocking_application_compatibility_gaps below.)
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
   const rows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
   writeJson(file, makeArtifact(rows));
   const result = run(file, ["--json", "--require-application-compat"]);
-  assert.equal(result.status, 1, "publish gate should fail when application compat rows are absent");
+  const expectBlocking = REQUIRED_APPLICATION_ROWS.length > 0;
+  assert.equal(
+    result.status,
+    expectBlocking ? 1 : 0,
+    `all-canary application rows absent must be advisory (exit 0), not blocking:\n${result.stderr}`,
+  );
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.application_compatibility.required, true);
   assert.equal(parsed.application_compatibility.row_count, APPLICATION_PROJECT_ROWS.length);
   assert.equal(parsed.application_compatibility.present, 0);
   assert.equal(parsed.application_compatibility.missing, APPLICATION_PROJECT_ROWS.length);
-  assert.match(result.stderr, /application compatibility incomplete/);
-  assert.match(result.stderr, new RegExp(`${APPLICATION_PROJECT_ROWS[0]} \\(missing\\)`));
+  assert.equal(parsed.application_compatibility.advisory_gaps, CANARY_APPLICATION_ROWS.length);
+  assert.equal(parsed.application_compatibility.blocking_gaps, REQUIRED_APPLICATION_ROWS.length);
+  assert.equal(parsed.advisory_application_compatibility_gaps, CANARY_APPLICATION_ROWS.length);
+  assert.equal(parsed.blocking_application_compatibility_gaps, REQUIRED_APPLICATION_ROWS.length);
+  assert.match(
+    result.stderr,
+    /canary application compatibility gap\(s\) \(advisory, not blocking publish\)/,
+  );
 });
-console.log("✅ --require-application-compat fails missing application rows");
+console.log("✅ --require-application-compat treats absent canary application rows as advisory");
 
 // ---------------------------------------------------------------------------
 // Test: compile-only application rows with complete compatibility metadata pass
@@ -672,7 +698,60 @@ withTempDir((dir) => {
 console.log("✅ --require-application-compat accepts complete gray app rows");
 
 // ---------------------------------------------------------------------------
-// Test: a gray application row with partial metadata is still incomplete.
+// Regression (#15004 follow-up): a SINGLE canary application row missing its
+// compatibility entirely — exactly infisical in Bench run 28322724209, where
+// the bench-applications shard no longer benched it and that run had no matching
+// main-CI compat — must be advisory, not publish-blocking. The other 19/20 app
+// rows are present + complete; the lone missing canary must not freeze the site.
+// ---------------------------------------------------------------------------
+if (CANARY_APPLICATION_ROWS.length > 1) {
+  withTempDir((dir) => {
+    const file = path.join(dir, "bench.json");
+    const missingName = CANARY_APPLICATION_ROWS.includes("infisical-project")
+      ? "infisical-project"
+      : CANARY_APPLICATION_ROWS[0];
+    const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+    const applicationRows = APPLICATION_PROJECT_ROWS
+      .filter((name) => name !== missingName)
+      .map((name) =>
+        makeRow(name, "green", {
+          errorStatus: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+          tsz_ms: null,
+          tsgo_ms: null,
+          winner: "error",
+        }),
+      );
+    writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
+    const result = run(file, ["--json", "--require-application-compat", "--require-green-project-timing-pairs"]);
+    assert.equal(
+      result.status,
+      0,
+      `one missing canary application row must not block the publish:\n${result.stderr}`,
+    );
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.equal(parsed.application_compatibility.missing, 1);
+    assert.equal(parsed.application_compatibility.present, APPLICATION_PROJECT_ROWS.length - 1);
+    assert.equal(parsed.blocking_application_compatibility_gaps, 0);
+    assert.equal(parsed.advisory_application_compatibility_gaps, 1);
+    assert.deepEqual(parsed.application_compatibility.advisory_gap_rows, [
+      { name: missingName, state: "missing", gap_kind: "missing" },
+    ]);
+    assert.deepEqual(parsed.application_compatibility.blocking_gap_rows, []);
+    assert.match(
+      result.stderr,
+      new RegExp(`${missingName} \\(missing\\)`),
+    );
+    assert.doesNotMatch(
+      result.stderr,
+      /application compatibility incomplete for \d+ required row/,
+    );
+  });
+  console.log("✅ --require-application-compat keeps a single missing canary app row advisory");
+}
+
+// ---------------------------------------------------------------------------
+// Test: a gray application row with partial metadata is incomplete, but because
+// it is a canary row the gap is advisory (reported, not publish-blocking).
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
@@ -688,16 +767,29 @@ withTempDir((dir) => {
   delete applicationRows[0].compatibility.phase;
   writeJson(file, makeArtifact([...requiredRows, ...applicationRows]));
   const result = run(file, ["--json", "--require-application-compat"]);
-  assert.equal(result.status, 1, "partial application compatibility should fail readiness");
+  const incompleteName = APPLICATION_PROJECT_ROWS[0];
+  const expectBlocking = REQUIRED_APPLICATION_ROWS.includes(incompleteName);
+  assert.equal(
+    result.status,
+    expectBlocking ? 1 : 0,
+    `partial canary application compatibility must be advisory, not blocking:\n${result.stderr}`,
+  );
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.application_compatibility.present, APPLICATION_PROJECT_ROWS.length);
   assert.equal(parsed.application_compatibility.complete, APPLICATION_PROJECT_ROWS.length - 1);
   assert.equal(parsed.application_compatibility.incomplete, 1);
   assert.deepEqual(parsed.application_compatibility.incomplete_rows, [
-    { name: APPLICATION_PROJECT_ROWS[0], state: "gray" },
+    { name: incompleteName, state: "gray" },
   ]);
+  if (!expectBlocking) {
+    assert.equal(parsed.blocking_application_compatibility_gaps, 0);
+    assert.equal(parsed.advisory_application_compatibility_gaps, 1);
+    assert.deepEqual(parsed.application_compatibility.advisory_gap_rows, [
+      { name: incompleteName, state: "gray", gap_kind: "incomplete" },
+    ]);
+  }
 });
-console.log("✅ --require-application-compat rejects partial app rows");
+console.log("✅ --require-application-compat keeps a partial canary app row advisory");
 
 // ---------------------------------------------------------------------------
 // Test: --require-green fails when any present required row is red.

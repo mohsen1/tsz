@@ -927,6 +927,94 @@ withTempDir((dir) => {
   );
 });
 
+// Optional canary/application shard signature defects are ADVISORY: a broken
+// optional shard must never fail the merge step (and freeze latest.json) when
+// the required shards are clean. Classify by shard.label.
+withTempDir((dir) => {
+  const required = writeInput(
+    dir,
+    "bench-results-projects.json",
+    [projectRow("required-row")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "projects", filter: "projects" },
+      filter: "projects",
+    },
+  );
+  // Optional canary shard missing its entire runner_environment — would block
+  // pre-fix; advisory now.
+  const canary = writeInput(
+    dir,
+    "bench-results-bench-canaries.json",
+    [projectRow("valibot-project")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      shard: { label: "bench-canaries", filter: "valibot-project" },
+      filter: "bench-canaries",
+    },
+  );
+  const result = runMergeInputs(dir, [required, canary], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, `optional canary signature defect must not block publish:\n${result.stderr}`);
+  assert.match(result.stderr, /advisory gaps on optional shards/);
+  assert.match(result.stderr, /bench-results-bench-canaries\.json: missing runner_environment/);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.ok(
+    merged.validation.runner_signature_advisory.some((m) => /bench-results-bench-canaries\.json/.test(m)),
+    "advisory signature gaps are recorded in the merged validation block",
+  );
+});
+
+// The same defect on a REQUIRED shard still blocks (the advisory split must not
+// leak to required rows).
+withTempDir((dir) => {
+  const required = writeInput(
+    dir,
+    "bench-results-projects.json",
+    [projectRow("required-row")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      shard: { label: "projects", filter: "projects" },
+      filter: "projects",
+    },
+  );
+  const result = runMergeInputs(dir, [required], ["--require-runner-signature"]);
+  assert.equal(result.status, 1, "a required shard missing runner_environment still blocks");
+  assert.match(result.stderr, /validation failed \(blocking\)/);
+  assert.match(result.stderr, /bench-results-projects\.json: missing runner_environment/);
+});
+
+// Filename fallback: an optional shard so broken it dropped shard.label is still
+// recognised as optional by its `bench-results-bench-applications.json` name.
+withTempDir((dir) => {
+  const required = writeInput(
+    dir,
+    "bench-results-projects.json",
+    [projectRow("required-row")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      shard: { label: "projects", filter: "projects" },
+      filter: "projects",
+    },
+  );
+  const application = writeInput(
+    dir,
+    "bench-results-bench-applications.json",
+    [projectRow("umami-project")],
+    {
+      ...SAMPLE_RUN_METADATA,
+      runner_environment: SAMPLE_RUNNER_ENVIRONMENT,
+      // shard omitted entirely -> missing shard.label/shard.filter, but the
+      // filename identifies it as the optional applications shard.
+      filter: "bench-applications",
+    },
+  );
+  const result = runMergeInputs(dir, [required, application], ["--require-runner-signature"]);
+  assert.equal(result.status, 0, `optional applications shard defect must not block:\n${result.stderr}`);
+  assert.match(result.stderr, /bench-results-bench-applications\.json: missing shard\.label/);
+});
+
 withTempDir((dir) => {
   const result = runMerge(
     dir,

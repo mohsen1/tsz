@@ -46,8 +46,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if self.type_contains_infer(pattern_prop.type_id) {
                 let mut visited = InferPatternVisited::default();
+                // Rebind the member's polymorphic `this` to the receiver before
+                // extracting the `infer` candidate (issue #14785).
+                let source_member_type = self.bind_member_this(source_prop.type_id, source);
                 if !self.match_infer_pattern(
-                    source_prop.type_id,
+                    source_member_type,
                     pattern_prop.type_id,
                     bindings,
                     &mut visited,
@@ -120,6 +123,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_props: &[PropertyInfo],
         pattern_props: &[PropertyInfo],
         pattern: TypeId,
+        receiver: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         visited: &mut InferPatternVisited,
         checker: &mut SubtypeChecker<'_, R>,
@@ -134,7 +138,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_type = match source_prop {
                 Some(source_prop) => {
                     if self.type_contains_infer(pattern_prop.type_id) {
-                        source_prop.type_id
+                        // Rebind the member's polymorphic `this` to the receiver
+                        // before extracting the `infer` candidate, matching tsc's
+                        // `getTypeWithThisArgument` (issue #14785).
+                        self.bind_member_this(source_prop.type_id, receiver)
                     } else {
                         self.optional_property_type(source_prop)
                     }
@@ -190,6 +197,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &source_shape.properties,
                     &pattern_shape.properties,
                     pattern,
+                    source,
                     bindings,
                     visited,
                     checker,
@@ -241,7 +249,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     };
                     let source_type = if self.type_contains_infer(pattern_prop.type_id) {
-                        source_prop.type_id
+                        self.bind_member_this(source_prop.type_id, source)
                     } else {
                         self.optional_property_type(source_prop)
                     };
@@ -302,6 +310,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
+
+                    // Rebind the matched member's polymorphic `this` to the whole
+                    // intersection receiver before extracting the `infer`
+                    // candidate (tsc's `getTypeWithThisArgument`, issue #14785).
+                    // The helper is a no-op for members without `this`, so it is
+                    // applied unconditionally here.
+                    let source_type = self.bind_member_this(source_type, source);
 
                     if !self.match_infer_pattern(
                         source_type,
@@ -468,6 +483,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &source_shape.properties,
                     &pattern_shape.properties,
                     pattern,
+                    source,
                     bindings,
                     visited,
                     checker,

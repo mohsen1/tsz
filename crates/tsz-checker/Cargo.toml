@@ -240,6 +240,9 @@ path = "tests/generic_generator_member_substitution_tests.rs"
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 [[test]]
+name = "return_only_defaulted_intersection_contextual_inference_tests"
+path = "tests/return_only_defaulted_intersection_contextual_inference_tests.rs"
+[[test]]
 name = "identity_alias_union_arm_inference_tests"
 path = "tests/identity_alias_union_arm_inference_tests.rs"
 [[test]]
@@ -659,6 +662,9 @@ path = "tests/literal_source_widening_position_parity_tests.rs"
 name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
 [[test]]
+name = "lib_conditional_alias_return_consumer_first_tests"
+path = "tests/lib_conditional_alias_return_consumer_first_tests.rs"
+[[test]]
 name = "lib_merge_indexed_access_no_cascade_tests"
 path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
 [[test]]
@@ -1051,6 +1057,9 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+[[test]]
+name = "conditional_infer_polymorphic_this_tests"
+path = "tests/conditional_infer_polymorphic_this_tests.rs"
 [[test]]
 name = "inline_conditional_rest_spread_negative_display_tests"
 path = "tests/inline_conditional_rest_spread_negative_display_tests.rs"
