@@ -853,6 +853,9 @@ mod cross_file_class_merge_tests;
 #[path = "tests/cross_file_generic_alias_union_implements_tests.rs"]
 mod cross_file_generic_alias_union_implements_tests;
 #[cfg(test)]
+#[path = "tests/cross_file_in_operator_indexed_element_narrowing_tests.rs"]
+mod cross_file_in_operator_indexed_element_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/cross_file_interface_merge_ts2717_tests.rs"]
 mod cross_file_interface_merge_ts2717_tests;
 #[cfg(test)]

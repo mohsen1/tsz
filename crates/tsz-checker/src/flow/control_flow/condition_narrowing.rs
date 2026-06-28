@@ -48,6 +48,21 @@ impl<'a> FlowAnalyzer<'a> {
         guard: &TypeGuard,
         is_true_branch: bool,
     ) -> TypeId {
+        // Recover cross-file `Application(UnresolvedTypeName, args)` residue before
+        // applying any guard (`typeof` / `instanceof` / `in` / predicate) so the
+        // solver can read the union members. This is the central chokepoint for
+        // the "solver-first" guard path, which equality/discriminant narrowing in
+        // `narrow_by_binary_expr` does not reach. The `in`-operator guard in
+        // particular targets the whole object (`'right' in a`); when `a` is a
+        // cross-file discriminated-union element obtained through indexed access
+        // (`as[0]`), its members stay `Application(UnresolvedTypeName, ..)` that
+        // the solver-side `NarrowingContext` resolver (a `TypeEnvironment`) cannot
+        // resolve, so member-presence filtering keeps the whole union and a later
+        // `.right` access surfaces a false `TS2339`/`TS2322`. The `CheckerContext`
+        // resolver walks the merged binder graph to recover the members. Gated
+        // structurally on the residue (cached per `TypeId`), so resolved flow
+        // types are untouched (#14756).
+        let type_id = self.recover_unresolved_application_for_narrowing(type_id);
         flow_query::narrow_with_guard_in_context(narrowing, type_id, guard, is_true_branch)
     }
 
@@ -1258,7 +1273,9 @@ impl<'a> FlowAnalyzer<'a> {
         // resolver walks the merged binder graph and recovers the members, so
         // discriminant filtering then works (benefits any cross-file discriminated
         // union). Gated structurally on the residue, so resolved flow types are
-        // untouched.
+        // untouched. The `in`/`instanceof`/`typeof`/predicate guard forms take the
+        // solver-first guard path and recover at
+        // `narrow_with_guard_via_flow_boundary` instead (#14756).
         let mut type_id = self.recover_unresolved_application_for_narrowing(type_id);
 
         // Optional-chain equality transport:
