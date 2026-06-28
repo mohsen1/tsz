@@ -1201,3 +1201,42 @@ withTempDir((dir) => {
   assert.ok(!row.status, "a perf-timed canary must not be stamped 'not timed' (would drop it off the chart)");
   assert.equal(row.compatibility.state, "green");
 });
+
+// The merged artifact's `generated_at` must be a FRESH wall-clock stamp at merge
+// time, never inherited from a shard payload. The publish path's monotonic
+// latest.json guard refuses to overwrite latest.json when the incoming
+// generated_at is <= the published one; if the merge inherited a frozen/stale
+// shard timestamp, every fresh run would look "older-or-equal" and the public
+// site would stop advancing. Pin that a stale shard generated_at does not leak
+// into the merged metadata.
+withTempDir((dir) => {
+  const staleGeneratedAt = "2020-01-01T00:00:00.000Z";
+  const inputs = REQUIRED_PROJECT_ROWS.map((name, index) =>
+    writeInput(dir, `bench-results-${index}.json`, [projectRow(name)], {
+      generated_at: staleGeneratedAt,
+      source_commit: "abcdef1234567890abcd",
+    }),
+  );
+  const before = Date.now();
+  const result = runMergeInputs(dir, inputs);
+  const after = Date.now();
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.notEqual(
+    merged.generated_at,
+    staleGeneratedAt,
+    "merged generated_at must not inherit a shard's frozen timestamp",
+  );
+  const mergedMs = Date.parse(merged.generated_at);
+  assert.ok(Number.isFinite(mergedMs), "merged generated_at must be a valid ISO 8601 timestamp");
+  // Wall-clock stamp at merge time: within the [before, after] window (allowing
+  // a small clock skew). Critically it is strictly newer than the stale shards.
+  assert.ok(
+    mergedMs >= before - 1000 && mergedMs <= after + 1000,
+    `merged generated_at (${merged.generated_at}) should reflect merge time, not a stale/inherited value`,
+  );
+  assert.ok(
+    mergedMs > Date.parse(staleGeneratedAt),
+    "merged generated_at must advance past stale shard timestamps so the monotonic publish guard can publish",
+  );
+});

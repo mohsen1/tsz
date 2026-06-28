@@ -43,8 +43,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /artifact_ready_for_pages\(\)[\s\S]+application_compatibility\.required == true[\s\S]+application_compatibility\.missing == 0[\s\S]+application_compatibility\.incomplete == 0[\s\S]+application_compatibility\.duplicates == 0[\s\S]+green_project_timing_pair_gaps == 0[\s\S]+successful_project_timing_pairs >= \.required_project_timing_pairs/,
-  "Pages deploy should require benchmark readiness JSON with complete application compatibility and green project timing pairs before using merged artifacts",
+  /artifact_ready_for_pages\(\)[\s\S]+application_compatibility\.required == true[\s\S]+application_compatibility\.missing == 0[\s\S]+application_compatibility\.incomplete == 0[\s\S]+application_compatibility\.duplicates == 0[\s\S]+blocking_project_timing_pair_gaps == 0[\s\S]+successful_project_timing_pairs >= \.required_project_timing_pairs/,
+  "Pages deploy should require benchmark readiness JSON with complete application compatibility and no blocking (required) project timing-pair gaps before using merged artifacts",
 );
 
 assert.match(

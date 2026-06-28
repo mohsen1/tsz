@@ -511,9 +511,14 @@ withTempDir((dir) => {
 console.log("✅ --require-application-compat accepts complete compile-only app rows");
 
 // ---------------------------------------------------------------------------
-// Test: --require-green-project-timing-pairs rejects green perf-timed rows that
-// only have compile compatibility. They would otherwise appear green in the
-// compatibility table while being absent from the vs-tsgo chart.
+// Test: --require-green-project-timing-pairs surfaces green perf-timed rows that
+// only have compile compatibility, but treats them as ADVISORY (non-blocking)
+// because every perf_timed row today is a canary/advisory shard. A green-compat
+// canary whose vs-tsgo perf benchmark errors must not freeze the publish — it is
+// simply omitted from the chart. Regression guard for the half-day benchmark
+// site freeze where one such canary (infisical) hard-blocked ~70% of Bench
+// publishes until it was demoted to perf_timed:false (#15004); this generalizes
+// the rule so any flaky canary timing pair is advisory.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
   const file = path.join(dir, "bench.json");
@@ -532,12 +537,19 @@ withTempDir((dir) => {
     "--require-application-compat",
     "--require-green-project-timing-pairs",
   ]);
-  assert.equal(result.status, 1, "green compile-only perf-timed rows should fail the chart timing gate");
+  assert.equal(
+    result.status,
+    0,
+    `canary perf-timed rows missing a chart timing pair must not block publish:\n${result.stderr}`,
+  );
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.require_green_project_timing_pairs, true);
-  // Only perf_timed application rows are required to have a chart; non-perf-timed
-  // canary apps (whose perf benchmark errors) are tracked for compat only.
+  // The full advisory set still surfaces the missing canary charts...
   assert.equal(parsed.green_project_timing_pair_gaps, PERF_TIMED_APPLICATION_ROWS.length);
+  assert.equal(parsed.advisory_project_timing_pair_gaps, PERF_TIMED_APPLICATION_ROWS.length);
+  // ...but none of them is publish-blocking (no required row opts into perf timing).
+  assert.equal(parsed.blocking_project_timing_pair_gaps, 0);
+  assert.deepEqual(parsed.blocking_project_timing_pair_gap_rows, []);
   const gapRowNames = parsed.green_project_timing_pair_gap_rows.map((r) => r.name);
   for (const name of NON_PERF_TIMED_APPLICATION_ROWS) {
     assert.ok(
@@ -545,10 +557,20 @@ withTempDir((dir) => {
       `non-perf-timed canary app ${name} must not be flagged as a missing timing-pair gap`,
     );
   }
-  assert.match(result.stderr, /green perf-timed project row\(s\) missing tsz\/tsgo timing pairs/);
-  assert.match(result.stderr, new RegExp(PERF_TIMED_APPLICATION_ROWS[0]));
+  for (const row of parsed.green_project_timing_pair_gap_rows) {
+    assert.equal(row.blocking, false, `canary timing gap ${row.name} must be marked non-blocking`);
+  }
+  // Advisory warning is surfaced, but not as a publish-blocking failure line.
+  assert.match(
+    result.stderr,
+    /canary perf-timed project row\(s\) missing tsz\/tsgo timing pairs \(advisory/,
+  );
+  assert.doesNotMatch(
+    result.stderr,
+    /required perf-timed project row\(s\) missing tsz\/tsgo timing pairs/,
+  );
 });
-console.log("✅ --require-green-project-timing-pairs rejects green perf-timed app rows without charts");
+console.log("✅ --require-green-project-timing-pairs treats canary perf-timed gaps as advisory, not blocking");
 
 // ---------------------------------------------------------------------------
 // Test: --require-green-project-timing-pairs accepts green perf-timed rows once
