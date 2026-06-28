@@ -216,10 +216,8 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                 self.find_matching_signature_for_union(list, signature, false, true)
                     .or_else(|| self.find_matching_signature_for_union(list, signature, true, true))
             };
-            match matched {
-                Some(sig) => append_if_unique(&mut result, sig),
-                None => return None,
-            }
+            let sig = matched?;
+            append_if_unique(&mut result, sig);
         }
         Some(result)
     }
