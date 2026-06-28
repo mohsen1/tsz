@@ -477,7 +477,7 @@ impl<'a> CheckerState<'a> {
         let FunctionBodyCtx {
             func_idx,
             func,
-            node: _node,
+            node,
             is_closure,
             has_type_annotation,
             has_jsdoc_return_type,
@@ -586,7 +586,7 @@ impl<'a> CheckerState<'a> {
         if !pushed_this_type
             && self.is_js_file()
             && matches!(
-                _node.kind,
+                node.kind,
                 syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
             )
             && let Some(jsdoc) = func_decl_jsdoc.as_ref()
@@ -607,7 +607,7 @@ impl<'a> CheckerState<'a> {
         if !pushed_this_type
             && self.is_js_file()
             && matches!(
-                _node.kind,
+                node.kind,
                 syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
             )
             && let Some(this_type) =
@@ -622,7 +622,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let owns_untyped_this_binding = matches!(
-            _node.kind,
+            node.kind,
             syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
         ) && !pushed_this_type
             && !self.enclosing_function_has_contextual_this_type(func_idx)
