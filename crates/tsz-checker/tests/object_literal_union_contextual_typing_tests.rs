@@ -24,7 +24,7 @@
 //! This is the object-literal counterpart of
 //! `tuple_union_contextual_typing_tests.rs`.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_codes, check_source_strict_codes};
 
 // ---------------------------------------------------------------------------
 // Core cases - differing-arity object unions, literal arm preserved
@@ -182,4 +182,127 @@ const b: { v: string } | { v: number } = { v: 42 };
 "#,
     );
     assert!(!codes.contains(&2322), "expected no TS2322, got: {codes:?}");
+}
+
+// ---------------------------------------------------------------------------
+// Object-literal METHOD/property params contextually typed from a union
+// annotation (jotai `atomWithStorage` / `createJSONStorage`).
+//
+// Two roots are exercised here:
+//   1. The discriminant pre-scan of a union contextual type must not check
+//      function/object/array initializers context-free — doing so committed a
+//      premature TS7006 on the method's parameters before the real, contextually
+//      typed pass ran.
+//   2. The union contextual *parameter* extraction is signature-level: params are
+//      contextually typed iff the callable members agree at every shared position
+//      (tsc `getUnionSignatures`); if any position disagrees, every parameter is
+//      implicit-any (#5840), not just the disagreeing one.
+// ---------------------------------------------------------------------------
+
+/// Repro: union members declare `getItem` with identical parameter types and
+/// differ only in return type (`Promise<Value>` vs `Value`). tsc contextually
+/// types `key`/`initialValue`; tsz used to emit spurious TS7006.
+#[test]
+fn union_member_identical_params_method_is_contextually_typed() {
+    let codes = check_source_strict_codes(
+        r#"
+interface AsyncStorage<Value> { getItem: (key: string, initialValue: Value) => Promise<Value> }
+interface SyncStorage<Value>  { getItem: (key: string, initialValue: Value) => Value }
+function make<Value>() {
+  const storage: AsyncStorage<Value> | SyncStorage<Value> = {
+    getItem: (key, initialValue) => initialValue,
+  };
+  return storage;
+}
+"#,
+    );
+    assert!(!codes.contains(&7006), "expected no TS7006, got: {codes:?}");
+}
+
+/// Renamed binders + a second method (`setItem`) and a third union arm: the fix
+/// must not depend on any particular property/identifier name.
+#[test]
+fn union_member_identical_params_multi_method_three_arms_contextual() {
+    let codes = check_source_strict_codes(
+        r#"
+interface A<V> { read: (slot: string, seed: V) => Promise<V>; write: (slot: string, next: V) => void }
+interface B<V> { read: (slot: string, seed: V) => V; write: (slot: string, next: V) => void }
+interface C<V> { read: (slot: string, seed: V) => V | null; write: (slot: string, next: V) => void }
+function make<V>() {
+  const store: A<V> | B<V> | C<V> = {
+    read: (slot, seed) => seed,
+    write: (slot, next) => {},
+  };
+  return store;
+}
+"#,
+    );
+    assert!(!codes.contains(&7006), "expected no TS7006, got: {codes:?}");
+}
+
+/// Optional union member (`| undefined`) still contextually types the method.
+#[test]
+fn union_with_undefined_member_method_is_contextually_typed() {
+    let codes = check_source_strict_codes(
+        r#"
+interface AsyncStorage<Value> { getItem: (key: string, initialValue: Value) => Promise<Value> }
+interface SyncStorage<Value>  { getItem: (key: string, initialValue: Value) => Value }
+function make<Value>() {
+  const storage: AsyncStorage<Value> | SyncStorage<Value> | undefined = {
+    getItem: (key, initialValue) => initialValue,
+  };
+  return storage;
+}
+"#,
+    );
+    assert!(!codes.contains(&7006), "expected no TS7006, got: {codes:?}");
+}
+
+/// Negative (#5840): when the union members disagree on a parameter type, the
+/// union provides NO contextual signature, so EVERY parameter is implicit-any —
+/// not just the one that differs.
+#[test]
+fn union_member_disagreeing_params_keeps_all_implicit_any() {
+    let codes = check_source_strict_codes(
+        r#"
+interface A<V> { getItem: (key: string, v: V) => V }
+interface B<V> { getItem: (key: number, v: V) => V }
+function make<V>() {
+  const s: A<V> | B<V> = { getItem: (key, v) => v };
+  return s;
+}
+"#,
+    );
+    // Both `key` (disagrees) and `v` (agrees) must be implicit-any.
+    let ts7006 = codes.iter().filter(|&&c| c == 7006).count();
+    assert_eq!(ts7006, 2, "expected TS7006 on both params, got: {codes:?}");
+}
+
+/// Negative: first parameter agrees, second disagrees → still all implicit-any.
+#[test]
+fn union_member_later_param_disagrees_keeps_all_implicit_any() {
+    let codes = check_source_strict_codes(
+        r#"
+interface A { f: (a: string, b: string) => void }
+interface B { f: (a: string, b: number) => void }
+const o: A | B = { f: (a, b) => {} };
+"#,
+    );
+    let ts7006 = codes.iter().filter(|&&c| c == 7006).count();
+    assert_eq!(ts7006, 2, "expected TS7006 on both params, got: {codes:?}");
+}
+
+/// Arity gap is not a disagreement: the longer member's extra parameter is
+/// contextually typed from the member that declares it.
+#[test]
+fn union_member_arity_gap_still_contextually_types_extra_param() {
+    let codes = check_source_strict_codes(
+        r#"
+interface A { f: (a: string, b: number) => void }
+interface B { f: (a: string) => void }
+const o: A | B = { f: (a, b) => { a.toUpperCase(); b.toFixed(); } };
+"#,
+    );
+    assert!(!codes.contains(&7006), "expected no TS7006, got: {codes:?}");
+    assert!(!codes.contains(&2339), "expected no TS2339, got: {codes:?}");
 }
