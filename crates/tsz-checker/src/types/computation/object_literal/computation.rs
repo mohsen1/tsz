@@ -7,9 +7,7 @@ use super::super::object_literal_context::ContextualPropertyPresence;
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
-use crate::query_boundaries::common::{
-    ContextualTypeContext, get_application_base, is_conditional_type, is_mapped_type,
-};
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -31,14 +29,6 @@ struct ObjectLiteralRequestFacts {
 }
 
 impl<'a> CheckerState<'a> {
-    fn contextual_type_requires_authoritative_evaluation(&mut self, type_id: TypeId) -> bool {
-        let Some(base) = get_application_base(self.ctx.types, type_id) else {
-            return false;
-        };
-        let base_body = self.resolve_lazy_type(base);
-        is_conditional_type(self.ctx.types, base_body) || is_mapped_type(self.ctx.types, base_body)
-    }
-
     fn collect_object_literal_request_facts(
         &mut self,
         idx: NodeIndex,
@@ -559,15 +549,16 @@ impl<'a> CheckerState<'a> {
                                 .remove(&prop.initializer);
                             self.invalidate_initializer_for_context_change(prop.initializer);
                         }
-                        // For function expression property initializers (not arrow functions),
-                        // push a synthetic `this` type so that `this` inside the function body
-                        // resolves to the object literal's type rather than `any`.
-                        // Arrow functions inherit `this` from the enclosing scope, so they
-                        // must NOT get a synthetic `this` push.
+                        // Function-expression property initializers (not arrow functions)
+                        // get a synthetic `this` of the object literal's type. Arrow
+                        // functions inherit `this`, and an explicit `this:` parameter binds
+                        // `this` to its declared type (tsc `getThisTypeOfSignature`, #14843),
+                        // so neither gets the synthetic push.
                         let mut pushed_prop_fn_this = false;
                         if initializer_is_function_expression
                             && marker_this_type.is_none()
                             && self.current_this_type().is_none()
+                            && !self.function_like_has_explicit_this_parameter(prop.initializer)
                         {
                             if let Some(receiver_this_type) = contextual_receiver_this_type {
                                 self.ctx.this_type_stack.push(receiver_this_type);
@@ -1449,10 +1440,17 @@ impl<'a> CheckerState<'a> {
                         ),
                     );
                     // If no explicit ThisType marker exists, use the object literal's
-                    // contextual type as `this` inside method bodies.
+                    // contextual type as `this` inside method bodies. An explicit `this:`
+                    // parameter instead binds `this` to its declared type (tsc
+                    // `getThisTypeOfSignature`), independent of the object literal; pushing
+                    // the synthetic `this` would mis-print TS2339 receivers and trip
+                    // `method_return_this_circularity` into a spurious TS7023 (#14843).
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
-                    if marker_this_type.is_none() && self.current_this_type().is_none() {
+                    if marker_this_type.is_none()
+                        && self.current_this_type().is_none()
+                        && !self.function_like_has_explicit_this_parameter(elem_idx)
+                    {
                         // Prefer the method's contextual `this` type (e.g., from an
                         // interface declaration `(this: { options: T }) => R`) over the
                         // outer object's contextual type. This ensures that in Round 2 of

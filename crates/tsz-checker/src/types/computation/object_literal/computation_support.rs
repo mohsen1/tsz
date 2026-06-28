@@ -1,5 +1,6 @@
 //! Support helpers for object literal type computation.
 
+use crate::query_boundaries::common::{get_application_base, is_conditional_type, is_mapped_type};
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
@@ -11,6 +12,19 @@ use tsz_solver::{PropertyInfo, TypeId};
 
 pub(super) const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
 pub(super) const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
+
+impl<'a> CheckerState<'a> {
+    pub(super) fn contextual_type_requires_authoritative_evaluation(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        let Some(base) = get_application_base(self.ctx.types, type_id) else {
+            return false;
+        };
+        let base_body = self.resolve_lazy_type(base);
+        is_conditional_type(self.ctx.types, base_body) || is_mapped_type(self.ctx.types, base_body)
+    }
+}
 
 pub(super) fn rebase_spread_display_property_order(
     props: &[PropertyInfo],

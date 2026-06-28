@@ -40,6 +40,28 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|init_node| init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
     }
 
+    /// Whether a function-like node (method shorthand, `function`-expression
+    /// property initializer, or accessor) declares an explicit `this:`
+    /// parameter. tsc's `getThisTypeOfSignature` makes such a `this` bind to
+    /// exactly that declared type, so the enclosing object literal's synthetic
+    /// `this` must not be pushed for the member body. Centralizing the check
+    /// keeps every object-literal callable-member path in sync (see #14843).
+    pub(super) fn function_like_has_explicit_this_parameter(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        let params: &[NodeIndex] = if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            &method.parameters.nodes
+        } else if let Some(func) = self.ctx.arena.get_function(node) {
+            &func.parameters.nodes
+        } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+            &accessor.parameters.nodes
+        } else {
+            return false;
+        };
+        self.get_explicit_this_type_annotation(params).is_some()
+    }
+
     /// Best-effort `PropertyInfo` entries for the object literal's non-method
     /// members (data properties, shorthands, and accessors) declared *after* the
     /// first `this`-capturing callable member.
