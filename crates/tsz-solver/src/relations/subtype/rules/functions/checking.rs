@@ -2174,7 +2174,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // evaluator, re-entering the same `TypeId` without any guard firing. On a
         // cross-instance cycle (`None`) leave the type unevaluated and, crucially,
         // do not record it in `eval_cache` — the in-flight ancestor owns the result.
-        let Some((result, stable)) = cross_eval_guard::memoized_eval_with_stability(
+        let Some(memo_result) = cross_eval_guard::memoized_eval_with_stability(
             type_id,
             self.no_unchecked_indexed_access,
             || {
@@ -2192,6 +2192,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) else {
             return (type_id, false);
         };
+        let result = memo_result.into_type_id();
+        let stable = memo_result.is_stable_for_depth_agnostic_cache();
         self.eval_cache.insert(cache_key, (result, stable));
         (result, stable)
     }

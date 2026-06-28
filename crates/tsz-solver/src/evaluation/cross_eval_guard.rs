@@ -23,6 +23,7 @@
 //! treats a within-instance cycle), which lets the in-flight expansion — the one
 //! holding the real work — converge and breaks the churn.
 
+use crate::evaluation::result::EvaluationMemoResult;
 use crate::types::TypeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -102,10 +103,10 @@ pub(crate) fn reset_query_memo() {
 pub(crate) fn memoized_eval(
     type_id: TypeId,
     no_unchecked_indexed_access: bool,
-    compute: impl FnOnce() -> (TypeId, bool),
+    compute: impl FnOnce() -> EvaluationMemoResult,
 ) -> Option<TypeId> {
     memoized_eval_with_stability(type_id, no_unchecked_indexed_access, compute)
-        .map(|(result, _)| result)
+        .map(EvaluationMemoResult::into_type_id)
 }
 
 /// Like [`memoized_eval`], but also reports whether the result is *stable*:
@@ -118,17 +119,17 @@ pub(crate) fn memoized_eval(
 pub(crate) fn memoized_eval_with_stability(
     type_id: TypeId,
     no_unchecked_indexed_access: bool,
-    compute: impl FnOnce() -> (TypeId, bool),
-) -> Option<(TypeId, bool)> {
+    compute: impl FnOnce() -> EvaluationMemoResult,
+) -> Option<EvaluationMemoResult> {
     if let Some(cached) = query_memo_get(type_id, no_unchecked_indexed_access) {
-        return Some((cached, true));
+        return Some(EvaluationMemoResult::cached(cached));
     }
     let _cross = CrossEvalExpansionGuard::enter(type_id)?;
-    let (result, memoizable) = compute();
-    if memoizable {
-        query_memo_put(type_id, no_unchecked_indexed_access, result);
+    let memo_result = compute();
+    if memo_result.is_stable_for_depth_agnostic_cache() {
+        query_memo_put(type_id, no_unchecked_indexed_access, memo_result.type_id());
     }
-    Some((result, memoizable))
+    Some(memo_result)
 }
 
 /// RAII membership guard for cross-evaluator expansion of a `TypeId`.
@@ -179,15 +180,19 @@ mod tests {
 
     #[test]
     fn non_stable_fresh_result_is_returned_but_not_memoized() {
+        use crate::evaluation::result::EvaluationResult;
+
         reset_query_memo();
         let t = TypeId(8);
 
-        let first = memoized_eval(t, false, || (TypeId(80), false));
+        let first = memoized_eval(t, false, || {
+            EvaluationMemoResult::new(EvaluationResult::complete(TypeId(80)), false)
+        });
 
         assert_eq!(first, Some(TypeId(80)));
         assert_eq!(query_memo_get(t, false), None);
 
-        let second = memoized_eval(t, false, || (TypeId(81), true));
+        let second = memoized_eval(t, false, || EvaluationMemoResult::cached(TypeId(81)));
 
         assert_eq!(second, Some(TypeId(81)));
         assert_eq!(query_memo_get(t, false), Some(TypeId(81)));
