@@ -178,6 +178,9 @@ mod class_member_self_type_circularity_tests;
 #[path = "tests/class_namespace_static_relation_routing_arch_tests.rs"]
 mod class_namespace_static_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "../tests/class_property_constructor_flow_inference_tests.rs"]
+mod class_property_constructor_flow_inference_tests;
+#[cfg(test)]
 #[path = "../tests/class_property_typed_const_initializer_tests.rs"]
 mod class_property_typed_const_initializer_tests;
 #[cfg(test)]

@@ -312,7 +312,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 tsz_solver::operations::widening::widen_type(interner, type_id)
                             })
                             .unwrap_or(type_id)
-                    } else if !is_readonly {
+                    } else if !is_readonly && self.source_is_js_file {
+                        // JS class members infer fresh literal `this.x = ...`
+                        // writes that still need primitive widening at emit.
                         self.type_interner
                             .map(|interner| {
                                 tsz_solver::operations::widening::widen_literal_type(
@@ -321,6 +323,13 @@ impl<'a> DeclarationEmitter<'a> {
                             })
                             .unwrap_or(type_id)
                     } else {
+                        // TS property with no initializer and no annotation: the
+                        // inferred type comes from constructor-flow property
+                        // inference (or accessor inference), which already applied
+                        // tsc's `getWidenedType` (fresh-only) widening. Re-widening
+                        // here would over-widen a precise literal union such as
+                        // `"a" | "b"` (from `this.x = value`) to its primitive
+                        // base, diverging from tsc.
                         type_id
                     };
                     let type_text = self

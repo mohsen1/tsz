@@ -462,14 +462,38 @@ impl<'a> CheckerState<'a> {
         // Check if property is abstract - abstract properties should emit TS7008
         // even if assigned in constructor (since the assignment is an error - TS2715)
         let is_abstract = self.has_abstract_modifier(&prop.modifiers);
+
+        // Infer the type of an un-annotated, un-initialized instance property
+        // from the constructor's `this.<name> = ...` assignments (tsc's
+        // control-flow property inference). The result both supplies the cached
+        // type below (for the declaration emitter) and governs TS7008: tsc
+        // suppresses the implicit-any error exactly when this inference yields a
+        // concrete (non-`any`) type — including conditionally-assigned fields
+        // (`x: number | undefined`) — and keeps it when every assignment only
+        // produces `null`/`undefined` (the flow type widens back to `any`).
+        let ctor_flow_type = if !is_static
+            && !is_abstract
+            && effective_declared_type.is_none()
+            && contextual_member_type.is_none()
+            && inferred_initializer_type.is_none()
+            && prop.initializer.is_none()
+            && prop.type_annotation.is_none()
+            && !self.has_accessor_modifier(&prop.modifiers)
+        {
+            self.infer_property_type_from_enclosing_constructor_flow(prop.name)
+        } else {
+            None
+        };
+
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()
             && prop.initializer.is_none()
             && prop.type_annotation.is_none()
             && !is_private_in_ambient
             && !is_static_prototype
-            // Constructor assignments only apply to instance properties, not static
-            && (is_static || is_abstract || !self.property_assigned_in_enclosing_class_constructor(prop.name))
+            // Constructor-flow inference only applies to instance properties; a
+            // concrete inferred type suppresses the implicit-any error.
+            && (is_static || is_abstract || ctor_flow_type.is_none())
             // TSC also suppresses TS7008 for static properties assigned in class
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static
@@ -523,6 +547,11 @@ impl<'a> CheckerState<'a> {
         } else if self.has_accessor_modifier(&prop.modifiers) {
             self.infer_property_type_from_enclosing_class_assignments(prop.name, is_static)
                 .unwrap_or(TypeId::ANY)
+        } else if !is_static {
+            // Un-annotated, un-initialized instance property: reuse the
+            // constructor-flow inference computed above so the cached type (used
+            // by the declaration emitter) matches the class instance type.
+            ctor_flow_type.unwrap_or(TypeId::ANY)
         } else {
             TypeId::ANY
         };
