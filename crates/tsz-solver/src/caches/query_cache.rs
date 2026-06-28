@@ -1501,7 +1501,8 @@ impl QueryDatabase for QueryCache<'_> {
 
         let union_too_complex_before = self.interner.is_union_too_complex();
         let mut evaluator = self.query_backed_evaluator();
-        let result = evaluator.evaluate_request_result(request).into_type_id();
+        let evaluation_result = evaluator.evaluate_request_result(request);
+        let result = evaluation_result.into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
@@ -1523,17 +1524,19 @@ impl QueryDatabase for QueryCache<'_> {
         // recursive-utility fixtures flip with surrounding code.
         //
         // The discrimination is per-entry (issue #13241, extending the
-        // PR #12902 application-eval epoch split): the top-level result is
-        // gated on the run-sticky `recursion_limit_hit` (its subtree IS the
-        // whole run), while drained intermediates are filtered through the
-        // evaluator's per-node `tainted` set, so the clean intermediates of a
-        // run whose *unrelated sibling* subtree bailed are still persisted
-        // instead of being recomputed from scratch on every later query.
+        // PR #12902 application-eval epoch split): the top-level result first
+        // consults the typed `EvaluationResult` verdict (#14346), then keeps the
+        // run-sticky `recursion_limit_hit` guard for taint classes that are not
+        // solely modeled by the typed verdict yet. Its subtree IS the whole
+        // run, while drained intermediates are filtered through the evaluator's
+        // per-node `tainted` set, so the clean intermediates of a run whose
+        // *unrelated sibling* subtree bailed are still persisted instead of
+        // being recomputed from scratch on every later query.
         // A union-complexity overflow is not routed through the evaluator's
         // limit epoch, so it conservatively suppresses all writes, as before.
         let newly_union_too_complex =
             self.interner.is_union_too_complex() && !union_too_complex_before;
-        let top_level_clean = !evaluator.recursion_limit_hit();
+        let top_level_clean = evaluation_result.is_complete() && !evaluator.recursion_limit_hit();
         if !newly_union_too_complex
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
