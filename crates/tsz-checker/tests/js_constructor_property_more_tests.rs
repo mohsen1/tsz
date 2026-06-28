@@ -905,6 +905,142 @@ mark.call({ ready: false });
 }
 
 #[test]
+fn test_jsdoc_this_direct_read_checks_explicit_receiver_shape() {
+    // Read/write parity: reading an unknown member of a JSDoc `@this`-typed
+    // receiver must emit TS2339 just like writing one does. Previously the
+    // read silently typed `any`.
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  const x = this.missing;
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'missing' does not exist on type '{ ready: boolean; }'."
+        }),
+        "Expected TS2339 for reading `this.missing` against the explicit @this receiver shape, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_bare_read_expression_checks_receiver_shape() {
+    // Bare expression-statement read (no binding) must also be checked.
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  this.missing;
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        1,
+        "Expected exactly one TS2339 for bare `this.missing` read, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_read_known_member_is_clean() {
+    // Reading a member that DOES exist on the @this receiver must not error.
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  const x = this.ready;
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        0,
+        "Expected no TS2339 for reading the known `this.ready` member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_read_on_function_expression_checks_receiver_shape() {
+    // The fix applies uniformly to function EXPRESSIONS, not just declarations.
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+const mark = function () {
+  const x = this.missing;
+};
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        1,
+        "Expected TS2339 for `this.missing` read inside a @this-typed function expression, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_read_is_structural_not_name_keyed() {
+    // Anti-hardcoding: the miss was structural. Vary both the receiver-shape
+    // member name and the accessed property name; the read must still error.
+    let source = r#"
+/**
+ * @this {{ alpha: number }}
+ */
+function configure() {
+  const v = this.omega;
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2339
+                && message == "Property 'omega' does not exist on type '{ alpha: number; }'."
+        }),
+        "Expected TS2339 for `this.omega` against `{{ alpha: number }}`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_jsdoc_this_read_write_parity_count() {
+    // Both a read and a write of unknown members emit exactly one TS2339 each;
+    // a known-member read/write stays clean.
+    let source = r#"
+/**
+ * @this {{ ready: boolean }}
+ */
+function mark() {
+  this.ready = true;
+  const x = this.missingRead;
+  this.missingWrite = 1;
+}
+"#;
+
+    let diagnostics = check_js(source);
+
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        2,
+        "Expected exactly two TS2339 (one read, one write) for unknown members, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_js_chained_this_element_assignment_reports_ts7053() {
     let source = r#"
 this["y"] = {};
