@@ -2140,6 +2140,9 @@ path = "tests/same_generic_application_assign_outcome_tests.rs"
 [[test]]
 name = "import_meta_module_support_diagnostics_tests"
 path = "tests/import_meta_module_support_diagnostics_tests.rs"
+[[test]]
+name = "mapped_as_primitive_index_tests"
+path = "tests/mapped_as_primitive_index_tests.rs"
 
 [lints]
 workspace = true

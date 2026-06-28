@@ -607,6 +607,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // cross-product expansion caps. The sticky `union_too_complex` flag then
         // drives TS2590 in the checker.
         let mut cumulative_value_members: usize = 0;
+        // Index-signature values synthesized from literal source keys whose `as`
+        // clause collapses to a *bare primitive* key (`as string` / `as number`).
+        // tsc lowers `{ [K in keyof S as string]: S[K] }` to `{ [x: string]: V }`
+        // where `V` unions each contributing source key's value type, rather than
+        // materializing named properties. Accumulate that union here and promote
+        // it to a string/number index signature after the key loop.
+        let mut string_index_from_remap: Option<TypeId> = None;
+        let mut number_index_from_remap: Option<TypeId> = None;
         // Snapshot the flag so the cascade short-circuit reacts only to
         // complexity that arose *inside* this evaluation (a nested key's
         // sub-evaluation), never to a flag a sibling type left set before this
@@ -633,25 +641,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Ok(None) => continue,
                 Err(()) => return self.interner().mapped(*mapped),
             };
+            // When the `as` clause collapses a literal source key to the *bare*
+            // `string`/`number` primitive (not a literal, not a usable property
+            // name), tsc folds it into a string/number index signature instead of
+            // a named property. Mark which index this key feeds; the value type is
+            // accumulated once `property_type` is computed below. `as symbol` and
+            // other non-property-name primitives stay on the deferral path.
+            let remapped_primitive_index =
+                if remapped == TypeId::STRING || remapped == TypeId::NUMBER {
+                    Some(remapped)
+                } else {
+                    None
+                };
             // Property key(s) from the remapped key. Each `MappedKey` carries the
             // naming key literal (string- vs number-named; see `is_string_named`).
-            let remapped_keys: smallvec::SmallVec<[MappedKey; 1]> = if remapped == key_literal {
-                smallvec::smallvec![mapped_key]
-            } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
-                smallvec::smallvec![entry]
-            } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
-                let members = self.interner().type_list(list_id);
-                let keys: smallvec::SmallVec<[MappedKey; 1]> = members
-                    .iter()
-                    .filter_map(|&m| self.mapped_key_from_literal(m))
-                    .collect();
-                if keys.is_empty() {
+            let remapped_keys: smallvec::SmallVec<[MappedKey; 1]> =
+                if remapped_primitive_index.is_some() {
+                    smallvec::smallvec![]
+                } else if remapped == key_literal {
+                    smallvec::smallvec![mapped_key]
+                } else if let Some(entry) = self.mapped_key_from_literal(remapped) {
+                    smallvec::smallvec![entry]
+                } else if let Some(TypeData::Union(list_id)) = self.interner().lookup(remapped) {
+                    let members = self.interner().type_list(list_id);
+                    let keys: smallvec::SmallVec<[MappedKey; 1]> = members
+                        .iter()
+                        .filter_map(|&m| self.mapped_key_from_literal(m))
+                        .collect();
+                    if keys.is_empty() {
+                        return self.interner().mapped(*mapped);
+                    }
+                    keys
+                } else {
                     return self.interner().mapped(*mapped);
-                }
-                keys
-            } else {
-                return self.interner().mapped(*mapped);
-            };
+                };
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
             // Use memoized source property info for O(1) lookup.
@@ -714,6 +737,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 property_type,
                 homomorphic_removes_optional && source_optional,
             );
+
+            // The `as` clause collapsed this key to a bare `string`/`number`
+            // primitive: fold its value into the corresponding index signature
+            // (unioned across every source key that maps to that primitive)
+            // instead of emitting a named property, mirroring tsc's
+            // `resolveMappedTypeMembers` index-info accumulation.
+            if let Some(primitive) = remapped_primitive_index {
+                let slot = if primitive == TypeId::NUMBER {
+                    &mut number_index_from_remap
+                } else {
+                    &mut string_index_from_remap
+                };
+                *slot = Some(match *slot {
+                    Some(existing) => self.interner().union2(existing, property_type),
+                    None => property_type,
+                });
+                cumulative_value_members = cumulative_value_members
+                    .saturating_add(self.count_union_members(property_type));
+                if cumulative_value_members >= TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                    self.interner().mark_union_too_complex();
+                    break;
+                }
+                continue;
+            }
 
             // Naming flags an identity key inherits from its homomorphic source.
             let (src_string_named, src_symbol_named, src_single_quoted) =
@@ -971,6 +1018,61 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(sig)
         } else {
             string_index
+        };
+
+        // Promote literal source keys that the `as` clause collapsed to a bare
+        // `string`/`number` primitive into the matching index signature. The
+        // value is the union accumulated across those keys; modifiers come from
+        // the mapped type itself (`get_mapped_modifiers`), and an optional
+        // modifier widens the value with `undefined`, exactly as for the
+        // template-instantiated index path above. Only fills an index slot the
+        // source did not already provide, so source string/number index
+        // signatures keep priority.
+        let string_index = match (string_index, string_index_from_remap) {
+            (None, Some(value)) => {
+                let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
+                    mapped,
+                    is_identity_homomorphic || is_homomorphic,
+                    source_object,
+                    TypeId::STRING,
+                );
+                let value_type = if idx_optional {
+                    self.interner().union2(value, TypeId::UNDEFINED)
+                } else {
+                    value
+                };
+                string_index_optional = idx_optional;
+                Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type,
+                    readonly: idx_readonly,
+                    param_name: None,
+                })
+            }
+            (existing, _) => existing,
+        };
+        let number_index = match (number_index, number_index_from_remap) {
+            (None, Some(value)) => {
+                let (idx_optional, idx_readonly) = self.get_mapped_modifiers(
+                    mapped,
+                    is_identity_homomorphic || is_homomorphic,
+                    source_object,
+                    TypeId::NUMBER,
+                );
+                let value_type = if idx_optional {
+                    self.interner().union2(value, TypeId::UNDEFINED)
+                } else {
+                    value
+                };
+                number_index_optional = idx_optional;
+                Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type,
+                    readonly: idx_readonly,
+                    param_name: None,
+                })
+            }
+            (existing, _) => existing,
         };
 
         if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
