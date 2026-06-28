@@ -276,12 +276,22 @@ impl BinderState {
                 return;
             }
 
-            // Prefix unary (e.g., typeof x, !x)
+            // Prefix unary (e.g., typeof x, !x, ++x, delete x.y)
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = arena.get_unary_expr(node) {
                     self.bind_expression(arena, unary.operand);
-                    if (unary.operator == SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    let is_increment_decrement = unary.operator == SyntaxKind::PlusPlusToken as u16
+                        || unary.operator == SyntaxKind::MinusMinusToken as u16;
+                    // `delete o.a` mutates `o.a`, so a later read widens back to the
+                    // declared type (re-including `undefined` for an optional prop).
+                    // tsc's `bindDeleteExpressionFlow` records a flow mutation for the
+                    // operand only when it is a property-access reference; element and
+                    // other operands are left unmutated, so narrowing is reset for
+                    // `delete o.a` but not for `delete o[k]`, matching tsc exactly.
+                    let is_delete_of_property_access = unary.operator
+                        == SyntaxKind::DeleteKeyword as u16
+                        && Self::is_property_access_reference(arena, unary.operand);
+                    if (is_increment_decrement || is_delete_of_property_access)
                         && !Self::is_inside_class_member_computed_property_name(arena, idx)
                     {
                         let flow = self.create_flow_assignment(idx);
@@ -470,6 +480,18 @@ impl BinderState {
         }
 
         self.bind_node(arena, idx);
+    }
+
+    /// Whether `idx` is a property-access expression (`o.a`, `o.a.b`), the only
+    /// operand shape tsc treats as a flow mutation for `delete`
+    /// (`bindDeleteExpressionFlow`). Element access (`o[k]`) and other operands
+    /// are intentionally excluded so `delete o[k]` does not reset narrowing,
+    /// matching tsc. Parentheses are not skipped, mirroring tsc's direct
+    /// `node.expression.kind` check.
+    fn is_property_access_reference(arena: &NodeArena, idx: NodeIndex) -> bool {
+        arena
+            .get(idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
     }
 
     /// Detect expando property assignments of the form `X.prop = value`.

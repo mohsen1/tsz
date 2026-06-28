@@ -315,6 +315,7 @@ mod local_alias_elision;
 mod misc_features;
 mod misc_features_import_exports;
 mod misc_inference_features;
+mod namespace_const_literal_preservation;
 mod probes_issues;
 mod probes_systematic;
 mod probes_tsc_comparison;

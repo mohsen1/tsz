@@ -30,8 +30,20 @@ impl<'a> CheckerState<'a> {
     /// is `ANY` because the calling convention is distinguished by the first
     /// argument shape alone — the context object differs by kind but tsc
     /// reports the same TS1240 either way.
+    ///
+    /// The synthetic argument list is truncated to the decorator's own declared
+    /// parameter count via [`Self::es_member_decorator_argument_count`], mirroring
+    /// tsc's `getDecoratorArgumentCount` (`min(max(paramCount, 1), 2)`). A
+    /// 1-parameter decorator therefore only receives `first_arg`; tsc never
+    /// passes a trailing context argument the decorator did not declare, so
+    /// requiring exact 2-arity here produced a spurious TS1240/TS1241.
+    ///
+    /// A decorator whose every signature accepts zero arguments is reported as a
+    /// "did you mean to call it" TS1329 (the decorator-factory hint), matching
+    /// tsc's `isPotentiallyUncalledDecorator`, instead of the generic TS1240.
     pub(crate) fn check_es_member_decorator_call_signature(
         &mut self,
+        decorator_expr: NodeIndex,
         decorator_node: NodeIndex,
         decorator_type: TypeId,
         first_arg: TypeId,
@@ -51,13 +63,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let (result, _, _) = self.resolve_call_with_checker_adapter(
-            resolved,
-            &[first_arg, TypeId::ANY],
-            false,
-            None,
-            actual_this_type,
-        );
+        if self.decorator_has_zero_arg_factory_shape(decorator_expr, resolved, decorator_node) {
+            return;
+        }
+
+        let all_args = [first_arg, TypeId::ANY];
+        // `es_member_decorator_argument_count` returns 1..=2, so this never panics.
+        let args = &all_args[..self.es_member_decorator_argument_count(resolved)];
+        let (result, _, _) =
+            self.resolve_call_with_checker_adapter(resolved, args, false, None, actual_this_type);
 
         if !matches!(result, CallResult::Success(_)) {
             self.error_at_node(
@@ -180,6 +194,59 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// tsc's `getDecoratorArgumentCount` for ES (TC39 stage-3) member
+    /// decorators: the decorator is invoked with `min(max(paramCount, 1), 2)`
+    /// arguments, where `paramCount` is the decorator function's own declared
+    /// parameter count.
+    ///
+    /// This is what lets a 1-parameter decorator (`(value: any) => any`) be
+    /// accepted on a method or field: only the `value`/`target` argument is
+    /// supplied and the trailing context argument is dropped. A decorator that
+    /// declares 3+ required parameters still under-flows the 2-argument cap and
+    /// fails, exactly as in tsc.
+    ///
+    /// Overloaded (multi-signature) decorators keep the historical 2-argument
+    /// behavior: tsc resolves the arity per candidate signature, which a single
+    /// fixed synthetic argument list cannot reproduce, so the longer 2-argument
+    /// form is supplied rather than risk dropping an argument a wider overload
+    /// requires.
+    fn es_member_decorator_argument_count(&self, decorator_type: TypeId) -> usize {
+        // `min(max(paramCount, 1), 2)` for a single declared signature; an
+        // unknown shape or an overload set falls back to the full two-argument
+        // call so exotic callees behave as they did before.
+        match Self::decorator_signature_param_counts(self.ctx.types, decorator_type).as_deref() {
+            Some(&[count]) => count.clamp(1, 2),
+            _ => 2,
+        }
+    }
+
+    /// Declared value-parameter counts, one entry per call signature, for a
+    /// decorator callee — or `None` when the callee has no statically known
+    /// function/callable shape. A plain function type yields a single-element
+    /// list; an overloaded callable yields one entry per call signature (which
+    /// may be empty when the callable carries no call signatures).
+    ///
+    /// Shared by the decorator-arity helpers in this module so the
+    /// `function_shape` → `callable_shape_for_type` probe is written once.
+    fn decorator_signature_param_counts(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        decorator_type: TypeId,
+    ) -> Option<Vec<usize>> {
+        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
+        {
+            return Some(vec![shape.params.len()]);
+        }
+        let callable =
+            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)?;
+        Some(
+            callable
+                .call_signatures
+                .iter()
+                .map(|sig| sig.params.len())
+                .collect(),
+        )
+    }
+
     pub(crate) fn check_method_or_accessor_decorator_call_signature(
         &mut self,
         decorator_expr: NodeIndex,
@@ -203,11 +270,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        if self.method_decorator_has_zero_arg_factory_shape(
-            decorator_expr,
-            resolved,
-            decorator_node,
-        ) {
+        if self.decorator_has_zero_arg_factory_shape(decorator_expr, resolved, decorator_node) {
             return;
         }
 
@@ -227,8 +290,16 @@ impl<'a> CheckerState<'a> {
                 vec![TypeId::ANY, TypeId::STRING, descriptor_type]
             }
         } else {
-            self.es_method_or_accessor_decorator_args(member_node)
-                .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
+            // ES (TC39) member decorators: truncate the synthetic
+            // `(value, context)` argument list to the decorator's own declared
+            // parameter count so a 1-parameter decorator is not rejected for an
+            // unrequested trailing context argument. See
+            // `es_member_decorator_argument_count`.
+            let mut args = self
+                .es_method_or_accessor_decorator_args(member_node)
+                .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT]);
+            args.truncate(self.es_member_decorator_argument_count(resolved));
+            args
         };
 
         let (result, _, _) = self.resolve_call_with_checker_adapter(
@@ -280,39 +351,24 @@ impl<'a> CheckerState<'a> {
         db: &dyn tsz_solver::construction::TypeDatabase,
         decorator_type: TypeId,
     ) -> bool {
-        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
-        {
-            return shape.params.len() <= 2;
-        }
-
-        if let Some(callable) =
-            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)
-        {
-            if callable.call_signatures.is_empty() {
-                // Callable shape with no call signatures: the subsequent call
-                // will fail regardless of argcount, so pick the legacy 3-arg
-                // default to keep recovery-path diagnostics stable.
-                return false;
-            }
-            return callable
-                .call_signatures
-                .iter()
-                .all(|sig| sig.params.len() <= 2);
-        }
-
-        // No statically known shape: default to the historical 3-arg call so
-        // recovery paths and error reporting stay aligned with the prior
-        // unconditional behavior.
-        false
+        // An empty signature list (callable shape with no call signatures) or an
+        // unknown shape keeps the historical 3-arg default so recovery-path
+        // diagnostics stay stable; otherwise every declared signature must fit
+        // within the 2-arg (target, propertyKey) call.
+        Self::decorator_signature_param_counts(db, decorator_type)
+            .is_some_and(|counts| !counts.is_empty() && counts.iter().all(|&n| n <= 2))
     }
 
-    /// TS1329: Check if a method/accessor decorator accepts too few arguments.
+    /// TS1329: Check if a class-member decorator accepts too few arguments.
     ///
-    /// Method/accessor decorators are invoked with at least two arguments in
-    /// stage-3 mode and three arguments in legacy mode. If every call signature
-    /// has zero parameters, tsc reports the decorator-factory hint instead of
-    /// the generic method-decorator signature failure.
-    fn method_decorator_has_zero_arg_factory_shape(
+    /// Member decorators are invoked with at least one argument (the value or
+    /// target) in stage-3 mode and two/three arguments in legacy mode. If every
+    /// call signature has zero parameters, tsc reports the decorator-factory
+    /// hint ("did you mean to call it") instead of the generic
+    /// method/property-decorator signature failure. This mirrors tsc's
+    /// `isPotentiallyUncalledDecorator` for the common zero-parameter case and
+    /// applies uniformly to method, accessor, and field decorators.
+    fn decorator_has_zero_arg_factory_shape(
         &mut self,
         decorator_expr: NodeIndex,
         decorator_type: TypeId,
@@ -322,22 +378,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let has_too_few_args = if let Some(shape) =
-            crate::query_boundaries::class_type::function_shape(self.ctx.types, decorator_type)
-        {
-            shape.params.is_empty()
-        } else if let Some(callable) = crate::query_boundaries::class_type::callable_shape_for_type(
-            self.ctx.types,
-            decorator_type,
-        ) {
-            !callable.call_signatures.is_empty()
-                && callable
-                    .call_signatures
-                    .iter()
-                    .all(|sig| sig.params.is_empty())
-        } else {
-            false
-        };
+        let has_too_few_args =
+            Self::decorator_signature_param_counts(self.ctx.types, decorator_type)
+                .is_some_and(|counts| !counts.is_empty() && counts.iter().all(|&n| n == 0));
 
         if has_too_few_args {
             let name = self.get_decorator_expression_name(decorator_expr);

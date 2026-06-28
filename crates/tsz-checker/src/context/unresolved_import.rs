@@ -33,6 +33,19 @@ impl CheckerContext<'_> {
             })
     }
 
+    /// Whether `def_id` backs an `import` alias whose module failed to resolve.
+    ///
+    /// The `DefId`-keyed entry point for the same contagion the
+    /// [`Self::type_references_unresolved_import`] walk applies per type node:
+    /// the solver's `TypeResolver::is_unresolved_import_def` adapter calls this
+    /// so the type evaluator can collapse `Application(Lazy(unresolved), args)`
+    /// to `any` (matching `tsc`'s error-type substitution) instead of leaving a
+    /// live structural application the relation layer rejects.
+    pub fn def_is_unresolved_import(&self, def_id: tsz_solver::DefId) -> bool {
+        self.def_to_symbol_id(def_id)
+            .is_some_and(|sym_id| self.is_unresolved_import_alias_symbol(sym_id))
+    }
+
     /// Whether `sym_id` is an `import` alias whose module cannot be resolved
     /// through any known channel (`module_exports`, ambient/shorthand modules,
     /// CLI-resolved modules, or package resolution). The module-spec import case

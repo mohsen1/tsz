@@ -413,3 +413,226 @@ fn test_parameter_list_stray_colon_recovers_through_object_binding_tail() {
         "parameter-list recovery fingerprints must match tsc, got: {diagnostics:?}"
     );
 }
+
+/// Collect `(code, line, column, message)` fingerprints for a source string.
+fn parameter_diag_fingerprints(source: &str) -> Vec<(u32, u32, u32, String)> {
+    let (parser, _root) = parse_source(source);
+    let line_map = LineMap::build(source);
+    parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| {
+            let pos = line_map.offset_to_position(diag.start, source);
+            (
+                diag.code,
+                pos.line + 1,
+                pos.character + 1,
+                diag.message.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn empty_parameter_slot_in_function_declaration_reports_ts1138() {
+    // `(a, , b)` — the empty middle slot is `Parameter declaration expected.`
+    // (TS1138) in tsc, not `Identifier expected.` (TS1003).
+    let fingerprints = parameter_diag_fingerprints("function g(a, , b) {}");
+    assert_eq!(
+        fingerprints,
+        vec![(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            15,
+            "Parameter declaration expected.".to_string(),
+        )],
+        "empty parameter slot must report a single TS1138 at the stray comma"
+    );
+}
+
+#[test]
+fn empty_parameter_slot_does_not_depend_on_binder_names() {
+    // The recovery is structural: renaming the binders must not change it.
+    for (source, column) in [
+        ("function g(alpha, , beta) {}", 19),
+        ("function h(longName, , other) {}", 22),
+    ] {
+        let fingerprints = parameter_diag_fingerprints(source);
+        assert_eq!(
+            fingerprints,
+            vec![(
+                diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+                1,
+                column,
+                "Parameter declaration expected.".to_string(),
+            )],
+            "TS1138 recovery must not depend on parameter names ({source})"
+        );
+    }
+}
+
+#[test]
+fn empty_parameter_slot_in_object_method_reports_ts1138() {
+    let fingerprints = parameter_diag_fingerprints("const o = { m(a, , b) {} };");
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            18,
+            "Parameter declaration expected.".to_string(),
+        )),
+        "object-literal method empty slot must report TS1138, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints
+            .iter()
+            .all(|(code, _, _, _)| *code != diagnostic_codes::IDENTIFIER_EXPECTED),
+        "object-literal method empty slot must not fall back to TS1003, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn empty_parameter_slot_in_class_method_and_constructor_reports_ts1138() {
+    let method = parameter_diag_fingerprints("class C { m(a, , b) {} }");
+    assert!(
+        method.contains(&(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            16,
+            "Parameter declaration expected.".to_string(),
+        )),
+        "class method empty slot must report TS1138, got {method:?}"
+    );
+
+    let ctor = parameter_diag_fingerprints("class D { constructor(a, , b) {} }");
+    assert!(
+        ctor.contains(&(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            26,
+            "Parameter declaration expected.".to_string(),
+        )),
+        "constructor empty slot must report TS1138, got {ctor:?}"
+    );
+}
+
+#[test]
+fn empty_parameter_slot_in_arrow_function_reports_only_ts1138() {
+    // The arrow form previously mis-parsed into a parenthesized expression
+    // (TS1109 + a TS1005 cascade). tsc recovers it in place as an arrow with a
+    // single TS1138. A single TS1138 with no TS1109/TS1005 cascade is itself
+    // proof the arrow was recognized: had it mis-parsed into a parenthesized
+    // expression, the empty slot would surface as TS1109 `Expression expected.`
+    let fingerprints = parameter_diag_fingerprints("const f = (a, , b) => a;");
+    assert_eq!(
+        fingerprints,
+        vec![(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            15,
+            "Parameter declaration expected.".to_string(),
+        )],
+        "arrow empty slot must report a single TS1138, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn empty_parameter_slot_in_generic_arrow_reports_ts1138() {
+    let fingerprints = parameter_diag_fingerprints("const f = <T,>(a, , b) => a;");
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            19,
+            "Parameter declaration expected.".to_string(),
+        )),
+        "generic arrow empty slot must report TS1138, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn leading_empty_parameter_slot_in_arrow_stays_parenthesized_expression() {
+    // A LEADING empty slot is genuinely a parenthesized expression in both tsc
+    // and tsz (TS1109 + TS1005). The recovery must NOT promote it to an arrow.
+    let fingerprints = parameter_diag_fingerprints("const h = (, a) => a;");
+    assert!(
+        fingerprints
+            .iter()
+            .any(|(code, _, _, _)| *code == diagnostic_codes::EXPRESSION_EXPECTED),
+        "leading empty slot must remain TS1109, got {fingerprints:?}"
+    );
+    assert!(
+        fingerprints
+            .iter()
+            .all(|(code, _, _, _)| *code != diagnostic_codes::PARAMETER_DECLARATION_EXPECTED),
+        "leading empty slot must NOT be recovered as an arrow parameter list, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn multiple_empty_parameter_slots_report_one_ts1138_each() {
+    let fingerprints = parameter_diag_fingerprints("function f(a, , , b) {}");
+    let ts1138: Vec<_> = fingerprints
+        .iter()
+        .filter(|(code, _, _, _)| *code == diagnostic_codes::PARAMETER_DECLARATION_EXPECTED)
+        .collect();
+    assert_eq!(
+        ts1138.len(),
+        2,
+        "each empty slot reports its own TS1138, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn trailing_empty_parameter_slot_reports_ts1138() {
+    let fingerprints = parameter_diag_fingerprints("function j(a, , ) {}");
+    assert!(
+        fingerprints.contains(&(
+            diagnostic_codes::PARAMETER_DECLARATION_EXPECTED,
+            1,
+            15,
+            "Parameter declaration expected.".to_string(),
+        )),
+        "trailing empty slot must report TS1138, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn invalid_character_in_parameter_slot_reports_only_ts1127() {
+    // `function f(a,¬)` — the `¬` (U+00AC) is an invalid character, scanned as
+    // `Unknown`. tsc reports a single TS1127 `Invalid character.` (its would-be
+    // TS1138 is deduped against the same-position scanner TS1127). The empty-slot
+    // recovery must NOT promote this to TS1138; an `Unknown` token is not the
+    // comma delimiter the recovery targets. Mirrors conformance test
+    // `parserErrorRecovery_ParameterList4.ts`.
+    let fingerprints = parameter_diag_fingerprints("function f(a,\u{00AC}) {}");
+    assert_eq!(
+        fingerprints,
+        vec![(
+            diagnostic_codes::INVALID_CHARACTER,
+            1,
+            14,
+            "Invalid character.".to_string(),
+        )],
+        "invalid character in a parameter slot must report a single TS1127, got {fingerprints:?}"
+    );
+}
+
+#[test]
+fn well_formed_parameter_lists_remain_diagnostic_free() {
+    // Guard against the recovery introducing false positives on valid lists.
+    for source in [
+        "function okfn(a, b) {}",
+        "const ok = (a, b) => a;",
+        "const okGeneric = <T,>(a: T, b: T) => a;",
+        "class C { m(a, b) {} constructor(x, y) {} }",
+        "function trailing(a, b,) {}",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "well-formed parameter list should parse cleanly ({source}): {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}

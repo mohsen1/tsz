@@ -842,6 +842,11 @@ impl<'a> CheckerState<'a> {
         // circular through a `this.`/`Class.` self-invocation (issue #14805).
         self.check_class_member_circular_returns(stmt_idx, &class.members.nodes);
 
+        // TS2502: annotated members whose declared type annotation is circular
+        // through a `typeof Class.m`/`typeof this.m`/`typeof Class[k]`
+        // self-reference (issue #14819).
+        self.check_class_member_circular_annotations(stmt_idx, &class.members.nodes);
+
         self.ctx.async_depth = saved_async_depth;
 
         // Check for duplicate member names (TS2300, TS2393)

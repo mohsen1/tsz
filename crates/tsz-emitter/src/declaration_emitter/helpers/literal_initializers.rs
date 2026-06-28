@@ -142,7 +142,35 @@ impl<'a> DeclarationEmitter<'a> {
             return self.const_literal_initializer_text_deep_guarded(initializer, guard);
         }
 
+        // Chase a namespace-qualified value member (`N.deep`, `N.M.deep`) to its
+        // const declaration initializer, mirroring the Identifier-alias branch.
+        // `tsc` preserves the member's fresh literal the same way it preserves a
+        // plain identifier alias: `export const x = N.deep` -> `= 1`. The enum
+        // member access path (`E.A` -> `= E.A`) is handled earlier by
+        // `const_literal_initializer_text`, so this only fires for namespace
+        // value members.
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(initializer) = self.const_qualified_member_initializer(expr_idx)
+        {
+            return self.const_literal_initializer_text_deep_guarded(initializer, guard);
+        }
+
         None
+    }
+
+    /// The initializer of the namespace value member that a property-access
+    /// chain (`N.deep`, `N.M.deep`) resolves to, when that member is a `const`
+    /// with no type annotation (a fresh literal). Mirrors `const_alias_initializer`
+    /// but for qualified namespace members. Requires the binder; enum members are
+    /// left to the dedicated enum-access path.
+    fn const_qualified_member_initializer(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let binder = self.binder?;
+        let sym_id = self.access_reference_symbol(expr_idx)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0 {
+            return None;
+        }
+        self.const_variable_initializer_for_symbol(sym_id)
     }
 
     /// Inline `= literal` text for a `const` declaration, but only when the
@@ -232,7 +260,16 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                 continue;
             };
-            if self.arena.is_const_variable_declaration(decl_idx) && decl.initializer.is_some() {
+            // Only a `const` with NO explicit type annotation carries a fresh
+            // literal type whose initializer `tsc` inlines (`isFreshLiteralType`
+            // in `isLiteralConstDeclaration`). An annotation (`const a: number =
+            // 1`) widens the declared type, so a reference to it (`const c = a`,
+            // `N.deep`) must fall back to the `: number` annotation form rather
+            // than chasing the literal `= 1`.
+            if self.arena.is_const_variable_declaration(decl_idx)
+                && decl.type_annotation.is_none()
+                && decl.initializer.is_some()
+            {
                 return Some(decl.initializer);
             }
         }
@@ -258,6 +295,7 @@ impl<'a> DeclarationEmitter<'a> {
                     let decl_node = self.arena.get(decl_idx)?;
                     let decl = self.arena.get_variable_declaration(decl_node)?;
                     if self.arena.is_const_variable_declaration(decl_idx)
+                        && decl.type_annotation.is_none()
                         && self.get_identifier_text(decl.name).as_deref() == Some(&name)
                         && decl.initializer.is_some()
                     {
