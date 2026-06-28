@@ -917,7 +917,7 @@ impl<'a> CheckerState<'a> {
                         type_param,
                     )
                 } else {
-                    self.widen_for_ts2367_cross_family_display(left_narrow, right_narrow)
+                    self.widen_operands_for_ts2367_display(left_narrow, right_narrow)
                 };
                 // tsc shows unique symbols as `typeof varName` in comparison overlap errors
                 // (distinct from index-type errors like TS2538/TS7053 where it uses `unique symbol`).

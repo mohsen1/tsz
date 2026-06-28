@@ -990,6 +990,50 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Recover an `Application(UnresolvedTypeName(name), args)` residue left in a
+    /// flow type by cross-file alias lowering, so equality/discriminant narrowing
+    /// can read the now-concrete members.
+    ///
+    /// When an imported alias such as `type Either<E, A> = Left<E> | Right<A>` is
+    /// lowered before the merged binder is available, the alias body's inner
+    /// references (`Left`/`Right`) stay as `Application(UnresolvedTypeName, args)`
+    /// instead of `Lazy(DefId)`. The solver-side `NarrowingContext` resolver is a
+    /// `TypeEnvironment`, which only resolves names it was explicitly seeded with
+    /// and returns `None` for such imports; a guard like `a._tag === 'Right'`
+    /// then cannot read `_tag` off the members, keeps the whole union, and a
+    /// later `.right` access reports a false `TS2339`. The `CheckerContext`
+    /// resolver walks the merged binder graph and resolves the names, so running
+    /// the type evaluator with it as the resolver recovers concrete members.
+    ///
+    /// Gated structurally on `contains_unresolved_application` (no name/file-string
+    /// check), so a resolved flow type is returned unchanged. If recovery cannot
+    /// resolve every name (e.g. a qualified `S.Separated` reference), the original
+    /// type is kept so no partially-recovered type leaks into narrowing.
+    pub(crate) fn recover_unresolved_application_for_narrowing(&self, type_id: TypeId) -> TypeId {
+        if !crate::query_boundaries::spread::contains_unresolved_application(
+            self.interner.as_type_database(),
+            type_id,
+        ) {
+            return type_id;
+        }
+        let Some(ctx) = self.checker_context else {
+            return type_id;
+        };
+        let recovered =
+            crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                self.interner,
+                ctx,
+                type_id,
+            );
+        if crate::query_boundaries::spread::contains_unresolved_application(
+            self.interner.as_type_database(),
+            recovered,
+        ) {
+            return type_id;
+        }
+        recovered
+    }
+
     /// Resolve a global constructor-variable symbol (e.g. the lib `Map`/`Set`
     /// interface+var) to its instance type for `instanceof` narrowing. The raw
     /// interface is generic (`Map<K, V>`); tsc narrows `x instanceof Map` to the

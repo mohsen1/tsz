@@ -4,8 +4,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::core::{
-    WriteTargetLogicalOperator, WriteTargetLogicalResult, enum_components, evaluate_type_structure,
-    is_keyof_type, type_parameter_constraint,
+    WriteTargetLogicalOperator, WriteTargetLogicalResult,
 };
 use crate::query_boundaries::type_computation::in_operator::{self, InOperatorRhsClassifier};
 use crate::state::CheckerState;
@@ -786,151 +785,72 @@ impl CheckerState<'_> {
         false
     }
 
-    /// Get the primitive type family of a type: `TypeId::STRING` for string/string literals,
-    /// `TypeId::NUMBER` for number/number literals, `TypeId::BOOLEAN` for boolean/boolean literals,
-    /// `TypeId::BIGINT` for bigint/bigint literals, or `TypeId::ERROR` for non-primitive types.
+    /// Compute one operand's TS2367 display base, mirroring tsc's
+    /// `getBaseTypeOfLiteralType`.
     ///
-    /// Used to determine if two types are from different primitive families (e.g., string vs number)
-    /// for TS2367 display purposes. When types are from different families, tsc widens literals
-    /// to their base primitive types in error messages.
-    fn get_primitive_family(&self, type_id: TypeId) -> TypeId {
-        use crate::query_boundaries::common::LiteralTypeKind;
-        use crate::query_boundaries::common::{
-            classify_literal_type, is_string_intrinsic_type, is_template_literal_type,
-            is_unique_symbol_type,
-        };
-
-        // Check direct primitive type IDs
-        if type_id == TypeId::STRING
-            || type_id == TypeId::NUMBER
-            || type_id == TypeId::BOOLEAN
-            || type_id == TypeId::BIGINT
-            || type_id == TypeId::SYMBOL
-        {
-            return type_id;
-        }
-
-        // Boolean literal intrinsics (`true` / `false`) belong to the boolean
-        // family. classify_literal_type below short-circuits on intrinsics,
-        // so we'd otherwise miss them and TS2367 cross-family widening
-        // would skip — leaving messages like `'symbol' and 'true'` instead
-        // of tsc's `'symbol' and 'boolean'`.
-        if type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE {
-            return TypeId::BOOLEAN;
-        }
-
-        // Check literal types via query boundary
-        match classify_literal_type(self.ctx.types, type_id) {
-            LiteralTypeKind::String(_) => return TypeId::STRING,
-            LiteralTypeKind::Number(_) => return TypeId::NUMBER,
-            LiteralTypeKind::Boolean(_) => return TypeId::BOOLEAN,
-            LiteralTypeKind::BigInt(_) => return TypeId::BIGINT,
-            LiteralTypeKind::NotLiteral => {}
-        }
-
-        // Unique symbol literal types belong to the symbol family.
-        if is_unique_symbol_type(self.ctx.types, type_id) {
-            return TypeId::SYMBOL;
-        }
-
-        // Check template literals and string intrinsics
-        if is_template_literal_type(self.ctx.types, type_id)
-            || is_string_intrinsic_type(self.ctx.types, type_id)
-        {
-            return TypeId::STRING;
-        }
-
-        if let Some((_def_id, member_type)) = enum_components(self.ctx.types, type_id) {
-            return self.get_primitive_family(member_type);
-        }
-        if is_keyof_type(self.ctx.types, type_id) {
-            return TypeId::STRING;
-        }
-        if let Some(constraint) = type_parameter_constraint(self.ctx.types, type_id) {
-            return self.get_primitive_family(constraint);
-        }
-
-        // Intersections narrow their members; if any member sits in a primitive
-        // family, treat the intersection as belonging to that family (e.g.
-        // `T & number` should count as number-family for TS2367 widening).
-        if let Some(list_id) =
-            crate::query_boundaries::common::intersection_list_id(self.ctx.types, type_id)
-        {
-            for member in self.ctx.types.type_list(list_id).iter() {
-                let family = self.get_primitive_family(*member);
-                if family != TypeId::ERROR {
-                    return family;
-                }
-            }
-        }
-
-        // A union belongs to a primitive family when every primitive member
-        // shares one family (`1 | 2`, `"a" | undefined`). `null`/`undefined`
-        // and non-primitive members are ignored for the family decision: they
-        // ride along unwidened in tsc's display (`number | undefined`,
-        // `Refrigerator | "foo"`). A union of only ignored members, an empty
-        // union, or a union spanning multiple primitive families has no single
-        // family. This mirrors tsc widening `(1 | undefined) === "x"` operands
-        // to `number | undefined` / `string` while leaving `(1 | undefined) === 2`
-        // and `(Refrigerator | "foo") === "bar"` as literals.
+    /// A bare primitive literal widens to its primitive (`1` → `number`, `"x"`
+    /// → `string`); an enum *member* widens to its parent enum (`E.A` → `E`); a
+    /// union maps every member through the same rule (`E.A | 1` → `E | number`);
+    /// and everything else — a whole enum, an object/function/`void`, a type
+    /// parameter, `keyof`, an intersection — is returned unchanged.
+    fn ts2367_display_base_type(&mut self, type_id: TypeId) -> TypeId {
+        // Distribute the base-of-literal over a union's members so a mixed
+        // operand widens member-by-member, matching tsc's `mapType`.
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, type_id)
         {
-            let mut common: Option<TypeId> = None;
-            for &member in &members {
-                if member == TypeId::NULL || member == TypeId::UNDEFINED {
-                    continue;
-                }
-                let family = self.get_primitive_family(member);
-                if family == TypeId::ERROR {
-                    continue;
-                }
-                match common {
-                    None => common = Some(family),
-                    Some(existing) if existing == family => {}
-                    Some(_) => return TypeId::ERROR,
-                }
-            }
-            return common.unwrap_or(TypeId::ERROR);
+            let mut changed = false;
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&member| {
+                    let base = self.ts2367_display_base_type(member);
+                    changed |= base != member;
+                    base
+                })
+                .collect();
+            return if changed {
+                tsz_solver::utils::union_or_single(self.ctx.types, mapped)
+            } else {
+                type_id
+            };
         }
-
-        let evaluated = evaluate_type_structure(self.ctx.types, type_id);
-        if evaluated != type_id {
-            return self.get_primitive_family(evaluated);
+        // An enum member widens to its parent enum; `widen_enum_member_type`
+        // leaves whole enums and non-enum types untouched.
+        let widened_enum = self.widen_enum_member_type(type_id);
+        if widened_enum != type_id {
+            return widened_enum;
         }
-
-        TypeId::ERROR // Non-primitive types
+        // A bare primitive literal widens to its primitive; non-literals (objects,
+        // functions, `void`, type parameters, `null`/`undefined`) are unchanged.
+        crate::query_boundaries::common::widen_literal_type(self.ctx.types, type_id)
     }
 
-    /// Widen operands for TS2367 display.
+    /// Widen operands for TS2367 display, mirroring tsc's
+    /// `getBaseTypesIfUnrelated`.
     ///
-    /// tsc preserves literal types in the message only when both operands belong
-    /// to the *same* single primitive family (`"foo"` vs `"bar"` → `"foo"` /
-    /// `"bar"`; `1 | undefined` vs `2` → `1 | undefined` / `2`). Otherwise it
-    /// shows each operand widened to its base type via `getBaseTypeOfLiteralType`
-    /// — distributing over unions and leaving non-literals (objects,
-    /// `null`/`undefined`) unchanged: `1 | 2` vs `"x"` → `number` / `string`;
-    /// `1 | undefined` vs `"x"` → `number | undefined` / `string`; `{ a }` vs
-    /// `"x"` → `{ a }` / `string`. A `null`/`undefined`-only or mixed-family
-    /// operand has no family (`ERROR`), so it never matches the other side and
-    /// the pair is widened.
-    pub(super) fn widen_for_ts2367_cross_family_display(
-        &self,
+    /// tsc computes the base type of each operand
+    /// ([`ts2367_display_base_type`](Self::ts2367_display_base_type)) and adopts
+    /// those bases for the message **only when the bases remain unrelated**. If
+    /// widening introduces an overlap — two literals of one primitive family
+    /// (`1` / `2`), two members of one enum (`E.A` / `E.B`), or an enum against
+    /// its own primitive (`E` / `0`) — the original operand types are kept so
+    /// their precise literal/member form is displayed. Otherwise the bases are
+    /// shown: `1 | 2` vs `"x"` → `number` / `string`; `void` vs `1` → `void` /
+    /// `number`; and enum members against a disjoint operand collapse to their
+    /// parent enum (`E.A === F.X` → `'E'` / `'F'`).
+    pub(super) fn widen_operands_for_ts2367_display(
+        &mut self,
         left: TypeId,
         right: TypeId,
     ) -> (TypeId, TypeId) {
-        let left_family = self.get_primitive_family(left);
-        let right_family = self.get_primitive_family(right);
-
-        if left_family != TypeId::ERROR && left_family == right_family {
-            // Same single primitive family: preserve literal types.
-            (left, right)
+        let left_base = self.ts2367_display_base_type(left);
+        let right_base = self.ts2367_display_base_type(right);
+        if (left_base != left || right_base != right)
+            && self.equality_operands_have_no_overlap(left_base, right_base)
+        {
+            (left_base, right_base)
         } else {
-            // Differing or absent family: widen both to their base types.
-            (
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, left),
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, right),
-            )
+            (left, right)
         }
     }
 

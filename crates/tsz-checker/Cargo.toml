@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "union_overloaded_member_call_signatures_tests"
 path = "tests/union_overloaded_member_call_signatures_tests.rs"
 [[test]]
+name = "delete_narrowing_reset_tests"
+path = "tests/delete_narrowing_reset_tests.rs"
+[[test]]
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
@@ -1243,6 +1246,9 @@ path = "tests/ts2344_class_constructor_constraint_call.rs"
 [[test]]
 name = "ts2344_class_constructor_constraint_expr"
 path = "tests/ts2344_class_constructor_constraint_expr.rs"
+[[test]]
+name = "instance_type_this_member_class_tests"
+path = "tests/instance_type_this_member_class_tests.rs"
 [[test]]
 name = "ts2344_class_constructor_constraint_visibility"
 path = "tests/ts2344_class_constructor_constraint_visibility.rs"

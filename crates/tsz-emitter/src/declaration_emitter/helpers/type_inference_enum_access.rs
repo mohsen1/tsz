@@ -147,9 +147,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let binder = self.binder?;
-        let sym_id = self
-            .value_reference_symbol(expr_idx)
-            .or_else(|| self.entity_access_chain_symbol(expr_idx))?;
+        let sym_id = self.access_reference_symbol(expr_idx)?;
         let symbol = binder.symbols.get(sym_id)?;
         if symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0 {
             return None;
@@ -159,6 +157,18 @@ impl<'a> DeclarationEmitter<'a> {
         // slice: this normalizes `E["B"]` to `E.B` and prevents parenthesis /
         // non-null punctuation from leaking into the declaration output.
         self.enum_member_access_canonical_text(expr_idx)
+    }
+
+    /// Resolve a value reference or namespace-qualified property-access chain
+    /// (`N.deep`, `N.M.deep`) to its value symbol, trying the binder-tracked
+    /// node symbol first and falling back to walking the namespace export chain.
+    /// Shared by the enum-member-access and namespace-const-member paths.
+    pub(in crate::declaration_emitter) fn access_reference_symbol(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        self.value_reference_symbol(expr_idx)
+            .or_else(|| self.entity_access_chain_symbol(expr_idx))
     }
 
     fn entity_access_chain_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
