@@ -873,23 +873,10 @@ fn ts2367_widens_cross_family_literals_in_display() {
     // belong to different primitive families: `1 | 2` vs `"hello"` is displayed
     // as `number` and `string` (verified against tsc 6.0.2), distributing the
     // base-of-literal widening over the union.
-    let diags = check_source_diagnostics(r#"declare let x: 1 | 2; if (x === "hello") {}"#);
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
-    assert_eq!(
-        relevant.len(),
-        1,
-        "Expected exactly one TS2367, got: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, d.message_text.as_str()))
-            .collect::<Vec<_>>()
-    );
+    let message = sole_ts2367_message(r#"declare let x: 1 | 2; if (x === "hello") {}"#);
     assert!(
-        relevant[0]
-            .message_text
-            .contains("types 'number' and 'string' have no overlap"),
-        "Expected cross-family widened display matching tsc, got: {:?}",
-        relevant[0].message_text
+        message.contains("types 'number' and 'string' have no overlap"),
+        "Expected cross-family widened display matching tsc, got: {message}"
     );
 }
 
@@ -898,23 +885,10 @@ fn ts2367_preserves_same_family_literals_in_display() {
     // When both operands share a single primitive family, tsc preserves the
     // literal types in the message: `1` vs `2` stays `1` and `2` rather than
     // widening to `number` (verified against tsc 6.0.2).
-    let diags = check_source_diagnostics(r#"const unused = (1 as 1) === (2 as 2);"#);
-    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
-    assert_eq!(
-        relevant.len(),
-        1,
-        "Expected exactly one TS2367, got: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, d.message_text.as_str()))
-            .collect::<Vec<_>>()
-    );
+    let message = sole_ts2367_message(r#"const unused = (1 as 1) === (2 as 2);"#);
     assert!(
-        relevant[0]
-            .message_text
-            .contains("types '1' and '2' have no overlap"),
-        "Expected same-family literal display matching tsc, got: {:?}",
-        relevant[0].message_text
+        message.contains("types '1' and '2' have no overlap"),
+        "Expected same-family literal display matching tsc, got: {message}"
     );
 }
 
@@ -1025,6 +999,127 @@ function object_null_or_undefined<T extends {} | null | undefined>(value: T & ({
             .iter()
             .all(|diag| diag.message_text.contains("types 'T' and 'number'")),
         "Expected tsc-style `T` vs `number` display, got: {relevant:?}"
+    );
+}
+
+/// The single TS2367 message text emitted for `source`, or a panic listing the
+/// diagnostics actually produced. Centralizes the "exactly one TS2367" check the
+/// display-parity tests below all need.
+fn sole_ts2367_message(source: &str) -> String {
+    let diags = check_source_diagnostics(source);
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code == 2367).collect();
+    assert_eq!(
+        relevant.len(),
+        1,
+        "Expected exactly one TS2367, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+    relevant[0].message_text.to_string()
+}
+
+#[test]
+fn ts2367_enum_members_of_distinct_enums_widen_to_parent_enum() {
+    // tsc's getBaseTypesIfUnrelated widens each enum member to its parent enum
+    // when the parents are unrelated: `E.A === F.X` displays `'E' and 'F'`, not
+    // the member names (verified against tsc). Mixed numeric/string enums.
+    let message = sole_ts2367_message(
+        r#"enum E { A, B }
+enum F { X = "x" }
+const unused = E.A === F.X;"#,
+    );
+    assert!(
+        message.contains("types 'E' and 'F' have no overlap"),
+        "Expected distinct enum members to display as their parent enums, got: {message}"
+    );
+}
+
+#[test]
+fn ts2367_enum_members_of_distinct_enums_widen_with_renamed_binders() {
+    // Same rule, different binder names + both numeric: proves the widening is
+    // structural (enum-member -> parent enum), not keyed on any identifier.
+    let message = sole_ts2367_message(
+        r#"enum Direction { North, South }
+enum Weekday { Monday, Tuesday }
+const unused = Direction.North === Weekday.Monday;"#,
+    );
+    assert!(
+        message.contains("types 'Direction' and 'Weekday' have no overlap"),
+        "Expected renamed distinct enum members to display as parent enums, got: {message}"
+    );
+}
+
+#[test]
+fn ts2367_enum_member_against_disjoint_literal_widens_to_parent_enum() {
+    // A numeric enum member vs a string literal: bases `E` and `string` remain
+    // unrelated, so tsc shows `'E' and 'string'` (not `'E.A'` / `'"z"'`).
+    let message = sole_ts2367_message(
+        r#"enum E { A, B }
+const unused = E.A === "z";"#,
+    );
+    assert!(
+        message.contains("types 'E' and 'string' have no overlap"),
+        "Expected enum member vs string literal to widen to parent enum + string, got: {message}"
+    );
+}
+
+#[test]
+fn ts2367_distinct_string_enum_members_widen_to_parent_enums() {
+    let message = sole_ts2367_message(
+        r#"enum Color { Red = "red", Green = "green" }
+enum Hue { Cyan = "cyan", Magenta = "magenta" }
+const unused = Color.Red === Hue.Cyan;"#,
+    );
+    assert!(
+        message.contains("types 'Color' and 'Hue' have no overlap"),
+        "Expected distinct string enum members to display as parent enums, got: {message}"
+    );
+}
+
+#[test]
+fn ts2367_same_enum_members_preserve_member_display() {
+    // Two members of the *same* enum: their bases (`Color`/`Color`) are related,
+    // so tsc keeps the precise member display `'Color.Red' and 'Color.Green'`.
+    let message = sole_ts2367_message(
+        r#"enum Color { Red = "red", Green = "green" }
+const unused = Color.Red === Color.Green;"#,
+    );
+    assert!(
+        message.contains("types 'Color.Red' and 'Color.Green' have no overlap"),
+        "Expected same-enum members to keep their member display, got: {message}"
+    );
+    // Numeric variant of the same rule.
+    let numeric = sole_ts2367_message(
+        r#"enum Level { Low, High }
+const unused = Level.Low === Level.High;"#,
+    );
+    assert!(
+        numeric.contains("types 'Level.Low' and 'Level.High' have no overlap"),
+        "Expected same numeric-enum members to keep their member display, got: {numeric}"
+    );
+}
+
+#[test]
+fn ts2367_non_primitive_operand_widens_literal_to_base() {
+    // The other operand being non-primitive (`void`, object, function) must
+    // widen the literal to its primitive while leaving the non-primitive as-is.
+    let void_msg = sole_ts2367_message("declare const v: void;\nconst unused = v === 1;");
+    assert!(
+        void_msg.contains("types 'void' and 'number' have no overlap"),
+        "Expected `void === 1` to widen `1` to `number`, got: {void_msg}"
+    );
+    let obj_msg =
+        sole_ts2367_message("declare const o: { p: number };\nconst unused = o === \"x\";");
+    assert!(
+        obj_msg.contains("types '{ p: number; }' and 'string' have no overlap"),
+        "Expected object operand preserved and `\"x\"` widened to `string`, got: {obj_msg}"
+    );
+    let fn_msg = sole_ts2367_message("declare const f: () => void;\nconst unused = f === 1;");
+    assert!(
+        fn_msg.contains("types '() => void' and 'number' have no overlap"),
+        "Expected function operand preserved and `1` widened to `number`, got: {fn_msg}"
     );
 }
 
