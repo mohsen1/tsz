@@ -1246,7 +1246,20 @@ impl<'a> FlowAnalyzer<'a> {
         let is_strict = comparison.is_strict;
 
         let effective_truth = comparison.effective_truth(is_true_branch);
-        let mut type_id = type_id;
+        // Recover any `Application(UnresolvedTypeName(name), args)` residue left by
+        // cross-file alias lowering before equality/discriminant narrowing reads
+        // the members. An imported `type Either<E, A> = Left<E> | Right<A>` lowers
+        // its alias body before the merged binder exists, so the inner `Left`/
+        // `Right` refs stay unresolved; the solver-side `NarrowingContext`
+        // resolver (a `TypeEnvironment`) only knows names it was explicitly seeded
+        // with and cannot resolve such imports, so a guard like
+        // `a._tag === 'Right'` fails to read `_tag` and keeps the whole union,
+        // surfacing a false `TS2339` on a later `.right`. The `CheckerContext`
+        // resolver walks the merged binder graph and recovers the members, so
+        // discriminant filtering then works (benefits any cross-file discriminated
+        // union). Gated structurally on the residue, so resolved flow types are
+        // untouched.
+        let mut type_id = self.recover_unresolved_application_for_narrowing(type_id);
 
         // Optional-chain equality transport:
         // when an optional-chain comparison is known-equal to a value that cannot
