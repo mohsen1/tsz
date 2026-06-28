@@ -17,6 +17,15 @@ impl DeclarationEmitter<'_> {
     ) -> Option<String> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        // A single returned enum-member literal (`return E.A`) widens to its
+        // parent enum (`E`) in an inferred return type, mirroring the checker's
+        // type-level widening. Done before the member-qualified text paths below
+        // so methods/functions emit `E`, not `E.A`.
+        if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
+            && let Some(type_text) = self.returned_enum_member_widened_base_text(return_expr)
+        {
+            return Some(type_text);
+        }
         if let Some(type_text) =
             self.function_body_numeric_literal_return_union_type_text(&block.statements)
         {
@@ -1113,6 +1122,14 @@ impl DeclarationEmitter<'_> {
                     // return is equivalent to `return undefined` with
                     // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
                     "void".to_string()
+                } else if let Some(text) =
+                    self.returned_enum_member_widened_base_text(ret.expression)
+                {
+                    // A returned enum-member literal widens to its parent enum,
+                    // so multiple `return E.A` branches collapse to `E` (matching
+                    // the checker's inferred-return widening) instead of unifying
+                    // as the member-qualified `E.A`.
+                    text
                 } else if self
                     .arena
                     .get(ret.expression)

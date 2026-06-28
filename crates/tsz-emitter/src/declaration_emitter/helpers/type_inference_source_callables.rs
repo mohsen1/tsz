@@ -943,8 +943,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             if let Some(return_expr) = self.single_return_expression(func.body)
                 && let Some(type_text) = self
-                    .declaration_summary_primitive_expression_type_text(return_expr, 0)
-                    .or_else(|| self.infer_fallback_type_text_at(return_expr, 0))
+                    .return_expression_type_text_with_enum_widening(return_expr, 0)
                     .filter(|text| !text.is_empty() && text != "any")
             {
                 return Some(type_text);

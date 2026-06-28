@@ -691,16 +691,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let body_node = self.arena.get(func.body)?;
         if body_node.kind == syntax_kind_ext::BLOCK {
+            // A returned enum-member literal widens to its parent enum, matching
+            // the checker's inferred-return widening.
             return self
                 .function_body_single_return_expression(func.body)
                 .and_then(|return_expr| {
-                    self.declaration_summary_primitive_expression_type_text(return_expr, depth + 1)
-                        .or_else(|| self.infer_fallback_type_text_at(return_expr, depth + 1))
+                    self.return_expression_type_text_with_enum_widening(return_expr, depth + 1)
                 })
                 .or_else(|| self.function_body_preferred_return_type_text(func.body));
         }
-        self.declaration_summary_primitive_expression_type_text(func.body, depth + 1)
-            .or_else(|| self.infer_fallback_type_text_at(func.body, depth + 1))
+        // Expression-bodied arrow (`() => E.A`): same widen-then-fallback path.
+        self.return_expression_type_text_with_enum_widening(func.body, depth + 1)
     }
 
     fn well_known_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
