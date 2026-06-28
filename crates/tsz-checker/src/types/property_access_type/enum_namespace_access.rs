@@ -260,7 +260,23 @@ impl<'a> CheckerState<'a> {
         let member_sym = self
             .get_cross_file_symbol(member_sym_id)
             .or_else(|| self.ctx.binder.get_symbol(member_sym_id));
-        let member_type = if let Some(member_sym) = member_sym
+        let member_is_enum_object = member_sym.is_some_and(|s| {
+            s.has_any_flags(symbol_flags::ENUM) && !s.has_any_flags(symbol_flags::ENUM_MEMBER)
+        });
+        let member_type = if member_is_enum_object {
+            // Value-position access of a namespace's nested enum
+            // (`Ns.SomeEnum`) must yield the enum's VALUE meaning — the
+            // `typeof SomeEnum` object carrying the static member keys — not the
+            // enum instance type (the union of member literals). `get_type_of_symbol`
+            // can return either depending on which position resolved the enum
+            // first; through a re-export hop the type-position resolves first and
+            // caches the instance type, dropping the static keys (TS2339 on
+            // `Ns.SomeEnum.Member`). Mirror the identifier value-position path and
+            // `build_namespace_object_type`, which both convert the enum member to
+            // its enum object type via `get_enum_namespace_type_for_value`.
+            let base = self.get_type_of_symbol(member_sym_id);
+            self.get_enum_namespace_type_for_value(base)
+        } else if let Some(member_sym) = member_sym
             && member_sym.has_any_flags(symbol_flags::INTERFACE)
             && member_sym.has_any_flags(symbol_flags::VARIABLE)
             && member_sym.value_declaration.is_some()
