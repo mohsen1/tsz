@@ -1540,7 +1540,6 @@ impl QueryDatabase for QueryCache<'_> {
         if !newly_union_too_complex
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
-            let tainted = evaluator.take_tainted();
             let mut cache = self.eval_cache.borrow_mut();
             if top_level_clean {
                 cache.insert(key, result);
@@ -1549,11 +1548,8 @@ impl QueryDatabase for QueryCache<'_> {
                     shared.eval_cache.insert(key, result);
                 }
             }
-            for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
-                if intermediate_id != intermediate_result
-                    && !intermediate_id.is_intrinsic()
-                    && !tainted.contains(&intermediate_id)
-                {
+            for (intermediate_id, intermediate_result) in evaluator.drain_stable_cache() {
+                if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
                     let ikey = request.with_type_id(intermediate_id).cache_key();
                     cache.entry(ikey).or_insert(intermediate_result);
                     if let Some(shared) = self.shared {
