@@ -566,6 +566,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.def_depth.clear();
         self.def_eval_stack.clear();
         self.real_instantiation_depth_count = 0;
+        self.silent_depth_bailed = false;
+        self.deep_recursion_seen = false;
+        self.request_termination_kind = None;
+        self.limit_epoch = 0;
+        self.app_body_limit_epoch = 0;
+        self.unresolved_def_seen = false;
     }
 
     /// Evaluate a normalized request, applying option-sensitive configuration

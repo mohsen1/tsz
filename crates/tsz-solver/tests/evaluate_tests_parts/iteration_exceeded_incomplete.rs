@@ -68,3 +68,28 @@ fn every_guard_bail_reports_incomplete_with_its_kind_and_partial() {
         assert!(result.is_identity_for(partial));
     }
 }
+
+#[test]
+fn reset_clears_typed_and_legacy_termination_state() {
+    let interner = TypeInterner::new();
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.simulate_unrelated_recursion_bail_for_test();
+    evaluator.simulate_incomplete_request_verdict_for_test(TerminationKind::QueryOpBudget);
+    evaluator.mark_unresolved_def_seen();
+    evaluator.app_body_limit_epoch = evaluator.limit_epoch;
+
+    assert!(evaluator.recursion_limit_hit());
+    assert!(evaluator.has_incomplete_request_verdict());
+    assert!(evaluator.unresolved_def_seen());
+    assert_ne!(evaluator.limit_epoch, 0);
+    assert_ne!(evaluator.app_body_limit_epoch, 0);
+
+    evaluator.reset();
+
+    assert!(!evaluator.recursion_limit_hit());
+    assert!(!evaluator.has_incomplete_request_verdict());
+    assert!(!evaluator.unresolved_def_seen());
+    assert_eq!(evaluator.limit_epoch, 0);
+    assert_eq!(evaluator.app_body_limit_epoch, 0);
+}
