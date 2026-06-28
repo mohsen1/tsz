@@ -296,6 +296,34 @@ impl<'a> CheckerState<'a> {
             target_property_type
         };
 
+        // A member whose two signatures differ in their RETURN type is elaborated
+        // by tsc distinctly from the generic `PropertyTypeMismatch` shape, and
+        // never with the `Return type 'X' is not assignable to 'Y'.` phrasing
+        // (tsc emits zero such lines). Route those to the dedicated renderer,
+        // which reproduces tsc's two forms:
+        //   * method syntax (`f(): T`):   `The types returned by 'f()' are
+        //     incompatible between these types.` (TS2201), then the inner leaf.
+        //   * property syntax (`f: () => T`): `Types of property 'f' are
+        //     incompatible.`, the `() => S`/`() => T` function-type line, then
+        //     the inner leaf.
+        // Same-generic applications keep their type-argument elaboration, so this
+        // only fires for the plain structural-member surface.
+        if let Some(tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
+            source_return,
+            target_return,
+            nested_reason: return_inner,
+        }) = nested_reason
+            && !self.should_render_nested_application_property_mismatch(source, target)
+        {
+            return self.render_member_return_type_mismatch(
+                reason,
+                ctx,
+                property_name,
+                (source_property_type, target_property_type),
+                (*source_return, *target_return, return_inner.as_deref()),
+            );
+        }
+
         if depth == 0 {
             let (source_str, target_str) =
                 self.format_top_level_assignability_message_types_at(source, target, idx);
@@ -501,6 +529,221 @@ impl<'a> CheckerState<'a> {
             Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
         }
         diag
+    }
+
+    /// Render a member whose two signatures differ in their RETURN type.
+    ///
+    /// tsc has two distinct shapes here and never uses tsz's historical
+    /// `Return type 'X' is not assignable to 'Y'.` phrasing:
+    ///
+    /// Method syntax (`f(): T`) — the member relation runs through signature
+    /// comparison, so the return failure heads with TS2201 and drills straight
+    /// into the inner relation:
+    /// ```text
+    /// Type 'A' is not assignable to type 'B'.
+    ///   The types returned by 'f()' are incompatible between these types.
+    ///     Type 'string' is not assignable to type 'number'.
+    /// ```
+    ///
+    /// Property syntax (`f: () => T`) — the member relation runs through the
+    /// property's function *type*, so it keeps the `Types of property` header,
+    /// shows the function-type line, then the inner relation:
+    /// ```text
+    /// Type 'X' is not assignable to type 'Y'.
+    ///   Types of property 'f' are incompatible.
+    ///     Type '() => string' is not assignable to type '() => number'.
+    ///       Type 'string' is not assignable to type 'number'.
+    /// ```
+    pub(super) fn render_member_return_type_mismatch(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        ctx: &RenderContext,
+        property_name: tsz_common::interner::Atom,
+        property_types: (TypeId, TypeId),
+        return_relation: (TypeId, TypeId, Option<&tsz_solver::SubtypeFailureReason>),
+    ) -> Diagnostic {
+        let (source_property_type, target_property_type) = property_types;
+        let (source_return, target_return, return_inner) = return_relation;
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+        let is_method = self.member_is_method_on_both_sides(source, target, property_name);
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+        let (header, header_code) = Self::member_return_header(is_method, &prop_name, reason);
+
+        // The header sits at `header_depth`: at the top level it is an
+        // elaboration under the base `Type 'S' is not assignable to type 'T'.`
+        // line; when nested it is this diagnostic's own message. Deeper lines
+        // are authored at absolute depths starting one below the header, the
+        // convention every other `render_*` follows when nested.
+        let (mut diag, header_depth) = if depth == 0 {
+            let (source_str, target_str) =
+                self.format_top_level_assignability_message_types_at(source, target, idx);
+            let mut diag = Diagnostic::error(
+                file_name,
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            diag.push_elaboration_in_span(start, length, header, header_code, 0);
+            (diag, 0)
+        } else {
+            (
+                Diagnostic::error(file_name, start, length, header, header_code),
+                depth,
+            )
+        };
+
+        // Property syntax keeps the intermediate `() => S` / `() => T`
+        // function-type line; method syntax drills straight into the return
+        // relation.
+        let leaf_depth = if is_method {
+            header_depth + 1
+        } else {
+            diag.push_elaboration_in_span(
+                start,
+                length,
+                self.member_function_type_line(source_property_type, target_property_type),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                header_depth + 1,
+            );
+            header_depth + 2
+        };
+        self.push_member_return_inner(
+            &mut diag,
+            source_return,
+            target_return,
+            return_inner,
+            idx,
+            leaf_depth,
+        );
+        diag
+    }
+
+    /// The member-mismatch header line and its diagnostic code: TS2201
+    /// (`The types returned by 'f()' ...`) for method syntax, or
+    /// `Types of property 'f' are incompatible.` for a function-typed property.
+    fn member_return_header(
+        is_method: bool,
+        prop_name: &str,
+        reason: &tsz_solver::SubtypeFailureReason,
+    ) -> (String, u32) {
+        if is_method {
+            (
+                format_message(
+                    diagnostic_messages::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
+                    &[&format!("{prop_name}()")],
+                ),
+                diagnostic_codes::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
+            )
+        } else {
+            (
+                format_message(
+                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
+                    &[prop_name],
+                ),
+                reason.diagnostic_code(),
+            )
+        }
+    }
+
+    /// `Type '<src-fn>' is not assignable to type '<tgt-fn>'.` line shown for a
+    /// function-typed property whose signatures differ. Disambiguates identical
+    /// renderings via the shared pair finalizer.
+    fn member_function_type_line(
+        &mut self,
+        source_property_type: TypeId,
+        target_property_type: TypeId,
+    ) -> String {
+        let source_str = self.format_type_diagnostic(source_property_type);
+        let target_str = self.format_type_diagnostic(target_property_type);
+        let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+            source_property_type,
+            target_property_type,
+            source_str,
+            target_str,
+        );
+        format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        )
+    }
+
+    /// Append the inner return-type relation beneath the member header at
+    /// `leaf_depth`. When the solver carried a structural reason for the return
+    /// failure (a missing property, nested chain, …) it is drilled; otherwise a
+    /// plain `Type 'S' is not assignable to type 'T'.` leaf is synthesized.
+    fn push_member_return_inner(
+        &mut self,
+        diag: &mut Diagnostic,
+        source_return: TypeId,
+        target_return: TypeId,
+        return_inner: Option<&tsz_solver::SubtypeFailureReason>,
+        idx: tsz_parser::parser::NodeIndex,
+        leaf_depth: u32,
+    ) {
+        if let Some(inner) = return_inner {
+            let sub =
+                self.render_failure_reason(inner, source_return, target_return, idx, leaf_depth);
+            Self::push_rebased_subdiagnostic(diag, sub, leaf_depth, leaf_depth);
+        } else {
+            let source_str = self.format_type_diagnostic(source_return);
+            let target_str = self.format_type_diagnostic(target_return);
+            let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                source_return,
+                target_return,
+                source_str,
+                target_str,
+            );
+            let (start, length) = (diag.start, diag.length);
+            diag.push_elaboration_in_span(
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    &[&source_str, &target_str],
+                ),
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                leaf_depth,
+            );
+        }
+    }
+
+    /// Whether the named member is declared as a *method* (`f(): T`) on both
+    /// the source and target object shapes — the distinction tsc uses to choose
+    /// between the TS2201 return-type elaboration and the function-typed
+    /// `Types of property` elaboration. Falls back to `false` (the property
+    /// form) when either shape is unavailable or the member is property-typed.
+    fn member_is_method_on_both_sides(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> bool {
+        self.property_declared_as_method(source, property_name)
+            && self.property_declared_as_method(target, property_name)
+    }
+
+    fn property_declared_as_method(
+        &mut self,
+        type_id: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> bool {
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        crate::query_boundaries::common::find_property_in_object(
+            self.ctx.types,
+            evaluated,
+            property_name,
+        )
+        .is_some_and(|prop| prop.is_method)
     }
 
     /// Render a tuple element type mismatch.
