@@ -1781,3 +1781,138 @@ fn anonymous_default_export_function_hoists_export_assignment() {
         "Should emit the anonymous default function export assignment once.\nOutput:\n{output}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Dynamic `import()` lowering must gate the `__importStar` interop wrapper on
+// `esModuleInterop`, matching tsc. With interop off, a bare `require(...)` is
+// emitted and none of the `__importStar`/`__createBinding`/`__setModuleDefault`
+// helper prologue may leak into the output (issue: dynamic import wrapped
+// `require` in `__importStar` ignoring `esModuleInterop=false`).
+// ---------------------------------------------------------------------------
+
+fn emit_module_with_interop(
+    source: &str,
+    module: ModuleKind,
+    target: ScriptTarget,
+    es_module_interop: bool,
+) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module,
+        target,
+        es_module_interop,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+fn assert_no_import_star_helper(output: &str) {
+    for helper in [
+        "var __importStar",
+        "var __createBinding",
+        "var __setModuleDefault",
+    ] {
+        assert!(
+            !output.contains(helper),
+            "interop-off dynamic import must not emit the `{helper}` helper prologue.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
+fn commonjs_dynamic_import_string_literal_bare_require_without_interop() {
+    let source = "const m = import(\"./dep\");\n";
+    let output =
+        emit_module_with_interop(source, ModuleKind::CommonJS, ScriptTarget::ES2020, false);
+    assert!(
+        output.contains("const m = Promise.resolve().then(() => require(\"./dep\"));"),
+        "interop-off CJS dynamic import should emit a bare require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__importStar"),
+        "interop-off CJS dynamic import must not wrap require in __importStar.\nOutput:\n{output}"
+    );
+    assert_no_import_star_helper(&output);
+}
+
+#[test]
+fn commonjs_dynamic_import_string_literal_import_star_with_interop() {
+    let source = "const m = import(\"./dep\");\n";
+    let output = emit_module_with_interop(source, ModuleKind::CommonJS, ScriptTarget::ES2020, true);
+    assert!(
+        output
+            .contains("const m = Promise.resolve().then(() => __importStar(require(\"./dep\")));"),
+        "interop-on CJS dynamic import should wrap require in __importStar.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var __importStar"),
+        "interop-on CJS dynamic import should emit the __importStar helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_dynamic_import_expression_specifier_bare_require_without_interop() {
+    let source = "const f = (p: string) => import(p);\n";
+    let output =
+        emit_module_with_interop(source, ModuleKind::CommonJS, ScriptTarget::ES2020, false);
+    assert!(
+        output.contains("Promise.resolve(`${p}`).then(s => require(s))"),
+        "interop-off expression-specifier dynamic import should emit a bare require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__importStar"),
+        "interop-off expression-specifier dynamic import must not use __importStar.\nOutput:\n{output}"
+    );
+    assert_no_import_star_helper(&output);
+}
+
+#[test]
+fn commonjs_dynamic_import_es5_bare_require_without_interop() {
+    let source = "const m = import(\"./dep\");\n";
+    let output = emit_module_with_interop(source, ModuleKind::CommonJS, ScriptTarget::ES5, false);
+    assert!(
+        output.contains("Promise.resolve().then(function () { return require(\"./dep\"); })"),
+        "interop-off ES5 CJS dynamic import should emit a bare require.\nOutput:\n{output}"
+    );
+    assert_no_import_star_helper(&output);
+}
+
+#[test]
+fn amd_dynamic_import_drops_then_import_star_without_interop() {
+    let source = "const m = import(\"./dep\");\n";
+    let output = emit_module_with_interop(source, ModuleKind::AMD, ScriptTarget::ES2020, false);
+    assert!(
+        output.contains(
+            "new Promise((resolve_1, reject_1) => { require([\"./dep\"], resolve_1, reject_1); })"
+        ),
+        "interop-off AMD dynamic import should emit the bare Promise form.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".then(__importStar)"),
+        "interop-off AMD dynamic import must not append .then(__importStar).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_async_nested_dynamic_import_es5_bare_require_without_interop() {
+    // The dynamic import lives inside an ES5-downleveled async function, so it
+    // flows through the async generator IR transform path rather than the direct
+    // call emitter. The interop gate must hold there too, otherwise the helper
+    // prologue would be suppressed while the body still referenced __importStar.
+    let source = "export async function f() { await import(\"./dep\"); }\n";
+    let output = emit_module_with_interop(source, ModuleKind::CommonJS, ScriptTarget::ES5, false);
+    assert!(
+        output.contains("Promise.resolve().then(function () { return require(\"./dep\"); })"),
+        "interop-off async-nested ES5 dynamic import should emit a bare require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__importStar"),
+        "interop-off async-nested ES5 dynamic import must not reference __importStar.\nOutput:\n{output}"
+    );
+    assert_no_import_star_helper(&output);
+}

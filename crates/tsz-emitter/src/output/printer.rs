@@ -66,6 +66,10 @@ pub struct PrintOptions {
     /// Emit class fields using `Object.defineProperty` semantics when
     /// downleveling (mirrors `--useDefineForClassFields`).
     pub use_define_for_class_fields: bool,
+    /// Enable CommonJS/ESM interop helpers (mirrors `--esModuleInterop`).
+    /// Controls, among other things, whether downlevel dynamic `import()`
+    /// wraps `require(...)` in the `__importStar` helper.
+    pub es_module_interop: bool,
 }
 
 impl PrintOptions {
@@ -112,6 +116,7 @@ impl PrintOptions {
             downlevel_iteration: self.downlevel_iteration,
             jsx: self.jsx,
             use_define_for_class_fields: self.use_define_for_class_fields,
+            es_module_interop: self.es_module_interop,
             ..Default::default()
         }
     }

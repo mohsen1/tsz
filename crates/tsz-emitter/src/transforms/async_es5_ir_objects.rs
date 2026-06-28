@@ -608,6 +608,7 @@ impl AsyncES5Transformer<'_> {
                 nested.set_source_text(source_text);
             }
             nested.set_module_kind(self.module_kind);
+            nested.set_es_module_interop(self.es_module_interop);
             nested.set_target_es5(self.target_es5);
             let has_await = nested.body_contains_await(method.body);
             let mut generator_body = nested.transform_generator_body(method.body, has_await);

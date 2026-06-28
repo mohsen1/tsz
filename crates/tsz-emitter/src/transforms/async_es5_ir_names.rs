@@ -56,6 +56,13 @@ impl<'a> AsyncES5Transformer<'a> {
         self.module_kind = kind;
     }
 
+    /// Set whether `esModuleInterop` is enabled so dynamic `import()` lowering
+    /// inside the generator body wraps `require(...)` in `__importStar` (on) or
+    /// emits a bare `require(...)` (off), matching tsc.
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.es_module_interop = es_module_interop;
+    }
+
     /// Set whether the emit target is ES5. When `false` (ES2015+), dynamic
     /// `import()` branches inside the generator body use arrow functions
     /// instead of `function` expressions.

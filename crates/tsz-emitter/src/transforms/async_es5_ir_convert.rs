@@ -883,6 +883,7 @@ impl<'a> AsyncES5Transformer<'a> {
             transformer.set_temp_var_counter(self.temp_var_counter());
             transformer.downlevel_iteration = self.downlevel_iteration;
             transformer.set_module_kind(self.module_kind);
+            transformer.set_es_module_interop(self.es_module_interop);
             transformer.set_target_es5(self.target_es5);
             transformer
                 .dynamic_import_promise_counter
@@ -1252,26 +1253,21 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     fn dynamic_import_cjs_branch(&self, specifier: &str) -> String {
-        if self.target_es5 {
-            format!(
-                "Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})"
-            )
-        } else {
-            format!("Promise.resolve().then(() => __importStar(require({specifier})))")
-        }
+        crate::transforms::emit_utils::dynamic_import_cjs_form(
+            specifier,
+            self.target_es5,
+            self.es_module_interop,
+        )
     }
 
     fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
         let id = self.dynamic_import_promise_counter.get();
         self.dynamic_import_promise_counter.set(id + 1);
-        if self.target_es5 {
-            format!(
-                "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
-            )
-        } else {
-            format!(
-                "new Promise((resolve_{id}, reject_{id}) => {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
-            )
-        }
+        crate::transforms::emit_utils::dynamic_import_amd_form(
+            specifier,
+            id,
+            self.target_es5,
+            self.es_module_interop,
+        )
     }
 }

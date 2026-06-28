@@ -464,6 +464,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         es5_emitter.set_printer_options(self.ctx.options.clone());
         es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+        es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
         if let Some(text) = self.source_text_for_map() {
             es5_emitter.set_source_text(text);
         }

@@ -1524,9 +1524,59 @@ pub(crate) fn call_argument_should_emit(arena: &NodeArena, idx: NodeIndex) -> bo
         .is_none_or(|ident| !ident.escaped_text.is_empty())
 }
 
-/// Emit a dynamic `import(specifier)` as the CommonJS `Promise.resolve().then(...)` form.
-pub(crate) fn dynamic_import_cjs_form(specifier: &str) -> String {
-    format!("Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})")
+/// Wrap a dynamic-import `require(...)` expression in the `__importStar` helper
+/// when `esModuleInterop` is enabled, mirroring tsc; otherwise return it bare.
+fn import_star_wrap(require_expr: String, es_module_interop: bool) -> String {
+    if es_module_interop {
+        format!("__importStar({require_expr})")
+    } else {
+        require_expr
+    }
+}
+
+/// Emit a dynamic `import(specifier)` as the CommonJS `Promise.resolve().then(...)`
+/// form. The callback is a `function` expression at ES5 and an arrow at ES2015+.
+/// The `require` is wrapped in `__importStar` only when `esModuleInterop` is
+/// enabled (matching tsc's `createImportCallExpressionCommonJS`); otherwise a
+/// bare `require(...)` is emitted.
+pub(crate) fn dynamic_import_cjs_form(
+    specifier: &str,
+    target_es5: bool,
+    es_module_interop: bool,
+) -> String {
+    let body = import_star_wrap(format!("require({specifier})"), es_module_interop);
+    if target_es5 {
+        format!("Promise.resolve().then(function () {{ return {body}; }})")
+    } else {
+        format!("Promise.resolve().then(() => {body})")
+    }
+}
+
+/// Emit a dynamic `import(specifier)` as the AMD/UMD async-`require` form:
+/// `new Promise((resolve_N, reject_N) => {{ require([spec], resolve_N, reject_N); }})`.
+/// The callback is a `function` expression at ES5 and an arrow at ES2015+. The
+/// `.then(__importStar)` suffix is appended only when `esModuleInterop` is
+/// enabled (matching tsc's `createImportCallExpressionAMD`).
+pub(crate) fn dynamic_import_amd_form(
+    specifier: &str,
+    id: u32,
+    target_es5: bool,
+    es_module_interop: bool,
+) -> String {
+    let then = if es_module_interop {
+        ".then(__importStar)"
+    } else {
+        ""
+    };
+    if target_es5 {
+        format!(
+            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}){then}"
+        )
+    } else {
+        format!(
+            "new Promise((resolve_{id}, reject_{id}) => {{ require([{specifier}], resolve_{id}, reject_{id}); }}){then}"
+        )
+    }
 }
 
 #[cfg(test)]

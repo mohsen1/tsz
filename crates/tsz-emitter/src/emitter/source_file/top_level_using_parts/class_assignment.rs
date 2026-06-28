@@ -556,6 +556,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_printer_options(self.ctx.options.clone());
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
@@ -772,6 +773,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_printer_options(self.ctx.options.clone());
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
@@ -836,6 +838,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_printer_options(self.ctx.options.clone());
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
@@ -876,6 +879,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_printer_options(self.ctx.options.clone());
             es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }

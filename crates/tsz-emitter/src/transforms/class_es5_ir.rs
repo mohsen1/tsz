@@ -200,6 +200,10 @@ pub struct ES5ClassTransformer<'a> {
     tslib_helpers: TslibHelperNaming,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
+    /// Whether `esModuleInterop` is enabled, threaded into nested converters
+    /// (`AstToIr`, async transformer) so dynamic `import()` lowering wraps
+    /// `require(...)` in `__importStar` only when interop is on.
+    es_module_interop: bool,
     target_es5: bool,
     downlevel_iteration: bool,
     dynamic_import_promise_counter: Cell<u32>,
@@ -264,6 +268,7 @@ impl<'a> ES5ClassTransformer<'a> {
             tslib_helpers: TslibHelperNaming::default(),
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
+            es_module_interop: false,
             target_es5: false,
             downlevel_iteration: false,
             dynamic_import_promise_counter: Cell::new(1),
@@ -335,6 +340,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
         self.module_kind = module_kind;
+    }
+
+    pub const fn set_es_module_interop(&mut self, es_module_interop: bool) {
+        self.es_module_interop = es_module_interop;
     }
 
     pub const fn set_target_es5(&mut self, es5: bool) {
@@ -686,6 +695,7 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_class_transformer_indent_base(self.indent_base + 2)
             .with_downlevel_iteration(self.downlevel_iteration)
             .with_module_kind(self.module_kind)
+            .with_es_module_interop(self.es_module_interop)
             .with_target_es5(self.target_es5)
             .with_private_member_maps(
                 &self.private_fields,

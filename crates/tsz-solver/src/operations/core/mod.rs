@@ -11,6 +11,7 @@ mod call_inference_shape;
 mod call_resolution;
 #[cfg(test)]
 mod call_resolution_tests;
+mod union_signatures;
 
 pub(crate) use call_evaluator::MAX_CONSTRAINT_STEPS;
 pub use call_evaluator::*;

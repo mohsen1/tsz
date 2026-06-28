@@ -220,6 +220,7 @@ impl<'a> Printer<'a> {
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
             async_emitter.set_module_kind(self.ctx.outer_module_kind());
+            async_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
             async_emitter.set_target_es5(self.ctx.target_es5);
             async_emitter.set_dynamic_import_promise_counter(self.next_dynamic_import_promise_id);
             async_emitter
@@ -624,6 +625,7 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        transformer.set_es_module_interop(self.ctx.options.es_module_interop);
         transformer.set_target_es5(self.ctx.target_es5);
         transformer.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
@@ -996,6 +998,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
         es5_emitter.set_printer_options(self.ctx.options.clone());
         es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+        es5_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());

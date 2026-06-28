@@ -29,6 +29,10 @@ fn lower_emit_module(source: &str, module: ModuleKind, target: ScriptTarget) -> 
     let options = PrinterOptions {
         module,
         target,
+        // Dynamic-import wrapper-kind tests assert the `__importStar`-wrapped
+        // form, which tsc emits only under `esModuleInterop`. The interop-off
+        // (bare `require`) form is covered by dedicated tests.
+        es_module_interop: true,
         ..Default::default()
     };
     let ctx = EmitContext::with_options(options.clone());

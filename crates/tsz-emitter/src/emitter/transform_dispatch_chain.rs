@@ -97,6 +97,7 @@ impl<'a> Printer<'a> {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_module_kind(self.ctx.outer_module_kind());
+                ns_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
                 ns_emitter.set_const_enum_facts(
                     self.const_enum_values.clone(),
                     self.const_enum_import_aliases.clone(),
@@ -148,6 +149,7 @@ impl<'a> Printer<'a> {
                     let cjs_export_names = self.commonjs_export_name_strings(names.as_ref());
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                     ns_emitter.set_module_kind(self.ctx.outer_module_kind());
+                    ns_emitter.set_es_module_interop(self.ctx.options.es_module_interop);
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
                         self.const_enum_import_aliases.clone(),

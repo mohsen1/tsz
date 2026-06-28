@@ -21,6 +21,12 @@
 //! - **UMD conditional** parenthesization follows parent-expression binding, not a
 //!   fixed rule — verified against `tsc` 6.x.
 //!
+//! - **`esModuleInterop` gate**: the `__importStar` wrapper (CJS/UMD-CJS) and the
+//!   `.then(__importStar)` callback (AMD/UMD-AMD) are emitted ONLY under
+//!   `esModuleInterop`. With interop off, tsc emits a bare `require(...)` /
+//!   `new Promise(...)`. The shape tests below run with interop on; the
+//!   interop-off forms are asserted in the dedicated section at the end.
+//!
 //! Owner layer: emitter (`crates/tsz-emitter/src/emitter/expressions/call.rs`).
 
 use tsz_common::common::{ModuleKind, ScriptTarget};
@@ -31,12 +37,17 @@ mod test_support;
 
 use test_support::parse_and_lower_print as emit;
 
+// The `__importStar`-wrapped forms asserted below match tsc's output under
+// `esModuleInterop` (with interop off tsc emits a bare `require(...)`; that
+// gate is covered separately by the interop-off tests at the end of this file
+// and in `cjs_module_exports.rs`). These helpers therefore enable interop.
 fn cjs(source: &str) -> String {
     emit(
         source,
         PrintOptions {
             target: ScriptTarget::ES2022,
             module: ModuleKind::CommonJS,
+            es_module_interop: true,
             ..Default::default()
         },
     )
@@ -48,6 +59,7 @@ fn umd(source: &str) -> String {
         PrintOptions {
             target: ScriptTarget::ES2017,
             module: ModuleKind::UMD,
+            es_module_interop: true,
             ..Default::default()
         },
     )
@@ -59,6 +71,7 @@ fn umd_target(source: &str, target: ScriptTarget) -> String {
         PrintOptions {
             target,
             module: ModuleKind::UMD,
+            es_module_interop: true,
             ..Default::default()
         },
     )
@@ -70,6 +83,7 @@ fn amd(source: &str) -> String {
         PrintOptions {
             target: ScriptTarget::ES2017,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     )
@@ -81,6 +95,21 @@ fn system(source: &str) -> String {
         PrintOptions {
             target: ScriptTarget::ES2017,
             module: ModuleKind::System,
+            es_module_interop: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// Emit with `esModuleInterop` off (tsc's default), used by the interop-gate
+/// tests at the end of this file.
+fn emit_no_interop(source: &str, module: ModuleKind, target: ScriptTarget) -> String {
+    emit(
+        source,
+        PrintOptions {
+            target,
+            module,
+            es_module_interop: false,
             ..Default::default()
         },
     )
@@ -488,6 +517,7 @@ fn async_lowered_cjs_es5_uses_function_form() {
         PrintOptions {
             target: ScriptTarget::ES5,
             module: ModuleKind::CommonJS,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -511,6 +541,7 @@ fn async_lowered_amd_es5_uses_function_form() {
         PrintOptions {
             target: ScriptTarget::ES5,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -533,6 +564,7 @@ fn async_lowered_amd_es2015_uses_arrow_form() {
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -554,6 +586,7 @@ fn async_lowered_umd_es5_uses_function_form_in_both_branches() {
         PrintOptions {
             target: ScriptTarget::ES5,
             module: ModuleKind::UMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -577,6 +610,7 @@ fn async_lowered_umd_es2015_uses_arrow_form_in_both_branches() {
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::UMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -598,6 +632,7 @@ fn async_lowered_amd_es2016_uses_arrow_form() {
         PrintOptions {
             target: ScriptTarget::ES2016,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -615,6 +650,7 @@ fn async_lowered_arrow_form_rule_is_structural_not_name_sensitive() {
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -641,6 +677,7 @@ fn nested_class_async_method_amd_es5_uses_function_form() {
         PrintOptions {
             target: ScriptTarget::ES5,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -662,6 +699,7 @@ fn nested_class_async_method_amd_es2015_uses_arrow_form() {
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -684,6 +722,7 @@ fn namespace_class_async_method_amd_es5_uses_function_form() {
         PrintOptions {
             target: ScriptTarget::ES5,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -705,6 +744,7 @@ fn namespace_class_async_method_amd_es2015_uses_arrow_form() {
         PrintOptions {
             target: ScriptTarget::ES2015,
             module: ModuleKind::AMD,
+            es_module_interop: true,
             ..Default::default()
         },
     );
@@ -716,4 +756,112 @@ fn namespace_class_async_method_amd_es2015_uses_arrow_form() {
         !out.contains("new Promise(function (resolve_"),
         "Namespace class async method at ES2015 must not emit function() form.\nOutput:\n{out}"
     );
+}
+
+// --- esModuleInterop gate: interop OFF emits bare require / Promise ----------
+// tsc default (`--esModuleInterop false`) does not wrap the dynamic `require`
+// in `__importStar`, and AMD/UMD drop the trailing `.then(__importStar)`.
+
+#[test]
+fn cjs_string_literal_no_interop_emits_bare_require() {
+    let out = emit_no_interop(
+        "const m = import(\"./dep\");",
+        ModuleKind::CommonJS,
+        ScriptTarget::ES2022,
+    );
+    assert!(
+        out.contains("Promise.resolve().then(() => require(\"./dep\"))"),
+        "interop-off CJS string-literal import should be a bare require.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__importStar"),
+        "no __importStar wrapper.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_identifier_no_interop_emits_bare_require() {
+    let out = emit_no_interop(
+        "declare const p: string; const m = import(p);",
+        ModuleKind::CommonJS,
+        ScriptTarget::ES2022,
+    );
+    assert!(
+        out.contains("Promise.resolve(`${p}`).then(s => require(s))"),
+        "interop-off CJS identifier import should coerce then bare require.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__importStar"),
+        "no __importStar wrapper.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn cjs_es5_no_interop_emits_bare_require_function_form() {
+    let out = emit_no_interop(
+        "const m = import(\"./dep\");",
+        ModuleKind::CommonJS,
+        ScriptTarget::ES5,
+    );
+    assert!(
+        out.contains("Promise.resolve().then(function () { return require(\"./dep\"); })"),
+        "interop-off ES5 CJS import should be a bare require function form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__importStar"),
+        "no __importStar wrapper.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn amd_no_interop_drops_then_import_star() {
+    let out = emit_no_interop(
+        "const m = import(\"./dep\");",
+        ModuleKind::AMD,
+        ScriptTarget::ES2017,
+    );
+    assert!(
+        out.contains(
+            "new Promise((resolve_1, reject_1) => { require([\"./dep\"], resolve_1, reject_1); })"
+        ),
+        "interop-off AMD import should emit the bare Promise form.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains(".then(__importStar)"),
+        "interop-off AMD import must not append .then(__importStar).\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn umd_no_interop_drops_import_star_in_both_branches() {
+    let out = emit_no_interop(
+        "const m = import(\"./dep\");",
+        ModuleKind::UMD,
+        ScriptTarget::ES2017,
+    );
+    assert!(
+        out.contains("__syncRequire ? Promise.resolve().then(() => require(\"./dep\")) : new Promise((resolve_1, reject_1) => { require([\"./dep\"], resolve_1, reject_1); })"),
+        "interop-off UMD import should drop __importStar in both branches.\nOutput:\n{out}"
+    );
+    assert!(
+        !out.contains("__importStar"),
+        "no __importStar anywhere.\nOutput:\n{out}"
+    );
+}
+
+#[test]
+fn interop_off_rule_is_independent_of_specifier_name() {
+    // The gate is structural (esModuleInterop), not keyed on the specifier name.
+    let a = emit_no_interop(
+        "const m = import(\"./alpha\");",
+        ModuleKind::CommonJS,
+        ScriptTarget::ES2022,
+    );
+    let b = emit_no_interop(
+        "const m = import(\"./zeta\");",
+        ModuleKind::CommonJS,
+        ScriptTarget::ES2022,
+    );
+    assert!(a.contains("require(\"./alpha\")") && !a.contains("__importStar"));
+    assert!(b.contains("require(\"./zeta\")") && !b.contains("__importStar"));
 }

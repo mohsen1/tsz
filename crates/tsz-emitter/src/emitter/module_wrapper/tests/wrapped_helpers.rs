@@ -10,6 +10,10 @@ fn emit_wrapped(source: &str, module: ModuleKind, target: ScriptTarget) -> Strin
     let options = PrinterOptions {
         module,
         target,
+        // These tests assert the `__importStar`-wrapped dynamic-import form,
+        // which tsc emits only under `esModuleInterop`. Exercise interop-on here;
+        // the interop-off (bare `require`) form is covered by dedicated tests.
+        es_module_interop: true,
         ..Default::default()
     };
     let ctx = EmitContext::with_options(options.clone());

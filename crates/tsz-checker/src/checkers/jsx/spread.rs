@@ -184,7 +184,11 @@ impl<'a> CheckerState<'a> {
             Some(display) if !display.is_empty() => display.to_string(),
             _ => {
                 let props_display_type = self.strip_jsx_children_injection_for_display(props_type);
-                self.format_type(props_display_type)
+                // When the props target is (or aliases to) an unevaluated
+                // `LibraryManagedAttributes` conditional, render its resolved
+                // props object — never the raw conditional (issue #14817).
+                self.jsx_managed_conditional_props_display(props_display_type)
+                    .unwrap_or_else(|| self.format_type(props_display_type))
             }
         };
 

@@ -210,6 +210,16 @@ impl RelationFailure {
                     target_count,
                 }
             }
+            // Open-array source provides no value for a required/variadic tuple
+            // slot (`TS2623`/`TS2624`). This buckets into the arity family for
+            // classification only; the live elaboration (including the failing
+            // position and the required-vs-variadic distinction) is rendered from
+            // the solver reason directly, so the exact element counts are not
+            // modeled here.
+            SubtypeFailureReason::SourceProvidesNoMatch { .. } => Self::TupleArityMismatch {
+                source_count: 0,
+                target_count: 0,
+            },
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,

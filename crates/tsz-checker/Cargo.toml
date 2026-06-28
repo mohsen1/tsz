@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "union_overloaded_member_call_signatures_tests"
+path = "tests/union_overloaded_member_call_signatures_tests.rs"
+[[test]]
 name = "delete_narrowing_reset_tests"
 path = "tests/delete_narrowing_reset_tests.rs"
 [[test]]
@@ -221,6 +224,9 @@ path = "tests/tuple_argument_mismatch_elaboration_tests.rs"
 [[test]]
 name = "tuple_call_argument_elaboration_tests"
 path = "tests/tuple_call_argument_elaboration_tests.rs"
+[[test]]
+name = "array_source_tuple_target_elaboration_tests"
+path = "tests/array_source_tuple_target_elaboration_tests.rs"
 [[test]]
 name = "for_await_type_parameter_iterability_tests"
 path = "tests/for_await_type_parameter_iterability_tests.rs"

@@ -1518,12 +1518,20 @@ impl<'a> LoweringPass<'a> {
             );
         }
 
-        // CJS-like dynamic import: import("mod") needs __importStar helper.
+        // CJS-like dynamic import: import("mod") lowers to
+        // `Promise.resolve().then(() => require(...))`. The `require` is wrapped
+        // in `__importStar` (which pulls in `__createBinding`/`__setModuleDefault`)
+        // ONLY when `esModuleInterop` is enabled, matching tsc's
+        // `createImportCallExpressionCommonJS`/`AMD`. With interop off, the bare
+        // `require(...)` form is emitted and these helpers are dead code, so they
+        // must not be requested here (otherwise ~33 lines of unused helper
+        // prologue leak into the output).
         // `--module none --outFile` uses the same lowering below native
         // dynamic import support without promoting the script to CJS.
-        // This applies regardless of esModuleInterop setting.
         // Skip for node module CJS files where native import() is supported.
-        if (self.commonjs_mode || (self.ctx.module_none_out_file && self.ctx.needs_es2020_lowering))
+        if self.ctx.options.es_module_interop
+            && (self.commonjs_mode
+                || (self.ctx.module_none_out_file && self.ctx.needs_es2020_lowering))
             && !self.ctx.options.resolved_node_module_to_cjs
             && !is_super_call
             && let Some(expr_node) = self.arena.get(call.expression)

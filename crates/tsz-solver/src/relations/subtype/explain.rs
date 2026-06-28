@@ -10,8 +10,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleListId, TypeId,
-    Visibility,
+    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement,
+    TupleListId, TypeId, Visibility,
 };
 use crate::utils;
 use crate::visitor::is_type_parameter;
@@ -59,6 +59,47 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             readonly_inner_type(self.interner, ty)
                 .and_then(|inner| tuple_list_id(self.interner, inner))
         })
+    }
+
+    /// First target tuple position an unbounded array source cannot satisfy,
+    /// modeling the source as an all-rest slot list (`[...E[]]`).
+    ///
+    /// The array guarantees no value at any fixed position, so the first
+    /// *required* element yields the `TS2623` reason — including a required
+    /// element that trails a rest (`[...number[], string]` reports position
+    /// `1`) — and a *variadic* spread (`...T`, a non-array rest) yields
+    /// `TS2624`. A plain array rest (`...E[]`) is filled by the source spread,
+    /// so the scan skips past it (rather than stopping) to reach any trailing
+    /// required slot; optional elements may be legitimately omitted, so they are
+    /// skipped too. Returns `None` when no such position exists (e.g. an
+    /// all-optional or pure-array-rest target), so the caller falls through to
+    /// element-type elaboration without altering the established reason. (#14816)
+    fn array_source_tuple_position_no_match(
+        &self,
+        target: &[TupleElement],
+    ) -> Option<SubtypeFailureReason> {
+        for (position, elem) in target.iter().enumerate() {
+            if elem.rest {
+                // A concrete array rest (`...E[]`) is covered by the source
+                // spread, so keep scanning for a trailing required slot; a
+                // variadic spread of a generic/tuple (`...T`) is not coverable
+                // and fails at its own position.
+                if array_element_type(self.interner, elem.type_id).is_none() {
+                    return Some(SubtypeFailureReason::SourceProvidesNoMatch {
+                        position,
+                        variadic: true,
+                    });
+                }
+            } else if elem.is_required() {
+                return Some(SubtypeFailureReason::SourceProvidesNoMatch {
+                    position,
+                    variadic: false,
+                });
+            }
+            // An optional element may be legitimately omitted by the source, so
+            // it does not force a match; keep scanning.
+        }
+        None
     }
 
     fn shape_or_type_requires_declared_index_signature(
@@ -875,6 +916,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     source_type: source,
                     target_type: target,
                 });
+            }
+        }
+
+        // Array source vs Tuple target: an unbounded array can never
+        // structurally satisfy a tuple's fixed slots. tsc reports the
+        // closed-target arity gap (`TS2620`/`TS2621`) when the target has no
+        // rest element, and otherwise the first required/variadic position the
+        // open source cannot pin (`TS2623`/`TS2624`). The boolean relation has
+        // already rejected; this only synthesizes the matching reason chain
+        // (the tuple-vs-tuple path below never fires for a non-tuple source). (#14816)
+        if let Some(s_elem) = self.array_element_peeling_readonly(resolved_source)
+            && let Some(t_tuple_id) = self
+                .tuple_list_peeling_readonly(target)
+                .or_else(|| self.tuple_list_peeling_readonly(resolved_target))
+        {
+            let t_elems = self.interner.tuple_list(t_tuple_id);
+            if t_elems.iter().any(|elem| elem.rest) {
+                // The target carries a rest element, so tsc's closed-target
+                // arity gate does not fire; report the first required/variadic
+                // slot the open source cannot pin (`TS2623`/`TS2624`).
+                if let Some(reason) = self.array_source_tuple_position_no_match(&t_elems) {
+                    return Some(reason);
+                }
+            } else {
+                // Closed target: an open array can never satisfy a fixed tuple.
+                // Drive the shared arity classifier with the source modeled as a
+                // single rest slot `[...E[]]` (`source_min == 0`). The classifier
+                // inspects only the rest flag and required counts — never the
+                // element type — so it yields the same `TS2620`/`TS2621` reason a
+                // variadic-tuple source would, keeping parity with that path.
+                let synthetic_source = [TupleElement::rest(s_elem)];
+                if let Some(arity) = utils::classify_tuple_arity(&synthetic_source, &t_elems) {
+                    return Some(SubtypeFailureReason::TupleArityMismatch(arity));
+                }
             }
         }
 

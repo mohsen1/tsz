@@ -352,10 +352,63 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render the resolved props object for a JSX component-prop diagnostic
+    /// target whose semantic type is (or aliases to) an *unevaluated*
+    /// `LibraryManagedAttributes` conditional.
+    ///
+    /// `LibraryManagedAttributes<C, P>` whose body is a conditional (React's
+    /// `… extends MemoExoticComponent<…> ? … : ReactManagedAttributes<…>`, or a
+    /// minimal `C extends (props: infer Q) => any ? Q : P`) is preserved by the
+    /// solver in its unevaluated form for contextual inference, while its
+    /// *apparent* type is the concrete props object the relation actually
+    /// compares against. `tsc` always prints that resolved props object, never
+    /// the raw conditional. Two shapes reach the display layer:
+    ///
+    /// * the props already materialized to an object, but the object carries the
+    ///   inline conditional as its `display_alias` (the explicit-attrs / TS2741
+    ///   path), and
+    /// * the props is still the bare inline conditional whose apparent type is an
+    ///   object (the whole-object / spread assignability path).
+    ///
+    /// In both cases render the structural object, skipping the inline-conditional
+    /// alias. The gate is structural — it fires only for an inline `Conditional`
+    /// (`TypeData::Conditional`). Named aliases (`Lazy(DefId)` references to
+    /// interfaces / type aliases) and `LibraryManagedAttributes<…>` application
+    /// surfaces are not inline conditionals, so they keep their existing display
+    /// paths and legitimate alias names are preserved.
+    pub(in crate::checkers_domain::jsx) fn jsx_managed_conditional_props_display(
+        &mut self,
+        props_type: TypeId,
+    ) -> Option<String> {
+        use crate::query_boundaries::common::{get_conditional_type_id, object_shape_for_type};
+
+        // Materialized object whose display alias is an inline conditional.
+        if let Some(alias) = self.ctx.types.get_display_alias(props_type)
+            && get_conditional_type_id(self.ctx.types, alias).is_some()
+            && object_shape_for_type(self.ctx.types, props_type).is_some()
+        {
+            return Some(self.format_type_skip_object_display_alias(props_type));
+        }
+
+        // Bare inline conditional whose apparent type is a props object.
+        if get_conditional_type_id(self.ctx.types, props_type).is_some()
+            && let Some(shape) = object_shape_for_type(self.ctx.types, props_type)
+        {
+            let object = self.ctx.types.factory().object(shape.properties.clone());
+            return Some(self.format_type_skip_object_display_alias(object));
+        }
+
+        None
+    }
+
     pub(in crate::checkers_domain::jsx) fn jsx_library_managed_structural_props_display(
         &mut self,
         props_type: TypeId,
     ) -> Option<String> {
+        if let Some(display) = self.jsx_managed_conditional_props_display(props_type) {
+            return Some(display);
+        }
+
         let raw_display = self.format_type(props_type);
         if let Some(display) =
             Self::jsx_library_managed_application_simplified_display(&raw_display)

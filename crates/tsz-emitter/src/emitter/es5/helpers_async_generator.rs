@@ -34,6 +34,7 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        transformer.set_es_module_interop(self.ctx.options.es_module_interop);
         transformer.set_target_es5(self.ctx.target_es5);
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         transformer
