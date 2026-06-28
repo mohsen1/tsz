@@ -511,21 +511,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Drain the evaluator's internal cache, returning all intermediate results.
-    /// This allows callers to persist intermediate evaluation results
-    /// (e.g., from recursive mapped type expansion) into a longer-lived cache.
-    ///
-    /// Callers persisting these into a cache whose key does not capture the
-    /// ambient stack depth must filter out limit-truncated entries via
-    /// [`take_tainted`](Self::take_tainted).
+    /// This is for callers that inspect or discard entries. Callers persisting
+    /// results into a cache whose key does not capture the ambient stack depth
+    /// should use [`drain_stable_cache`](Self::drain_stable_cache).
     pub fn drain_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
         self.cache.drain()
     }
 
-    /// Take the set of cache entries whose values are limit-truncated
-    /// stack-context artifacts (see the `tainted` field). Pair with
-    /// [`drain_cache`](Self::drain_cache) to persist only stable entries.
-    pub(crate) fn take_tainted(&mut self) -> FxHashSet<TypeId> {
-        std::mem::take(&mut self.tainted)
+    /// Drain only cache entries whose values are stable functions of their
+    /// input `TypeId`.
+    ///
+    /// This filters out entries whose values are limit-truncated stack-context
+    /// artifacts, which must not be persisted into evaluator caches keyed only
+    /// by `TypeId`.
+    pub fn drain_stable_cache(&mut self) -> impl Iterator<Item = (TypeId, TypeId)> + '_ {
+        let tainted = std::mem::take(&mut self.tainted);
+        self.cache
+            .drain()
+            .filter(move |(type_id, _)| !tainted.contains(type_id))
     }
 
     /// Whether `type_id`'s memoized value is a limit-truncated artifact.
