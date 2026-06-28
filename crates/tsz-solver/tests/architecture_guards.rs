@@ -191,6 +191,13 @@ fn read_solver_source(rel: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
 }
 
+fn read_solver_test(rel: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join(rel);
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+}
+
 #[test]
 fn evaluation_engine_keeps_request_stage_boundary() {
     let mod_rs = read_solver_source("evaluation/mod.rs");
@@ -201,6 +208,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
+    let iteration_incomplete_tests =
+        read_solver_test("evaluate_tests_parts/iteration_exceeded_incomplete.rs");
 
     assert!(
         mod_rs.contains("pub mod request;"),
@@ -245,6 +254,13 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && !query_cache_rs
                 .contains("evaluation_result.is_complete() && !evaluator.recursion_limit_hit()"),
         "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and consume EvaluationMemoResult stability instead of rebuilding termination predicates"
+    );
+    assert!(
+        evaluate_rs
+            .contains("fn request_result_for_test(&self, type_id: TypeId) -> EvaluationResult")
+            && iteration_incomplete_tests.contains("request_result_for_test(TypeId::ERROR)")
+            && !iteration_incomplete_tests.contains("evaluator.request_termination_kind"),
+        "typed request-verdict tests must consume EvaluationResult through the evaluator boundary instead of reading the raw request_termination_kind slot"
     );
 }
 

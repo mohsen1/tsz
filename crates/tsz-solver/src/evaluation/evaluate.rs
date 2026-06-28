@@ -927,6 +927,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.request_termination_kind = Some(kind);
     }
 
+    /// Test hook: expose the typed request-result boundary without exposing the
+    /// raw per-request verdict slot.
+    #[cfg(test)]
+    pub(crate) const fn request_result_for_test(&self, type_id: TypeId) -> EvaluationResult {
+        request_result_verdict(type_id, self.request_termination_kind)
+    }
+
     /// Global thread-local depth counter for cross-evaluator stack overflow
     /// prevention. Each `SubtypeChecker::evaluate_type` creates a fresh
     /// `TypeEvaluator`, but the OS stack accumulates across ALL of them: deep
