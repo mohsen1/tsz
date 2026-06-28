@@ -925,21 +925,17 @@ impl<'a> AstToIr<'a> {
     /// `(_a = base).p` needs it; an index capture `base[_b = idx]` does not).
     fn temp_ref_and_target(
         &self,
-        temp: &Option<String>,
+        temp: Option<&String>,
         expr_idx: NodeIndex,
         paren: bool,
     ) -> (IRNode, IRNode) {
-        match temp {
-            Some(t) => {
-                let assign =
-                    IRNode::assign(IRNode::id(t.clone()), self.convert_expression(expr_idx));
-                let reference = if paren { assign.paren() } else { assign };
-                (reference, IRNode::id(t.clone()))
-            }
-            None => {
-                let expr = self.convert_expression(expr_idx);
-                (expr.clone(), expr)
-            }
+        if let Some(t) = temp {
+            let assign = IRNode::assign(IRNode::id(t.clone()), self.convert_expression(expr_idx));
+            let reference = if paren { assign.paren() } else { assign };
+            (reference, IRNode::id(t.clone()))
+        } else {
+            let expr = self.convert_expression(expr_idx);
+            (expr.clone(), expr)
         }
     }
 
@@ -1104,11 +1100,12 @@ impl<'a> AstToIr<'a> {
 
         // The base reference is parenthesized when captured (`(_a = base).p`);
         // an element index assignment is not (`base[_b = idx]`).
-        let (ref_base, target_base) = self.temp_ref_and_target(&base_temp, access.expression, true);
+        let (ref_base, target_base) =
+            self.temp_ref_and_target(base_temp.as_ref(), access.expression, true);
 
         let (reference, target) = if is_element {
             let (ref_index, target_index) =
-                self.temp_ref_and_target(&index_temp, access.name_or_argument, false);
+                self.temp_ref_and_target(index_temp.as_ref(), access.name_or_argument, false);
             (
                 IRNode::elem(ref_base, ref_index),
                 IRNode::elem(target_base, target_index),
