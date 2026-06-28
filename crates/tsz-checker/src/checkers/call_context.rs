@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             (
-                func.parameters.nodes.iter().copied().collect(),
+                func.parameters.nodes.to_vec(),
                 func.type_annotation.is_some(),
                 func.equals_greater_than_token,
                 func.body,
@@ -844,7 +844,7 @@ impl<'a> CheckerState<'a> {
             let Some(obj) = self.ctx.arena.get_literal_expr(body_node) else {
                 return false;
             };
-            obj.elements.nodes.iter().copied().collect()
+            obj.elements.nodes.to_vec()
         };
         if element_indices.is_empty() {
             return false;
