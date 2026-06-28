@@ -23,6 +23,16 @@ const REQUIRED_PROJECT_ROWS = ALL_REQUIRED_PROJECT_ROWS.filter(
 const APPLICATION_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
   .filter((row) => row.category === "application")
   .map((row) => row.name);
+// The --require-green-project-timing-pairs gate only flags rows that are
+// perf_timed. A green-compat application row that is *not* perf_timed (its
+// vs-tsgo perf benchmark legitimately errors, e.g. infisical) must not be
+// counted as a missing timing-pair gap.
+const PERF_TIMED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application" && row.perf_timed === true)
+  .map((row) => row.name);
+const NON_PERF_TIMED_APPLICATION_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.category === "application" && row.perf_timed !== true)
+  .map((row) => row.name);
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -525,11 +535,20 @@ withTempDir((dir) => {
   assert.equal(result.status, 1, "green compile-only perf-timed rows should fail the chart timing gate");
   const parsed = JSON.parse(result.stdout.trim());
   assert.equal(parsed.require_green_project_timing_pairs, true);
-  assert.equal(parsed.green_project_timing_pair_gaps, APPLICATION_PROJECT_ROWS.length);
+  // Only perf_timed application rows are required to have a chart; non-perf-timed
+  // canary apps (whose perf benchmark errors) are tracked for compat only.
+  assert.equal(parsed.green_project_timing_pair_gaps, PERF_TIMED_APPLICATION_ROWS.length);
+  const gapRowNames = parsed.green_project_timing_pair_gap_rows.map((r) => r.name);
+  for (const name of NON_PERF_TIMED_APPLICATION_ROWS) {
+    assert.ok(
+      !gapRowNames.includes(name),
+      `non-perf-timed canary app ${name} must not be flagged as a missing timing-pair gap`,
+    );
+  }
   assert.match(result.stderr, /green perf-timed project row\(s\) missing tsz\/tsgo timing pairs/);
-  assert.match(result.stderr, new RegExp(APPLICATION_PROJECT_ROWS[0]));
+  assert.match(result.stderr, new RegExp(PERF_TIMED_APPLICATION_ROWS[0]));
 });
-console.log("✅ --require-green-project-timing-pairs rejects green app rows without charts");
+console.log("✅ --require-green-project-timing-pairs rejects green perf-timed app rows without charts");
 
 // ---------------------------------------------------------------------------
 // Test: --require-green-project-timing-pairs accepts green perf-timed rows once
@@ -550,6 +569,52 @@ withTempDir((dir) => {
   assert.equal(parsed.green_project_timing_pair_gaps, 0);
 });
 console.log("✅ --require-green-project-timing-pairs accepts green timed app rows");
+
+// ---------------------------------------------------------------------------
+// Regression: a green-compat canary application row that is NOT perf_timed
+// (its vs-tsgo perf benchmark errors, e.g. infisical) must not block
+// --require-green-project-timing-pairs. The compat row is still authoritative;
+// only perf-timed rows owe a tsz/tsgo timing pair. This pins the fix for the
+// Bench publish gate failing ~70% of runs on "1 green perf-timed project
+// row(s) missing tsz/tsgo timing pairs: infisical-project".
+// ---------------------------------------------------------------------------
+if (NON_PERF_TIMED_APPLICATION_ROWS.length > 0) {
+  withTempDir((dir) => {
+    const file = path.join(dir, "bench.json");
+    const requiredRows = REQUIRED_PROJECT_ROWS.map((name) => makeRow(name, "green"));
+    const perfTimedAppRows = PERF_TIMED_APPLICATION_ROWS.map((name) => makeRow(name, "green"));
+    // Green compatibility, but the perf benchmark errored: no tsz/tsgo timing.
+    const nonPerfTimedAppRows = NON_PERF_TIMED_APPLICATION_ROWS.map((name) =>
+      makeRow(name, "green", {
+        errorStatus: "compile canary tracked in CI; perf benchmark errored",
+        tsz_ms: null,
+        tsgo_ms: null,
+        winner: "error",
+      }),
+    );
+    writeJson(file, makeArtifact([...requiredRows, ...perfTimedAppRows, ...nonPerfTimedAppRows]));
+    const result = run(file, [
+      "--json",
+      "--require-application-compat",
+      "--require-green-project-timing-pairs",
+    ]);
+    assert.equal(
+      result.status,
+      0,
+      `green non-perf-timed canary app rows must not block the timing gate:\n${result.stderr}`,
+    );
+    const parsed = JSON.parse(result.stdout.trim());
+    assert.equal(parsed.green_project_timing_pair_gaps, 0);
+    const gapRowNames = parsed.green_project_timing_pair_gap_rows.map((r) => r.name);
+    for (const name of NON_PERF_TIMED_APPLICATION_ROWS) {
+      assert.ok(
+        !gapRowNames.includes(name),
+        `non-perf-timed canary app ${name} must not be a timing-pair gap`,
+      );
+    }
+  });
+  console.log("✅ --require-green-project-timing-pairs ignores green non-perf-timed canary app rows");
+}
 
 // ---------------------------------------------------------------------------
 // Test: complete gray application compatibility is still authoritative data.
