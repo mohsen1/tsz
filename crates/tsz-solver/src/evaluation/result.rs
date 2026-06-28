@@ -122,6 +122,11 @@ impl EvaluationResult {
         self.termination
     }
 
+    /// Whether this walk completed without a guard-truncated verdict.
+    pub const fn is_complete(self) -> bool {
+        matches!(self.termination, Termination::Complete)
+    }
+
     /// Whether a guard cut this walk short.
     pub const fn is_incomplete(self) -> bool {
         matches!(self.termination, Termination::Incomplete { .. })
@@ -152,6 +157,7 @@ mod tests {
         assert_eq!(result.type_id(), TypeId::STRING);
         assert_eq!(result.into_type_id(), TypeId::STRING);
         assert_eq!(result.termination(), Termination::Complete);
+        assert!(result.is_complete());
         assert!(!result.is_incomplete());
         assert!(result.is_identity_for(TypeId::STRING));
         assert!(!result.is_identity_for(TypeId::NUMBER));
@@ -164,6 +170,7 @@ mod tests {
         // identical for every kind.
         let result = EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
 
+        assert!(!result.is_complete());
         assert!(result.is_incomplete());
         // `into_type_id` returns the relation-preserving partial regardless of
         // the verdict — the same collapse every consumer performs today.
