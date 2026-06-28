@@ -563,11 +563,18 @@ impl<'a> CheckerState<'a> {
                         // push a synthetic `this` type so that `this` inside the function body
                         // resolves to the object literal's type rather than `any`.
                         // Arrow functions inherit `this` from the enclosing scope, so they
-                        // must NOT get a synthetic `this` push.
+                        // must NOT get a synthetic `this` push. Likewise a function
+                        // expression with an explicit `this:` parameter binds `this`
+                        // to that declared type (tsc's `getThisTypeOfSignature`), so
+                        // the object-literal synthetic `this` must not override it
+                        // (see issue #14843).
+                        let prop_fn_has_explicit_this = initializer_is_function_expression
+                            && self.function_like_has_explicit_this_parameter(prop.initializer);
                         let mut pushed_prop_fn_this = false;
                         if initializer_is_function_expression
                             && marker_this_type.is_none()
                             && self.current_this_type().is_none()
+                            && !prop_fn_has_explicit_this
                         {
                             if let Some(receiver_this_type) = contextual_receiver_this_type {
                                 self.ctx.this_type_stack.push(receiver_this_type);
@@ -1452,7 +1459,22 @@ impl<'a> CheckerState<'a> {
                     // contextual type as `this` inside method bodies.
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
-                    if marker_this_type.is_none() && self.current_this_type().is_none() {
+                    // An explicit `this:` parameter binds `this` to exactly that
+                    // type (tsc's `getThisTypeOfSignature`), independent of the
+                    // enclosing object literal. Pushing the synthetic
+                    // object-literal `this` here would (1) print the wrong
+                    // receiver for a genuine TS2339 on `this.<absentMember>` and
+                    // (2) trip `method_return_this_circularity` below — which is
+                    // gated on `pushed_synthetic_this` — into a spurious TS7023.
+                    // The body-check pass (`implicit_function_this_type`) already
+                    // establishes the explicit `this:` type, so leaving the stack
+                    // untouched here is sufficient. See issue #14843.
+                    let method_has_explicit_this =
+                        self.function_like_has_explicit_this_parameter(elem_idx);
+                    if marker_this_type.is_none()
+                        && self.current_this_type().is_none()
+                        && !method_has_explicit_this
+                    {
                         // Prefer the method's contextual `this` type (e.g., from an
                         // interface declaration `(this: { options: T }) => R`) over the
                         // outer object's contextual type. This ensures that in Round 2 of

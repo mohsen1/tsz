@@ -137,3 +137,170 @@ class Consumer {
         "expected no diagnostics when this annotation refers to a differently-named class; got {codes:?}"
     );
 }
+
+// --- Issue #14843 -----------------------------------------------------------
+// An object-literal method with an explicit `this:` parameter and NO return
+// annotation must resolve `this` against that declared parameter type during
+// speculative return-type inference (tsc's `getThisTypeOfSignature`), not
+// against the in-construction object-literal type. Otherwise an absent member
+// access re-enters the method being inferred (spurious TS7023) and the TS2339
+// "property does not exist" prints the object literal instead of the `this:`
+// type.
+
+use crate::test_utils::check_source_strict_messages;
+
+/// Assert that `source` produces exactly one TS2339 whose displayed receiver is
+/// `expected_receiver` and no TS7023 — the fixed shape for an explicit-`this:`
+/// member accessing a member absent on the declared receiver.
+fn assert_single_ts2339_on_receiver(source: &str, expected_receiver: &str) {
+    let diags = check_source_strict_messages(source);
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 7023),
+        "explicit `this:` must not produce a spurious TS7023; got {diags:?}"
+    );
+    let ts2339: Vec<&String> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, msg)| msg)
+        .collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "expected exactly one TS2339 for the absent member; got {diags:?}"
+    );
+    assert!(
+        ts2339[0].contains(expected_receiver),
+        "TS2339 receiver must be the explicit `this:` type {expected_receiver}; got {:?}",
+        ts2339[0]
+    );
+}
+
+#[test]
+fn object_literal_method_explicit_this_no_spurious_circular_return() {
+    // Witness A: `x` exists on the object literal but not on `Ctx`.
+    // tsc 5.9.3: a single TS2339 against `Ctx`; tsz previously added TS7023 and
+    // printed the object-literal type as the receiver.
+    assert_single_ts2339_on_receiver(
+        r#"
+interface Ctx { kind: string; }
+const obj = {
+  x: 1,
+  bad(this: Ctx) { return this.x; }
+};
+"#,
+        "'Ctx'",
+    );
+}
+
+#[test]
+fn object_literal_method_explicit_this_void_no_spurious_circular_return() {
+    // Witness B: `this: void`, member on neither side.
+    assert_single_ts2339_on_receiver(
+        r#"
+const obj2 = {
+  x: 1,
+  bad(this: void) { return this.x; }
+};
+"#,
+        "'void'",
+    );
+}
+
+#[test]
+fn object_literal_method_explicit_this_member_present_is_clean() {
+    // Control from the triage note: when the member is present on the `this:`
+    // type both tools are clean — must remain clean.
+    let diags = check_source_strict_messages(
+        r#"
+interface Ctx { x: number; }
+const obj = { x: 1, bad(this: Ctx) { return this.x; } };
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "member present on the `this:` type must be clean; got {diags:?}"
+    );
+}
+
+#[test]
+fn object_literal_method_explicit_inline_this_resolves_members() {
+    // The explicit `this:` may be an inline object type whose member differs
+    // from the object literal; it must resolve against the inline type.
+    let diags = check_source_strict_messages(
+        r#"
+const obj = { x: 1, bad(this: { y: string }) { return this.y; } };
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "inline explicit `this:` member access must resolve cleanly; got {diags:?}"
+    );
+}
+
+#[test]
+fn object_literal_getter_genuine_self_reference_still_reports_circular() {
+    // Negative case: a getter with NO explicit `this:` that genuinely references
+    // its own inferred return type must still report TS7023.
+    let diags = check_source_strict_messages(
+        r#"
+const obj = {
+  get x() { return this.x + 1; }
+};
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 7023),
+        "genuine getter self-reference must still report TS7023; got {diags:?}"
+    );
+}
+
+#[test]
+fn class_method_explicit_this_void_absent_member_reports_on_void() {
+    // Adjacent: class method with explicit `this:` was already correct and must
+    // stay correct (single TS2339 on `void`, no TS7023).
+    assert_single_ts2339_on_receiver(
+        r#"
+class C {
+  x = 1;
+  bad(this: void) { return this.x; }
+}
+"#,
+        "'void'",
+    );
+}
+
+#[test]
+fn standalone_function_explicit_this_void_absent_member_reports_on_void() {
+    assert_single_ts2339_on_receiver("function bad(this: void) { return this.x; }\n", "'void'");
+}
+
+#[test]
+fn object_literal_function_property_explicit_this_no_spurious_circular_return() {
+    // The same rule applies to a `function`-expression property (not just method
+    // shorthand): an explicit `this:` parameter governs `this`, so an absent
+    // member reports a single TS2339 against the declared type with no TS7023.
+    assert_single_ts2339_on_receiver(
+        r#"
+interface Ctx { kind: string; }
+const obj = {
+  x: 1,
+  bad: function (this: Ctx) { return this.x; }
+};
+"#,
+        "'Ctx'",
+    );
+}
+
+#[test]
+fn object_literal_function_property_explicit_this_member_present_is_clean() {
+    let diags = check_source_strict_messages(
+        r#"
+interface Ctx { x: number; }
+const obj = { x: 1, bad: function (this: Ctx) { return this.x; } };
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "function-expression property with member present on `this:` must be clean; got {diags:?}"
+    );
+}
