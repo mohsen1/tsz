@@ -233,8 +233,7 @@ fn array_source_mapping_call_keeps_concrete_headline_with_arity_subline() {
         2322,
     );
     assert_eq!(
-        diagnostic.message_text,
-        "Type 'string[]' is not assignable to type '[any, any]'.",
+        diagnostic.message_text, "Type 'string[]' is not assignable to type '[any, any]'.",
         "array-source mapping headline must stay 'string[]', not the recovered 'any[]'",
     );
     assert!(

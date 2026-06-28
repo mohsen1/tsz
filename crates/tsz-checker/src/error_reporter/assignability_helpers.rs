@@ -84,7 +84,10 @@ impl<'a> CheckerState<'a> {
             // (#14966, mappedTypeWithAny.ts)
             let widened = self.widen_type_for_display(element_type);
             if widened == TypeId::ANY
-                && !matches!(source_element, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+                && !matches!(
+                    source_element,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                )
             {
                 return source;
             }
