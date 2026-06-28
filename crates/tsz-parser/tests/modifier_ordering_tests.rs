@@ -422,3 +422,87 @@ fn accessor_property_keys_off_token_kind_not_member_name() {
         );
     }
 }
+
+// =========================================================================
+// TS1028: Duplicate accessibility modifier — properties AND methods
+//
+// tsc emits TS1028 for a second accessibility modifier on ANY class member
+// (checkGrammarModifiers records each modifier and reports the duplicate
+// without inspecting the member kind). tsz previously suppressed it on
+// property declarations via a method-context lookahead heuristic.
+// =========================================================================
+
+#[test]
+fn duplicate_accessibility_on_property_ts1028() {
+    // Every property form — with/without initializer or type annotation, each
+    // accessibility keyword, and a mixed pair — must emit exactly one TS1028.
+    // This is the path the old method-context lookahead heuristic wrongly
+    // suppressed.
+    for member in [
+        "public public x = 1",
+        "public public x",
+        "public public x: number",
+        "private private y = 1",
+        "protected protected z = 1",
+        "public private mixed = 1",
+    ] {
+        let source = format!("class C {{ {member}; }}");
+        assert_eq!(
+            count_error(&source, 1028),
+            1,
+            "`{member}` should emit exactly one TS1028"
+        );
+    }
+}
+
+#[test]
+fn duplicate_accessibility_on_method_still_ts1028() {
+    // Control: the method/constructor path already fired TS1028 and must not
+    // regress when the lookahead heuristic is removed.
+    assert_eq!(count_error("class C { public public m() {} }", 1028), 1);
+    assert_eq!(
+        count_error("class C { protected protected m() {} }", 1028),
+        1
+    );
+    assert_eq!(
+        count_error("class C { public public constructor() {} }", 1028),
+        1
+    );
+}
+
+#[test]
+fn triple_accessibility_emits_single_ts1028() {
+    // tsc's checkGrammarModifiers `return`s after the first duplicate, so a
+    // third accessibility keyword does not produce a second TS1028.
+    let source = "class C { public public public x = 1; }";
+    assert_eq!(count_error(source, 1028), 1);
+}
+
+#[test]
+fn single_accessibility_no_ts1028() {
+    // No false positive on a lone accessibility modifier.
+    assert!(!has_error("class C { public x = 1; }", 1028));
+    assert!(!has_error("class C { private m() {} }", 1028));
+    assert!(!has_error("class C { protected p: number; }", 1028));
+}
+
+#[test]
+fn duplicate_accessibility_keys_off_token_kind_not_member_name() {
+    // The diagnostic must fire regardless of the property/method identifier,
+    // confirming the parser keys off token kind rather than the binder name.
+    for name in ["a", "myProp", "_x", "$field"] {
+        let prop_src = format!("class C {{ public public {name} = 1; }}");
+        assert_eq!(
+            count_error(&prop_src, 1028),
+            1,
+            "duplicate accessibility on property `{name}` should emit one TS1028"
+        );
+
+        let method_src = format!("class C {{ private private {name}() {{}} }}");
+        assert_eq!(
+            count_error(&method_src, 1028),
+            1,
+            "duplicate accessibility on method `{name}()` should emit one TS1028"
+        );
+    }
+}
