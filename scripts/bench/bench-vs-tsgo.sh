@@ -1796,7 +1796,9 @@ main() {
     run_isolated "typebot-project"                   run_application_project_benchmarks "typebot-project"
     run_isolated "lobe-chat-project"                 run_application_project_benchmarks "lobe-chat-project"
     run_isolated "supabase-studio-project"           run_application_project_benchmarks "supabase-studio-project"
-    run_isolated "infisical-project"                 run_application_project_benchmarks "infisical-project"
+    # infisical-project is perf_timed:false (its vs-tsgo perf benchmark errors).
+    # Compatibility is still tracked via the compile-canary (run_application_row),
+    # so it is intentionally absent from the perf runner. See project-rows.mjs.
     run_isolated "payload-project"                   run_application_project_benchmarks "payload-project"
     run_isolated "medusa-project"                    run_application_project_benchmarks "medusa-project"
     run_isolated "outline-project"                   run_application_project_benchmarks "outline-project"
