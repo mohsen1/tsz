@@ -589,6 +589,27 @@ impl<'a> CheckerState<'a> {
                 _node.kind,
                 syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
             )
+            && let Some(jsdoc) = func_decl_jsdoc.as_ref()
+            && let Some(this_type) = self.resolve_jsdoc_this_type(jsdoc)
+        {
+            // A JSDoc `@this {T}` tag declares the receiver type of a free
+            // function (declaration or expression), mirroring tsc's
+            // `getThisTypeOfSignature`. Seeding the `this` stack makes the
+            // declared receiver authoritative for the whole body so property
+            // READS and WRITES are checked uniformly against it (TS2339).
+            // Without this seed only the `this`-keyword dispatch knew the
+            // type, so reads of an unknown member were silently typed `any`
+            // while writes errored — a read/write asymmetry.
+            self.ctx.this_type_stack.push(this_type);
+            self.ctx.function_owned_this_stack.push(func_idx);
+            pushed_this_type = true;
+        }
+        if !pushed_this_type
+            && self.is_js_file()
+            && matches!(
+                _node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::FUNCTION_EXPRESSION
+            )
             && let Some(this_type) =
                 self.synthesize_js_constructor_instance_type(func_idx, TypeId::ANY, &[])
         {
