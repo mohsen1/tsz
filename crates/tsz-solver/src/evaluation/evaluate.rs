@@ -615,7 +615,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         request: EvaluationRequest,
     ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        EvaluationMemoResult::for_depth_agnostic_memo(result, self.recursion_limit_hit())
+        EvaluationMemoResult::for_depth_agnostic_memo(
+            result,
+            self.request_state_is_depth_agnostic_cache_stable(),
+        )
+    }
+
+    /// Whether the current request state is stable enough for depth-agnostic
+    /// cache publication.
+    ///
+    /// This centralizes the #14346 transition from loose evaluator flags to the
+    /// typed request verdict. A typed incomplete verdict catches guard bails
+    /// that the legacy sticky flags did not fully model (for example
+    /// fuel/query-budget bails). The legacy [`Self::recursion_limit_hit`]
+    /// backstop remains until every recursion-taint class is owned by the typed
+    /// termination channel.
+    #[inline]
+    pub(crate) const fn request_state_is_depth_agnostic_cache_stable(&self) -> bool {
+        !self.has_incomplete_request_verdict() && !self.recursion_limit_hit()
     }
 
     // =========================================================================

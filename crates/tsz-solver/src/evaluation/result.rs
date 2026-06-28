@@ -149,8 +149,8 @@ impl EvaluationResult {
 ///
 /// #14346 is moving cache eligibility from loose evaluator flags into typed
 /// result boundaries. A fresh-evaluator memo has two pieces of information:
-/// the request's [`EvaluationResult`] and whether legacy stack-context taint
-/// still makes the collapsed value unsafe to store in a depth-agnostic cache.
+/// the request's [`EvaluationResult`] and whether the request state still makes
+/// the collapsed value safe to store in a depth-agnostic cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EvaluationMemoResult {
     result: EvaluationResult,
@@ -158,15 +158,15 @@ pub(crate) struct EvaluationMemoResult {
 }
 
 impl EvaluationMemoResult {
-    /// Construct a memo result from a typed evaluation result and the legacy
-    /// recursion-limit backstop.
+    /// Construct a memo result from a typed evaluation result and the
+    /// request-state stability verdict.
     pub(crate) const fn for_depth_agnostic_memo(
         result: EvaluationResult,
-        legacy_recursion_limit_hit: bool,
+        request_state_stable: bool,
     ) -> Self {
         Self {
             result,
-            stable_for_depth_agnostic_cache: result.is_complete() && !legacy_recursion_limit_hit,
+            stable_for_depth_agnostic_cache: result.is_complete() && request_state_stable,
         }
     }
 
@@ -257,21 +257,21 @@ mod tests {
     }
 
     #[test]
-    fn memo_result_stability_requires_complete_result_and_clean_legacy_backstop() {
+    fn memo_result_stability_requires_complete_result_and_clean_request_state() {
         let complete = EvaluationResult::complete(TypeId::STRING);
-        let stable = EvaluationMemoResult::for_depth_agnostic_memo(complete, false);
+        let stable = EvaluationMemoResult::for_depth_agnostic_memo(complete, true);
 
         assert_eq!(stable.evaluation_result(), complete);
         assert_eq!(stable.type_id(), TypeId::STRING);
         assert_eq!(stable.into_type_id(), TypeId::STRING);
         assert!(stable.is_stable_for_depth_agnostic_cache());
 
-        let legacy_tainted = EvaluationMemoResult::for_depth_agnostic_memo(complete, true);
-        assert!(!legacy_tainted.is_stable_for_depth_agnostic_cache());
+        let request_state_tainted = EvaluationMemoResult::for_depth_agnostic_memo(complete, false);
+        assert!(!request_state_tainted.is_stable_for_depth_agnostic_cache());
 
         let incomplete =
             EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
-        let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(incomplete, false);
+        let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(incomplete, true);
         assert_eq!(typed_tainted.into_type_id(), TypeId::NUMBER);
         assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
     }

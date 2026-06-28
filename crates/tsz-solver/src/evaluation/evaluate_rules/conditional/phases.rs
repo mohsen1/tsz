@@ -690,16 +690,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //    this arm, so no registration-window artifact is published;
             //  - not budget-bounded — neither the depth bail nor a limit-tripped
             //    structural walk produced it;
-            //  - the enclosing evaluation request saw no typed incomplete
-            //    verdict, legacy recursion limit, or unresolved application
-            //    body (`has_incomplete_request_verdict` /
-            //    `recursion_limit_hit` / `unresolved_def_seen`), and neither
-            //    operand is tainted — the same whole-run gates `closed_eval`
-            //    uses before persisting.
+            //  - the enclosing evaluation request is stable enough for
+            //    depth-agnostic publication, saw no unresolved application
+            //    body, and neither operand is tainted — the same whole-run
+            //    gates `closed_eval` uses before persisting.
             if conditional_branch_verdict_cache_enabled()
                 && !verdict_is_budget_bounded
-                && !self.has_incomplete_request_verdict()
-                && !self.recursion_limit_hit()
+                && self.request_state_is_depth_agnostic_cache_stable()
                 && !self.unresolved_def_seen()
                 && !self.is_tainted(check_type)
                 && !self.is_tainted(extends_type)
