@@ -30,14 +30,16 @@
 //!    closed conditionals the resolver-backed contexts compute and re-compute is
 //!    the deep-recursion win, and reads stay open to every evaluator since a
 //!    stored value is always a fully-resolved answer.
-//!  - **Limit gate**: a run that hit any recursion/complexity limit
-//!    (`deep_recursion_seen`, the `TS2589` depth machinery, or the `TS2590`
-//!    union-too-complex flag) caches nothing — a cached read must never
-//!    short-circuit an expansion the type system must continue in order to
-//!    re-derive those diagnostics. A run that evaluated an application whose
-//!    base `DefId` had no resolvable body (`unresolved_def_seen`) also caches
-//!    nothing: its results are registration-window artifacts that would
-//!    permanently shadow the answer derived after the real body registers.
+//!  - **Limit gate**: a run that returned a typed incomplete
+//!    [`crate::evaluation::result::EvaluationResult`] verdict, or hit any
+//!    legacy recursion/complexity limit (`deep_recursion_seen`, the `TS2589`
+//!    depth machinery, or the `TS2590` union-too-complex flag), caches nothing
+//!    — a cached read must never short-circuit an expansion the type system must
+//!    continue in order to re-derive those diagnostics. A run that evaluated an
+//!    application whose base `DefId` had no resolvable body
+//!    (`unresolved_def_seen`) also caches nothing: its results are
+//!    registration-window artifacts that would permanently shadow the answer
+//!    derived after the real body registers.
 
 use super::TypeEvaluator;
 use crate::relations::subtype::TypeResolver;
@@ -119,6 +121,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // answer a sibling read would observe.
         let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
+            || self.request_termination_kind.is_some()
             || self.recursion_limit_hit()
             || self.unresolved_def_seen()
             || (self.interner.is_union_too_complex() && !union_too_complex_before)
@@ -445,6 +448,7 @@ mod tests {
     use crate::caches::query_cache::QueryCache;
     use crate::construction::TypeInterner;
     use crate::def::DefId;
+    use crate::evaluation::result::TerminationKind;
 
     fn evaluator(interner: &TypeInterner) -> TypeEvaluator<'_> {
         TypeEvaluator::new(interner)
@@ -485,6 +489,35 @@ mod tests {
         let limited = TypeEvaluator::new(&cache).with_limited_resolver();
         assert_eq!(limited.try_closed_eval_read(idx), None);
         assert_eq!(limited.try_closed_eval_read(keyof), None);
+    }
+
+    /// A closed-eval write is publishable only when the request completed. The
+    /// legacy `recursion_limit_hit` backstop remains below this gate, but an
+    /// explicit typed incomplete verdict is already enough to reject the write.
+    #[test]
+    fn incomplete_request_verdict_blocks_closed_eval_write() {
+        let interner = TypeInterner::new();
+        let cache = QueryCache::new(&interner);
+
+        let complete_node = interner.index_access(TypeId::OBJECT, TypeId::STRING);
+        let mut complete = TypeEvaluator::new(&cache)
+            .with_query_db(&cache)
+            .with_closed_eval_writes();
+        complete.cache.insert(complete_node, TypeId::NUMBER);
+        complete.commit_closed_eval_writes(false);
+        assert_eq!(
+            cache.lookup_closed_eval_cache(complete_node, false),
+            Some(TypeId::NUMBER)
+        );
+
+        let incomplete_node = interner.keyof(TypeId::OBJECT);
+        let mut incomplete = TypeEvaluator::new(&cache)
+            .with_query_db(&cache)
+            .with_closed_eval_writes();
+        incomplete.cache.insert(incomplete_node, TypeId::BOOLEAN);
+        incomplete.request_termination_kind = Some(TerminationKind::DepthExceeded);
+        incomplete.commit_closed_eval_writes(false);
+        assert_eq!(cache.lookup_closed_eval_cache(incomplete_node, false), None);
     }
 
     /// The substitution-independent cache is eligible for `IndexAccess`/`KeyOf`
