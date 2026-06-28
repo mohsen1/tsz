@@ -1496,7 +1496,17 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Merge reconciliation: #14787 (main) and #14789 (this branch) each add
         # one independent `query_boundaries::common` reference over the shared
         # 3078 base, so the live merged count is 3080.
-        3080,
+        #
+        # Bumped 3080→3082 for the enum-member quick-info value display fix:
+        # `CheckerState::format_enum_member_value` in
+        # `state/type_environment/formatting.rs` adds an
+        # `query_boundaries::common::enum_member_type` peel plus an
+        # `query_boundaries::common::is_literal_type` guard so hover/completion
+        # surfaces print the member's underlying constant value (`= 0`) instead
+        # of its type, matching tsserver. Both are existing request-shaped
+        # boundary helpers already used throughout the checker — no new
+        # quarantine entry; #8225 narrowing remains the removal condition.
+        3082,
     ),
 ]
 
