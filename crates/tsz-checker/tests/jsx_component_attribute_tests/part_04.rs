@@ -511,3 +511,154 @@ fn jsx_intrinsic_key_ref_ts2322_target_follows_renamed_alias_structurally() {
         "ref target should follow renamed alias `DomRef<…> | undefined`, got: {diags:?}"
     );
 }
+
+// ── Issue #14817: JSX component-prop diagnostic target must render the resolved
+// props object, not the unevaluated LibraryManagedAttributes conditional ──────
+//
+// When a function-component's props flow through `JSX.LibraryManagedAttributes`
+// whose body is a conditional (the React shape, but reproducible with a minimal
+// local LMA), the solver resolves the props to a concrete object but kept the
+// raw `C extends … ? … : …` conditional as the object's *display alias*. tsc
+// resolves the conditional and prints the props object, e.g.
+// `{ name: string; count: number; }`. The fix renders the structural object,
+// skipping the inline-conditional alias, across TS2741 / TS2322 / excess.
+
+const ISSUE_14817_LMA_NAMESPACE: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type LibraryManagedAttributes<C, P> =
+        C extends (props: infer Q) => any ? Q : P;
+}
+"#;
+
+#[test]
+fn issue_14817_missing_prop_ts2741_shows_resolved_props_object() {
+    let source = format!(
+        "{ISSUE_14817_LMA_NAMESPACE}\n\
+         function Comp(props: {{ name: string; count: number }}): JSX.Element {{ return null as any; }}\n\
+         const b = <Comp name=\"x\" />;\n"
+    );
+
+    let diags = jsx_diagnostics(&source);
+    let messages = messages_for_code(
+        &diags,
+        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains(
+            "Property 'count' is missing in type '{ name: string; }' but required in type '{ name: string; count: number; }'."
+        )),
+        "TS2741 target must be the resolved props object, not the LMA conditional, got: {diags:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("extends") && m.contains("infer Q")),
+        "TS2741 target must not leak the unevaluated LMA conditional, got: {diags:?}"
+    );
+}
+
+#[test]
+fn issue_14817_prop_type_mismatch_ts2322_shows_resolved_props_object() {
+    let source = format!(
+        "{ISSUE_14817_LMA_NAMESPACE}\n\
+         function Comp(props: {{ name: string; count: number }}): JSX.Element {{ return null as any; }}\n\
+         const b = <Comp name=\"x\" count=\"nope\" />;\n"
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(_, m)| m.contains("extends") && m.contains("infer Q")),
+        "JSX prop-mismatch diagnostics must not leak the unevaluated LMA conditional, got: {diags:?}"
+    );
+}
+
+#[test]
+fn issue_14817_named_props_interface_alias_is_not_stripped() {
+    // A named conditional-bodied alias is a `Lazy(DefId)` reference, not an
+    // inline conditional; the structural gate must leave such named aliases on
+    // their normal display path. Here `Props` is a plain interface, the common
+    // case — its name/structure must survive and TS2741 must still fire.
+    let source = format!(
+        "{ISSUE_14817_LMA_NAMESPACE}\n\
+         interface Props {{ name: string; count: number; }}\n\
+         function Comp(props: Props): JSX.Element {{ return null as any; }}\n\
+         const b = <Comp name=\"x\" />;\n"
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        has_code(
+            &diags,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+        ),
+        "named-interface props must still report the missing required prop, got: {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|(_, m)| m.contains("extends") && m.contains("infer Q")),
+        "named-interface props target must not leak the LMA conditional, got: {diags:?}"
+    );
+}
+
+#[test]
+fn issue_14817_renamed_binders_still_resolve_props_object() {
+    // Vary the component binder name and the LMA type-parameter names to prove
+    // the fix is structural and not keyed on any identifier spelling.
+    let source = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {}
+    type LibraryManagedAttributes<Component, Properties> =
+        Component extends (p: infer Inferred) => any ? Inferred : Properties;
+}
+
+function Widget(props: { title: string; size: number }): JSX.Element { return null as any; }
+
+const w = <Widget title="x" />;
+"#;
+
+    let diags = jsx_diagnostics(source);
+    let messages = messages_for_code(
+        &diags,
+        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("but required in type '{ title: string; size: number; }'.")),
+        "renamed binders must still resolve to the structural props object, got: {diags:?}"
+    );
+}
+
+#[test]
+fn issue_14817_spread_attrs_target_shows_resolved_props_object() {
+    // The whole-object / spread assignability path renders its target through a
+    // different code path than explicit attrs; it must also resolve the LMA
+    // conditional to the props object rather than leaking the raw conditional.
+    let source = format!(
+        "{ISSUE_14817_LMA_NAMESPACE}\n\
+         function Comp(props: {{ name: string; count: number }}): JSX.Element {{ return null as any; }}\n\
+         const p = {{ name: \"x\", count: \"nope\" }};\n\
+         const b = <Comp {{...p}} />;\n"
+    );
+
+    let diags = jsx_diagnostics(&source);
+    assert!(
+        !diags
+            .iter()
+            .any(|(_, m)| m.contains("extends") && m.contains("infer Q")),
+        "spread-attrs target must not leak the unevaluated LMA conditional, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(
+            |(code, m)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && m.contains("type '{ name: string; count: number; }'")
+        ),
+        "spread-attrs target must be the resolved props object, got: {diags:?}"
+    );
+}
