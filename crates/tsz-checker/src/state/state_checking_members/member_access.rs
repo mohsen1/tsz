@@ -14,6 +14,31 @@ impl<'a> CheckerState<'a> {
         prop_name: NodeIndex,
         is_static: bool,
     ) -> Option<TypeId> {
+        self.infer_property_type_from_class_member_assignments_widened(
+            member_nodes,
+            prop_name,
+            is_static,
+            false,
+        )
+    }
+
+    /// Like [`infer_property_type_from_class_member_assignments`] but lets the
+    /// caller choose the widening policy applied to each `this.<name> = <expr>`
+    /// assignment value.
+    ///
+    /// - `widen_fresh_only = false` (legacy accessor path): every assignment
+    ///   value is literal-widened unconditionally.
+    /// - `widen_fresh_only = true` (`tsc`'s `getFlowTypeInConstructor` →
+    ///   `getWidenedType`): only *fresh* literal-like expressions (literals,
+    ///   object/array literals) are widened, so declared literal unions such as
+    ///   `"A" | "B" | "C"` flowing in from a typed value are preserved.
+    pub(crate) fn infer_property_type_from_class_member_assignments_widened(
+        &mut self,
+        member_nodes: &[NodeIndex],
+        prop_name: NodeIndex,
+        is_static: bool,
+        widen_fresh_only: bool,
+    ) -> Option<TypeId> {
         let property_name = self.get_property_name(prop_name)?;
         let mut assigned_types = Vec::new();
 
@@ -34,6 +59,7 @@ impl<'a> CheckerState<'a> {
                     &property_name,
                     member_nodes,
                     is_static,
+                    widen_fresh_only,
                     &mut assigned_types,
                 );
             } else if is_static
@@ -44,6 +70,7 @@ impl<'a> CheckerState<'a> {
                     &property_name,
                     member_nodes,
                     is_static,
+                    widen_fresh_only,
                     &mut assigned_types,
                 );
             }
@@ -59,6 +86,84 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Infer the type of an un-annotated, un-initialized **instance** class
+    /// property from the `this.<name> = <expr>` assignments in its constructor,
+    /// mirroring `tsc`'s `getFlowTypeInConstructor`.
+    ///
+    /// Returns `None` (caller falls back to `any`, with `TS7008`/`TS2564` left
+    /// to fire where applicable) when there are no usable constructor
+    /// assignments, or when every assignment only ever produces `null` /
+    /// `undefined` — `tsc` widens such a flow type back to `any`.
+    ///
+    /// When `strictNullChecks` is on and the property is **not** definitely
+    /// assigned on every control-flow path through the constructor, `undefined`
+    /// is unioned in, matching `tsc`'s flow type for conditionally-assigned
+    /// fields.
+    pub(crate) fn infer_property_type_from_constructor_flow(
+        &mut self,
+        member_nodes: &[NodeIndex],
+        prop_name: NodeIndex,
+        requires_super: bool,
+    ) -> Option<TypeId> {
+        let inferred = self.infer_property_type_from_class_member_assignments_widened(
+            member_nodes,
+            prop_name,
+            false,
+            true,
+        )?;
+
+        // Assignments that only ever produce `null`/`undefined` leave the
+        // property implicitly `any` in `tsc` (its flow type widens back to
+        // `any`), so don't infer a bare `null`/`undefined` field type here.
+        if crate::query_boundaries::common::is_definitely_nullish(self.ctx.types, inferred) {
+            return None;
+        }
+
+        let result = if self.ctx.strict_null_checks()
+            && !self.property_definitely_assigned_in_members(
+                member_nodes,
+                prop_name,
+                requires_super,
+            ) {
+            crate::query_boundaries::common::union_with_undefined(self.ctx.types, inferred)
+        } else {
+            inferred
+        };
+        Some(result)
+    }
+
+    /// Whether the named property is definitely assigned (`this.<name> = ...`)
+    /// on every normal control-flow path through the class constructor.
+    fn property_definitely_assigned_in_members(
+        &self,
+        member_nodes: &[NodeIndex],
+        prop_name: NodeIndex,
+        requires_super: bool,
+    ) -> bool {
+        let Some(key) = self.property_key_from_name(prop_name) else {
+            return false;
+        };
+        let mut tracked = rustc_hash::FxHashSet::default();
+        tracked.insert(key.clone());
+
+        member_nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                return false;
+            }
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                return false;
+            };
+            if ctor.body.is_none() {
+                return false;
+            }
+            self.analyze_constructor_assignments(ctor.body, &tracked, requires_super)
+                .contains(&key)
+        })
+    }
+
     pub(crate) fn infer_property_type_from_enclosing_class_assignments(
         &mut self,
         prop_name: NodeIndex,
@@ -68,6 +173,35 @@ impl<'a> CheckerState<'a> {
         self.infer_property_type_from_class_member_assignments(&member_nodes, prop_name, is_static)
     }
 
+    /// Constructor-flow property inference (see
+    /// [`infer_property_type_from_constructor_flow`]) over the enclosing class.
+    pub(crate) fn infer_property_type_from_enclosing_constructor_flow(
+        &mut self,
+        prop_name: NodeIndex,
+    ) -> Option<TypeId> {
+        let class_idx = self.ctx.enclosing_class.as_ref()?.class_idx;
+        let member_nodes = self.ctx.enclosing_class.as_ref()?.member_nodes.clone();
+        let requires_super = self
+            .ctx
+            .arena
+            .get_class_at(class_idx)
+            .is_some_and(|class| self.class_has_base(class));
+        self.infer_property_type_from_constructor_flow(&member_nodes, prop_name, requires_super)
+    }
+
+    /// Whether the named instance property is assigned via `this.<name> = ...`
+    /// anywhere in the enclosing class constructor (regardless of the assigned
+    /// value's type, including element-access `this["name"] = ...`, `accessor`
+    /// auto-properties, and `null`/`undefined`-only assignments).
+    ///
+    /// `tsc` suppresses the implicit-any member error (`TS7008`) for any
+    /// instance property assigned in the constructor — the property's type then
+    /// comes from constructor-flow analysis. Constructor-flow *type* inference
+    /// ([`infer_property_type_from_enclosing_constructor_flow`]) can return
+    /// `None` for cases that are nonetheless assigned (accessor properties,
+    /// values that widen to `any`, `null`-only assignments), so the `TS7008`
+    /// suppression must consult this assignment predicate as well to avoid
+    /// false positives.
     pub(crate) fn property_assigned_in_enclosing_class_constructor(
         &mut self,
         prop_name: NodeIndex,
@@ -117,6 +251,7 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
         member_nodes: &[NodeIndex],
         is_static: bool,
+        widen_fresh_only: bool,
         assigned_types: &mut Vec<TypeId>,
     ) {
         let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -144,15 +279,26 @@ impl<'a> CheckerState<'a> {
                         rhs_type = self
                             .class_member_declared_type(member_nodes, name_idx, is_static)
                             .or_else(|| {
-                                self.infer_property_type_from_class_member_assignments(
+                                self.infer_property_type_from_class_member_assignments_widened(
                                     member_nodes,
                                     name_idx,
                                     is_static,
+                                    widen_fresh_only,
                                 )
                             })
                             .unwrap_or(rhs_type);
                     }
-                    let rhs_type = self.widen_literal_type(rhs_type);
+                    // `tsc`'s `getFlowTypeInConstructor` widens the assigned value
+                    // via `getWidenedType`, which only widens *fresh* literal-like
+                    // expressions. In `widen_fresh_only` mode keep declared literal
+                    // unions (`"A" | "B" | "C"`) intact so a value flowing in from a
+                    // typed source is not over-widened to its primitive base.
+                    let rhs_type =
+                        if !widen_fresh_only || self.is_fresh_literal_expression(bin.right) {
+                            self.widen_literal_type(rhs_type)
+                        } else {
+                            rhs_type
+                        };
                     if rhs_type != TypeId::ERROR && rhs_type != TypeId::ANY {
                         assigned_types.push(rhs_type);
                     }
@@ -167,6 +313,7 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 member_nodes,
                 is_static,
+                widen_fresh_only,
                 assigned_types,
             );
         }

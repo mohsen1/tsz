@@ -462,14 +462,46 @@ impl<'a> CheckerState<'a> {
         // Check if property is abstract - abstract properties should emit TS7008
         // even if assigned in constructor (since the assignment is an error - TS2715)
         let is_abstract = self.has_abstract_modifier(&prop.modifiers);
+
+        // Infer the type of an un-annotated, un-initialized instance property
+        // from the constructor's `this.<name> = ...` assignments (tsc's
+        // control-flow property inference). The result both supplies the cached
+        // type below (for the declaration emitter) and governs TS7008: tsc
+        // suppresses the implicit-any error exactly when this inference yields a
+        // concrete (non-`any`) type — including conditionally-assigned fields
+        // (`x: number | undefined`) — and keeps it when every assignment only
+        // produces `null`/`undefined` (the flow type widens back to `any`).
+        let ctor_flow_type = if !is_static
+            && !is_abstract
+            && effective_declared_type.is_none()
+            && contextual_member_type.is_none()
+            && inferred_initializer_type.is_none()
+            && prop.initializer.is_none()
+            && prop.type_annotation.is_none()
+            && !self.has_accessor_modifier(&prop.modifiers)
+        {
+            self.infer_property_type_from_enclosing_constructor_flow(prop.name)
+        } else {
+            None
+        };
+
         if self.ctx.no_implicit_any()
             && effective_declared_type.is_none()
             && prop.initializer.is_none()
             && prop.type_annotation.is_none()
             && !is_private_in_ambient
             && !is_static_prototype
-            // Constructor assignments only apply to instance properties, not static
-            && (is_static || is_abstract || !self.property_assigned_in_enclosing_class_constructor(prop.name))
+            // Constructor-flow inference only applies to instance properties. A
+            // concrete inferred type suppresses the implicit-any error; so does
+            // *any* constructor assignment to the property even when inference
+            // yields no concrete type (accessor auto-properties, values that
+            // widen to `any`, or `null`/`undefined`-only assignments), matching
+            // tsc, which takes the property's type from constructor flow in all
+            // of those cases.
+            && (is_static
+                || is_abstract
+                || (ctor_flow_type.is_none()
+                    && !self.property_assigned_in_enclosing_class_constructor(prop.name)))
             // TSC also suppresses TS7008 for static properties assigned in class
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static
@@ -523,6 +555,11 @@ impl<'a> CheckerState<'a> {
         } else if self.has_accessor_modifier(&prop.modifiers) {
             self.infer_property_type_from_enclosing_class_assignments(prop.name, is_static)
                 .unwrap_or(TypeId::ANY)
+        } else if !is_static {
+            // Un-annotated, un-initialized instance property: reuse the
+            // constructor-flow inference computed above so the cached type (used
+            // by the declaration emitter) matches the class instance type.
+            ctor_flow_type.unwrap_or(TypeId::ANY)
         } else {
             TypeId::ANY
         };
@@ -1857,127 +1894,6 @@ impl<'a> CheckerState<'a> {
 
         if self.has_static_modifier(&accessor.modifiers) {
             self.check_static_member_for_class_type_param_refs(member_idx);
-        }
-    }
-
-    /// Check if a setter has a paired getter with the same name in the class.
-    ///
-    /// TSC infers setter parameter types from the getter return type, so a setter
-    /// with a paired getter has contextually typed parameters (no TS7006).
-    fn setter_has_paired_getter(
-        &self,
-        _setter_idx: NodeIndex,
-        setter_accessor: &tsz_parser::parser::node::AccessorData,
-    ) -> bool {
-        self.paired_getter_member_for_setter(setter_accessor)
-            .is_some()
-    }
-
-    fn check_getter_setter_accessibility(
-        &mut self,
-        getter: &tsz_parser::parser::node::AccessorData,
-    ) {
-        let getter_name = match self.get_property_name(getter.name) {
-            Some(n) => n,
-            None => return,
-        };
-
-        let should_error = {
-            let Some(ref class_info) = self.ctx.enclosing_class else {
-                return;
-            };
-            let mut should_error = false;
-            for &member_idx in &class_info.member_nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::SET_ACCESSOR {
-                    continue;
-                }
-                let Some(setter) = self.ctx.arena.get_accessor(member_node) else {
-                    continue;
-                };
-                let Some(setter_name) = self.get_property_name(setter.name) else {
-                    continue;
-                };
-                if setter_name != getter_name {
-                    continue;
-                }
-
-                let getter_level = self.accessibility_level(&getter.modifiers);
-                let setter_level = self.accessibility_level(&setter.modifiers);
-                should_error = getter_level < setter_level;
-                break;
-            }
-            should_error
-        };
-
-        if should_error {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                getter.name,
-                diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-            );
-        }
-    }
-
-    fn accessibility_level(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> u8 {
-        if self.has_private_modifier(modifiers) {
-            1
-        } else if self.has_protected_modifier(modifiers) {
-            2
-        } else {
-            3 // public (explicit or implicit)
-        }
-    }
-
-    fn check_setter_getter_accessibility(
-        &mut self,
-        setter: &tsz_parser::parser::node::AccessorData,
-    ) {
-        let setter_name = match self.get_property_name(setter.name) {
-            Some(n) => n,
-            None => return,
-        };
-
-        let should_error = {
-            let Some(ref class_info) = self.ctx.enclosing_class else {
-                return;
-            };
-            let mut should_error = false;
-            for &member_idx in &class_info.member_nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::GET_ACCESSOR {
-                    continue;
-                }
-                let Some(getter) = self.ctx.arena.get_accessor(member_node) else {
-                    continue;
-                };
-                let Some(getter_name) = self.get_property_name(getter.name) else {
-                    continue;
-                };
-                if getter_name != setter_name {
-                    continue;
-                }
-
-                let getter_level = self.accessibility_level(&getter.modifiers);
-                let setter_level = self.accessibility_level(&setter.modifiers);
-                should_error = getter_level < setter_level;
-                break;
-            }
-            should_error
-        };
-
-        if should_error {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                setter.name,
-                diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-                diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
-            );
         }
     }
 

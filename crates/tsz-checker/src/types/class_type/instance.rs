@@ -479,6 +479,10 @@ impl<'a> CheckerState<'a> {
     {
         let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
+        // A derived class can only assign `this.<prop>` after `super()`, so
+        // constructor-flow property inference must respect the same gate when
+        // computing definite assignment.
+        let class_requires_super = self.class_has_base(class);
         for (member_pos, &member_idx) in class.members.nodes.iter().enumerate() {
             let declaration_order = ClassInstanceBuilder::class_member_order(member_pos);
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -649,9 +653,17 @@ impl<'a> CheckerState<'a> {
                         )
                         .unwrap_or(TypeId::ANY)
                     } else {
-                        // Class properties without type annotation or initializer
-                        // get implicit 'any' type (TS7008 when noImplicitAny is on)
-                        TypeId::ANY
+                        // An un-annotated, un-initialized instance property takes
+                        // its type from the constructor's `this.<name> = ...`
+                        // assignments (tsc's control-flow property inference);
+                        // only when none exist does it fall back to implicit
+                        // 'any' (TS7008 when noImplicitAny is on).
+                        self.infer_property_type_from_constructor_flow(
+                            &class.members.nodes,
+                            prop.name,
+                            class_requires_super,
+                        )
+                        .unwrap_or(TypeId::ANY)
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
 
