@@ -218,6 +218,35 @@ fn array_to_single_rest_tuple_reports_element_mismatch() {
     );
 }
 
+/// Regression for #14966 / `mappedTypeWithAny.ts`: a generic *mapping* call
+/// whose argument is `any` but whose result element type is concrete must keep
+/// its concrete `TS2322` headline. Here `stringifyPair` maps every element to
+/// `string`, so the inferred return is `string[]`; the open array still cannot
+/// pin the closed `[any, any]` tuple, so the new array-source arm appends the
+/// `TS2620` arity sub-line. The display recovery must NOT degrade the concrete
+/// `string[]` headline to `any[]` just because the call argument was `any`.
+#[test]
+fn array_source_mapping_call_keeps_concrete_headline_with_arity_subline() {
+    let diagnostic = single(
+        "declare function stringifyPair<T extends readonly [any, any]>(arr: T): { -readonly [K in keyof T]: string };
+         let def: [any, any] = stringifyPair(void 0 as any);",
+        2322,
+    );
+    assert_eq!(
+        diagnostic.message_text,
+        "Type 'string[]' is not assignable to type '[any, any]'.",
+        "array-source mapping headline must stay 'string[]', not the recovered 'any[]'",
+    );
+    assert!(
+        has_related(
+            &diagnostic,
+            "Target requires 2 element(s) but source may have fewer."
+        ),
+        "missing TS2620 arity sub-line; related = {:#?}",
+        related(&diagnostic)
+    );
+}
+
 /// A compatible array source produces no diagnostic.
 #[test]
 fn array_to_single_rest_tuple_compatible_has_no_diagnostic() {

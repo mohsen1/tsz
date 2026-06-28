@@ -23,12 +23,14 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         depth: u32,
     ) -> TypeId {
-        if depth != 0
-            || crate::query_boundaries::diagnostics::array_element_type(self.ctx.types, source)
-                .is_none()
-        {
+        if depth != 0 {
             return source;
         }
+        let Some(source_element) =
+            crate::query_boundaries::diagnostics::array_element_type(self.ctx.types, source)
+        else {
+            return source;
+        };
 
         let Some(expr_idx) = self.assignment_source_expression(idx) else {
             return source;
@@ -71,10 +73,23 @@ impl<'a> CheckerState<'a> {
                 return source;
             }
 
-            let recovered = self
-                .ctx
-                .types
-                .array(self.widen_type_for_display(element_type));
+            // This recovery exists to make an *unknown-ish* array source more
+            // specific (e.g. `unknown[]` -> the argument's real element type).
+            // It must never *degrade* an already-concrete element type down to
+            // `any`: a generic mapping call such as
+            // `stringifyPair<T extends readonly [any, any]>(arr: T): { [K in keyof T]: string }`
+            // produces a concrete `string[]` whose display tsc preserves
+            // verbatim even though the call argument is `any`. Recovering to
+            // `any[]` there would rewrite the `TS2322` headline tsc emits.
+            // (#14966, mappedTypeWithAny.ts)
+            let widened = self.widen_type_for_display(element_type);
+            if widened == TypeId::ANY
+                && !matches!(source_element, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            {
+                return source;
+            }
+
+            let recovered = self.ctx.types.array(widened);
             if recovered != source {
                 return recovered;
             }
