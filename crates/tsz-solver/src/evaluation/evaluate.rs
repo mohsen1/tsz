@@ -25,6 +25,7 @@ use crate::diagnostics::display_provenance::{
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationResult;
 use crate::evaluation::result::TerminationKind;
 #[cfg(test)]
@@ -609,12 +610,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(crate) fn evaluate_request_memo_result(
         &mut self,
         request: EvaluationRequest,
-    ) -> (TypeId, bool) {
+    ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        (
-            result.into_type_id(),
-            !result.is_incomplete() && !self.recursion_limit_hit(),
-        )
+        EvaluationMemoResult::for_depth_agnostic_memo(result, self.recursion_limit_hit())
     }
 
     // =========================================================================

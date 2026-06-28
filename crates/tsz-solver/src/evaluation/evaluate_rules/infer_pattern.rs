@@ -12,6 +12,7 @@
 //! - `bind_infer`: Bind a type to an infer parameter
 
 use crate::def::DefId;
+use crate::evaluation::result::{EvaluationMemoResult, EvaluationResult};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
@@ -1736,7 +1737,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // in-flight ancestor expansion converges.
         crate::evaluation::cross_eval_guard::memoized_eval(type_id, nuia, || {
             let Some(_guard) = InferMatchExpansionGuard::enter() else {
-                return (type_id, false);
+                return EvaluationMemoResult::new(EvaluationResult::complete(type_id), false);
             };
             let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
             if let Some(query_db) = self.query_db() {
