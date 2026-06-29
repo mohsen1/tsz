@@ -11,12 +11,11 @@
 //! variable-initializer assignability check trivially passed and the real `TS2322`
 //! was lost.
 //!
-//! Fix: the contextual return type only fills the result when the solver left the
-//! return type unresolved (still mentions a type parameter, an `infer`
-//! placeholder, or `unknown`) — mirroring the sibling finalize path in
-//! `call/mod.rs`. When inference already produced a concrete return type from the
-//! arguments, that binding is authoritative (tsc's inference priority: a direct
-//! argument candidate outranks a return-context candidate).
+//! Fix: a contextual return type may still preserve ordinary literal inference
+//! for non-spread arguments, but it must not replace a tuple already pinned by a
+//! spread argument feeding the same bare rest type parameter returned by the call
+//! (tsc's inference priority: the spread/rest positional candidate outranks a
+//! same-arity contextual-return candidate).
 //!
 //! Each test varies the callee/type-parameter/binding names so the fix is
 //! exercised structurally, never through an identifier or file-name predicate.
@@ -166,6 +165,37 @@ fn issue_14793_unresolved_return_still_filled_from_contextual() {
 interface Holder<V> { value: V; }
 declare function empty<V>(): Holder<V>;
 const held: Holder<string> = empty();
+"#,
+    );
+}
+
+/// Ordinary non-spread generic calls still use contextual return information to
+/// preserve literal candidates. A broad "concrete argument inference always wins"
+/// guard widens this to `Wrap<string>` and emits a false `TS2322`.
+#[test]
+fn issue_14793_non_spread_contextual_return_preserves_literal_wrapper() {
+    expect_clean(
+        r#"
+interface Wrap<Value> { value: Value; }
+declare function wrap<Item>(value: Item): Wrap<Item>;
+function wrapped(): Wrap<"foo"> {
+    return wrap("foo");
+}
+"#,
+    );
+}
+
+/// Contextual return inference also keeps a generic array update inside the
+/// target union element type. This mirrors `literalTypes2.ts`: `append(bits, 1)`
+/// must remain `(0 | 1)[]`, not widen to `number[]`.
+#[test]
+fn issue_14793_non_spread_contextual_return_preserves_array_union_element() {
+    expect_clean(
+        r#"
+type Bit = 0 | 1;
+declare function append<Cell>(items: Cell[], item: Cell): Cell[];
+let bits: Bit[] = [0];
+bits = append(bits, 1);
 "#,
     );
 }
