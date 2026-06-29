@@ -213,7 +213,9 @@ impl RelationEvaluationResult {
 #[cfg(test)]
 mod relation_evaluation_result_tests {
     use super::{RelationEvaluationResult, RelationEvaluationStability};
-    use crate::evaluation::result::{EvaluationMemoResult, EvaluationResult, TerminationKind};
+    use crate::evaluation::result::{
+        EvaluationMemoResult, EvaluationRequestStability, EvaluationResult, TerminationKind,
+    };
     use crate::types::TypeId;
 
     #[test]
@@ -238,7 +240,7 @@ mod relation_evaluation_result_tests {
     fn relation_evaluation_result_imports_memo_stability() {
         let complete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
             EvaluationResult::complete(TypeId::NUMBER),
-            true,
+            EvaluationRequestStability::Stable,
         );
         let complete = RelationEvaluationResult::from_depth_agnostic_memo(complete_memo);
         assert_eq!(complete.type_id(), TypeId::NUMBER);
@@ -249,7 +251,7 @@ mod relation_evaluation_result_tests {
 
         let incomplete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
             EvaluationResult::incomplete(TypeId::UNKNOWN, TerminationKind::DepthExceeded),
-            true,
+            EvaluationRequestStability::Stable,
         );
         let incomplete = RelationEvaluationResult::from_depth_agnostic_memo(incomplete_memo);
         assert_eq!(incomplete.type_id(), TypeId::UNKNOWN);
