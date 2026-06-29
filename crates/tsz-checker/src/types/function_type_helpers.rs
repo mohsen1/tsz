@@ -108,7 +108,7 @@ enum DirectReturnAnnotation {
 }
 
 impl DirectReturnAnnotation {
-    fn from_parts(has_type_annotation: bool, has_jsdoc_return: bool) -> Self {
+    const fn from_parts(has_type_annotation: bool, has_jsdoc_return: bool) -> Self {
         if has_type_annotation || has_jsdoc_return {
             Self::Declared
         } else {
@@ -116,7 +116,7 @@ impl DirectReturnAnnotation {
         }
     }
 
-    fn is_declared(self) -> bool {
+    const fn is_declared(self) -> bool {
         matches!(self, Self::Declared)
     }
 }
