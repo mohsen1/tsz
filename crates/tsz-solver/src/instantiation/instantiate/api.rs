@@ -870,9 +870,10 @@ pub(crate) fn instantiate_with_request_cached(
         let limit_snapshot = ProjectInstantiationCacheLimitSnapshot::capture(interner);
         let result =
             instantiate_with_request_cached_inner(interner, query_db, allow_alpha_cache, request);
+        let request_state_stability = limit_snapshot.request_state_stability_after(interner);
         let memo_result = InstantiationMemoResult::for_project_cache(
             result,
-            limit_snapshot.request_state_is_stable_after(interner),
+            request_state_stability.is_stable_for_project_cache(),
         );
         if memo_result.is_stable_for_project_cache() {
             interner
