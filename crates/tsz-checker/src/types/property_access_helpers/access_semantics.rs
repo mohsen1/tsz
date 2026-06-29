@@ -941,6 +941,114 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Collapse a generic call target's type parameters that depend on its
+    /// `this`-type parameter before synthesizing the `.call`/`.apply` method
+    /// signature.
+    ///
+    /// `tsc` models `CallableFunction.call` as
+    /// `call<T, A extends any[], R>(this: (this: T, ...args: A) => R, thisArg: T, ...args: A): R`.
+    /// The rest-arg tuple `A` is fixed from the target's ORIGINAL signature
+    /// before `T` is pinned from `thisArg`, so a target type parameter whose
+    /// constraint references the `this`-type parameter resolves with that
+    /// parameter still unknown — e.g. `K extends keyof T` collapses to
+    /// `keyof unknown` = `never`. Synthesizing the method with the target's
+    /// own type parameters threaded through instead infers them in natural
+    /// call order (`T` from `thisArg`, `K` from the argument), which loses
+    /// `tsc`'s `never` collapse and accepts the call (false negative). This
+    /// rewrites the `this`-dependent parameters to their collapsed constraint
+    /// so the synthesized signature reproduces the collapse, while leaving the
+    /// `this`-type parameter itself inferable from `thisArg`.
+    ///
+    /// Returns `None` when nothing collapses (no `this`-type, no type
+    /// parameters, or no constraint that depends on the `this`-type parameter)
+    /// so the caller can keep the original signature without cloning.
+    fn collapse_this_dependent_type_params(
+        &mut self,
+        sig: &tsz_solver::CallSignature,
+    ) -> Option<tsz_solver::CallSignature> {
+        use crate::query_boundaries::common::{
+            TypeSubstitution, contains_type_parameter_named, instantiate_type,
+        };
+
+        let this_type = sig.this_type?;
+        if sig.type_params.is_empty() {
+            return None;
+        }
+
+        // Type parameters referenced by the `this`-type itself (e.g. `T` in
+        // `this: T`) stay inferable from `thisArg`, so they must not be
+        // collapsed. Fix each of them to `unknown`, mirroring `tsc` fixing the
+        // rest-arg tuple before `T` is pinned: a dependent constraint such as
+        // `keyof T` then reduces to `keyof unknown` = `never`.
+        let mut this_to_unknown = TypeSubstitution::new();
+        let mut this_param_names = Vec::new();
+        for tp in &sig.type_params {
+            if contains_type_parameter_named(self.ctx.types, this_type, tp.name) {
+                this_to_unknown.insert(tp.name, TypeId::UNKNOWN);
+                this_param_names.push(tp.name);
+            }
+        }
+        if this_param_names.is_empty() {
+            return None;
+        }
+
+        let mut collapse_subst = TypeSubstitution::new();
+        let mut collapsed_names = Vec::new();
+        for tp in &sig.type_params {
+            if this_param_names.contains(&tp.name) {
+                continue;
+            }
+            let Some(constraint) = tp.constraint else {
+                continue;
+            };
+            let depends_on_this = this_param_names
+                .iter()
+                .any(|&name| contains_type_parameter_named(self.ctx.types, constraint, name));
+            if !depends_on_this {
+                continue;
+            }
+            let collapsed_constraint =
+                instantiate_type(self.ctx.types, constraint, &this_to_unknown);
+            let collapsed_value = self.evaluate_type_with_env(collapsed_constraint);
+            collapse_subst.insert(tp.name, collapsed_value);
+            collapsed_names.push(tp.name);
+        }
+        if collapsed_names.is_empty() {
+            return None;
+        }
+
+        let params = sig
+            .params
+            .iter()
+            .map(|param| tsz_solver::ParamInfo {
+                type_id: instantiate_type(self.ctx.types, param.type_id, &collapse_subst),
+                ..*param
+            })
+            .collect();
+        let return_type = instantiate_type(self.ctx.types, sig.return_type, &collapse_subst);
+        let this_type = Some(instantiate_type(self.ctx.types, this_type, &collapse_subst));
+        let type_params = sig
+            .type_params
+            .iter()
+            .filter(|tp| !collapsed_names.contains(&tp.name))
+            .map(|tp| tsz_solver::TypeParamInfo {
+                constraint: tp
+                    .constraint
+                    .map(|c| instantiate_type(self.ctx.types, c, &collapse_subst)),
+                ..*tp
+            })
+            .collect();
+
+        Some(tsz_solver::CallSignature {
+            type_params,
+            params,
+            this_type,
+            return_type,
+            type_predicate: sig.type_predicate,
+            is_method: sig.is_method,
+        })
+    }
+
     pub(in crate::types_domain) fn strict_bind_call_apply_method_type(
         &mut self,
         object_type: TypeId,
@@ -1084,6 +1192,19 @@ impl<'a> CheckerState<'a> {
                     if !construct_targets.contains(sig) {
                         construct_targets.push(sig.clone());
                     }
+                }
+            }
+        }
+
+        // For `.call`/`.apply`, `tsc` fixes the rest-arg tuple from the
+        // target's original signature, collapsing type parameters whose
+        // constraint references the `this`-type parameter (e.g. `K extends
+        // keyof T` -> `never`). `.bind` defers the rest-arg check to the bound
+        // function's later invocation, so it keeps the un-collapsed target.
+        if matches!(property_name, "call" | "apply") {
+            for sig in &mut call_targets {
+                if let Some(collapsed) = self.collapse_this_dependent_type_params(sig) {
+                    *sig = collapsed;
                 }
             }
         }
