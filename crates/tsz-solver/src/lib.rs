@@ -183,7 +183,7 @@ pub mod computation {
         substitute_this_type, substitute_this_type_at_return_position, substitute_this_type_cached,
     };
     pub use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
-    pub use crate::instantiation::result::InstantiationResult;
+    pub use crate::instantiation::result::{InstantiationResult, InstantiationTermination};
 
     // Contextual typing
     pub use crate::contextual::{

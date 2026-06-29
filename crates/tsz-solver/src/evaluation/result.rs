@@ -7,10 +7,11 @@
 //! # Termination channel (#14346 scaffold)
 //!
 //! Beyond the evaluated `TypeId`, the result now carries an explicit
-//! [`Termination`] verdict mirroring the `InstantiationResult::overflowed`
-//! precedent (`crate::instantiation::result`). The verdict names *whether* a
-//! bound (depth, fuel, solver-stack frame budget, cross-eval cycle, query-op
-//! budget) cut the walk short and, if so, which one — instead of letting an
+//! [`Termination`] verdict mirroring the instantiation result's typed
+//! termination precedent (`crate::instantiation::result`). The verdict names
+//! *whether* a bound (depth, fuel, solver-stack frame budget, cross-eval
+//! cycle, query-op budget) cut the walk short and, if so, which one — instead
+//! of letting an
 //! outer collapse silently treat a budget-truncated partial as a finished
 //! type.
 //!
