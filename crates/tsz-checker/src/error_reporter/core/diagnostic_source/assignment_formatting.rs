@@ -5,103 +5,10 @@
 
 use super::literal_widening_helpers::literal_display_appropriate_for_undefined_null_target;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::error_reporter) fn source_type_contains_number_literal_only_union(
-        &self,
-        ty: TypeId,
-    ) -> bool {
-        let mut stack = vec![ty];
-        let mut seen = FxHashSet::default();
-
-        while let Some(current) = stack.pop() {
-            if !seen.insert(current) {
-                continue;
-            }
-
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, current)
-            {
-                if self.union_members_are_number_literals_or_common_intersections(&members) {
-                    return true;
-                }
-                stack.extend(members);
-                continue;
-            }
-
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, current)
-            {
-                stack.extend(members);
-            }
-        }
-
-        false
-    }
-
-    fn union_members_are_number_literals_or_common_intersections(
-        &self,
-        members: &[TypeId],
-    ) -> bool {
-        if members.len() < 2 {
-            return false;
-        }
-
-        let mut expected_non_numeric_parts: Option<FxHashSet<TypeId>> = None;
-        for &member in members {
-            let Some(non_numeric_parts) =
-                self.number_literal_union_member_non_numeric_intersection_parts(member)
-            else {
-                return false;
-            };
-
-            if let Some(expected) = &expected_non_numeric_parts {
-                if *expected != non_numeric_parts {
-                    return false;
-                }
-            } else {
-                expected_non_numeric_parts = Some(non_numeric_parts);
-            }
-        }
-
-        true
-    }
-
-    fn number_literal_union_member_non_numeric_intersection_parts(
-        &self,
-        member: TypeId,
-    ) -> Option<FxHashSet<TypeId>> {
-        if matches!(
-            crate::query_boundaries::common::literal_value(self.ctx.types, member),
-            Some(crate::query_boundaries::common::LiteralValue::Number(_))
-        ) {
-            return Some(FxHashSet::default());
-        }
-
-        let intersection_members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, member)?;
-        let mut saw_number_literal = false;
-        let mut non_numeric_parts = FxHashSet::default();
-        for part in intersection_members {
-            if matches!(
-                crate::query_boundaries::common::literal_value(self.ctx.types, part),
-                Some(crate::query_boundaries::common::LiteralValue::Number(_))
-            ) {
-                if saw_number_literal {
-                    return None;
-                }
-                saw_number_literal = true;
-            } else {
-                non_numeric_parts.insert(part);
-            }
-        }
-
-        saw_number_literal.then_some(non_numeric_parts)
-    }
-
     /// When the diagnostic source expression at `anchor_idx` is a plain
     /// `expr as T` / `<T>expr` assertion (not `as const`, not `satisfies`),
     /// return the asserted type formatted with its literal element / property
@@ -208,6 +115,17 @@ impl<'a> CheckerState<'a> {
             && self.source_flow_type_strictly_narrows_declared(source, declared_type)
         {
             return self.format_assignability_type_for_message(source, target);
+        }
+        // An inline / anonymous composite source annotation (`declare const s:
+        // { a: number }; const t: string = s`) carries no `aliasSymbol`, so tsc
+        // renders the structural shape rather than a coincidentally-shaped alias
+        // name reached through the reverse type-to-def lookup. Suppress that
+        // repaint for such annotations (the flow-narrowing guards above already
+        // claimed the cases where the displayed source is a narrowed subset).
+        if let Some(display) =
+            self.anonymous_composite_annotation_source_display(anchor_idx, source)
+        {
+            return display;
         }
         // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
         // or indexed-access (`T["x"]`), or an `Application` of a conditional/
@@ -975,6 +893,64 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|value| value.primitive_type_id() == TypeId::STRING)
     }
 
+    /// Structural display for an assignment **target** whose type was written as
+    /// an inline / anonymous composite annotation (`{ a: number }`,
+    /// `{ a: number } | { b: string }`, `{ a: number } & { b: string }`).
+    ///
+    /// Such an annotation carries no `aliasSymbol`, so tsc renders the structural
+    /// shape rather than a coincidentally-shaped non-generic type-alias name
+    /// reached through the reverse type-to-def lookup. Returns `None` when the
+    /// target was not written as an anonymous composite (a named reference, a
+    /// mixed union/intersection, or a non-composite type), leaving the
+    /// established display path untouched. Shared by every renderer that prints a
+    /// top-level assignability target so they cannot drift on alias display.
+    pub(in crate::error_reporter) fn anonymous_composite_annotation_target_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let target_expr = self
+            .assignment_target_expression(anchor_idx)
+            .unwrap_or(anchor_idx);
+        let is_anonymous_composite = self
+            .declared_type_annotation_node_for_expression(target_expr)
+            .is_some_and(|(arena, annotation_idx)| {
+                Self::annotation_is_anonymous_structural_composite(arena, annotation_idx)
+            });
+        if !is_anonymous_composite {
+            return None;
+        }
+        // A non-generic alias reference reaches the formatter as a `Lazy(DefId)`
+        // whose name path bypasses the composite-structural gate; resolve it to
+        // the structural body first so the inline shape renders even when the
+        // checker canonicalized the annotation type.
+        let resolved = self.resolve_lazy_type(target);
+        Some(self.format_type_for_assignability_message_anonymous_composite_structural(resolved))
+    }
+
+    /// Structural display for an assignment **source** written as an inline /
+    /// anonymous composite annotation. The source mirror of
+    /// [`Self::anonymous_composite_annotation_target_display`].
+    pub(in crate::error_reporter) fn anonymous_composite_annotation_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<String> {
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let is_anonymous_composite = self
+            .declared_type_annotation_node_for_expression(expr_idx)
+            .is_some_and(|(arena, annotation_idx)| {
+                Self::annotation_is_anonymous_structural_composite(arena, annotation_idx)
+            });
+        if !is_anonymous_composite {
+            return None;
+        }
+        let resolved = self.resolve_lazy_type(source);
+        Some(self.format_type_for_assignability_message_anonymous_composite_structural(resolved))
+    }
+
     pub(in crate::error_reporter) fn format_assignment_target_type_for_diagnostic(
         &mut self,
         target: TypeId,
@@ -986,6 +962,16 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_object_literal_property_diag_target(contextual_target);
         }
+
+        if let Some(display) =
+            self.anonymous_composite_annotation_target_display(anchor_idx, target)
+        {
+            return display;
+        }
+
+        let target_expr = self
+            .assignment_target_expression(anchor_idx)
+            .unwrap_or(anchor_idx);
 
         // When the target is a nullable union (e.g., `T | null | undefined`)
         // and the source is non-nullable, strip null/undefined from the
@@ -1016,9 +1002,6 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        let target_expr = self
-            .assignment_target_expression(anchor_idx)
-            .unwrap_or(anchor_idx);
         if display_target == target
             && let Some(display) =
                 self.keyof_type_alias_annotation_display_for_expression(target_expr)

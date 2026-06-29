@@ -118,3 +118,86 @@ fn intersection_with_named_member_unchanged() {
         "expected the named member 'Tail' to remain in the `&` form, got: {msg}"
     );
 }
+
+// =================================================================
+// #14827: inline / anonymous object & union annotations that
+// coincidentally match a non-generic type-alias body must render
+// structurally, while genuine alias references keep the alias name.
+// =================================================================
+
+/// An inline object-literal annotation whose shape coincides with a non-generic
+/// alias body renders structurally (`{ a: number; }`), not the alias name `A` —
+/// the annotation carries no `aliasSymbol`. The alias `A` is declared so the
+/// reverse type-to-def lookup *would* repaint it without the fix.
+#[test]
+fn inline_object_target_coinciding_with_alias_renders_structurally() {
+    let msg = message(
+        "type A = { a: number };\nconst x: { a: number } = \"wrong\";\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type '{ a: number; }'"),
+        "inline object target must render structurally, got: {msg}"
+    );
+    assert!(
+        !msg.contains("type 'A'"),
+        "the coincidental alias name must not leak, got: {msg}"
+    );
+}
+
+/// A genuine reference to the alias keeps the alias name (the annotation carried
+/// the `aliasSymbol`). This is the anti-over-suppression guard for the object
+/// case: the fix must distinguish a reference from an inline annotation.
+#[test]
+fn object_alias_reference_target_keeps_alias_name() {
+    let msg = message("type A = { a: number };\nconst x: A = \"wrong\";\n", 2322);
+    assert!(
+        msg.contains("type 'A'"),
+        "an alias reference must keep its name, got: {msg}"
+    );
+}
+
+/// An inline union of object literals coinciding with alias bodies renders each
+/// member structurally, never repainting members with their alias names.
+#[test]
+fn inline_object_union_target_renders_structurally() {
+    let msg = message(
+        "type A = { a: number };\ntype B = { b: string };\nconst u: { a: number } | { b: string } = 5;\n",
+        2322,
+    );
+    assert!(
+        msg.contains("{ a: number; } | { b: string; }"),
+        "inline union members must render structurally, got: {msg}"
+    );
+}
+
+/// A genuine union-of-aliases reference keeps both alias names (`A | B`).
+#[test]
+fn union_alias_reference_target_keeps_alias_names() {
+    let msg = message(
+        "type A = { a: number };\ntype B = { b: string };\nconst u: A | B = 5;\n",
+        2322,
+    );
+    assert!(
+        msg.contains("type 'A | B'"),
+        "a union of alias references must keep the names, got: {msg}"
+    );
+}
+
+/// An inline object annotation on a **source** identifier renders structurally
+/// rather than picking up the coincidental alias name.
+#[test]
+fn inline_object_source_renders_structurally() {
+    let msg = message(
+        "type A = { a: number };\ndeclare const s: { a: number };\nconst t: string = s;\n",
+        2322,
+    );
+    assert!(
+        msg.contains("Type '{ a: number; }'"),
+        "inline object source must render structurally, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Type 'A'"),
+        "the coincidental alias name must not leak in the source, got: {msg}"
+    );
+}
