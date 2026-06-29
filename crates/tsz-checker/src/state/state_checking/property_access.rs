@@ -246,6 +246,28 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Like [`Self::resolve_property_access_via_resolver`] but leaves polymorphic
+    /// `this` unbound (`skip_this_binding`).
+    ///
+    /// Used when resolving a member through a type parameter's *evaluated*
+    /// constraint shape: the receiver is the type parameter, not its constraint,
+    /// so a `this`-returning member must stay polymorphic for the checker to
+    /// rebind it to the type parameter. Mirrors the solver's own `TypeParameter`
+    /// property path (issue #14797).
+    fn resolve_property_access_raw_this_via_resolver(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
+        crate::query_boundaries::property_access::resolve_property_access_raw_this_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            object_type,
+            self.ctx.types.intern_string(prop_name),
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+        )
+    }
+
     /// Whether a property-access result is a concrete member type fit to replace
     /// a degenerate `any` fallback: a `Success` whose type is neither `any`, a
     /// type parameter, nor `this`. Generic/`this`-bearing members are left for
@@ -507,8 +529,7 @@ impl<'a> CheckerState<'a> {
         // evaluation (for example `T extends Box` where `Box` is cross-file
         // `Lazy(DefId)`, or `T extends MyPartial<Foo>` where the constraint is a
         // generic mapped alias), the solver's noop-resolver property evaluator can
-        // only see the unresolved constraint and report a missing property. Evaluate
-        // through the checker's full `TypeEnvironment` and retry the property query.
+        // only see the unresolved constraint and report a missing property.
         if result.is_degenerate()
             && let Some(constraint) =
                 crate::query_boundaries::state::checking::type_parameter_constraint(
@@ -523,12 +544,39 @@ impl<'a> CheckerState<'a> {
                 || query::is_mapped_type(self.ctx.types, constraint)
                 || query::needs_env_eval(self.ctx.types, constraint))
         {
-            let evaluated = self.evaluate_type_with_env(constraint);
-            if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR {
-                let retry_result = self.resolve_property_access_via_boundary(evaluated, prop_name);
-                if retry_result.is_improved_over_any() {
-                    result = retry_result;
-                    resolved_object_type = evaluated;
+            // A member that returns polymorphic `this` (e.g. `clone(): this` on
+            // `T extends INode`) must stay unbound so the checker can rebind it to
+            // the receiver type parameter `T`. Resolve it on the type parameter
+            // *itself* through the checker's `TypeResolver`, whose `TypeParameter`
+            // property path preserves `this`. Resolving on the *evaluated
+            // constraint shape* instead binds `this` to the constraint, collapsing
+            // `n.clone(): this` to `INode` and drawing a false TS2322 on
+            // `function f<T extends INode>(n: T): T { return n.clone(); }`. The
+            // class-receiver path never lost `this` because its boundary lookup
+            // already preserves it (issue #14797). This override is scoped to
+            // `this`-bearing members so all other constraint members keep flowing
+            // through the env-evaluation path below unchanged.
+            let on_param =
+                self.resolve_property_access_raw_this_via_resolver(resolved_object_type, prop_name);
+            let on_param_has_this = on_param.success_type().is_some_and(|type_id| {
+                crate::query_boundaries::common::contains_this_type(self.ctx.types, type_id)
+            });
+            if on_param_has_this {
+                result = on_param;
+            } else {
+                // Evaluate the constraint through the checker's full
+                // `TypeEnvironment` (needed for cross-file `Lazy(DefId)` or generic
+                // mapped/application constraints the noop-resolver evaluator cannot
+                // expand) and re-query the member.
+                let evaluated = self.evaluate_type_with_env(constraint);
+                if evaluated != constraint && evaluated != TypeId::ANY && evaluated != TypeId::ERROR
+                {
+                    let retry_result =
+                        self.resolve_property_access_via_boundary(evaluated, prop_name);
+                    if retry_result.is_improved_over_any() {
+                        result = retry_result;
+                        resolved_object_type = evaluated;
+                    }
                 }
             }
         }

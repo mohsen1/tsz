@@ -711,8 +711,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Do not rebind `ThisType` introduced by a type argument. For
         // `Array<this>.push(...items: T[])`, instantiating `T` yields `this[]`;
         // rebinding that `this` to the receiver application would incorrectly
-        // produce `Array<this>[]`.
-        if contains_declared_this {
+        // produce `Array<this>[]`. Only the member's *declared* `this` is rebound,
+        // and not when resolving through a type parameter's constraint
+        // (`skip_this_binding`), where `this` must stay polymorphic so the checker
+        // can rebind it to the receiver type parameter (issue #14797).
+        if contains_declared_this && !self.skip_this_binding.get() {
             self.substitute_this_type_cached(instantiated, app_type)
         } else {
             instantiated
@@ -968,12 +971,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     "application property access: def observed with NO type params; reading raw body"
                 );
             }
-            // No type params - still rebind polymorphic `this` to the concrete application.
-            let resolved_body = if crate::contains_this_type(self.interner(), body_type) {
-                self.substitute_this_type_cached(body_type, app_type)
-            } else {
-                body_type
-            };
+            // No type params - still rebind polymorphic `this` to the concrete
+            // application (honouring `skip_this_binding` for type-param receivers).
+            let resolved_body = self.rebind_resolved_body_this(body_type, app_type);
             return self.resolve_property_access_inner(resolved_body, prop_atom);
         };
 
