@@ -46,6 +46,10 @@ impl ParserState {
 
         // State tracking for TS1028 (duplicates) and TS1029 (ordering)
         let mut seen_accessibility = false;
+        // Matches tsc's `checkGrammarModifiers`, which reports TS1028 only once
+        // per modifier list (it `return`s after the first duplicate). A third
+        // accessibility keyword must not produce a second TS1028.
+        let mut reported_accessibility_duplicate = false;
         let mut seen_static = false;
         let mut seen_abstract = false;
         let mut seen_readonly = false;
@@ -69,42 +73,19 @@ impl ParserState {
                     | SyntaxKind::PrivateKeyword
                     | SyntaxKind::ProtectedKeyword
             ) {
-                if seen_accessibility {
-                    // tsc silently accepts duplicate/mixed accessibility on property
-                    // declarations (e.g., `public public p1;`) — no TS1028 emitted.
-                    // But for methods/constructors (e.g., `public public Foo()`,
-                    // `public public constructor()`), tsc emits TS1028.
-                    //
-                    // Detect method/constructor context with two-token lookahead:
-                    // if the token after the duplicate keyword is `constructor`, or
-                    // an identifier/keyword followed by `(` or `<`, this is a method.
-                    let snapshot = self.scanner.save_state();
-                    let saved_token = self.current_token;
-                    self.next_token(); // skip duplicate accessibility keyword
-                    let token_after = self.current_token;
-                    let is_method_context = if token_after == SyntaxKind::ConstructorKeyword {
-                        true
-                    } else {
-                        // Look one more ahead to check for `(` or `<`
-                        self.next_token();
-                        let token_after_name = self.current_token;
-                        matches!(
-                            token_after_name,
-                            SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken
-                        )
-                    };
-                    self.scanner.restore_state(snapshot);
-                    self.current_token = saved_token;
-
-                    if is_method_context {
-                        // Method/constructor context — emit TS1028
-                        use tsz_common::diagnostics::diagnostic_codes;
-                        self.parse_error_at_current_token(
-                            "Accessibility modifier already seen.",
-                            diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
-                        );
-                    }
-                    // For property context, silently accept the duplicate modifier
+                if seen_accessibility && !reported_accessibility_duplicate {
+                    // tsc emits TS1028 for a second accessibility modifier on ANY
+                    // class member — property, method, accessor, or constructor —
+                    // via `checkGrammarModifiers`, which records each modifier and
+                    // reports the duplicate without inspecting the member kind.
+                    // Emit it unconditionally at the duplicate keyword; the
+                    // member-kind lookahead the old path used was based on a false
+                    // premise (that tsc silently accepts duplicates on properties).
+                    self.parse_error_at_current_token(
+                        "Accessibility modifier already seen.",
+                        diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+                    );
+                    reported_accessibility_duplicate = true;
                 }
                 // TS1029: accessibility must come after certain modifiers
                 if seen_static
