@@ -346,6 +346,21 @@ fn relation_queries_keep_overflow_flags_on_relation_result() {
         "relation query dispatch must keep related/depth/iteration verdicts bundled \
          as RelationResult instead of passing around anonymous overflow tuples"
     );
+
+    let conditional_phases_rs =
+        read_solver_source("evaluation/evaluate_rules/conditional/phases.rs");
+    assert!(
+        conditional_phases_rs.contains("struct ConditionalSubtypeDepthEntry")
+            && conditional_phases_rs.contains("fn enter() -> ConditionalSubtypeDepthEntry")
+            && conditional_phases_rs
+                .contains("let depth_entry = ConditionalSubtypeDepthGuard::enter()")
+            && conditional_phases_rs.contains("depth_entry.prior_depth()")
+            && conditional_phases_rs.contains("depth_entry.exit()")
+            && !conditional_phases_rs
+                .contains("let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter()"),
+        "conditional subtype depth probes must carry prior-depth plus RAII guard \
+         as a named entry object instead of an anonymous tuple"
+    );
 }
 
 // =============================================================================
