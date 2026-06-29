@@ -270,52 +270,47 @@ impl<'a> CheckerState<'a> {
                             .arena
                             .get_property_decl(member_node)
                             .filter(|prop| instance(&prop.modifiers))
-                            .map(|prop| Shape::Property {
+                            .map_or(Shape::Skip, |prop| Shape::Property {
                                 name_idx: prop.name,
                                 type_annotation: prop.type_annotation,
                                 initializer: prop.initializer,
-                            })
-                            .unwrap_or(Shape::Skip),
+                            }),
                         syntax_kind_ext::GET_ACCESSOR if dm.is_class => self
                             .ctx
                             .arena
                             .get_accessor(member_node)
                             .filter(|acc| instance(&acc.modifiers))
-                            .map(|acc| Shape::Property {
+                            .map_or(Shape::Skip, |acc| Shape::Property {
                                 name_idx: acc.name,
                                 type_annotation: NodeIndex::NONE,
                                 initializer: NodeIndex::NONE,
-                            })
-                            .unwrap_or(Shape::Skip),
+                            }),
                         syntax_kind_ext::METHOD_DECLARATION if dm.is_class => self
                             .ctx
                             .arena
                             .get_method_decl(member_node)
                             .filter(|method| instance(&method.modifiers))
-                            .map(|method| Shape::Method {
+                            .map_or(Shape::Skip, |method| Shape::Method {
                                 name_idx: method.name,
                                 has_body: method.body.is_some(),
-                            })
-                            .unwrap_or(Shape::Skip),
+                            }),
                         syntax_kind_ext::PROPERTY_SIGNATURE if !dm.is_class => self
                             .ctx
                             .arena
                             .get_signature(member_node)
-                            .map(|sig| Shape::Property {
+                            .map_or(Shape::Skip, |sig| Shape::Property {
                                 name_idx: sig.name,
                                 type_annotation: sig.type_annotation,
                                 initializer: NodeIndex::NONE,
-                            })
-                            .unwrap_or(Shape::Skip),
+                            }),
                         syntax_kind_ext::METHOD_SIGNATURE if !dm.is_class => self
                             .ctx
                             .arena
                             .get_signature(member_node)
-                            .map(|sig| Shape::Method {
+                            .map_or(Shape::Skip, |sig| Shape::Method {
                                 name_idx: sig.name,
                                 has_body: false,
-                            })
-                            .unwrap_or(Shape::Skip),
+                            }),
                         _ => Shape::Skip,
                     };
                     (pos, shape)
