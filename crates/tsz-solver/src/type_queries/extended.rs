@@ -22,6 +22,20 @@ thread_local! {
     static EXTENDED_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IndexTypeVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+fn index_type_visit_state(visited: &mut FxHashSet<TypeId>, type_id: TypeId) -> IndexTypeVisitState {
+    if visited.insert(type_id) {
+        IndexTypeVisitState::Entered
+    } else {
+        IndexTypeVisitState::AlreadyVisited
+    }
+}
+
 #[inline]
 fn with_extended_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     let mut visited = EXTENDED_VISITED_POOL
@@ -185,8 +199,9 @@ fn is_invalid_index_type_inner(
     type_id: TypeId,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<TypeId> {
-    if !visited.insert(type_id) {
-        return None;
+    match index_type_visit_state(visited, type_id) {
+        IndexTypeVisitState::Entered => {}
+        IndexTypeVisitState::AlreadyVisited => return None,
     }
 
     if matches!(
@@ -276,8 +291,9 @@ fn is_index_key_anchor_inner(
     type_id: TypeId,
     visited: &mut FxHashSet<TypeId>,
 ) -> bool {
-    if !visited.insert(type_id) {
-        return false;
+    match index_type_visit_state(visited, type_id) {
+        IndexTypeVisitState::Entered => {}
+        IndexTypeVisitState::AlreadyVisited => return false,
     }
 
     match type_id {
@@ -331,8 +347,9 @@ fn is_invalid_index_type_strict_inner(
     type_id: TypeId,
     visited: &mut FxHashSet<TypeId>,
 ) -> Option<TypeId> {
-    if !visited.insert(type_id) {
-        return None;
+    match index_type_visit_state(visited, type_id) {
+        IndexTypeVisitState::Entered => {}
+        IndexTypeVisitState::AlreadyVisited => return None,
     }
 
     // Error types should not cascade further diagnostics
@@ -1584,6 +1601,31 @@ mod tests {
     use super::*;
     use crate::{CallSignature, ParamInfo, TypeParamInfo};
     use tsz_common::Atom;
+
+    #[test]
+    fn index_type_visit_state_records_first_entry() {
+        let mut visited = FxHashSet::default();
+
+        let state = index_type_visit_state(&mut visited, TypeId::STRING);
+
+        assert_eq!(state, IndexTypeVisitState::Entered);
+        assert!(visited.contains(&TypeId::STRING));
+    }
+
+    #[test]
+    fn index_type_visit_state_records_reentry() {
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            index_type_visit_state(&mut visited, TypeId::STRING),
+            IndexTypeVisitState::Entered
+        );
+        assert_eq!(
+            index_type_visit_state(&mut visited, TypeId::STRING),
+            IndexTypeVisitState::AlreadyVisited
+        );
+        assert_eq!(visited.len(), 1);
+    }
 
     #[test]
     fn branded_primitive_intersections_are_valid_index_types() {
