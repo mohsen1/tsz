@@ -197,11 +197,6 @@ impl EvaluationMemoResult {
         self.result.type_id()
     }
 
-    /// Return the collapsed value and its depth-agnostic cache stability verdict.
-    pub(crate) const fn into_type_id_and_stability(self) -> (TypeId, bool) {
-        (self.into_type_id(), self.stable_for_depth_agnostic_cache)
-    }
-
     /// Whether this result can be stored in caches whose key does not capture
     /// ambient recursion depth/fuel state.
     pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {

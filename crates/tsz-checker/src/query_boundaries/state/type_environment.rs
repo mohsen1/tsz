@@ -28,12 +28,13 @@ pub(crate) fn collect_concrete_applications_with_def(
 /// `def_id`, or `None` if `type_id` is not such an application. The shared
 /// recursion-growth metric used to decide whether a residual self-application
 /// is converging (shrinking) or diverging.
-pub(crate) fn self_application_arg_weight(
+pub(crate) fn self_application_arg_weight<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
     def_id: tsz_solver::def::DefId,
 ) -> Option<u64> {
-    tsz_solver::visitor::self_application_arg_weight(db, type_id, def_id)
+    tsz_solver::visitor::self_application_arg_weight(db, resolver, type_id, def_id)
 }
 
 /// Thin wrapper around `tsz_solver::computation::TypeEvaluator`.

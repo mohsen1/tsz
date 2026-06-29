@@ -619,9 +619,25 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                 } else {
-                    self.error_type_not_assignable_at_with_raw_display_types(
-                        source, target, diag_idx,
-                    );
+                    // The public-variance prepass determined these two
+                    // instantiations of the same generic base are not
+                    // assignable. tsc elaborates the failing type argument
+                    // (`TypeArgumentMismatch`) under the top-line TS2322 — e.g.
+                    //   Type 'Box<string>' is not assignable to type 'Box<number>'.
+                    //     Type 'string' is not assignable to type 'number'.
+                    // Route through the reason-bearing emitter so the nested
+                    // relation reason is rendered, matching the return/argument
+                    // (TS2345) paths instead of dropping it. If that path
+                    // suppresses (the full structural relation disagrees with the
+                    // variance prepass), preserve the prepass decision with the
+                    // bare top-line diagnostic.
+                    let diags_before = self.ctx.diagnostics.len();
+                    self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+                    if self.ctx.diagnostics.len() == diags_before {
+                        self.error_type_not_assignable_at_with_raw_display_types(
+                            source, target, diag_idx,
+                        );
+                    }
                     return false;
                 }
             }

@@ -825,12 +825,20 @@ impl<'a> NarrowingContext<'a> {
 
     /// Exclude array-like types from a type.
     ///
-    /// Used for `!Array.isArray(x)` in the false branch.
-    /// Removes arrays, tuples, and readonly arrays.
+    /// Used for `!Array.isArray(x)` in the false branch. `Array.isArray`'s
+    /// effective type predicate is `x is any[]` — a MUTABLE array — so only
+    /// members assignable to a mutable `any[]` are subtracted. `readonly`
+    /// arrays/tuples (`ReadonlyType`-wrapped arrays/tuples and `ReadonlyArray<T>`
+    /// applications) are NOT assignable to `any[]`, so tsc keeps them in the
+    /// negative branch; subtracting them is a soundness gap (#14782). Only
+    /// mutable arrays/tuples are removed here; the positive branch
+    /// (`narrow_to_array`) still absorbs readonly arrays into `any[]`.
     ///
     /// # Examples
     /// - `narrow_excluding_array(string[] | number)` → `number`
     /// - `narrow_excluding_array(string[])` → `NEVER`
+    /// - `narrow_excluding_array(readonly string[])` → `readonly string[]`
+    /// - `narrow_excluding_array(readonly string[] | number)` → `readonly string[] | number`
     /// - `narrow_excluding_array(unknown)` → `unknown`
     pub(crate) fn narrow_excluding_array(&self, source_type: TypeId) -> TypeId {
         // Handle ANY and UNKNOWN
@@ -843,7 +851,7 @@ impl<'a> NarrowingContext<'a> {
             return TypeId::UNKNOWN;
         }
 
-        if self.is_array_like(source_type) {
+        if self.is_mutable_array_like(source_type) {
             return TypeId::NEVER;
         }
 
@@ -889,12 +897,11 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        // If array-like, return NEVER (excluded)
-        if self.is_array_like(source_type) {
-            return TypeId::NEVER;
-        }
-
-        // Not array-like, keep as-is
+        // `source_type` is an immutable parameter and was already checked for
+        // mutable-array-likeness at the top of this function (returning NEVER),
+        // so any type reaching here is kept as-is. `readonly` arrays/tuples in
+        // particular survive: they are not assignable to the predicate's
+        // mutable `any[]` type (#14782).
         source_type
     }
 
@@ -914,6 +921,30 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Check if type is Array, Tuple, or ReadonlyArray (wrapped)
+        type_queries::is_array_type(self.db, type_id)
+            || type_queries::is_tuple_type(self.db, type_id)
+    }
+
+    /// Check if a type is a *mutable* array-like (a plain `Array<T>`/`T[]` or a
+    /// mutable tuple) — i.e. assignable to the mutable `any[]` type predicate
+    /// that `Array.isArray` narrows by.
+    ///
+    /// Unlike [`Self::is_array_like`], this returns `false` for `readonly`
+    /// arrays/tuples: a `ReadonlyType`-wrapped array/tuple or a `ReadonlyArray<T>`
+    /// application. Those are not assignable to a mutable `any[]`, so they must
+    /// be kept in the negative `!Array.isArray(x)` branch to match tsc (#14782).
+    fn is_mutable_array_like(&self, type_id: TypeId) -> bool {
+        use crate::type_queries;
+
+        // `readonly`-wrapped arrays/tuples and `ReadonlyArray<T>` applications
+        // are not mutable arrays, so they are not subtracted by the predicate.
+        if type_queries::is_readonly_type(self.db, type_id)
+            || self.readonly_array_application_element(type_id).is_some()
+        {
+            return false;
+        }
+
+        // A bare `Array<T>`/`T[]` or a (non-readonly) tuple is mutable.
         type_queries::is_array_type(self.db, type_id)
             || type_queries::is_tuple_type(self.db, type_id)
     }
