@@ -441,6 +441,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(in crate::state_domain::type_analysis) fn source_file_global_name_def_id_for_lowering(
+        &self,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+        type_name: &str,
+    ) -> Option<tsz_solver::def::DefId> {
+        if !self.source_file_global_type_is_direct_lowerable(delegate_binder, type_name) {
+            return None;
+        }
+        if let Some(sym_id) = delegate_binder.file_locals.get(type_name)
+            && !Self::source_file_local_symbol_can_fall_back_to_global_type(
+                symbol_arena,
+                delegate_binder,
+                sym_id,
+            )
+        {
+            return None;
+        }
+        self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+            .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
+    }
+
     pub(in crate::state_domain::type_analysis) fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
