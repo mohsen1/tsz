@@ -24,6 +24,7 @@ use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationResult;
@@ -1050,9 +1051,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Top-level frame: evaluate, then commit closed-eval cache writes.
         // See the `closed_eval` module for the safety gates.
-        let union_too_complex_before = self.interner.is_union_too_complex();
+        let limit_snapshot = EvaluationCacheLimitSnapshot::capture(self.interner);
         let result = self.evaluate_guarded(type_id);
-        self.commit_closed_eval_writes(union_too_complex_before);
+        self.commit_closed_eval_writes(limit_snapshot);
         result
     }
 

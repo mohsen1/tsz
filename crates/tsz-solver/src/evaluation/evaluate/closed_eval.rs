@@ -42,6 +42,7 @@
 //!    derived after the real body registers.
 
 use super::TypeEvaluator;
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
 
@@ -108,10 +109,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Commit this evaluator's per-evaluator cache entries to the project-wide
     /// `closed_eval_cache`, subject to the authoritative-write and limit gates.
     ///
-    /// `union_too_complex_before` is the `TS2590` flag snapshot taken before the
-    /// top-level evaluation began; if the run newly tripped the flag, nothing is
-    /// cached.
-    pub(super) fn commit_closed_eval_writes(&self, union_too_complex_before: bool) {
+    /// `limit_snapshot` is captured before the top-level evaluation began; if
+    /// the run newly tripped `TS2590`, nothing is cached.
+    pub(super) fn commit_closed_eval_writes(&self, limit_snapshot: EvaluationCacheLimitSnapshot) {
         // A substitution-independent node's *final* result is a pure function of
         // `(TypeId, no_unchecked, exact_optional)` and the project's single fixed
         // resolver — but only once that resolver can resolve every
@@ -123,7 +123,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         if !is_top_level
             || !self.request_state_is_depth_agnostic_cache_stable()
             || self.unresolved_def_seen()
-            || (self.interner.is_union_too_complex() && !union_too_complex_before)
+            || !limit_snapshot.union_complexity_stayed_stable_after(self.interner)
         {
             return;
         }
@@ -502,7 +502,8 @@ mod tests {
             .with_query_db(&cache)
             .with_closed_eval_writes();
         complete.cache.insert(complete_node, TypeId::NUMBER);
-        complete.commit_closed_eval_writes(false);
+        let complete_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        complete.commit_closed_eval_writes(complete_snapshot);
         assert_eq!(
             cache.lookup_closed_eval_cache(complete_node, false),
             Some(TypeId::NUMBER)
@@ -514,7 +515,8 @@ mod tests {
             .with_closed_eval_writes();
         incomplete.cache.insert(incomplete_node, TypeId::BOOLEAN);
         incomplete.simulate_incomplete_request_verdict_for_test(TerminationKind::DepthExceeded);
-        incomplete.commit_closed_eval_writes(false);
+        let incomplete_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        incomplete.commit_closed_eval_writes(incomplete_snapshot);
         assert_eq!(cache.lookup_closed_eval_cache(incomplete_node, false), None);
 
         let legacy_tainted_node = interner.index_access(TypeId::STRING, TypeId::NUMBER);
@@ -525,7 +527,8 @@ mod tests {
             .cache
             .insert(legacy_tainted_node, TypeId::STRING);
         legacy_tainted.simulate_unrelated_recursion_bail_for_test();
-        legacy_tainted.commit_closed_eval_writes(false);
+        let legacy_tainted_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        legacy_tainted.commit_closed_eval_writes(legacy_tainted_snapshot);
         assert_eq!(
             cache.lookup_closed_eval_cache(legacy_tainted_node, false),
             None
