@@ -1181,6 +1181,9 @@ path = "tests/overload_inference_literal_preservation_tests.rs"
 name = "overload_spread_into_rest_ts2556_tests"
 path = "tests/overload_spread_into_rest_ts2556_tests.rs"
 [[test]]
+name = "spread_any_value_ts2556_tests"
+path = "tests/spread_any_value_ts2556_tests.rs"
+[[test]]
 name = "overload_nontuple_spread_rest_fallback_tests"
 path = "tests/overload_nontuple_spread_rest_fallback_tests.rs"
 [[test]]
