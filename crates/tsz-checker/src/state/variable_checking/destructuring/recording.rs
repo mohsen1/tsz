@@ -1,8 +1,11 @@
 //! Destructured binding source and group recording helpers.
 
-use super::*;
+use crate::state::CheckerState;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Record source expression info for destructured bindings.
     /// Maps each binding element symbol to `(source_expression, property_name)` so that
     /// flow narrowing can check if the source's property has been narrowed by a condition.
