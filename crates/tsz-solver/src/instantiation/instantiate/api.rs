@@ -1318,23 +1318,23 @@ pub fn instantiate_type_with_depth_status(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
-) -> (TypeId, bool) {
+) -> InstantiationResult {
     // Fast path: intrinsic types never need instantiation (no type-parameter
     // occurrences, no recursion). Skip the substitution probe AND the
     // `TypeInstantiator` construction. Mirrors the leaf fast path in
     // `instantiate_type_cached` / `instantiate_type_preserving_cached`.
     if type_id.is_intrinsic() {
-        return (type_id, false);
+        return InstantiationResult::ok(type_id);
     }
     if substitution.is_empty() {
-        return (type_id, false);
+        return InstantiationResult::ok(type_id);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     let result = instantiator.instantiate(type_id);
-    // Report the overflow bool for callers that gate on it, but hand back the
-    // relation-preserving bail value (never a substitution-bound free type
+    // Report the overflow verdict for callers that gate on it, but hand back
+    // the relation-preserving bail value (never a substitution-bound free type
     // parameter) instead of the `TypeId::ERROR` sentinel (#13652).
-    (result, instantiator.depth_exceeded)
+    InstantiationResult::from_walk(result, instantiator.depth_exceeded)
 }
 
 /// Convenience function for instantiating a type while preserving meta-type
@@ -1927,7 +1927,8 @@ pub fn instantiate_function_with_type_args(
         .params
         .iter()
         .map(|p| {
-            let (new_ty, _) = instantiate_type_with_depth_status(interner, p.type_id, &subst);
+            let new_ty =
+                instantiate_type_with_depth_status(interner, p.type_id, &subst).into_type_id();
             ParamInfo {
                 name: p.name,
                 type_id: new_ty,
@@ -1937,16 +1938,17 @@ pub fn instantiate_function_with_type_args(
         })
         .collect();
 
-    let (new_return, _) = instantiate_type_with_depth_status(interner, shape.return_type, &subst);
+    let new_return =
+        instantiate_type_with_depth_status(interner, shape.return_type, &subst).into_type_id();
 
     let new_this = shape
         .this_type
-        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0);
+        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).into_type_id());
 
     let new_predicate = shape.type_predicate.map(|tp| TypePredicate {
         type_id: tp
             .type_id
-            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0),
+            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).into_type_id()),
         ..tp
     });
 
