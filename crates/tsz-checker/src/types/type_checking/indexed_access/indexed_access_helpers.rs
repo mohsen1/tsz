@@ -1887,22 +1887,20 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn type_node_refers_to_type_parameter(&self, node_idx: NodeIndex) -> bool {
-        use tsz_binder::symbol_flags;
-
-        let Some(name) = self.simple_type_reference_name(node_idx) else {
-            return false;
-        };
-        self.ctx
-            .binder
-            .get_symbols()
-            .find_all_by_name(&name)
-            .iter()
-            .any(|&sym_id| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
-            })
+        // Resolve the name in its lexical scope rather than matching *any* symbol
+        // with the same spelling. A global `find_all_by_name` match also catches
+        // unrelated type parameters declared by lib/global generics — e.g. a user
+        // alias named `T` collides with `Array<T>`'s parameter `T` — and would
+        // mis-classify the concrete alias receiver as a type parameter, routing a
+        // missing literal key to TS2536 instead of TS2339 (#14804). The in-scope
+        // resolution keys off the actual binding (type-parameter scope or the
+        // identifier's resolved symbol), so it is independent of the chosen name.
+        crate::query_boundaries::type_checking_utilities::ast_index_node_is_in_scope_type_parameter(
+            self.ctx.arena,
+            self.ctx.binder,
+            &self.ctx.type_parameter_scope,
+            node_idx,
+        )
     }
 
     /// Structural rule: when the object has a plain string index signature and the index

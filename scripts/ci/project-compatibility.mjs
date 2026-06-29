@@ -124,8 +124,16 @@ function codesFromLines(lines, limit) {
 // Single-sided failures classify as *-fails-only so dashboards can route
 // oracle-side failures away from tsz-divergence triage.
 function oracleClassificationFrom({ tscExitCodes, tszExitCodes, tscDiagnosticCodes, tszDiagnosticCodes }) {
+  // A side counts as "failed" when it emitted any diagnostic codes OR exited
+  // nonzero. Diagnostic codes are the authoritative per-compiler signal: the
+  // parity path in scripts/ci/project-compile-guard.sh normalizes tsz's exit
+  // code to 0 once the tsc oracle cancels the tsz-only delta, yet tsz DID
+  // report the same diagnostics tsc did. Keying only on the exit code there
+  // would misread that side as "passed" and mislabel a tsz==tsc parity row as
+  // tsc-fails-only instead of both-fail-same. Empty codes + nonzero exit
+  // (crash/timeout/oom) still classifies as failed via the exit-code branch.
   const failed = (exitCodes, diagnosticCodes) => (
-    exitCodes.length > 0 ? exitCodes.some((code) => code !== 0) : diagnosticCodes.length > 0
+    diagnosticCodes.length > 0 || exitCodes.some((code) => code !== 0)
   );
   const tscSignaled = tscExitCodes.length > 0 || tscDiagnosticCodes.length > 0;
   const tszSignaled = tszExitCodes.length > 0 || tszDiagnosticCodes.length > 0;

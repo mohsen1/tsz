@@ -2,7 +2,7 @@ use tsz_solver::TypeId;
 use tsz_solver::computation::{
     EvaluationResult, InstantiationOptions, InstantiationRequest, InstantiationResult, Termination,
     TypeSubstitution, evaluate_type_result_with_request, evaluate_type_with_request,
-    instantiate_type_with_request,
+    instantiate_type_with_depth_status, instantiate_type_with_request,
 };
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::evaluation::request::EvaluationRequest;
@@ -15,6 +15,18 @@ fn computation_exports_staged_instantiation_api() {
     let request = InstantiationRequest::new(TypeId::STRING, &substitution).with_options(options);
 
     let result: InstantiationResult = instantiate_type_with_request(&interner, request);
+
+    assert!(!result.depth_exceeded());
+    assert_eq!(result.into_type_id(), TypeId::STRING);
+}
+
+#[test]
+fn computation_exports_depth_status_as_instantiation_result() {
+    let interner = TypeInterner::new();
+    let substitution = TypeSubstitution::new();
+
+    let result: InstantiationResult =
+        instantiate_type_with_depth_status(&interner, TypeId::STRING, &substitution);
 
     assert!(!result.depth_exceeded());
     assert_eq!(result.into_type_id(), TypeId::STRING);

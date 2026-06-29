@@ -180,13 +180,11 @@ mod tests {
 
     #[test]
     fn non_stable_fresh_result_is_returned_but_not_memoized() {
-        use crate::evaluation::result::EvaluationResult;
-
         reset_query_memo();
         let t = TypeId(8);
 
         let first = memoized_eval(t, false, || {
-            EvaluationMemoResult::new(EvaluationResult::complete(TypeId(80)), false)
+            EvaluationMemoResult::unstable_complete(TypeId(80))
         });
 
         assert_eq!(first, Some(TypeId(80)));

@@ -895,16 +895,19 @@ impl<'a> Printer<'a> {
             self.write("_Fragment");
         }
 
-        // Props with children
-        self.write(", { ");
-        if !filtered_children.is_empty() {
-            self.write("children: ");
-            self.emit_jsx_children_value(&children, &filtered_children, is_jsxs);
-            self.write(" ");
-        } else {
+        // Props object (with children embedded). Mirror the element automatic
+        // path (`emit_jsx_automatic_call`): emit a tight `{}` when there are no
+        // children rather than leaving a stray space (`{ }`), matching tsc
+        // byte-for-byte across the ESM, dev, and CJS automatic runtimes.
+        self.write(", ");
+        if filtered_children.is_empty() {
             self.skip_empty_jsx_children_comments(&children);
+            self.write("{}");
+        } else {
+            self.write("{ children: ");
+            self.emit_jsx_children_value(&children, &filtered_children, is_jsxs);
+            self.write(" }");
         }
-        self.write("}");
 
         if is_dev {
             // jsxDEV extra args: key, isStaticChildren, source, self

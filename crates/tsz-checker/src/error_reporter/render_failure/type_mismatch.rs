@@ -472,6 +472,22 @@ impl<'a> CheckerState<'a> {
             target_str = self
                 .canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
         }
+        // A source union whose top-level `null`/`undefined` was stripped by the
+        // target-only display policy can collapse to the target's display (e.g.
+        // `string[] | undefined` rendered as `string[]`). `tsc` keeps the source
+        // nullish, so restore it before building the assignability message:
+        // otherwise the collapse both misfires the TS2719 duplicate-name gate
+        // below and (on the TS2322 fallthrough) drops the `| undefined`/`| null`
+        // that `tsc` shows (`Type 'string[] | undefined' is not assignable to
+        // type 'string[]'`).
+        if let Some(restored) = self.source_display_preserving_nullish_if_collapsed_to_target(
+            source,
+            target,
+            &source_str,
+            &target_str,
+        ) {
+            source_str = restored;
+        }
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],

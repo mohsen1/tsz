@@ -238,6 +238,64 @@ fn literal_mask_preserves_object_vs_literal_reduction() {
     assert!(list.contains(&interner.literal_string("y")));
 }
 
+#[test]
+fn enum_absorbed_into_base_primitive_in_union_reduction() {
+    use crate::def::DefId;
+    let interner = TypeInterner::new();
+    // A nominal enum wrapping a union of `members` under `def`.
+    let mk_enum =
+        |def: u32, members: Vec<TypeId>| interner.enum_type(DefId(def), interner.union(members));
+    let num_members = || vec![interner.literal_number(0.0), interner.literal_number(1.0)];
+
+    // A numeric enum's structural member union (`0 | 1`) is a subtype of
+    // `number`, so `number | E` reduces to `number`; a string enum's
+    // (`"p" | "q"`) is a subtype of `string`, so `string | S` reduces to
+    // `string`. This mirrors tsc's `getUnionType` reduction after
+    // `getBaseTypeOfLiteralType` brands enum members as their base primitive.
+    let num_enum = mk_enum(7001, num_members());
+    assert_eq!(
+        interner.union(vec![TypeId::NUMBER, num_enum]),
+        TypeId::NUMBER,
+        "number | (numeric enum) must reduce to number"
+    );
+    // Intersection mirrors this: `E & number` keeps the nominal enum.
+    assert_eq!(
+        interner.intersection(vec![TypeId::NUMBER, num_enum]),
+        num_enum,
+        "number & (numeric enum) must reduce to the enum"
+    );
+
+    let str_enum = mk_enum(
+        7002,
+        vec![interner.literal_string("p"), interner.literal_string("q")],
+    );
+    assert_eq!(
+        interner.union(vec![TypeId::STRING, str_enum]),
+        TypeId::STRING,
+        "string | (string enum) must reduce to string"
+    );
+
+    // A string enum is disjoint from `number`, so `number | S` is preserved.
+    let mixed = interner.union(vec![TypeId::NUMBER, str_enum]);
+    let Some(TypeData::Union(list_id)) = interner.lookup(mixed) else {
+        panic!("number | (string enum) must stay a union");
+    };
+    assert_eq!(interner.type_list(list_id).len(), 2);
+
+    // Distinct enums stay nominal: neither absorbs the other even with
+    // identical structural members.
+    let other_num_enum = mk_enum(7003, num_members());
+    let two = interner.union(vec![num_enum, other_num_enum]);
+    let Some(TypeData::Union(list_id)) = interner.lookup(two) else {
+        panic!("two distinct enums must stay a union");
+    };
+    assert_eq!(
+        interner.type_list(list_id).len(),
+        2,
+        "distinct enums are nominal and irreducible"
+    );
+}
+
 fn distinct_keyof(interner: &TypeInterner, n: u32) -> TypeId {
     // `keyof <unique literal>` — a distinct, unevaluated `TypeData::KeyOf`
     // per `n`. This is the shape produced by distributing `keyof` over a

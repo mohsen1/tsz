@@ -2159,49 +2159,46 @@ impl QueryDatabase for TypeInterner {
                 }
             }
             Some(TypeData::Union(members_id)) => {
-                // For unions, collect index signatures from all members
+                // tsc's `getUnionIndexInfos`: an index signature is applicable to a
+                // union only when EVERY constituent supplies a matching one; the
+                // value type is then the union of the per-constituent value types.
+                // A constituent that lacks the signature voids it for the whole
+                // union — in particular a nullish (`null`/`undefined`/`void`)
+                // member, which has no members at all. Collecting from "any member"
+                // instead would expose an index signature the union does not have,
+                // making e.g. `(null | { [k: string]: number })["nope"]` silently
+                // resolve to `number` and drop tsc's TS2339 (#14804).
                 let members = self.type_list(members_id);
                 let mut string_indices = Vec::with_capacity(members.len());
                 let mut number_indices = Vec::with_capacity(members.len());
+                let mut all_have_string = !members.is_empty();
+                let mut all_have_number = !members.is_empty();
 
                 for &member in members.iter() {
                     let info = self.get_index_signatures(member);
-                    if let Some(sig) = info.string_index {
-                        string_indices.push(sig);
+                    match info.string_index {
+                        Some(sig) => string_indices.push(sig),
+                        None => all_have_string = false,
                     }
-                    if let Some(sig) = info.number_index {
-                        number_indices.push(sig);
+                    match info.number_index {
+                        Some(sig) => number_indices.push(sig),
+                        None => all_have_number = false,
                     }
                 }
 
-                // Union of the value types
-                let string_index = if string_indices.is_empty() {
-                    None
-                } else {
-                    Some(crate::types::IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type: self
-                            .union(string_indices.iter().map(|s| s.value_type).collect()),
-                        readonly: string_indices.iter().all(|s| s.readonly),
-                        param_name: None,
-                    })
-                };
-
-                let number_index = if number_indices.is_empty() {
-                    None
-                } else {
-                    Some(crate::types::IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type: self
-                            .union(number_indices.iter().map(|s| s.value_type).collect()),
-                        readonly: number_indices.iter().all(|s| s.readonly),
+                // Union of the value types, kept only when every member contributed.
+                let merge = |all: bool, sigs: &[crate::types::IndexSignature], key_type: TypeId| {
+                    all.then(|| crate::types::IndexSignature {
+                        key_type,
+                        value_type: self.union(sigs.iter().map(|s| s.value_type).collect()),
+                        readonly: sigs.iter().all(|s| s.readonly),
                         param_name: None,
                     })
                 };
 
                 IndexInfo {
-                    string_index,
-                    number_index,
+                    string_index: merge(all_have_string, &string_indices, TypeId::STRING),
+                    number_index: merge(all_have_number, &number_indices, TypeId::NUMBER),
                 }
             }
             Some(TypeData::Intersection(members_id)) => {

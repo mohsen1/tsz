@@ -16,6 +16,7 @@ use crate::construction::TypeDatabase;
 use crate::def::DefId;
 #[cfg(test)]
 use crate::diagnostics::SubtypeFailureReason;
+use crate::evaluation::result::EvaluationMemoResult;
 use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 use crate::operations::AssignabilityChecker;
 #[cfg(test)]
@@ -143,6 +144,48 @@ pub use crate::def::resolver::{NoopResolver, TypeEnvironment, TypeResolver};
 
 use super::rules::intrinsics::boxable_intrinsic_kind;
 use super::visitor::SubtypeVisitor;
+
+/// Result of relation-local type evaluation plus its cache-stability verdict.
+///
+/// Function-relation checking asks fresh evaluators to normalize nested types.
+/// The collapsed type and whether that collapse was depth/budget-stable travel
+/// together so callers do not pass around anonymous `(TypeId, bool)` tuples.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RelationEvaluationResult {
+    type_id: TypeId,
+    stable_for_depth_agnostic_cache: bool,
+}
+
+impl RelationEvaluationResult {
+    pub(crate) const fn stable(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            stable_for_depth_agnostic_cache: true,
+        }
+    }
+
+    pub(crate) const fn unstable(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            stable_for_depth_agnostic_cache: false,
+        }
+    }
+
+    pub(crate) const fn from_depth_agnostic_memo(result: EvaluationMemoResult) -> Self {
+        Self {
+            type_id: result.type_id(),
+            stable_for_depth_agnostic_cache: result.is_stable_for_depth_agnostic_cache(),
+        }
+    }
+
+    pub(crate) const fn type_id(self) -> TypeId {
+        self.type_id
+    }
+
+    pub(crate) fn is_unstable_unknown(self) -> bool {
+        self.type_id == TypeId::UNKNOWN && !self.stable_for_depth_agnostic_cache
+    }
+}
 
 /// Subtype checking context.
 /// Maintains the "seen" set for cycle detection.
@@ -289,10 +332,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
     /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
-    /// Value is `(result, stable)` where `stable` records whether the evaluation
-    /// converged without tripping a recursion/depth/budget limit (see
+    /// Value records the collapsed result plus whether evaluation converged
+    /// without tripping a recursion/depth/budget limit (see
     /// `evaluate_type_with_stability`).
-    pub(crate) eval_cache: FxHashMap<(TypeId, bool), (TypeId, bool)>,
+    pub(crate) eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>,
     /// Apparent object shapes for primitive wrapper fallback.
     ///
     /// Primitive structural subtype checks can ask for the same wrapper shape

@@ -332,6 +332,32 @@ impl RelationResult {
     }
 }
 
+const fn relation_result_from_compat_checker<R: TypeResolver>(
+    kind: RelationKind,
+    related: bool,
+    checker: &CompatChecker<'_, R>,
+) -> RelationResult {
+    RelationResult {
+        kind,
+        related,
+        depth_exceeded: checker.depth_exceeded(),
+        iteration_exceeded: checker.iteration_exceeded(),
+    }
+}
+
+const fn relation_result_from_subtype_checker<R: TypeResolver>(
+    kind: RelationKind,
+    related: bool,
+    checker: &SubtypeChecker<'_, R>,
+) -> RelationResult {
+    RelationResult {
+        kind,
+        related,
+        depth_exceeded: checker.depth_exceeded(),
+        iteration_exceeded: checker.iteration_exceeded(),
+    }
+}
+
 /// Structured failure details for assignability diagnostics.
 #[derive(Debug, Clone)]
 pub struct AssignabilityFailureAnalysis {
@@ -565,68 +591,43 @@ pub fn query_relation_with_overrides<
     )
     .entered();
 
-    let (related, depth_exceeded, iteration_exceeded) = match kind {
+    let result = match kind {
         RelationKind::Assignable => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let related = checker.is_assignable_with_overrides(source, target, overrides);
-            (
-                related,
-                checker.depth_exceeded(),
-                checker.iteration_exceeded(),
-            )
+            relation_result_from_compat_checker(kind, related, &checker)
         }
         RelationKind::AssignableBivariantCallbacks => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let _ = overrides;
             let related = checker.is_assignable_to_bivariant_callback(source, target);
-            (
-                related,
-                checker.depth_exceeded(),
-                checker.iteration_exceeded(),
-            )
+            relation_result_from_compat_checker(kind, related, &checker)
         }
         RelationKind::Subtype => {
             let mut checker = configured_subtype_checker(interner, resolver, policy, context);
             let related = checker.is_subtype_of(source, target);
-            (
-                related,
-                checker.depth_exceeded(),
-                checker.iteration_exceeded(),
-            )
+            relation_result_from_subtype_checker(kind, related, &checker)
         }
         RelationKind::Overlap => {
             let mut checker = configured_subtype_checker(interner, resolver, policy, context);
             let related = checker.are_types_overlapping(source, target);
-            (
-                related,
-                checker.depth_exceeded(),
-                checker.iteration_exceeded(),
-            )
+            relation_result_from_subtype_checker(kind, related, &checker)
         }
         RelationKind::RedeclarationIdentical => {
             let mut checker = configured_compat_checker(interner, resolver, policy, context);
             let related = checker.are_types_identical_for_redeclaration(source, target);
-            (
-                related,
-                checker.depth_exceeded(),
-                checker.iteration_exceeded(),
-            )
+            relation_result_from_compat_checker(kind, related, &checker)
         }
     };
 
     tracing::debug!(
-        related,
-        depth_exceeded,
-        iteration_exceeded,
+        related = result.related,
+        depth_exceeded = result.depth_exceeded,
+        iteration_exceeded = result.iteration_exceeded,
         "query_relation result"
     );
 
-    RelationResult {
-        kind,
-        related,
-        depth_exceeded,
-        iteration_exceeded,
-    }
+    result
 }
 
 /// Query the overload implementation fallback that compares erased parameter

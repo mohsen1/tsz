@@ -26,6 +26,69 @@ pub(super) enum BranchRelation {
     Undetermined,
 }
 
+/// Whether a conditional-branch probe can seed the depth-agnostic verdict
+/// cache.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ConditionalBranchCacheStability {
+    /// The probe did not consume a local recursion/iteration budget.
+    DepthAgnostic,
+    /// The probe returned a conservative answer after a local budget fired.
+    BudgetBounded,
+}
+
+impl ConditionalBranchCacheStability {
+    const fn mark_budget_bounded(&mut self) {
+        *self = Self::BudgetBounded;
+    }
+
+    const fn is_depth_agnostic(self) -> bool {
+        matches!(self, Self::DepthAgnostic)
+    }
+}
+
+/// Conditional-branch relation result plus its publication verdict.
+///
+/// The per-evaluator cache can remember any definitive branch relation. The
+/// cross-evaluator cache is stricter: it may only store definitive answers that
+/// are independent of the local subtype walk's recursion/iteration budgets.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct ConditionalBranchProbeResult {
+    relation: BranchRelation,
+    cache_stability: ConditionalBranchCacheStability,
+}
+
+impl ConditionalBranchProbeResult {
+    const fn new(
+        relation: BranchRelation,
+        cache_stability: ConditionalBranchCacheStability,
+    ) -> Self {
+        Self {
+            relation,
+            cache_stability,
+        }
+    }
+
+    const fn relation(self) -> BranchRelation {
+        self.relation
+    }
+
+    const fn definitive_verdict(self) -> Option<bool> {
+        match self.relation {
+            BranchRelation::Holds => Some(true),
+            BranchRelation::Fails => Some(false),
+            BranchRelation::Undetermined => None,
+        }
+    }
+
+    const fn depth_agnostic_cache_verdict(self) -> Option<bool> {
+        if self.cache_stability.is_depth_agnostic() {
+            self.definitive_verdict()
+        } else {
+            None
+        }
+    }
+}
+
 /// Run a structural relation probe that chooses a conditional branch and
 /// classify its result, following the thread-local unresolved-`Lazy` sentinel
 /// so a `false` that depended on an unregistered `Lazy` body is reported as
@@ -81,14 +144,21 @@ thread_local! {
 
 /// RAII recursion-depth guard for [`check_conditional_subtype`].
 ///
-/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns
-/// the depth observed *before* the increment plus the guard; `Drop` decrements
-/// it, so the counter is restored on the normal return path and when the
-/// guarded subtype walk unwinds via a caught panic. The counter is
+/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns a
+/// [`ConditionalSubtypeDepthEntry`] containing the depth observed *before* the
+/// increment plus the guard; `Drop` decrements it, so the counter is restored on
+/// the normal return path and when the guarded subtype walk unwinds via a caught
+/// panic. The counter is
 /// function-private state that the batch boundary reset cannot reach, so this
 /// self-cleaning guard is the only correct cross-compilation isolation for it.
 #[must_use]
 struct ConditionalSubtypeDepthGuard;
+
+#[must_use]
+struct ConditionalSubtypeDepthEntry {
+    prior_depth: u32,
+    guard: ConditionalSubtypeDepthGuard,
+}
 
 impl ConditionalSubtypeDepthGuard {
     /// Cap above which the conditional-subtype relation conservatively returns
@@ -96,13 +166,27 @@ impl ConditionalSubtypeDepthGuard {
     /// instantiation depth is exceeded.
     const LIMIT: u32 = 50;
 
-    fn enter() -> (u32, Self) {
-        let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+    fn enter() -> ConditionalSubtypeDepthEntry {
+        let prior_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
             let c = d.get();
             d.set(c + 1);
             c
         });
-        (prev_depth, Self)
+        ConditionalSubtypeDepthEntry {
+            prior_depth,
+            guard: Self,
+        }
+    }
+}
+
+impl ConditionalSubtypeDepthEntry {
+    const fn prior_depth(&self) -> u32 {
+        self.prior_depth
+    }
+
+    fn exit(self) {
+        let Self { guard, .. } = self;
+        drop(guard);
     }
 }
 
@@ -612,26 +696,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // RAII (see `ConditionalSubtypeDepthGuard`) so the depth is restored on
         // every exit including a caught panic-unwind, keeping the relation
         // schedule-independent across batch-worker reuse (#13368).
-        let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
+        let depth_entry = ConditionalSubtypeDepthGuard::enter();
         // A verdict produced by the depth bail or by a structural walk that
         // itself tripped a recursion/iteration limit is a *budget-bounded*
         // conservative answer, not a stable function of the type pair: it must
         // never be published to the cross-evaluator cache (it would permanently
-        // shadow the full answer a deeper-budget run derives). Tracked here and
-        // consulted at the write site.
-        let mut verdict_is_budget_bounded = false;
+        // shadow the full answer a deeper-budget run derives). Carry that as a
+        // typed publication verdict and consult it at the write site.
+        let mut cache_stability = ConditionalBranchCacheStability::DepthAgnostic;
         // Classify against the unresolved-`Lazy` sentinel: a `false` produced
         // only because the structural walk descended into an unregistered
         // `Lazy` body is reported as `Undetermined` rather than a definitive
         // false (issue #14238). Shared with the array fast path via
         // `classify_branch_relation`.
         let relation = classify_branch_relation(|| {
-            if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
+            if depth_entry.prior_depth() >= ConditionalSubtypeDepthGuard::LIMIT {
                 // At excessive depth, conservatively assume not a subtype
                 // (takes the false/else branch of the conditional).
                 // This matches tsc's behavior of returning the deferred
                 // conditional when instantiation depth is exceeded.
-                verdict_is_budget_bounded = true;
+                cache_stability.mark_budget_bounded();
                 false
             } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
                 // Fast-path: primitive types (string, number, boolean, bigint,
@@ -666,21 +750,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // A walk that exhausted its own depth/iteration budget returned
                 // a conservative verdict; mark it un-publishable.
                 if strict_checker.depth_exceeded() || strict_checker.iteration_exceeded() {
-                    verdict_is_budget_bounded = true;
+                    cache_stability.mark_budget_bounded();
                 }
                 verdict
             }
         });
+        let probe = ConditionalBranchProbeResult::new(relation, cache_stability);
         // Restore the depth before the cache write to preserve the original
         // decrement ordering; `Drop` would otherwise run at end of scope, but
         // either way the depth is restored on a panic-unwind exit.
-        drop(depth_guard);
+        depth_entry.exit();
         // An `Undetermined` false consumed an unregistered `Lazy` body: do not
         // cache it and do not let it take the false branch — defer so a later
         // resolved pass decides the conditional (issue #14238). Definitive
         // verdicts are cached as before.
-        if relation != BranchRelation::Undetermined {
-            let verdict = relation == BranchRelation::Holds;
+        if let Some(verdict) = probe.definitive_verdict() {
             self.cache_conditional_subtype(check_type, extends_type, verdict);
 
             // Publish to the cross-evaluator verdict cache only when the answer
@@ -690,16 +774,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //    this arm, so no registration-window artifact is published;
             //  - not budget-bounded — neither the depth bail nor a limit-tripped
             //    structural walk produced it;
-            //  - the enclosing evaluation request saw no typed incomplete
-            //    verdict, legacy recursion limit, or unresolved application
-            //    body (`has_incomplete_request_verdict` /
-            //    `recursion_limit_hit` / `unresolved_def_seen`), and neither
-            //    operand is tainted — the same whole-run gates `closed_eval`
-            //    uses before persisting.
+            //  - the enclosing evaluation request is stable enough for
+            //    depth-agnostic publication, saw no unresolved application
+            //    body, and neither operand is tainted — the same whole-run
+            //    gates `closed_eval` uses before persisting.
             if conditional_branch_verdict_cache_enabled()
-                && !verdict_is_budget_bounded
-                && !self.has_incomplete_request_verdict()
-                && !self.recursion_limit_hit()
+                && let Some(verdict) = probe.depth_agnostic_cache_verdict()
+                && self.request_state_is_depth_agnostic_cache_stable()
                 && !self.unresolved_def_seen()
                 && !self.is_tainted(check_type)
                 && !self.is_tainted(extends_type)
@@ -713,7 +794,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 tsz_common::perf_counters::record_eval_conditional_verdict_persist_insert();
             }
         }
-        relation
+        probe.relation()
     }
 
     fn object_literals_have_conflicting_required_property(
@@ -917,6 +998,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 }
 
 #[cfg(test)]
+mod conditional_branch_probe_result_tests {
+    use super::{BranchRelation, ConditionalBranchCacheStability, ConditionalBranchProbeResult};
+
+    #[test]
+    fn budget_bounded_probe_keeps_definitive_verdict_but_blocks_depth_cache() {
+        let probe = ConditionalBranchProbeResult::new(
+            BranchRelation::Fails,
+            ConditionalBranchCacheStability::BudgetBounded,
+        );
+
+        assert_eq!(probe.relation(), BranchRelation::Fails);
+        assert_eq!(probe.definitive_verdict(), Some(false));
+        assert_eq!(probe.depth_agnostic_cache_verdict(), None);
+    }
+
+    #[test]
+    fn undetermined_probe_has_no_cacheable_verdict() {
+        let probe = ConditionalBranchProbeResult::new(
+            BranchRelation::Undetermined,
+            ConditionalBranchCacheStability::DepthAgnostic,
+        );
+
+        assert_eq!(probe.relation(), BranchRelation::Undetermined);
+        assert_eq!(probe.definitive_verdict(), None);
+        assert_eq!(probe.depth_agnostic_cache_verdict(), None);
+    }
+
+    #[test]
+    fn depth_agnostic_probe_exports_definitive_cache_verdict() {
+        let probe = ConditionalBranchProbeResult::new(
+            BranchRelation::Holds,
+            ConditionalBranchCacheStability::DepthAgnostic,
+        );
+
+        assert_eq!(probe.relation(), BranchRelation::Holds);
+        assert_eq!(probe.definitive_verdict(), Some(true));
+        assert_eq!(probe.depth_agnostic_cache_verdict(), Some(true));
+    }
+}
+
+#[cfg(test)]
 mod conditional_subtype_depth_guard_tests {
     use super::{CONDITIONAL_SUBTYPE_DEPTH, ConditionalSubtypeDepthGuard};
 
@@ -927,16 +1049,20 @@ mod conditional_subtype_depth_guard_tests {
     #[test]
     fn enter_reports_prior_depth_and_drop_restores() {
         assert_eq!(current_depth(), 0, "counter starts clean");
-        let (prev0, g0) = ConditionalSubtypeDepthGuard::enter();
-        assert_eq!(prev0, 0, "first entry observes depth 0");
+        let entry0 = ConditionalSubtypeDepthGuard::enter();
+        assert_eq!(entry0.prior_depth(), 0, "first entry observes depth 0");
         assert_eq!(current_depth(), 1);
         {
-            let (prev1, _g1) = ConditionalSubtypeDepthGuard::enter();
-            assert_eq!(prev1, 1, "nested entry observes the outer depth");
+            let entry1 = ConditionalSubtypeDepthGuard::enter();
+            assert_eq!(
+                entry1.prior_depth(),
+                1,
+                "nested entry observes the outer depth"
+            );
             assert_eq!(current_depth(), 2);
         }
         assert_eq!(current_depth(), 1, "nested drop restores one level");
-        drop(g0);
+        drop(entry0);
         assert_eq!(current_depth(), 0, "outer drop restores the clean slate");
     }
 
@@ -949,7 +1075,7 @@ mod conditional_subtype_depth_guard_tests {
     fn depth_is_restored_on_unwind() {
         assert_eq!(current_depth(), 0, "counter starts clean");
         let result = std::panic::catch_unwind(|| {
-            let (_prev, _guard) = ConditionalSubtypeDepthGuard::enter();
+            let _entry = ConditionalSubtypeDepthGuard::enter();
             assert_eq!(current_depth(), 1);
             panic!("simulated mid-subtype-walk panic");
         });

@@ -1508,6 +1508,33 @@ impl<'a> CheckerState<'a> {
     /// type B = { kind: "b"; onClick: (e: number) => void };
     /// const x: A | B = { kind: "a", onClick: (e) => e.length }; // e: string
     /// ```
+    /// Returns `true` when the syntactic form of `idx` can never have a unit
+    /// (literal) type, so type-checking it to look for a discriminant value is
+    /// pure overhead — and, worse, would commit context-free diagnostics for a
+    /// node that is re-checked later with its proper contextual type.
+    ///
+    /// Covers function/arrow expressions (always a function type), object/array
+    /// literals (always an object/array type), and class/JSX expressions. These
+    /// already classify as non-unit today; skipping the probe only suppresses
+    /// the premature side-effect diagnostics, leaving discriminant detection
+    /// unchanged.
+    fn initializer_is_structurally_non_unit(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        matches!(
+            node.kind,
+            syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::JSX_ELEMENT
+                | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                | syntax_kind_ext::JSX_FRAGMENT
+        )
+    }
+
     pub(crate) fn narrow_contextual_union_via_object_literal_discriminants(
         &mut self,
         ctx_type: TypeId,
@@ -1545,21 +1572,20 @@ impl<'a> CheckerState<'a> {
                 };
                 present_property_names.push(name.clone());
                 // Get the literal type of the initializer without full type computation.
-                // A function-like initializer (arrow / function expression) can never be a
-                // unit/literal type, so it is irrelevant to discriminant narrowing. Computing
-                // its type bare here — before the real contextual pass over the object literal
-                // — would prematurely check the function with no contextual type and emit a
-                // spurious TS7006 for parameters that the contextual union member would have
-                // typed. Skip the bare probe for those initializers.
-                let initializer_is_function_like =
-                    self.ctx.arena.get(prop.initializer).is_some_and(|node| {
-                        node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    });
+                // The `get_type_of_node` fallback exists only to catch *reference*
+                // initializers whose type is a unit literal (a `const` bound to a
+                // literal, an enum member, an `as const`, etc.). Initializer forms
+                // whose type is structurally never a unit type — function/arrow
+                // expressions, object/array literals, class/JSX expressions — can
+                // never be a discriminant, so the only effect of type-checking them
+                // here is to commit premature, context-free diagnostics (e.g. a
+                // spurious TS7006 on an object-literal method's parameters). Skip the
+                // probe for those forms; the real, contextually-typed check of the
+                // object-literal element still runs afterward.
                 let unit_lit = self
                     .literal_type_from_initializer(prop.initializer)
                     .or_else(|| {
-                        if initializer_is_function_like {
+                        if self.initializer_is_structurally_non_unit(prop.initializer) {
                             return None;
                         }
                         let initializer_type = self.get_type_of_node(prop.initializer);

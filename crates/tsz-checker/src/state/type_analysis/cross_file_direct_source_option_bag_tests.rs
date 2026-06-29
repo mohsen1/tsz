@@ -17,9 +17,10 @@
 //! remains the safety gate, so heritage/computed/complex shapes still fall back
 //! to the child-checker path.
 
-use crate::context::{CheckerContext, CheckerOptions};
+use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
+use crate::test_utils::load_lib_files;
 use std::sync::Arc;
 use tsz_binder::{BinderState, ModuleAugmentation};
 use tsz_common::perf_counters::{DirectCrossFileInterfaceLoweringOutcome, PerfCounters};
@@ -361,6 +362,182 @@ fn delegate_cross_arena_source_option_bag_resolves_in_program_with_module_augmen
         )
         .is_some(),
         "BuildOptions should retain 'minify' property even with program-level augmentations present",
+    );
+}
+
+#[test]
+fn delegate_cross_arena_source_module_augmentation_member_substitutes_generic_interface_ref() {
+    let (registry_arena, registry_binder, types) = parse_bound_source_with_name(
+        "HKT.ts",
+        r#"
+                export interface URItoKind2<E, A> {}
+            "#,
+    );
+    let (augmentation_arena, augmentation_binder, _) = parse_bound_source_with_name(
+        "io-either.ts",
+        r#"
+                import { URItoKind2 } from "./HKT";
+                declare module "./HKT" {
+                    interface URItoKind2<E, A> {
+                        readonly IOEither: IOEither<E, A>;
+                    }
+                }
+                export interface IOEither<E, A> { readonly value: E | A; }
+            "#,
+    );
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        registry_arena.as_ref(),
+        registry_binder.as_ref(),
+        &types,
+        "HKT.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&registry_arena),
+        Arc::clone(&augmentation_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&registry_binder),
+        Arc::clone(&augmentation_binder),
+    ]));
+    ctx.set_current_file_idx(0);
+    let mut state = CheckerState { ctx };
+
+    let augmentation = augmentation_binder
+        .module_augmentations
+        .get("./HKT")
+        .and_then(|augmentations| {
+            augmentations
+                .iter()
+                .find(|augmentation| augmentation.name == "URItoKind2")
+        })
+        .expect("URItoKind2 module augmentation");
+    let registry_decl = augmentation.node;
+    let registry_interface = augmentation_arena
+        .get(registry_decl)
+        .and_then(|node| augmentation_arena.get_interface(node))
+        .expect("URItoKind2 augmentation interface");
+    let io_member = registry_interface.members.nodes[0];
+    let type_args = [TypeId::STRING, TypeId::NUMBER];
+
+    let member_types = state
+        .delegate_cross_arena_interface_member_simple_types(
+            registry_decl,
+            &[io_member],
+            augmentation_arena.as_ref(),
+            Some(&type_args),
+            true,
+        )
+        .expect("source-file module augmentation member should lower directly");
+    let member_type = member_types
+        .get(&io_member)
+        .copied()
+        .expect("IOEither member type");
+
+    assert_ne!(
+        member_type,
+        TypeId::ANY,
+        "source-file module augmentation member must not fall back to ANY"
+    );
+    assert_ne!(member_type, TypeId::UNKNOWN);
+    assert_ne!(member_type, TypeId::ERROR);
+}
+
+#[test]
+fn delegate_cross_arena_source_module_augmentation_member_lowers_global_map_ref() {
+    let (registry_arena, registry_binder, types) = parse_bound_source_with_name(
+        "HKT.ts",
+        r#"
+                export interface URItoKind2<E, A> {}
+            "#,
+    );
+    let (augmentation_arena, augmentation_binder, _) = parse_bound_source_with_name(
+        "table.ts",
+        r#"
+                import { URItoKind2 } from "./HKT";
+                declare module "./HKT" {
+                    interface URItoKind2<E, A> {
+                        readonly Table: ReadonlyMap<E, A>;
+                    }
+                }
+            "#,
+    );
+    let lib_files = load_lib_files(&["es5.d.ts", "es2015.collection.d.ts"]);
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        registry_arena.as_ref(),
+        registry_binder.as_ref(),
+        &types,
+        "HKT.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&registry_arena),
+        Arc::clone(&augmentation_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&registry_binder),
+        Arc::clone(&augmentation_binder),
+    ]));
+    ctx.set_current_file_idx(0);
+    ctx.set_lib_contexts(
+        lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect(),
+    );
+    ctx.set_actual_lib_file_count(lib_files.len());
+    let mut state = CheckerState { ctx };
+
+    let augmentation = augmentation_binder
+        .module_augmentations
+        .get("./HKT")
+        .and_then(|augmentations| {
+            augmentations
+                .iter()
+                .find(|augmentation| augmentation.name == "URItoKind2")
+        })
+        .expect("URItoKind2 module augmentation");
+    let registry_decl = augmentation.node;
+    let registry_interface = augmentation_arena
+        .get(registry_decl)
+        .and_then(|node| augmentation_arena.get_interface(node))
+        .expect("URItoKind2 augmentation interface");
+    let table_member = registry_interface.members.nodes[0];
+    let type_args = [TypeId::STRING, TypeId::NUMBER];
+
+    let member_types = state
+        .delegate_cross_arena_interface_member_simple_types(
+            registry_decl,
+            &[table_member],
+            augmentation_arena.as_ref(),
+            Some(&type_args),
+            true,
+        )
+        .expect("source-file module augmentation member with global map ref should lower directly");
+    let member_type = member_types
+        .get(&table_member)
+        .copied()
+        .expect("Table member type");
+
+    assert_ne!(
+        member_type,
+        TypeId::ANY,
+        "global `ReadonlyMap` member must not fall back to ANY"
+    );
+    assert_ne!(member_type, TypeId::UNKNOWN);
+    assert_ne!(member_type, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::application_info(
+            state.ctx.types.as_type_database(),
+            member_type,
+        )
+        .is_some(),
+        "global `ReadonlyMap<E, A>` should lower as an application"
     );
 }
 
