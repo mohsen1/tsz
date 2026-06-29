@@ -76,6 +76,44 @@ struct RelationFrameSnapshot {
     weak_sensitivity_at_entry: u64,
 }
 
+/// Whether a visiting `DefId` pair represents the same recursive relation by
+/// symbol identity even though the pair itself differs.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum SymbolDefCycleState {
+    NoCycle,
+    CycleDetected,
+}
+
+impl SymbolDefCycleState {
+    fn from_symbol_pairs(
+        visiting_defs: (DefId, DefId),
+        current_defs: (DefId, DefId),
+        visiting_symbols: (Option<tsz_binder::SymbolId>, Option<tsz_binder::SymbolId>),
+        current_symbols: (tsz_binder::SymbolId, tsz_binder::SymbolId),
+    ) -> Self {
+        if visiting_defs == current_defs {
+            return Self::NoCycle;
+        }
+
+        let (visiting_source, visiting_target) = visiting_symbols;
+        let (current_source, current_target) = current_symbols;
+        let forward_match =
+            visiting_source == Some(current_source) && visiting_target == Some(current_target);
+        let reversed_match =
+            visiting_source == Some(current_target) && visiting_target == Some(current_source);
+
+        if forward_match || reversed_match {
+            Self::CycleDetected
+        } else {
+            Self::NoCycle
+        }
+    }
+
+    const fn is_cycle(self) -> bool {
+        matches!(self, Self::CycleDetected)
+    }
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a Lazy type resolved to an Enum with the same DefId.
     ///
@@ -642,28 +680,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let s_sym = self.resolver.def_to_symbol_id(s_def);
             let t_sym = self.resolver.def_to_symbol_id(t_def);
             if let (Some(s_sid), Some(t_sid)) = (s_sym, t_sym) {
-                // Check if any visiting DefId pair maps to the same SymbolId pair
-                let found_cycle = self.def_guard.is_visiting_any(|&(visiting_s, visiting_t)| {
-                    let different_pair = visiting_s != s_def || visiting_t != t_def;
-                    if !different_pair {
-                        return false;
-                    }
-                    // Forward match: visiting (A, B) matches new (A', B') at SymbolId level
-                    let s_sym_match = self.resolver.def_to_symbol_id(visiting_s) == Some(s_sid);
-                    let t_sym_match = self.resolver.def_to_symbol_id(visiting_t) == Some(t_sid);
-                    if s_sym_match && t_sym_match {
-                        return true;
-                    }
-                    // Reversed match: visiting (A, B) matches new (B', A') at SymbolId level.
-                    // This catches bivariant cross-recursion with aliased DefIds, e.g.,
-                    // when checking IteratorObject<...> <: Generator<...> while
-                    // Generator<...> <: IteratorObject<...> is being visited with
-                    // different DefIds for the same SymbolIds.
-                    let s_rev_match = self.resolver.def_to_symbol_id(visiting_s) == Some(t_sid);
-                    let t_rev_match = self.resolver.def_to_symbol_id(visiting_t) == Some(s_sid);
-                    s_rev_match && t_rev_match
-                });
-                if found_cycle {
+                // Check if any visiting `DefId` pair maps to the same `SymbolId`
+                // pair, either forward or reversed for bivariant recursion.
+                let symbol_cycle_state =
+                    if self.def_guard.is_visiting_any(|&(visiting_s, visiting_t)| {
+                        SymbolDefCycleState::from_symbol_pairs(
+                            (visiting_s, visiting_t),
+                            (s_def, t_def),
+                            (
+                                self.resolver.def_to_symbol_id(visiting_s),
+                                self.resolver.def_to_symbol_id(visiting_t),
+                            ),
+                            (s_sid, t_sid),
+                        )
+                        .is_cycle()
+                    }) {
+                        SymbolDefCycleState::CycleDetected
+                    } else {
+                        SymbolDefCycleState::NoCycle
+                    };
+                if symbol_cycle_state.is_cycle() {
                     self.guard.leave(pair);
                     let result = self.result_on_cycle(source, target);
                     finish_frame!(result);
@@ -1547,5 +1583,63 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.interner.lookup(body),
             Some(TypeData::IndexAccess(_, _))
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_binder::SymbolId;
+
+    #[test]
+    fn symbol_def_cycle_state_ignores_same_def_pair() {
+        let state = SymbolDefCycleState::from_symbol_pairs(
+            (DefId(1), DefId(2)),
+            (DefId(1), DefId(2)),
+            (Some(SymbolId(10)), Some(SymbolId(20))),
+            (SymbolId(10), SymbolId(20)),
+        );
+        assert_eq!(state, SymbolDefCycleState::NoCycle);
+    }
+
+    #[test]
+    fn symbol_def_cycle_state_detects_forward_alias_pair() {
+        let state = SymbolDefCycleState::from_symbol_pairs(
+            (DefId(1), DefId(2)),
+            (DefId(3), DefId(4)),
+            (Some(SymbolId(10)), Some(SymbolId(20))),
+            (SymbolId(10), SymbolId(20)),
+        );
+        assert_eq!(state, SymbolDefCycleState::CycleDetected);
+    }
+
+    #[test]
+    fn symbol_def_cycle_state_detects_reversed_alias_pair() {
+        let state = SymbolDefCycleState::from_symbol_pairs(
+            (DefId(1), DefId(2)),
+            (DefId(3), DefId(4)),
+            (Some(SymbolId(20)), Some(SymbolId(10))),
+            (SymbolId(10), SymbolId(20)),
+        );
+        assert_eq!(state, SymbolDefCycleState::CycleDetected);
+    }
+
+    #[test]
+    fn symbol_def_cycle_state_rejects_partial_or_different_symbols() {
+        let missing_symbol = SymbolDefCycleState::from_symbol_pairs(
+            (DefId(1), DefId(2)),
+            (DefId(3), DefId(4)),
+            (Some(SymbolId(10)), None),
+            (SymbolId(10), SymbolId(20)),
+        );
+        assert_eq!(missing_symbol, SymbolDefCycleState::NoCycle);
+
+        let different_symbol = SymbolDefCycleState::from_symbol_pairs(
+            (DefId(1), DefId(2)),
+            (DefId(3), DefId(4)),
+            (Some(SymbolId(10)), Some(SymbolId(30))),
+            (SymbolId(10), SymbolId(20)),
+        );
+        assert_eq!(different_symbol, SymbolDefCycleState::NoCycle);
     }
 }
