@@ -35,8 +35,14 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(record_display) = self.format_in_operator_record(&shape) {
                     return record_display.into();
                 }
-                // Use display properties (pre-widened literal types) when enabled.
+                // Display properties are the as-written literal surface. A fresh
+                // object literal keeps that surface, and generic application
+                // arguments keep it too (`Alias<{ target: "$x" }>`). Regular
+                // widened/non-fresh objects such as `typeof obj` render their
+                // canonical widened property types.
                 if self.use_display_properties
+                    && (shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+                        || self.application_arg_display_depth > 0)
                     && let Some(display_props) = self.interner.get_display_properties(type_id)
                 {
                     return self.format_object(display_props.as_slice()).into();
@@ -55,6 +61,8 @@ impl<'a> TypeFormatter<'a> {
                     return name.into();
                 }
                 if self.use_display_properties
+                    && (shape.flags.contains(ObjectFlags::FRESH_LITERAL)
+                        || self.application_arg_display_depth > 0)
                     && let Some(display_props) = self.interner.get_display_properties(type_id)
                 {
                     let mut display_shape = shape.as_ref().clone();
@@ -450,7 +458,15 @@ impl<'a> TypeFormatter<'a> {
                         {
                             Cow::Borrowed("...")
                         } else {
-                            self.format(self.simplify_application_arg_for_display(arg))
+                            let previous_application_arg_display_depth =
+                                self.application_arg_display_depth;
+                            self.application_arg_display_depth =
+                                previous_application_arg_display_depth.saturating_add(1);
+                            let formatted =
+                                self.format(self.simplify_application_arg_for_display(arg));
+                            self.application_arg_display_depth =
+                                previous_application_arg_display_depth;
+                            formatted
                         }
                     })
                     .collect();

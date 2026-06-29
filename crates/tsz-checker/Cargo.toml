@@ -2322,5 +2322,9 @@ name = "noinfer_object_property_literal_widening_tests"
 path = "tests/noinfer_object_property_literal_widening_tests.rs"
 
 [[test]]
+name = "typeof_object_literal_widened_display_tests"
+path = "tests/typeof_object_literal_widened_display_tests.rs"
+
+[[test]]
 name = "class_duplicate_member_implicit_any_tests"
 path = "tests/class_duplicate_member_implicit_any_tests.rs"
