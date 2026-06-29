@@ -158,6 +158,33 @@ pub(crate) struct EvaluationMemoResult {
     cache_stability: EvaluationMemoStability,
 }
 
+/// Whether the evaluator request state is safe for depth-agnostic memo writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EvaluationRequestStability {
+    Stable,
+    IncompleteVerdict,
+    RecursionLimit,
+}
+
+impl EvaluationRequestStability {
+    pub(crate) const fn from_request_state(
+        has_incomplete_request_verdict: bool,
+        recursion_limit_hit: bool,
+    ) -> Self {
+        if has_incomplete_request_verdict {
+            Self::IncompleteVerdict
+        } else if recursion_limit_hit {
+            Self::RecursionLimit
+        } else {
+            Self::Stable
+        }
+    }
+
+    pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
+        matches!(self, Self::Stable)
+    }
+}
+
 /// Whether an evaluated memo result is safe to publish into caches whose key
 /// does not encode ambient recursion/fuel state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -167,8 +194,11 @@ pub(crate) enum EvaluationMemoStability {
 }
 
 impl EvaluationMemoStability {
-    const fn from_result(result: EvaluationResult, request_state_stable: bool) -> Self {
-        if result.is_complete() && request_state_stable {
+    const fn from_result(
+        result: EvaluationResult,
+        request_stability: EvaluationRequestStability,
+    ) -> Self {
+        if result.is_complete() && request_stability.is_stable_for_depth_agnostic_cache() {
             Self::Stable
         } else {
             Self::Unstable
@@ -185,11 +215,11 @@ impl EvaluationMemoResult {
     /// request-state stability verdict.
     pub(crate) const fn for_depth_agnostic_memo(
         result: EvaluationResult,
-        request_state_stable: bool,
+        request_stability: EvaluationRequestStability,
     ) -> Self {
         Self {
             result,
-            cache_stability: EvaluationMemoStability::from_result(result, request_state_stable),
+            cache_stability: EvaluationMemoStability::from_result(result, request_stability),
         }
     }
 
@@ -236,8 +266,8 @@ impl EvaluationMemoResult {
 #[cfg(test)]
 mod tests {
     use super::{
-        EvaluationMemoResult, EvaluationMemoStability, EvaluationResult, Termination,
-        TerminationKind,
+        EvaluationMemoResult, EvaluationMemoStability, EvaluationRequestStability,
+        EvaluationResult, Termination, TerminationKind,
     };
     use crate::types::TypeId;
 
@@ -278,7 +308,10 @@ mod tests {
     #[test]
     fn memo_result_stability_requires_complete_result_and_clean_request_state() {
         let complete = EvaluationResult::complete(TypeId::STRING);
-        let stable = EvaluationMemoResult::for_depth_agnostic_memo(complete, true);
+        let stable = EvaluationMemoResult::for_depth_agnostic_memo(
+            complete,
+            EvaluationRequestStability::Stable,
+        );
 
         assert_eq!(stable.evaluation_result(), complete);
         assert_eq!(stable.type_id(), TypeId::STRING);
@@ -286,7 +319,10 @@ mod tests {
         assert_eq!(stable.cache_stability, EvaluationMemoStability::Stable);
         assert!(stable.is_stable_for_depth_agnostic_cache());
 
-        let request_state_tainted = EvaluationMemoResult::for_depth_agnostic_memo(complete, false);
+        let request_state_tainted = EvaluationMemoResult::for_depth_agnostic_memo(
+            complete,
+            EvaluationRequestStability::RecursionLimit,
+        );
         assert_eq!(
             request_state_tainted.cache_stability,
             EvaluationMemoStability::Unstable
@@ -295,13 +331,42 @@ mod tests {
 
         let incomplete =
             EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
-        let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(incomplete, true);
+        let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(
+            incomplete,
+            EvaluationRequestStability::Stable,
+        );
         assert_eq!(typed_tainted.into_type_id(), TypeId::NUMBER);
         assert_eq!(
             typed_tainted.cache_stability,
             EvaluationMemoStability::Unstable
         );
         assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
+    }
+
+    #[test]
+    fn request_stability_names_request_state_reason() {
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(false, false),
+            EvaluationRequestStability::Stable
+        );
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(true, false),
+            EvaluationRequestStability::IncompleteVerdict
+        );
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(false, true),
+            EvaluationRequestStability::RecursionLimit
+        );
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(true, true),
+            EvaluationRequestStability::IncompleteVerdict,
+            "typed incomplete verdict should stay the primary request-state reason"
+        );
+        assert!(EvaluationRequestStability::Stable.is_stable_for_depth_agnostic_cache());
+        assert!(
+            !EvaluationRequestStability::IncompleteVerdict.is_stable_for_depth_agnostic_cache()
+        );
+        assert!(!EvaluationRequestStability::RecursionLimit.is_stable_for_depth_agnostic_cache());
     }
 
     #[test]

@@ -27,6 +27,7 @@ use crate::diagnostics::display_provenance::{
 use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationMemoResult;
+use crate::evaluation::result::EvaluationRequestStability;
 use crate::evaluation::result::EvaluationResult;
 use crate::evaluation::result::TerminationKind;
 #[cfg(test)]
@@ -616,10 +617,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         request: EvaluationRequest,
     ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        EvaluationMemoResult::for_depth_agnostic_memo(
-            result,
-            self.request_state_is_depth_agnostic_cache_stable(),
-        )
+        EvaluationMemoResult::for_depth_agnostic_memo(result, self.request_state_cache_stability())
     }
 
     /// Whether the current request state is stable enough for depth-agnostic
@@ -632,8 +630,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// backstop remains until every recursion-taint class is owned by the typed
     /// termination channel.
     #[inline]
+    pub(crate) const fn request_state_cache_stability(&self) -> EvaluationRequestStability {
+        EvaluationRequestStability::from_request_state(
+            self.has_incomplete_request_verdict(),
+            self.recursion_limit_hit(),
+        )
+    }
+
+    #[inline]
     pub(crate) const fn request_state_is_depth_agnostic_cache_stable(&self) -> bool {
-        !self.has_incomplete_request_verdict() && !self.recursion_limit_hit()
+        self.request_state_cache_stability()
+            .is_stable_for_depth_agnostic_cache()
     }
 
     // =========================================================================

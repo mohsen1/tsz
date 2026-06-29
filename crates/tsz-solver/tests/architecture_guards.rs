@@ -271,6 +271,11 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     );
     assert!(
         result_rs.contains("fn unstable_complete(type_id: TypeId) -> Self")
+            && result_rs.contains("enum EvaluationRequestStability")
+            && result_rs.contains("request_stability: EvaluationRequestStability")
+            && !result_rs.contains("request_state_stable: bool")
+            && evaluate_rs
+                .contains("request_state_cache_stability(&self) -> EvaluationRequestStability")
             && result_rs.contains("enum EvaluationMemoStability")
             && result_rs.contains("cache_stability: EvaluationMemoStability")
             && !result_rs.contains("stable_for_depth_agnostic_cache: bool")
