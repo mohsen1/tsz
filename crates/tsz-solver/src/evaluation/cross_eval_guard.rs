@@ -124,7 +124,10 @@ pub(crate) fn memoized_eval_with_stability(
     if let Some(cached) = query_memo_get(type_id, no_unchecked_indexed_access) {
         return Some(EvaluationMemoResult::cached(cached));
     }
-    let _cross = CrossEvalExpansionGuard::enter(type_id)?;
+    let _cross = match CrossEvalExpansionGuard::enter(type_id) {
+        CrossEvalExpansionState::Entered(guard) => guard,
+        CrossEvalExpansionState::AlreadyActive => return None,
+    };
     let memo_result = compute();
     if memo_result.is_stable_for_depth_agnostic_cache() {
         query_memo_put(type_id, no_unchecked_indexed_access, memo_result.type_id());
@@ -140,15 +143,28 @@ pub(crate) fn memoized_eval_with_stability(
 /// unchanged. Otherwise it records membership and clears it on drop, so the set
 /// is restored even if evaluation unwinds via panic.
 #[must_use]
+#[derive(Debug)]
 pub(crate) struct CrossEvalExpansionGuard(TypeId);
 
+/// Result of entering the cross-evaluator expansion active set.
+///
+/// `Entered` owns the RAII membership guard for this expansion. `AlreadyActive`
+/// names the cross-instance cycle case that callers collapse to the existing
+/// "skip expansion and return the input unchanged" behavior.
+#[must_use]
+#[derive(Debug)]
+pub(crate) enum CrossEvalExpansionState {
+    Entered(CrossEvalExpansionGuard),
+    AlreadyActive,
+}
+
 impl CrossEvalExpansionGuard {
-    pub(crate) fn enter(type_id: TypeId) -> Option<Self> {
+    pub(crate) fn enter(type_id: TypeId) -> CrossEvalExpansionState {
         ACTIVE.with(|set| {
             if set.borrow_mut().insert(type_id) {
-                Some(Self(type_id))
+                CrossEvalExpansionState::Entered(Self(type_id))
             } else {
-                None
+                CrossEvalExpansionState::AlreadyActive
             }
         })
     }
@@ -200,22 +216,34 @@ mod tests {
     #[test]
     fn reentry_of_active_type_is_rejected() {
         let t = TypeId(4242);
-        let outer = CrossEvalExpansionGuard::enter(t).expect("first entry succeeds");
+        let CrossEvalExpansionState::Entered(outer) = CrossEvalExpansionGuard::enter(t) else {
+            panic!("first entry succeeds");
+        };
         assert!(
-            CrossEvalExpansionGuard::enter(t).is_none(),
+            matches!(
+                CrossEvalExpansionGuard::enter(t),
+                CrossEvalExpansionState::AlreadyActive
+            ),
             "re-entering an in-flight TypeId must be rejected"
         );
         drop(outer);
         assert!(
-            CrossEvalExpansionGuard::enter(t).is_some(),
+            matches!(
+                CrossEvalExpansionGuard::enter(t),
+                CrossEvalExpansionState::Entered(_)
+            ),
             "once the in-flight guard drops, the TypeId is enterable again"
         );
     }
 
     #[test]
     fn distinct_types_are_independent() {
-        let a = CrossEvalExpansionGuard::enter(TypeId(1)).expect("a enters");
-        let b = CrossEvalExpansionGuard::enter(TypeId(2)).expect("b enters independently");
+        let CrossEvalExpansionState::Entered(a) = CrossEvalExpansionGuard::enter(TypeId(1)) else {
+            panic!("a enters");
+        };
+        let CrossEvalExpansionState::Entered(b) = CrossEvalExpansionGuard::enter(TypeId(2)) else {
+            panic!("b enters independently");
+        };
         drop(a);
         drop(b);
     }
