@@ -840,6 +840,13 @@ pub struct JsxOpeningData {
     pub tag_name: NodeIndex,
     pub type_arguments: Option<NodeList>,
     pub attributes: NodeIndex,
+    /// Trivia-inclusive full start of the element's `<` token (the position
+    /// immediately after the previous token, including any leading
+    /// whitespace/comments). Mirrors tsc's `node.pos`, which `react-jsxdev`
+    /// emit feeds to `getLineAndCharacterOfPosition` for the `__source`
+    /// `lineNumber`/`columnNumber`. Distinct from `Node::pos`, which tsz
+    /// anchors at the token start (the `<`) for diagnostics.
+    pub full_start: u32,
 }
 
 /// Data for JSX closing elements
@@ -852,6 +859,10 @@ pub struct JsxFragmentData {
     pub opening_fragment: NodeIndex,
     pub children: NodeList,
     pub closing_fragment: NodeIndex,
+    /// Trivia-inclusive full start of the fragment's opening `<` token.
+    /// See [`JsxOpeningData::full_start`]; used by `react-jsxdev` emit for the
+    /// fragment's `__source` location.
+    pub full_start: u32,
 }
 
 /// Data for JSX attributes

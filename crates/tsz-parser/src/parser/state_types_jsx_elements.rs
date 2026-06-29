@@ -157,6 +157,9 @@ impl ParserState {
         currently_opened_tag: Option<NodeIndex>,
     ) -> NodeIndex {
         let start_pos = self.token_pos();
+        // Trivia-inclusive full start of the element/fragment `<` token, taken
+        // before any token is consumed. See `JsxOpeningData::full_start`.
+        let full_start = self.token_full_start();
         let opening = self.parse_jsx_opening_or_self_closing_or_fragment(in_expression_context);
 
         // Check what type of opening element we got
@@ -344,6 +347,7 @@ impl ParserState {
                     opening_fragment: opening,
                     children,
                     closing_fragment: closing,
+                    full_start,
                 },
             )
         } else {
@@ -508,6 +512,13 @@ impl ParserState {
         _in_expression_context: bool,
     ) -> NodeIndex {
         let start_pos = self.token_pos();
+        // Trivia-inclusive full start of the `<` token (end of the previous
+        // token). Captured before `parse_expected` consumes `<`. Mirrors tsc's
+        // `node.pos`, which `react-jsxdev` emit uses for the `__source`
+        // line/column. In JSX-child context the scanner resets `full_start`
+        // to the `<` (preceding whitespace is a JsxText token, not trivia), so
+        // this equals `start_pos` there — matching tsc.
+        let full_start = self.token_full_start();
         self.parse_expected(SyntaxKind::LessThanToken);
         let initial_tag_head_token = self.token();
 
@@ -627,6 +638,7 @@ impl ParserState {
                     tag_name,
                     type_arguments,
                     attributes,
+                    full_start,
                 },
             );
         }
@@ -643,6 +655,7 @@ impl ParserState {
                     tag_name,
                     type_arguments,
                     attributes,
+                    full_start,
                 },
             );
         }
@@ -663,6 +676,7 @@ impl ParserState {
                     tag_name,
                     type_arguments,
                     attributes,
+                    full_start,
                 },
             );
         }
@@ -701,6 +715,7 @@ impl ParserState {
                     tag_name,
                     type_arguments,
                     attributes,
+                    full_start,
                 },
             );
         }
@@ -719,6 +734,7 @@ impl ParserState {
                 tag_name,
                 type_arguments,
                 attributes,
+                full_start,
             },
         )
     }

@@ -844,7 +844,13 @@ impl<'a> Printer<'a> {
         let tag_name = opening.tag_name;
         let attributes = opening.attributes;
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
-        let element_pos = opening_node.pos;
+        // `react-jsxdev` `__source` line/col come from the element's
+        // trivia-inclusive full start (tsc's `node.pos`), not the `<` token
+        // start that `Node::pos` anchors for diagnostics. A `JsxElement`'s full
+        // start is its opening element's full start (the opening `<` is the
+        // element's first token), so read it off `opening` rather than tracking
+        // a duplicate field on `JsxElementData`.
+        let element_pos = opening.full_start;
 
         self.emit_jsx_automatic_call(tag_name, attributes, &children, element_pos);
     }
@@ -856,7 +862,9 @@ impl<'a> Printer<'a> {
 
         let tag_name = jsx.tag_name;
         let attributes = jsx.attributes;
-        let element_pos = node.pos;
+        // See `emit_jsx_element_automatic`: use the trivia-inclusive full start
+        // for the `__source` location rather than the `<` token start.
+        let element_pos = jsx.full_start;
 
         self.emit_jsx_automatic_call(tag_name, attributes, &[], element_pos);
     }
@@ -866,6 +874,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Trivia-inclusive full start for the `__source` location (tsc's
+        // `node.pos`); captured as a value so later `&mut self` calls are free.
+        let fragment_full_start = jsx.full_start;
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
         let is_jsxs = self.jsx_children_need_array(&filtered_children);
@@ -913,8 +924,9 @@ impl<'a> Printer<'a> {
             // jsxDEV extra args: key, isStaticChildren, source, self
             self.write(", void 0, ");
             self.write(if is_jsxs { "true" } else { "false" });
-            // Source location for fragment - use the node's own position
-            let (line, col) = self.source_line_col_pos(node.pos);
+            // Source location for fragment - use the trivia-inclusive full
+            // start (tsc's `node.pos`), not the `<` token start.
+            let (line, col) = self.source_line_col_pos(fragment_full_start);
             self.write(&format!(
                 ", {{ fileName: _jsxFileName, lineNumber: {line}, columnNumber: {col} }}"
             ));

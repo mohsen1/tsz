@@ -119,6 +119,10 @@ name = "static_no_init_field_erasure_tests"
 path = "tests/static_no_init_field_erasure_tests.rs"
 
 [[test]]
+name = "jsx_dev_source_location_tests"
+path = "tests/jsx_dev_source_location_tests.rs"
+
+[[test]]
 name = "jsx_spread_tests"
 path = "tests/jsx_spread_tests.rs"
 
