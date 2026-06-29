@@ -98,12 +98,27 @@ struct DirectExpressionBodyReturnMismatchCtx {
     actual_return_uses_jsdoc_cast: bool,
     is_closure: bool,
     is_async_for_context: bool,
-    /// Whether the function carries an explicit declared return type (a syntactic
-    /// return-type annotation or a JSDoc `@returns`). tsc runs the contextual
-    /// excess-property check against a declared return type, but not against a
-    /// purely *contextual* one (e.g. an arrow assigned to an interface method),
-    /// so this gates the concise-body EPC pass to match.
-    has_explicit_return_annotation: bool,
+    return_annotation: DirectReturnAnnotation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirectReturnAnnotation {
+    ContextualOnly,
+    Declared,
+}
+
+impl DirectReturnAnnotation {
+    fn from_parts(has_type_annotation: bool, has_jsdoc_return: bool) -> Self {
+        if has_type_annotation || has_jsdoc_return {
+            Self::Declared
+        } else {
+            Self::ContextualOnly
+        }
+    }
+
+    fn is_declared(self) -> bool {
+        matches!(self, Self::Declared)
+    }
 }
 
 impl<'a> CheckerState<'a> {
@@ -614,8 +629,10 @@ impl<'a> CheckerState<'a> {
             actual_return_uses_jsdoc_cast,
             is_closure: ctx.is_closure,
             is_async_for_context: ctx.is_async_for_context,
-            has_explicit_return_annotation: ctx.has_type_annotation
-                || ctx.jsdoc_return_context.is_some(),
+            return_annotation: DirectReturnAnnotation::from_parts(
+                ctx.has_type_annotation,
+                ctx.jsdoc_return_context.is_some(),
+            ),
         });
     }
 
@@ -739,7 +756,7 @@ impl<'a> CheckerState<'a> {
         // type (an arrow assigned to an interface method) is left untouched, just
         // as in tsc.
         if assignability_ok
-            && ctx.has_explicit_return_annotation
+            && ctx.return_annotation.is_declared()
             && !ctx.actual_return_uses_jsdoc_cast
         {
             self.check_concise_body_excess_properties(ctx.body, ctx.expected_return_type);
