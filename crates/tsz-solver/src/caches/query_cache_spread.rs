@@ -8,6 +8,23 @@
 use super::*;
 use crate::types::Visibility;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObjectSpreadVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+fn object_spread_visit_state(
+    visited: &mut FxHashSet<TypeId>,
+    normalized: TypeId,
+) -> ObjectSpreadVisitState {
+    if visited.insert(normalized) {
+        ObjectSpreadVisitState::Entered
+    } else {
+        ObjectSpreadVisitState::AlreadyVisited
+    }
+}
+
 impl QueryCache<'_> {
     pub(super) fn check_property_cache(
         &self,
@@ -147,8 +164,9 @@ impl QueryCache<'_> {
         let normalized =
             self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
 
-        if !visited.insert(normalized) {
-            return Vec::new();
+        match object_spread_visit_state(visited, normalized) {
+            ObjectSpreadVisitState::Entered => {}
+            ObjectSpreadVisitState::AlreadyVisited => return Vec::new(),
         }
 
         if normalized != spread_type {
@@ -273,5 +291,35 @@ impl QueryCache<'_> {
                 p
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_spread_visit_state_records_first_entry() {
+        let mut visited = FxHashSet::default();
+
+        let state = object_spread_visit_state(&mut visited, TypeId::STRING);
+
+        assert_eq!(state, ObjectSpreadVisitState::Entered);
+        assert!(visited.contains(&TypeId::STRING));
+    }
+
+    #[test]
+    fn object_spread_visit_state_records_reentry() {
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            object_spread_visit_state(&mut visited, TypeId::STRING),
+            ObjectSpreadVisitState::Entered
+        );
+        assert_eq!(
+            object_spread_visit_state(&mut visited, TypeId::STRING),
+            ObjectSpreadVisitState::AlreadyVisited
+        );
+        assert_eq!(visited.len(), 1);
     }
 }
