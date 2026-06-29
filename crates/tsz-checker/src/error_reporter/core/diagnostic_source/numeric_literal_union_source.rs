@@ -4,7 +4,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(in crate::error_reporter) fn source_type_contains_number_literal_only_union(
         &self,
         ty: TypeId,

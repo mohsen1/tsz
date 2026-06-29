@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(in crate::error_reporter) fn direct_diagnostic_source_expression(
         &self,
         anchor_idx: NodeIndex,
