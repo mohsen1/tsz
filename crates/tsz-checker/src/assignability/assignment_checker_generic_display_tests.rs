@@ -129,3 +129,99 @@ function f<U>(value: Branch<U>): Target<U> {
         "named conditional alias source must not collapse to its branch union, got: {diag:?}"
     );
 }
+
+/// Helper: find the TS2322 and return its `(top message, related messages)`.
+fn ts2322_with_related(diagnostics: &[crate::diagnostics::Diagnostic]) -> (String, Vec<String>) {
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    (
+        diag.message_text.clone(),
+        diag.related_information
+            .iter()
+            .map(|r| r.message_text.clone())
+            .collect(),
+    )
+}
+
+/// Assigning one instantiation of a generic to another (same base, differing
+/// type argument) in a **variable declaration** must elaborate the failing
+/// type-argument relation under the top-line TS2322, matching tsc:
+///
+/// ```text
+/// Type 'Container<string>' is not assignable to type 'Container<number>'.
+///   Type 'string' is not assignable to type 'number'.
+/// ```
+///
+/// Regression: the public-variance prepass used to emit a bare top-line and
+/// drop the nested `TypeArgumentMismatch` reason for the var-decl /
+/// assignment-expression path, while the return-statement and argument
+/// (TS2345) paths kept it. Binder names are deliberately non-canonical so the
+/// assertion checks structure, not spellings.
+#[test]
+fn same_base_generic_var_decl_elaborates_failing_type_argument() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface Container<Payload> { item: Payload; }
+declare const source: Container<string>;
+const sink: Container<number> = source;
+"#,
+    );
+    let (top, related) = ts2322_with_related(&diagnostics);
+    assert!(
+        top.contains("Container<string>") && top.contains("Container<number>"),
+        "top line should name both same-base instantiations, got: {top:?}"
+    );
+    assert!(
+        related
+            .iter()
+            .any(|m| m.contains("'string' is not assignable to type 'number'")),
+        "must elaborate the failing type argument under the top-line, got related: {related:?}"
+    );
+}
+
+/// Same divergence through an **assignment expression** (`x = y`) rather than a
+/// declaration: the elaboration must still carry the type-argument reason.
+#[test]
+fn same_base_generic_assignment_expr_elaborates_failing_type_argument() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface Cell<Slot> { slot: Slot; }
+declare let target: Cell<number>;
+declare const origin: Cell<string>;
+target = origin;
+"#,
+    );
+    let (_, related) = ts2322_with_related(&diagnostics);
+    assert!(
+        related
+            .iter()
+            .any(|m| m.contains("'string' is not assignable to type 'number'")),
+        "assignment-expression path must elaborate the failing type argument, got: {related:?}"
+    );
+}
+
+/// Two type parameters where only the **second** argument differs: the
+/// elaboration must point at the offending argument's relation, not be dropped.
+#[test]
+fn same_base_two_type_param_application_elaborates_second_argument() {
+    let diagnostics = diagnostics_for(
+        r#"
+interface Couple<First, Second> { left: First; right: Second; }
+declare const made: Couple<number, string>;
+const want: Couple<number, number> = made;
+"#,
+    );
+    let (top, related) = ts2322_with_related(&diagnostics);
+    assert!(
+        top.contains("Couple<number, string>") && top.contains("Couple<number, number>"),
+        "top line should name both instantiations, got: {top:?}"
+    );
+    assert!(
+        related
+            .iter()
+            .any(|m| m.contains("'string' is not assignable to type 'number'")),
+        "the differing (second) type argument must be elaborated, got: {related:?}"
+    );
+}

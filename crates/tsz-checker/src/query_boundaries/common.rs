@@ -618,13 +618,13 @@ pub(crate) fn keyof_inner_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     tsz_solver::keyof_inner_type(db, type_id)
 }
 
-/// Instantiate a type, returning the result and a flag indicating whether the
-/// depth limit was exceeded during instantiation.
+/// Instantiate a type, returning the typed result and whether the depth limit
+/// was exceeded during instantiation.
 pub(crate) fn instantiate_type_with_depth_status(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
-) -> (TypeId, bool) {
+) -> c::InstantiationResult {
     c::instantiate_type_with_depth_status(db, type_id, substitution)
 }
 
