@@ -1229,6 +1229,64 @@ fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
 }
 
 #[test]
+fn filtered_parse_diagnostics_suppresses_ts1028_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    // multipleClassPropertyModifiersErrors.ts: `public public p1;` would emit
+    // TS1028, but the file also contains `static static p3;` which yields a real
+    // parse error (TS1434). tsc emits TS1028 via grammarErrorOnNode, which is
+    // suppressed by hasParseDiagnostics(sourceFile) when any real parse error
+    // exists, so only TS1434 survives.
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 18,
+            length: 6,
+            message: "Accessibility modifier already seen.".to_string(),
+            code: 1028,
+        },
+        ParseDiagnostic {
+            start: 50,
+            length: 6,
+            message: "Unexpected keyword or identifier.".to_string(),
+            code: 1434,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1028),
+        "TS1028 should be suppressed when a real parse error (TS1434) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1434),
+        "TS1434 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts1028_when_alone() {
+    use tsz::parser::ParseDiagnostic;
+
+    // parserMemberVariableDeclaration1.ts: `public public Foo;` with no other
+    // parse error. hasParseDiagnostics is false in tsc, so the grammar error is
+    // reported. tsz must keep its parser-emitted TS1028 in this case.
+    let diagnostics = vec![ParseDiagnostic {
+        start: 18,
+        length: 6,
+        message: "Accessibility modifier already seen.".to_string(),
+        code: 1028,
+    }];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1028),
+        "TS1028 should be kept when it is the only diagnostic, got: {codes:?}"
+    );
+}
+
+#[test]
 fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
     for code in [1214, 18012] {
         assert!(

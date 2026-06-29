@@ -294,10 +294,7 @@ fn test_non_stable_evaluation_result_is_not_cached() {
     assert_eq!(
         judge.record_evaluation_result(
             no_infer_string,
-            crate::evaluation::result::EvaluationMemoResult::new(
-                crate::evaluation::result::EvaluationResult::complete(TypeId::ERROR),
-                false,
-            ),
+            crate::evaluation::result::EvaluationMemoResult::unstable_complete(TypeId::ERROR),
         ),
         TypeId::ERROR
     );

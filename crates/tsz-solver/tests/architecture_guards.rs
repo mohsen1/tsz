@@ -207,6 +207,13 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     // The public staged entry points live in the `evaluate/api.rs` submodule
     // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
+    let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
+    let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
+    let instantiation_result_rs = read_solver_source("instantiation/result.rs");
+    let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
+    let subtype_core_rs = read_solver_source("relations/subtype/core.rs");
+    let function_checking_rs = read_solver_source("relations/subtype/rules/functions/checking.rs");
+    let functions_mod_rs = read_solver_source("relations/subtype/rules/functions/mod.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
     let iteration_incomplete_tests =
         read_solver_test("evaluate_tests_parts/iteration_exceeded_incomplete.rs");
@@ -262,6 +269,36 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && !iteration_incomplete_tests.contains("evaluator.request_termination_kind"),
         "typed request-verdict tests must consume EvaluationResult through the evaluator boundary instead of reading the raw request_termination_kind slot"
     );
+    assert!(
+        result_rs.contains("fn unstable_complete(type_id: TypeId) -> Self")
+            && cross_eval_guard_rs.contains("EvaluationMemoResult::unstable_complete(TypeId(80))")
+            && infer_pattern_rs.contains("EvaluationMemoResult::unstable_complete(type_id)")
+            && !cross_eval_guard_rs
+                .contains("EvaluationMemoResult::new(EvaluationResult::complete")
+            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete"),
+        "unstable complete memo results must use the named EvaluationMemoResult boundary instead of rebuilding the stability bit by hand"
+    );
+    assert!(
+        subtype_core_rs.contains("pub(crate) struct RelationEvaluationResult")
+            && subtype_core_rs
+                .contains("eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>")
+            && function_checking_rs
+                .contains("RelationEvaluationResult::from_depth_agnostic_memo(memo_result)")
+            && functions_mod_rs.contains(".is_unstable_unknown()")
+            && !functions_mod_rs
+                .contains("evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)"),
+        "function-relation evaluation caches must carry stability through RelationEvaluationResult instead of anonymous (TypeId, bool) tuples"
+    );
+    assert!(
+        instantiation_result_rs.contains("pub(crate) struct InstantiationMemoResult")
+            && instantiation_result_rs.contains("fn for_project_cache(")
+            && instantiation_result_rs.contains("fn is_stable_for_project_cache(self) -> bool")
+            && instantiation_api_rs.contains("ProjectInstantiationCacheLimitSnapshot::capture")
+            && instantiation_api_rs.contains("InstantiationMemoResult::for_project_cache")
+            && instantiation_api_rs.contains("is_stable_for_project_cache()")
+            && !instantiation_api_rs.contains("let limit_tripped ="),
+        "project instantiation cache writes must consume InstantiationMemoResult stability instead of rebuilding a raw limit_tripped predicate"
+    );
 }
 
 #[test]
@@ -288,6 +325,41 @@ fn narrowing_engine_keeps_request_stage_boundary() {
     assert!(
         !core_rs.contains("compiler_flags: u8"),
         "narrowing/core.rs must not own the anonymous packed compiler-flags byte — use NarrowingOptions"
+    );
+}
+
+#[test]
+fn relation_queries_keep_overflow_flags_on_relation_result() {
+    let relation_queries_rs = read_solver_source("relations/relation_queries.rs");
+
+    assert!(
+        relation_queries_rs.contains("pub struct RelationResult")
+            && relation_queries_rs.contains("fn relation_result_from_compat_checker")
+            && relation_queries_rs.contains("fn relation_result_from_subtype_checker")
+            && relation_queries_rs.contains("let result = match kind")
+            && relation_queries_rs
+                .contains("relation_result_from_compat_checker(kind, related, &checker)")
+            && relation_queries_rs
+                .contains("relation_result_from_subtype_checker(kind, related, &checker)")
+            && !relation_queries_rs
+                .contains("let (related, depth_exceeded, iteration_exceeded) = match kind"),
+        "relation query dispatch must keep related/depth/iteration verdicts bundled \
+         as RelationResult instead of passing around anonymous overflow tuples"
+    );
+
+    let conditional_phases_rs =
+        read_solver_source("evaluation/evaluate_rules/conditional/phases.rs");
+    assert!(
+        conditional_phases_rs.contains("struct ConditionalSubtypeDepthEntry")
+            && conditional_phases_rs.contains("fn enter() -> ConditionalSubtypeDepthEntry")
+            && conditional_phases_rs
+                .contains("let depth_entry = ConditionalSubtypeDepthGuard::enter()")
+            && conditional_phases_rs.contains("depth_entry.prior_depth()")
+            && conditional_phases_rs.contains("depth_entry.exit()")
+            && !conditional_phases_rs
+                .contains("let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter()"),
+        "conditional subtype depth probes must carry prior-depth plus RAII guard \
+         as a named entry object instead of an anonymous tuple"
     );
 }
 

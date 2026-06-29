@@ -40,6 +40,7 @@
 
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{IntrinsicKind, StringIntrinsicKind, TupleElement, TypeParamInfo};
 use crate::{LiteralValue, SymbolRef, TypeData, TypeId};
 use rustc_hash::FxHashSet;
@@ -629,6 +630,37 @@ fn unbounded_growth_weight(types: &dyn TypeDatabase, type_id: TypeId) -> u64 {
     }
 }
 
+/// Follow a `Lazy(DefId)` reference (bounded) to the underlying type so the
+/// growth metric measures the *resolved* shape rather than treating the
+/// reference as a single opaque unit.
+///
+/// A named alias argument such as `type TN = [0, 0]` must weigh the same as the
+/// inline `[0, 0]` it stands for. Without this, the use-site convergence check
+/// (see [`self_application_arg_weight`]) compares an unresolved `Lazy` arg on the
+/// *input* side (scored as a single unit) against the resolved tuple / string /
+/// template that the evaluator left in a *residual* self-application, so a
+/// recursion that is actually shrinking (`Nest<T, TN>` -> `Nest<T, [...]>` with a
+/// shorter tail) is misread as growing and trips a spurious TS2589. The bounded
+/// hop count mirrors the alias-resolution cap in
+/// `evaluate_rules::keyof::resolve_index_signature_key_alias`.
+fn resolve_lazy_for_growth_weight<R: TypeResolver>(
+    types: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> TypeId {
+    let mut current = type_id;
+    for _ in 0..8 {
+        let Some(TypeData::Lazy(def_id)) = types.lookup(current) else {
+            return current;
+        };
+        match resolver.resolve_lazy(def_id, types) {
+            Some(next) if next != current => current = next,
+            _ => return current,
+        }
+    }
+    current
+}
+
 /// Total structural weight of the arguments of a concrete `Application` of
 /// `target_def_id`, or `None` if `type_id` is not such an application.
 ///
@@ -637,8 +669,15 @@ fn unbounded_growth_weight(types: &dyn TypeDatabase, type_id: TypeId) -> u64 {
 /// argument weight is strictly smaller is making progress toward the base case
 /// (e.g. a variadic tuple tail that loses an element each step) and is not, on
 /// its own, evidence of an infinite instantiation.
-pub fn self_application_arg_weight(
+///
+/// Each argument is first resolved through any `Lazy(DefId)` alias indirection
+/// (see [`resolve_lazy_for_growth_weight`]) so that a named-alias argument and
+/// its inline expansion weigh identically — the input and residual sides of the
+/// comparison must measure the same shape regardless of whether the argument was
+/// written as an alias reference or spelled out inline.
+pub fn self_application_arg_weight<R: TypeResolver>(
     types: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
     target_def_id: DefId,
 ) -> Option<u64> {
@@ -650,7 +689,10 @@ pub fn self_application_arg_weight(
             return Some(
                 app.args
                     .iter()
-                    .map(|&a| unbounded_growth_weight(types, a))
+                    .map(|&a| {
+                        let resolved = resolve_lazy_for_growth_weight(types, resolver, a);
+                        unbounded_growth_weight(types, resolved)
+                    })
                     .sum(),
             );
         }

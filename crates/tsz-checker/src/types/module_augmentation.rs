@@ -707,6 +707,7 @@ impl<'a> CheckerState<'a> {
                         &delegatable_member_indices,
                         arena,
                         type_args,
+                        true,
                     )
                 };
 

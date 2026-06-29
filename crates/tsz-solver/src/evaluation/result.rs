@@ -170,23 +170,21 @@ impl EvaluationMemoResult {
         }
     }
 
-    /// Construct a memo result with an explicit stability verdict.
-    pub(crate) const fn new(
-        result: EvaluationResult,
-        stable_for_depth_agnostic_cache: bool,
-    ) -> Self {
-        Self {
-            result,
-            stable_for_depth_agnostic_cache,
-        }
-    }
-
     /// Construct a completed memo result read from a cache that stores only
     /// stable entries.
     pub(crate) const fn cached(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
             stable_for_depth_agnostic_cache: true,
+        }
+    }
+
+    /// Construct a completed result that must not be stored in a
+    /// depth-agnostic memo.
+    pub(crate) const fn unstable_complete(type_id: TypeId) -> Self {
+        Self {
+            result: EvaluationResult::complete(type_id),
+            stable_for_depth_agnostic_cache: false,
         }
     }
 
@@ -197,11 +195,6 @@ impl EvaluationMemoResult {
 
     pub(crate) const fn type_id(self) -> TypeId {
         self.result.type_id()
-    }
-
-    /// Return the collapsed value and its depth-agnostic cache stability verdict.
-    pub(crate) const fn into_type_id_and_stability(self) -> (TypeId, bool) {
-        (self.into_type_id(), self.stable_for_depth_agnostic_cache)
     }
 
     /// Whether this result can be stored in caches whose key does not capture
@@ -286,5 +279,14 @@ mod tests {
             cached.evaluation_result().termination(),
             Termination::Complete
         );
+    }
+
+    #[test]
+    fn unstable_complete_memo_result_collapses_without_becoming_cacheable() {
+        let result = EvaluationMemoResult::unstable_complete(TypeId::STRING);
+
+        assert_eq!(result.type_id(), TypeId::STRING);
+        assert_eq!(result.into_type_id(), TypeId::STRING);
+        assert!(!result.is_stable_for_depth_agnostic_cache());
     }
 }
