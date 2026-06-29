@@ -30,6 +30,16 @@ impl<'a> TypeInstantiator<'a> {
             || index_access_operand_needs_resolver(self.interner, inst_obj)
             || index_access_operand_needs_resolver(self.interner, inst_idx)
         {
+            // #14345 dormant re-reduce (default OFF, byte-parity): the
+            // base/index are concrete (no type parameters reached this point)
+            // but still hold a resolver-only meta-type (`Application`/`Lazy`/
+            // etc.). With the flag on and a resolver-aware db threaded in,
+            // route the re-reduce through it (resolving the cross-arena `Lazy`
+            // base) instead of returning the deferred `IndexAccess`. The OFF
+            // path below is the literal pre-existing deferred return.
+            if super::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
+                return self.evaluate_index_access(inst_obj, inst_idx);
+            }
             return self.interner.index_access(inst_obj, inst_idx);
         }
         // Evaluate immediately to achieve O(1) equality

@@ -42,6 +42,7 @@
 //!    derived after the real body registers.
 
 use super::TypeEvaluator;
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
 
@@ -108,10 +109,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Commit this evaluator's per-evaluator cache entries to the project-wide
     /// `closed_eval_cache`, subject to the authoritative-write and limit gates.
     ///
-    /// `union_too_complex_before` is the `TS2590` flag snapshot taken before the
-    /// top-level evaluation began; if the run newly tripped the flag, nothing is
-    /// cached.
-    pub(super) fn commit_closed_eval_writes(&self, union_too_complex_before: bool) {
+    /// `limit_snapshot` is captured before the top-level evaluation began; if
+    /// the run newly tripped `TS2590`, nothing is cached.
+    pub(super) fn commit_closed_eval_writes(&self, limit_snapshot: EvaluationCacheLimitSnapshot) {
         // A substitution-independent node's *final* result is a pure function of
         // `(TypeId, no_unchecked, exact_optional)` and the project's single fixed
         // resolver — but only once that resolver can resolve every
@@ -121,10 +121,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // answer a sibling read would observe.
         let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
-            || self.request_termination_kind.is_some()
-            || self.recursion_limit_hit()
+            || !self.request_state_is_depth_agnostic_cache_stable()
             || self.unresolved_def_seen()
-            || (self.interner.is_union_too_complex() && !union_too_complex_before)
+            || !limit_snapshot.union_complexity_stayed_stable_after(self.interner)
         {
             return;
         }
@@ -491,11 +490,10 @@ mod tests {
         assert_eq!(limited.try_closed_eval_read(keyof), None);
     }
 
-    /// A closed-eval write is publishable only when the request completed. The
-    /// legacy `recursion_limit_hit` backstop remains below this gate, but an
-    /// explicit typed incomplete verdict is already enough to reject the write.
+    /// A closed-eval write is publishable only when the shared request-state
+    /// stability gate reports the result is complete and untainted.
     #[test]
-    fn incomplete_request_verdict_blocks_closed_eval_write() {
+    fn request_state_stability_gate_blocks_closed_eval_write() {
         let interner = TypeInterner::new();
         let cache = QueryCache::new(&interner);
 
@@ -504,7 +502,8 @@ mod tests {
             .with_query_db(&cache)
             .with_closed_eval_writes();
         complete.cache.insert(complete_node, TypeId::NUMBER);
-        complete.commit_closed_eval_writes(false);
+        let complete_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        complete.commit_closed_eval_writes(complete_snapshot);
         assert_eq!(
             cache.lookup_closed_eval_cache(complete_node, false),
             Some(TypeId::NUMBER)
@@ -515,9 +514,25 @@ mod tests {
             .with_query_db(&cache)
             .with_closed_eval_writes();
         incomplete.cache.insert(incomplete_node, TypeId::BOOLEAN);
-        incomplete.request_termination_kind = Some(TerminationKind::DepthExceeded);
-        incomplete.commit_closed_eval_writes(false);
+        incomplete.simulate_incomplete_request_verdict_for_test(TerminationKind::DepthExceeded);
+        let incomplete_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        incomplete.commit_closed_eval_writes(incomplete_snapshot);
         assert_eq!(cache.lookup_closed_eval_cache(incomplete_node, false), None);
+
+        let legacy_tainted_node = interner.index_access(TypeId::STRING, TypeId::NUMBER);
+        let mut legacy_tainted = TypeEvaluator::new(&cache)
+            .with_query_db(&cache)
+            .with_closed_eval_writes();
+        legacy_tainted
+            .cache
+            .insert(legacy_tainted_node, TypeId::STRING);
+        legacy_tainted.simulate_unrelated_recursion_bail_for_test();
+        let legacy_tainted_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        legacy_tainted.commit_closed_eval_writes(legacy_tainted_snapshot);
+        assert_eq!(
+            cache.lookup_closed_eval_cache(legacy_tainted_node, false),
+            None
+        );
     }
 
     /// The substitution-independent cache is eligible for `IndexAccess`/`KeyOf`

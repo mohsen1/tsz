@@ -101,11 +101,7 @@ fn depth_marker_for_request_records_depth_verdict() {
 
     evaluator.mark_depth_exceeded_for_request();
 
-    assert_eq!(
-        evaluator.request_termination_kind,
-        Some(TerminationKind::DepthExceeded)
-    );
-    let result = request_result_verdict(TypeId::ERROR, evaluator.request_termination_kind);
+    let result = evaluator.request_result_for_test(TypeId::ERROR);
     assert_eq!(
         result.termination(),
         Termination::Incomplete {
@@ -124,11 +120,7 @@ fn raw_depth_marker_allows_specific_fuel_verdict() {
     evaluator.mark_depth_exceeded();
     evaluator.note_request_termination(TerminationKind::FuelExhausted);
 
-    assert_eq!(
-        evaluator.request_termination_kind,
-        Some(TerminationKind::FuelExhausted)
-    );
-    let result = request_result_verdict(TypeId::ERROR, evaluator.request_termination_kind);
+    let result = evaluator.request_result_for_test(TypeId::ERROR);
     assert_eq!(
         result.termination(),
         Termination::Incomplete {

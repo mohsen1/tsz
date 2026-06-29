@@ -238,8 +238,7 @@ impl<'a> CheckerState<'a> {
         if self.is_js_file()
             && !is_arrow_function
             && let Some(ref jsdoc) = func_jsdoc
-            && let Some(this_expr) = Self::extract_jsdoc_tag_type_expression(jsdoc, "this")
-            && let Some(resolved_this) = self.resolve_jsdoc_reference(this_expr)
+            && let Some(resolved_this) = self.resolve_jsdoc_this_type(jsdoc)
         {
             this_type = Some(resolved_this);
         }

@@ -1008,8 +1008,13 @@ tsz_write_io_ts_config() {
   # `any` external-module stub so fp-ts-typed positions resolve like a bare-`any`
   # install would, matching what tsc sees instead of a spurious TS2307 wall.
   tsz_write_io_ts_external_stubs "$1"
+  # `baseUrl` is deprecated in TS 6.0 (TS5101, removed in TS 7.0); tsc 6.0.x
+  # emits the deprecation error unless `ignoreDeprecations: "6.0"` is set, so
+  # match the sibling baseUrl-setting configs (drizzle/arktype/type-graphql)
+  # and silence it here too — otherwise tsz and tsc would both report TS5101.
   tsz_write_basic_external_project_config "$1" "src" \
     '    "baseUrl": ".",
+    "ignoreDeprecations": "6.0",
     "paths": {
       "fp-ts/lib/*": ["tsz-bench-external-module.d.ts"]
     },

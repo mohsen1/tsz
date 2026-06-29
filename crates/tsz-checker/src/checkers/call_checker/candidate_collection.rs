@@ -500,6 +500,20 @@ impl<'a> CheckerState<'a> {
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_expression);
 
+                    // A scalar `any`/`error` spread contributes an unknown number
+                    // of `any` arguments that tsc accepts against any parameter
+                    // list, so neither TS2556 nor an arity diagnostic fires.
+                    // Contribute a single `any` argument and stop: it is assignable
+                    // to whatever parameter sits at this slot, and the spread
+                    // element already relaxes the minimum-arity check. (An `any[]`
+                    // spread is different: its array-ness still overflows a non-rest
+                    // parameter, so TS2556 is correct there.) See #14746.
+                    if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
+                        arg_types.push(spread_type);
+                        effective_index += 1;
+                        continue;
+                    }
+
                     if let Some((elements, const_asserted)) =
                         self.const_asserted_array_literal_spread_elements(spread_expression)
                     {

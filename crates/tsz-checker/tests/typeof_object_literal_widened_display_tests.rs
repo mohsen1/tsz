@@ -10,8 +10,10 @@
 //! *fresh* object literal; a regular/widened object must render its canonical
 //! shape.
 //!
-//! Owner: `crates/tsz-solver/src/diagnostics/format/key.rs` (the diagnostic
-//! formatter's object branch now gates `display_properties` on `FRESH_LITERAL`).
+//! Owner: `crates/tsz-solver/src/diagnostics/format/key.rs`. The diagnostic
+//! formatter preserves literal display provenance for fresh literals and for
+//! generic application arguments, while regular widened `typeof` objects render
+//! their canonical shape.
 
 use tsz_checker::test_utils::check_source_code_messages;
 

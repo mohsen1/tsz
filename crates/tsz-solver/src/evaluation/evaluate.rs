@@ -24,6 +24,7 @@ use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationResult;
@@ -615,7 +616,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         request: EvaluationRequest,
     ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        EvaluationMemoResult::for_depth_agnostic_memo(result, self.recursion_limit_hit())
+        EvaluationMemoResult::for_depth_agnostic_memo(
+            result,
+            self.request_state_is_depth_agnostic_cache_stable(),
+        )
+    }
+
+    /// Whether the current request state is stable enough for depth-agnostic
+    /// cache publication.
+    ///
+    /// This centralizes the #14346 transition from loose evaluator flags to the
+    /// typed request verdict. A typed incomplete verdict catches guard bails
+    /// that the legacy sticky flags did not fully model (for example
+    /// fuel/query-budget bails). The legacy [`Self::recursion_limit_hit`]
+    /// backstop remains until every recursion-taint class is owned by the typed
+    /// termination channel.
+    #[inline]
+    pub(crate) const fn request_state_is_depth_agnostic_cache_stable(&self) -> bool {
+        !self.has_incomplete_request_verdict() && !self.recursion_limit_hit()
     }
 
     // =========================================================================
@@ -910,6 +928,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.request_termination_kind = Some(kind);
     }
 
+    /// Test hook: expose the typed request-result boundary without exposing the
+    /// raw per-request verdict slot.
+    #[cfg(test)]
+    pub(crate) const fn request_result_for_test(&self, type_id: TypeId) -> EvaluationResult {
+        request_result_verdict(type_id, self.request_termination_kind)
+    }
+
     /// Global thread-local depth counter for cross-evaluator stack overflow
     /// prevention. Each `SubtypeChecker::evaluate_type` creates a fresh
     /// `TypeEvaluator`, but the OS stack accumulates across ALL of them: deep
@@ -1026,9 +1051,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Top-level frame: evaluate, then commit closed-eval cache writes.
         // See the `closed_eval` module for the safety gates.
-        let union_too_complex_before = self.interner.is_union_too_complex();
+        let limit_snapshot = EvaluationCacheLimitSnapshot::capture(self.interner);
         let result = self.evaluate_guarded(type_id);
-        self.commit_closed_eval_writes(union_too_complex_before);
+        self.commit_closed_eval_writes(limit_snapshot);
         result
     }
 

@@ -93,6 +93,13 @@ pub struct TypeFormatter<'a> {
     /// show literal types like `{ x: "hello" }` even when the type system uses
     /// widened types like `{ x: string }`.
     use_display_properties: bool,
+    /// Nesting depth while formatting generic application arguments.
+    ///
+    /// tsc preserves the inferred literal surface for object arguments written
+    /// inside `Alias<{ tag: "x" }>` even after the canonical object type has
+    /// been widened. Outside application arguments, copied display properties
+    /// should only affect fresh object literals.
+    application_arg_display_depth: u32,
     /// Set of Application `TypeIds` currently being formatted via `display_alias`.
     /// Prevents infinite recursion when a `display_alias` chain forms a cycle.
     display_alias_visiting: FxHashSet<TypeId>,
@@ -636,6 +643,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
+            application_arg_display_depth: 0,
             display_alias_visiting: FxHashSet::default(),
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,
@@ -930,6 +938,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_optional_property_surface_syntax: false,
             preserve_optional_parameter_surface_syntax: true,
             use_display_properties: false,
+            application_arg_display_depth: 0,
             display_alias_visiting: FxHashSet::default(),
             format_visiting: FxHashSet::default(),
             preserve_array_generic_form: false,

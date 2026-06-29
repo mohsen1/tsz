@@ -1,8 +1,11 @@
 use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::instantiation::instantiate::cache_stability::ProjectInstantiationCacheLimitSnapshot;
 use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
-use crate::instantiation::result::InstantiationResult;
+use crate::instantiation::result::{
+    InstantiationMemoResult, InstantiationResult, InstantiationTermination,
+};
 use crate::types::{ConditionalType, FunctionShape, PropertyInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -864,43 +867,16 @@ pub(crate) fn instantiate_with_request_cached(
         // #13889-class trap one layer down). Snapshot the sticky flags BEFORE so
         // a newly-tripped flag is attributed to THIS instantiation, not an
         // earlier sibling that already set it.
-        let union_too_complex_before = interner.is_union_too_complex();
-        let tuple_too_large_before = interner.is_tuple_too_large();
-        let frame_bail_before = crate::recursion::solver_frame_bail_count();
+        let limit_snapshot = ProjectInstantiationCacheLimitSnapshot::capture(interner);
         let result =
             instantiate_with_request_cached_inner(interner, query_db, allow_alpha_cache, request);
-        // Limit signals, each a reason a result is bounded/degraded:
-        //  - depth_exceeded: per-instance depth cap OR the shared solver-frame
-        //    budget tripping on the instantiator's OWN entry — the
-        //    recursion-limit analog of closed_eval's `recursion_limit_hit`
-        //    (already carried on the result).
-        //  - union_too_complex (TS2590) / tuple_too_large (TS2799): sticky flags
-        //    a nested `evaluate_*` (mapped/conditional body) can trip; gate on
-        //    NEWLY-tripped so a pre-existing sibling flag does not block an
-        //    unrelated result.
-        //  - evaluation fuel exhausted: the global fuel budget; an exhausted run
-        //    yields a bounded result.
-        //  - poisoned: the interner type-count budget degraded new construction
-        //    to `TypeId::ERROR`.
-        //  - solver-frame curtailment: a NESTED `evaluate_*` (instantiate.rs
-        //    evaluate_type/index_access/keyof) curtailed by the shared frame
-        //    budget returns an under-evaluated form WITHOUT flipping the
-        //    instantiator's own `depth_exceeded` (the instantiator's frame is
-        //    already on the stack). This is closed_eval's per-node `tainted`
-        //    exclusion at the instantiation layer: a budget-rich walk would
-        //    otherwise cache an under-evaluated result a budget-poor walk should
-        //    re-derive. The monotonic counter changing across the walk detects it.
-        let newly_too_complex = interner.is_union_too_complex() && !union_too_complex_before;
-        let newly_tuple_too_large = interner.is_tuple_too_large() && !tuple_too_large_before;
-        let frame_curtailed = crate::recursion::solver_frame_bail_count() != frame_bail_before;
-        let limit_tripped = result.depth_exceeded()
-            || newly_too_complex
-            || newly_tuple_too_large
-            || frame_curtailed
-            || interner.is_evaluation_fuel_exhausted()
-            || interner.is_poisoned();
-        if !limit_tripped {
-            interner.insert_proto_instantiation_cache(proto_key, result.type_id());
+        let memo_result = InstantiationMemoResult::for_project_cache(
+            result,
+            limit_snapshot.request_state_is_stable_after(interner),
+        );
+        if memo_result.is_stable_for_project_cache() {
+            interner
+                .insert_proto_instantiation_cache(proto_key, memo_result.into_result().type_id());
         }
         return result;
     }
@@ -991,7 +967,8 @@ fn run_instantiator(
     instantiator.shallow_this_only = options.shallow_this_only();
     instantiator.this_type = request.this_type();
     let result = instantiator.instantiate(request.type_id());
-    InstantiationResult::from_walk(result, instantiator.depth_exceeded)
+    let termination = InstantiationTermination::from_depth_exceeded(instantiator.depth_exceeded);
+    InstantiationResult::from_walk(result, termination)
 }
 
 /// Convenience function for instantiating a type with a substitution.
@@ -1344,23 +1321,24 @@ pub fn instantiate_type_with_depth_status(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
     substitution: &TypeSubstitution,
-) -> (TypeId, bool) {
+) -> InstantiationResult {
     // Fast path: intrinsic types never need instantiation (no type-parameter
     // occurrences, no recursion). Skip the substitution probe AND the
     // `TypeInstantiator` construction. Mirrors the leaf fast path in
     // `instantiate_type_cached` / `instantiate_type_preserving_cached`.
     if type_id.is_intrinsic() {
-        return (type_id, false);
+        return InstantiationResult::ok(type_id);
     }
     if substitution.is_empty() {
-        return (type_id, false);
+        return InstantiationResult::ok(type_id);
     }
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     let result = instantiator.instantiate(type_id);
-    // Report the overflow bool for callers that gate on it, but hand back the
-    // relation-preserving bail value (never a substitution-bound free type
+    // Report the overflow verdict for callers that gate on it, but hand back
+    // the relation-preserving bail value (never a substitution-bound free type
     // parameter) instead of the `TypeId::ERROR` sentinel (#13652).
-    (result, instantiator.depth_exceeded)
+    let termination = InstantiationTermination::from_depth_exceeded(instantiator.depth_exceeded);
+    InstantiationResult::from_walk(result, termination)
 }
 
 /// Convenience function for instantiating a type while preserving meta-type
@@ -1782,6 +1760,33 @@ fn defer_lazy_default_conditional_enabled() -> bool {
     })
 }
 
+/// #14345 dormant resolver-aware re-reduce of instantiation-time deferred
+/// index-access / conditional leaks (default OFF; byte-parity when OFF).
+///
+/// When `TSZ_INST_RESOLVER_REREDUCE=1`, the instantiator keeps the
+/// resolver-aware `QueryDatabase` it was handed (instead of nulling it in
+/// `with_query_db`) and, at the two deferred-leak sites
+/// (`instantiate_index_access` and `instantiate_conditional`), re-runs the
+/// reduction through that resolver once the base/check became concrete (no
+/// type parameters remain). This resolves the cross-arena `Lazy(DefId)` base
+/// of an `URItoKind[URI]` index — e.g. fp-ts `Kind<TypeLambda, ...>` — to its
+/// alias instead of returning a structurally-detached deferred form.
+///
+/// The flag is OFF by default and the OFF path is the literal pre-existing
+/// code, so default-pipeline behavior is byte-identical. It is dormant
+/// infrastructure: with the flag ON it correctly clears the `TypeLambda` leak
+/// family but also exposes the #14344 unknown-drop family (the resolver
+/// returns alias bodies whose type-arg positions still carry the default
+/// `unknown` because the alias body was not materialized with the call's
+/// inferred arguments). Turning the flag into a default-on win requires the
+/// materialize-once stage (#14345 XL) to supply fully-substituted alias
+/// bodies before this re-reduce runs.
+pub(super) fn inst_resolver_rereduce_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_INST_RESOLVER_REREDUCE").is_ok_and(|v| v == "1"))
+}
+
 pub(super) fn maybe_evaluate_concrete_conditional(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1926,7 +1931,8 @@ pub fn instantiate_function_with_type_args(
         .params
         .iter()
         .map(|p| {
-            let (new_ty, _) = instantiate_type_with_depth_status(interner, p.type_id, &subst);
+            let new_ty =
+                instantiate_type_with_depth_status(interner, p.type_id, &subst).into_type_id();
             ParamInfo {
                 name: p.name,
                 type_id: new_ty,
@@ -1936,16 +1942,17 @@ pub fn instantiate_function_with_type_args(
         })
         .collect();
 
-    let (new_return, _) = instantiate_type_with_depth_status(interner, shape.return_type, &subst);
+    let new_return =
+        instantiate_type_with_depth_status(interner, shape.return_type, &subst).into_type_id();
 
     let new_this = shape
         .this_type
-        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0);
+        .map(|t| instantiate_type_with_depth_status(interner, t, &subst).into_type_id());
 
     let new_predicate = shape.type_predicate.map(|tp| TypePredicate {
         type_id: tp
             .type_id
-            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).0),
+            .map(|t| instantiate_type_with_depth_status(interner, t, &subst).into_type_id()),
         ..tp
     });
 

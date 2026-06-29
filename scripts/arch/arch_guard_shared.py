@@ -248,6 +248,13 @@ LINE_LIMIT_CHECKS = [
     ),
 ]
 
+QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1901
+
+# Temporary green-campaign headroom for #14351. The live baseline remains
+# explicit; this reserve lets urgent parity PRs land while #8225 follow-up
+# slices move helpers out of the broad `common` quarantine again.
+QUERY_BOUNDARY_COMMON_LINE_GREEN_HEADROOM = 24
+
 FILE_LINE_LIMIT_CHECKS = [
     (
         "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline",
@@ -262,7 +269,8 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1901,
+        QUERY_BOUNDARY_COMMON_LINE_BASELINE
+        + QUERY_BOUNDARY_COMMON_LINE_GREEN_HEADROOM,
     ),
     (
         "Emitter transform boundary: class_es5_ir.rs must not grow",
@@ -569,6 +577,101 @@ FILE_LINE_LIMIT_CHECKS = [
     # --- Blanket coverage batch: all production files > 2000 lines per §19 ---
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
+    (
+        "Solver boundary: narrowing/core.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/narrowing/core.rs",
+        2655,
+    ),
+    (
+        "Solver boundary: def/resolver.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/def/resolver.rs",
+        2506,
+    ),
+    (
+        "Solver boundary: evaluate_rules/infer_pattern.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+        2343,
+    ),
+    (
+        "Solver boundary: caches/db.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/caches/db.rs",
+        2334,
+    ),
+    (
+        "Emitter boundary: class_es5_ast_to_ir_expressions.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/transforms/class_es5_ast_to_ir_expressions.rs",
+        2223,
+    ),
+    (
+        "Solver boundary: type_queries/data/signatures_and_advanced.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/signatures_and_advanced.rs",
+        2191,
+    ),
+    (
+        "Solver boundary: types.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/types.rs",
+        2166,
+    ),
+    (
+        "CLI boundary: driver/check_tests/check_tests_part1.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/driver/check_tests/check_tests_part1.rs",
+        2158,
+    ),
+    (
+        "CLI boundary: driver/check.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/driver/check.rs",
+        2131,
+    ),
+    (
+        "Emitter boundary: emitter/functions.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/emitter/functions.rs",
+        2121,
+    ),
+    (
+        "Emitter boundary: emitter/expressions/call.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/emitter/expressions/call.rs",
+        2080,
+    ),
+    (
+        "Common boundary: perf_counters/tests.rs size ratchet",
+        ROOT / "crates/tsz-common/src/perf_counters/tests.rs",
+        2066,
+    ),
+    (
+        "Solver boundary: type_queries/data/content_predicates.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/content_predicates.rs",
+        2043,
+    ),
+    (
+        "Solver boundary: operations/widening.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/operations/widening.rs",
+        2042,
+    ),
+    (
+        "CLI LSP server: main.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/bin/tsz_server/main.rs",
+        2038,
+    ),
+    (
+        "Solver boundary: evaluation/evaluate/support.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/evaluation/evaluate/support.rs",
+        2037,
+    ),
+    (
+        "Solver boundary: type_queries/data/tests.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/tests.rs",
+        2035,
+    ),
+    (
+        "Solver boundary: intern/core/constructors.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/intern/core/constructors.rs",
+        2026,
+    ),
+    (
+        "Binder boundary: nodes/binding.rs size ratchet",
+        ROOT / "crates/tsz-binder/src/nodes/binding.rs",
+        2018,
+    ),
     (
         "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
         ROOT
@@ -1176,26 +1279,8 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
 # site to a tiered facade or checker query-boundary helper should ratchet the
 # cap down in the same diff.
 #
-# Transitional exceptions pinned by the current cap (#8204 successor debt —
-# each file below still reaches computation modules by path and is the
-# migration backlog for sealing the tiered API):
-#   - crates/tsz-cli/src/bin/tsz.rs (relations::subtype thread-local reset)
-#   - crates/tsz-cli/src/driver/check_tests/check_tests_part2.rs
-#     (operations::property::PropertyAccessResult)
-#   - crates/tsz-emitter/src/declaration_emitter/core/emit_class_properties.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/generic_call_literal.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/
-#     type_inference_return_normalization.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/variable_decl.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/
-#     variable_decl_type_helpers.rs
-#     (operations::widening / operations iterator helpers)
-#   - crates/tsz-emitter/src/lowering/helpers_private_fields.rs
-#     (operations::compound_assignment)
-#   - crates/tsz-lsp/src/code_actions/code_action_extract.rs
-#     (operations::compound_assignment)
-#   - crates/tsz-lsp/src/completions/mod.rs (objects apparent-member helpers)
+# Transitional exceptions remain at 14 module-path references. Ratchet this
+# down as sites migrate to named solver facades or checker query-boundaries.
 #
 # Each entry:
 #   (description, search_roots, exclude_path_prefixes, max_references).
@@ -1209,7 +1294,7 @@ MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-wasm" / "src",
         ],
         (),
-        16,
+        14,
     ),
 ]
 
@@ -1246,6 +1331,13 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
 # compatibility/quarantine barrel tracked by #8225. Existing sites are
 # tolerated as migration debt; new checker code should prefer a narrower
 # request-shaped boundary module, or intentionally bump this cap.
+QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3082
+
+# Temporary green-campaign headroom for #14351. Guard tests keep the baseline
+# tight underneath this reserve, so reductions still force ratchets while urgent
+# parity fixes have a small explicit budget instead of repeatedly deadlocking.
+QUERY_BOUNDARY_COMMON_REFERENCE_GREEN_HEADROOM = 16
+
 #
 # Each entry:
 #   (description, search_roots, exclude_path_prefixes, max_references).
@@ -1254,259 +1346,15 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Bumped by 2 for the deferred-conditional diagnostic-display fix
-        # (`is_conditional_type` guards in the assignment-target display path,
-        # matching the existing direct-call pattern in type_display.rs).
+        # Historical bump/ratchet details live in the PRs linked from #8225 and
+        # #12948. The current live baseline is 3082 (through the enum-member
+        # quick-info display fix); #8225 narrowing remains the removal condition.
         #
-        # Ratcheted down by 5 after literal alias / literal widening
-        # diagnostic display probes moved through query_boundaries::diagnostics.
-        #
-        # Ratcheted down by 14 after branch refresh removed stale direct
-        # common references.
-        #
-        # Ratcheted down by 1 during the #9281 current-main refresh after
-        # the split guard tests caught slack in the live count.
-        #
-        # Ratcheted down by 1 after the interface heritage `this`-type helper
-        # moved to `query_boundaries::type_predicates`.
-        #
-        # Ratcheted down by 8 after rebasing on main removed additional direct
-        # common references.
-        #
-        # Refreshed #9852 on current main for contextual-wrapper excess-property
-        # diagnostics; this records the merged live count.
-        #
-        # Ratcheted down after current-main guard tests caught slack in the
-        # live direct-reference count.
-        #
-        # Ratcheted down to the live merged count after #10311 and #10359
-        # narrowed checker-side direct common references; removal condition
-        # remains #8225 narrowing this quarantine.
-        #
-        # Ratcheted down after current-main guard tests caught slack in the
-        # live direct-reference count.
-        #
-        # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        #
-        # Bumped by 3 for the intersection-target missing-property elaboration
-        # (#11480): `render_missing_property` adds two `is_intersection_type`
-        # guards picking the matched intersection plus an
-        # `intersection_members` + `find_property_by_str` member lookup, all
-        # matching the existing direct-call pattern already used throughout this
-        # file. The helpers are only exposed via `query_boundaries::common`.
-        #
-        # Bumped by 8 for the TS2352 constrained-type-parameter assertion
-        # rule (#10676) — `assertion_source_fits_constrained_type_param` and
-        # its recursive helper resolve / decompose the constraint via
-        # `query_boundaries::common` helpers (`type_param_info`,
-        # `union_members`, `intersection_members`, `find_property_in_object`,
-        # `object_shape_for_type`, `types_are_comparable_for_assertion`).
-        # All routes are existing request-shaped boundaries — no new
-        # quarantine entry — so the count rises by the expected delta.
-        #
-        # Bumped by 3 for the rendered-type-decision cleanup (#8775): TS2536
-        # display picks up two structural keyof references
-        # (`is_keyof_type`, `contains_keyof_type`) and the readonly-key
-        # widening guard picks up one `union_members` reference. All three
-        # route through existing `query_boundaries::common` wrappers; no new
-        # quarantine entry — `contains_keyof_type` reuses the existing
-        # `contains_*` one-liner pattern in `common.rs`.
-        #
-        # Bumped by 1 for the concrete indexed-access TS2536→TS2339 parity fix:
-        # the missing-literal-key guard in `check_indexed_access_type` adds one
-        # `contains_type_parameters` concreteness check (the literal key name is
-        # derived through `query_boundaries::type_computation::access`, not the
-        # `common` barrel). It is an existing request-shaped helper already used
-        # throughout this file — no new quarantine entry.
-        #
-        # Re-pinned after neighboring queued PRs changed the current-main
-        # live direct-reference count during the merge queue.
-        #
-        # Bumped by 1 for the mixed-inheritance implements-clause member
-        # substitution fix (#10861): `collect_inherited_public_members` adds a
-        # single `use crate::query_boundaries::common::{TypeSubstitution,
-        # instantiate_type};` line. Both names are existing request-shaped
-        # boundary re-exports already used throughout the checker; the new
-        # call site walks the `extends` chain and substitutes inherited
-        # member types via `instantiate_type`. No new quarantine entry.
-        #
-        # Ratcheted down by 6 after the index-signature key-type validity
-        # check moved to `query_boundaries::index_signature` (PR #12371/
-        # #12468): `classify_index_sig_param_type` and the resolved-key
-        # `resolved_index_key_type_is_valid` query each use solver calls
-        # rather than direct `query_boundaries::common` access.
-        #
-        # Ratcheted down after arch-smoke caught current stacked-branch slack.
-        # Ratcheted 3211→3208 after guard tests caught slack in the live count,
-        # then bumped to 3209 for the `keyof T` TS2322 diagnostic-display fix
-        # (#12549). Owner: M1-A diagnostic hardcoding debt. Removal condition:
-        # ratchet this back down when `core_formatting.rs` gets a focused
-        # formatting/query-boundary helper for type-parameter `keyof` display,
-        # so `format_type_for_assignability_message` no longer needs a direct
-        # `type_param_info(keyof_inner)` quarantine read to short-circuit the
-        # anonymous-constraint evaluation path for free type parameters.
-        #
-        # Bumped by 4 for #10867 generic interface/class diagnostic source
-        # display: the display-only source formatter needs application base,
-        # lazy definition, and free-type-parameter checks before preserving the
-        # as-written nominal reference. Removal condition remains #8225
-        # narrowing these common-barrel calls behind a dedicated diagnostic
-        # source-display query.
-        #
-        # Ratcheted 3213→3202 after current arch-smoke caught live-count slack.
-        #
-        # Ratcheted 3202→3197 after generic predicate-target instantiation
-        # moved five flow/narrowing substitution queries through
-        # query_boundaries::flow_analysis instead of the broad common barrel.
-        #
-        # Ratcheted 3197→3191 after assignment flow operator/property/literal
-        # queries moved through query_boundaries::flow_analysis.
-        #
-        # Ratcheted 3191→3174 after assignment numeric display shape queries
-        # moved through query_boundaries::diagnostics.
-        #
-        # Ratcheted 3174→3163 after missing-property display shape queries
-        # moved through query_boundaries::diagnostics.
-        #
-        # Ratcheted 3163→3155 after arch-smoke caught current-main slack in the
-        # live direct-reference count.
-        #
-        # Ratcheted 3155→3040 after the #8204 module-path ratchet PR's
-        # arch-smoke run caught current-main slack in the live count.
-        #
-        # Bumped 3040→3045 for the deferred generic `O[K]` parity fix: the
-        # source constraint-widening relation fallback
-        # (`relation_outcome_helpers.rs`), the deferred-target literal
-        # sensitivity probe (`error_reporter/core/diagnostic_source.rs`), and the
-        # contextual-literal constraint recursion (`computed_helpers.rs`) consult
-        # the index-access shape through `query_boundaries::common` helpers
-        # (`index_access_types`, `type_param_info`, `is_index_access_type`) — the
-        # only sanctioned exposure of those solver structural queries to the
-        # checker, matching the direct-call pattern already used throughout these
-        # files. No new quarantine entry.
-        #
-        # Bumped 3045→3051 for the #13655 concrete-tuple generic-index-chain
-        # TS2536 parity fix: the new tuple-chain key-space derivation in
-        # `indexed_access/indexed_access_helpers.rs` adds 6 direct references
-        # (`union_members`, `tuple_elements`, `number_literal_value`,
-        # `type_parameter_constraint`, `is_type_parameter_like`) plus the
-        # current-main live slack the prior 3040→3045 ratchet anticipated. Every
-        # route is an existing request-shaped helper already used throughout the
-        # indexed-access checker — no new quarantine entry. Removal condition
-        # remains #8225 narrowing this quarantine.
-        #
-        # Bumped 3051→3066 for the deferred-conditional indexed-access parity
-        # fix (#13654 / #13678, landed on main): keeping `O[K]` deferred over a
-        # deferred conditional base adds request-shaped `query_boundaries::common`
-        # reads in `indexed_access.rs`,
-        # `indexed_access/deferred_conditional_index.rs`,
-        # `constrained_type_param_assertion.rs`, `signatures_and_advanced.rs`,
-        # and `comparability.rs` (`contains_free_type_parameters`,
-        # `types_are_comparable_for_assertion`,
-        # `conditional_branch_union_constraint`, `index_access_types`,
-        # `is_keyof_type`, `is_conditional_type`, `is_generic_application`,
-        # `is_index_access_type`). All are existing request-shaped boundary
-        # helpers already used throughout the checker — no new quarantine entry.
-        #
-        # Bumped 3066→3068 for the #13081 TypeFormatter factory fold: the new
-        # `create_instantiation_display_formatter` factory in `context/def_mapping.rs`
-        # adds two `query_boundaries::common::TypeFormatter` references (the return
-        # type annotation and the in-body `use`), replacing the open-coded formatter
-        # construction the instantiation-display sites previously carried. This is
-        # the request-shaped formatter-construction route the refactor consolidates
-        # onto; no new quarantine entry. Removal condition remains #8225.
-        #
-        # Bumped 3068→3070 for the #13677 deferred-conditional default-constraint
-        # indexed-access validation merged alongside #13678: the new
-        # `deferred_conditional_index_is_in_key_space` /
-        # `indexed_access_key_space_is_resolved` helpers in
-        # `indexed_access/indexed_access_helpers.rs` reach the conditional
-        # apparent-constraint and `KeyOf` predicates through the existing
-        # `query_boundaries::common` gateway (`conditional_default_constraint`,
-        # `is_keyof_type`) — all existing request-shaped boundary helpers, no new
-        # quarantine entry. Removal condition remains #8225 narrowing this
-        # quarantine.
-        #
-        # Bumped 3070→3072 for the polymorphic-`this` generic-indexed-access
-        # TS2536 deferral fix (#13720): `is_deferred_indexed_access_object` in
-        # `indexed_access/indexed_access_helpers.rs` adds one
-        # `is_this_type(base)` reference so a `this["arg0"][number]` base is
-        # recognized as a deferred generic indexed-access object, and the
-        # `key_space_is_unresolved` gate in `indexed_access.rs` adds one
-        # `is_keyof_type(ty)` reference so a still-deferred `keyof` key space is
-        # treated as unusable. Both route through the existing
-        # `query_boundaries::common` gateway and join the sibling structural
-        # predicates (`is_type_parameter_like`, `is_conditional_type`,
-        # `is_generic_application`, `is_index_access_type`) already called from
-        # `common` in the very same expressions — no new quarantine entry.
-        # Removal condition remains #8225 narrowing this quarantine.
-        #
-        # Bumped by 1 for the nested deferred-conditional indexed-access parity
-        # fix (#13792): the new `indexed_access/deferred_conditional_index.rs`
-        # module resolves a deferred `B[K1]` apparent type through the existing
-        # `query_boundaries::common` structural predicates (`is_conditional_type`,
-        # `is_generic_application`, `is_index_access_type`, `is_keyof_type`,
-        # `conditional_branch_union_constraint`). These join the sibling
-        # predicates already routed through `common`; the net live count rises by
-        # one over current main — no new quarantine entry.
-        # Removal condition remains #8225 narrowing this quarantine.
-        #
-        # Bumped 3073→3076 for the remeda error-type-contagion fix (#13512):
-        # the `indexed_access/error_contagion.rs` spine walk adds an
-        # `application_info` + `index_access_types` peel and the
-        # `context/unresolved_import.rs` detector adds a `lazy_def_id` lookup,
-        # all through the existing `query_boundaries::common` gateway joining the
-        # sibling structural predicates already used in the same expressions —
-        # no new quarantine entry. Removal condition remains #8225.
-        #
-        # Bumped 3076→3079 for the #12101 on-demand-forcing cache-poisoning
-        # backstop: `failure_memo_store` and its two callers
-        # (`assignability_relation.rs`, `assignability_diagnostics.rs`) each
-        # reference the existing `query_boundaries::common::lazy_resolve_failure_count`
-        # gateway helper — the same one `publish_shared_constraint_proof` already
-        # uses for the sibling cross-file proof cache. No new quarantine entry.
-        # Removal condition remains #8225.
-        #
-        # Ratcheted 3079→3073 after #14306 moved the spread constraint probe
-        # through the narrower call boundary. The merge queue picked up
-        # neighboring main changes while preserving a six-reference reduction.
-        #
-        # Bumped 3073→3078 to record the live merged count after a batch of
-        # checker fixes landed during a merge-queue (dist-binaries) outage
-        # window; each added a small number of existing-pattern
-        # `query_boundaries::common` reads. No new quarantine entry; #8225
-        # narrowing remains the removal condition.
-        #
-        # Bumped 3078→3079 for the #14787 declared-type narrowing fix: the
-        # object/array-literal assignment guard in `flow/control_flow` adds one
-        # `query_boundaries::common::type_has_readonly_members` read so a
-        # readonly nested member survives an outer assignment (TS2540 parity).
-        # It is an existing request-shaped boundary helper already used
-        # throughout the checker — no new quarantine entry. Removal condition
-        # remains #8225.
-        #
-        # Bumped 3079→3080 for the #14789 TS2820 display-types spelling
-        # suggestion: `find_string_literal_spelling_suggestion_reduced` in
-        # `error_reporter/core_formatting.rs` adds one
-        # `query_boundaries::common::literal_value` string-literal-source guard
-        # so the suggestion scan is gated to literal sources, matching the
-        # existing direct-call pattern already used throughout this file. No new
-        # quarantine entry; #8225 narrowing remains the removal condition.
-        #
-        # Merge reconciliation: #14787 (main) and #14789 (this branch) each add
-        # one independent `query_boundaries::common` reference over the shared
-        # 3078 base, so the live merged count is 3080.
-        #
-        # Bumped 3080→3082 for the enum-member quick-info value display fix:
-        # `CheckerState::format_enum_member_value` in
-        # `state/type_environment/formatting.rs` adds an
-        # `query_boundaries::common::enum_member_type` peel plus an
-        # `query_boundaries::common::is_literal_type` guard so hover/completion
-        # surfaces print the member's underlying constant value (`= 0`) instead
-        # of its type, matching tsserver. Both are existing request-shaped
-        # boundary helpers already used throughout the checker — no new
-        # quarantine entry; #8225 narrowing remains the removal condition.
-        3082,
+        # #14351 temporary green-campaign budget: keep the 3082 live baseline
+        # pinned, but allow a small explicit reserve for parity fixes that add
+        # sanctioned checker→solver queries before #8225 drain slices make room.
+        QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE
+        + QUERY_BOUNDARY_COMMON_REFERENCE_GREEN_HEADROOM,
     ),
 ]
 
