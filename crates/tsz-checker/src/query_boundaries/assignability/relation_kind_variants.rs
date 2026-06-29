@@ -56,12 +56,10 @@ pub(crate) fn cached_bivariant_assignability_with_resolver<
     if is_cacheable {
         let cache_key = assignability_cache_key(source, target, flags);
         if let Some(cached) = db.lookup_assignability_cache(cache_key) {
-            return tsz_solver::relations::relation_queries::RelationResult {
-                kind: tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
-                related: cached,
-                depth_exceeded: false,
-                iteration_exceeded: false,
-            };
+            return tsz_solver::relations::relation_queries::RelationResult::complete(
+                tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
+                cached,
+            );
         }
     }
 

@@ -102,8 +102,8 @@ pub(crate) fn cached_final_assignability(
     };
     let raw_related = relation_result.is_related();
     checker.propagate_overflow_flags(
-        relation_result.depth_exceeded,
-        relation_result.iteration_exceeded,
+        relation_result.depth_exceeded(),
+        relation_result.iteration_exceeded(),
     );
 
     if is_cacheable {

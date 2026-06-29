@@ -890,12 +890,10 @@ pub(crate) fn cached_assignability_with_overrides<
     if is_cacheable {
         let cache_key = assignability_cache_key(inputs.source, inputs.target, inputs.flags);
         if let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
-            return tsz_solver::relations::relation_queries::RelationResult {
-                kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
-                related: cached,
-                depth_exceeded: false,
-                iteration_exceeded: false,
-            };
+            return tsz_solver::relations::relation_queries::RelationResult::complete(
+                tsz_solver::relations::relation_queries::RelationKind::Assignable,
+                cached,
+            );
         }
     }
 
@@ -1037,8 +1035,8 @@ pub(crate) fn check_assignable_gate_with_overrides<
     let related = outcome.result.is_related();
     let capture = CachedAssignabilityAnalysis {
         related,
-        depth_exceeded: outcome.result.depth_exceeded,
-        iteration_exceeded: outcome.result.iteration_exceeded,
+        depth_exceeded: outcome.result.depth_exceeded(),
+        iteration_exceeded: outcome.result.iteration_exceeded(),
         weak_union_violation: outcome
             .analysis
             .as_ref()
@@ -1194,8 +1192,8 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
                 query_assignability_with_failure_analysis(inputs)
             };
             let related = solver_outcome.result.is_related();
-            let depth_exceeded = solver_outcome.result.depth_exceeded;
-            let iteration_exceeded = solver_outcome.result.iteration_exceeded;
+            let depth_exceeded = solver_outcome.result.depth_exceeded();
+            let iteration_exceeded = solver_outcome.result.iteration_exceeded();
             let capture = (!request.decision_only).then(|| CachedAssignabilityAnalysis {
                 related,
                 depth_exceeded,

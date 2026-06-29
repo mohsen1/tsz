@@ -36,12 +36,10 @@ pub(crate) fn cached_overload_subtype_pass_assignability<
     let cache_key =
         RelationCacheKey::for_assignability(inputs.source, inputs.target, policy.cache_config());
     if is_cacheable && let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
-        return tsz_solver::relations::relation_queries::RelationResult {
-            kind: tsz_solver::relations::relation_queries::RelationKind::Assignable,
-            related: cached,
-            depth_exceeded: false,
-            iteration_exceeded: false,
-        };
+        return tsz_solver::relations::relation_queries::RelationResult::complete(
+            tsz_solver::relations::relation_queries::RelationKind::Assignable,
+            cached,
+        );
     }
 
     let context = tsz_solver::relations::relation_queries::RelationContext {

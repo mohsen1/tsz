@@ -467,11 +467,11 @@ fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
     );
 
     assert!(
-        assume_uncached.depth_exceeded,
+        assume_uncached.depth_exceeded(),
         "deep nested array comparison should exceed the relation depth budget",
     );
     assert!(
-        reject_uncached.depth_exceeded,
+        reject_uncached.depth_exceeded(),
         "the non-assuming policy should see the same depth overflow",
     );
     assert!(
