@@ -49,6 +49,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
+            // A scalar `any`/`error` spread is assignable to any rest or fixed
+            // parameter and can never overflow the parameter list, so it is
+            // never a rejectable non-tuple spread. This mirrors the collector
+            // early-out in `collect_call_argument_types_with_context`; keeping
+            // the exemption in this shared overload predicate ensures the
+            // single-signature and overload-resolution paths agree (the value
+            // occupies one positional slot here).
+            if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
+                effective_index += 1;
+                continue;
+            }
             // A variadic-tuple type-parameter spread stays a single unit (see argument
             // collection and the type-parameter spread branch below); do not
             // advance by its constraint's tuple element count.

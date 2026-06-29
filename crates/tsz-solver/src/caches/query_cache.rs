@@ -17,6 +17,7 @@ use crate::caches::shared_query_cache::ApplicationEvalCacheKey;
 pub use crate::caches::shared_query_cache::SharedQueryCache;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
@@ -1499,7 +1500,7 @@ impl QueryDatabase for QueryCache<'_> {
             query_id
         });
 
-        let union_too_complex_before = self.interner.is_union_too_complex();
+        let limit_snapshot = EvaluationCacheLimitSnapshot::capture(self.interner);
         let mut evaluator = self.query_backed_evaluator();
         let evaluation_memo_result = evaluator.evaluate_request_memo_result(request);
         let result = evaluation_memo_result.into_type_id();
@@ -1535,10 +1536,10 @@ impl QueryDatabase for QueryCache<'_> {
         // recomputed from scratch on every later query.
         // A union-complexity overflow is not routed through the evaluator's
         // limit epoch, so it conservatively suppresses all writes, as before.
-        let newly_union_too_complex =
-            self.interner.is_union_too_complex() && !union_too_complex_before;
+        let union_complexity_stable =
+            limit_snapshot.union_complexity_stayed_stable_after(self.interner);
         let top_level_clean = evaluation_memo_result.is_stable_for_depth_agnostic_cache();
-        if !newly_union_too_complex
+        if union_complexity_stable
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
             let mut cache = self.eval_cache.borrow_mut();

@@ -636,11 +636,12 @@ impl CheckerState<'_> {
         // Create substitution and instantiate
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
-        let (mut instantiated, depth_exceeded) =
+        let instantiation_result =
             instantiate_type_with_depth_status(self.ctx.types, body_type, &substitution);
-        if depth_exceeded {
+        if instantiation_result.depth_exceeded() {
             self.ctx.depth_exceeded.set(true);
         }
+        let mut instantiated = instantiation_result.into_type_id();
         if query::contains_this_type(self.ctx.types, instantiated) {
             instantiated = query::substitute_this_type(self.ctx.types, instantiated, type_id);
         }
