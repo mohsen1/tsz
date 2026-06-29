@@ -26,26 +26,15 @@ pub(super) enum ProjectInstantiationCacheTaint {
 }
 
 impl ProjectInstantiationCacheStability {
-    const fn from_taint_flags(
-        newly_too_complex: bool,
-        newly_tuple_too_large: bool,
-        frame_curtailed: bool,
-        evaluation_fuel_exhausted: bool,
-        poisoned: bool,
+    fn from_ordered_taints<const N: usize>(
+        taints: [(bool, ProjectInstantiationCacheTaint); N],
     ) -> Self {
-        if newly_too_complex {
-            Self::Unstable(ProjectInstantiationCacheTaint::UnionTooComplex)
-        } else if newly_tuple_too_large {
-            Self::Unstable(ProjectInstantiationCacheTaint::TupleTooLarge)
-        } else if frame_curtailed {
-            Self::Unstable(ProjectInstantiationCacheTaint::SolverFrameCurtailment)
-        } else if evaluation_fuel_exhausted {
-            Self::Unstable(ProjectInstantiationCacheTaint::EvaluationFuelExhausted)
-        } else if poisoned {
-            Self::Unstable(ProjectInstantiationCacheTaint::Poisoned)
-        } else {
-            Self::Stable
+        for (is_tainted, taint) in taints {
+            if is_tainted {
+                return Self::Unstable(taint);
+            }
         }
+        Self::Stable
     }
 
     pub(super) const fn is_stable_for_project_cache(self) -> bool {
@@ -77,13 +66,28 @@ impl ProjectInstantiationCacheLimitSnapshot {
         let newly_tuple_too_large = interner.is_tuple_too_large() && !self.tuple_too_large;
         let frame_curtailed =
             crate::recursion::solver_frame_bail_count() != self.solver_frame_bail_count;
-        ProjectInstantiationCacheStability::from_taint_flags(
-            newly_too_complex,
-            newly_tuple_too_large,
-            frame_curtailed,
-            interner.is_evaluation_fuel_exhausted(),
-            interner.is_poisoned(),
-        )
+        ProjectInstantiationCacheStability::from_ordered_taints([
+            (
+                newly_too_complex,
+                ProjectInstantiationCacheTaint::UnionTooComplex,
+            ),
+            (
+                newly_tuple_too_large,
+                ProjectInstantiationCacheTaint::TupleTooLarge,
+            ),
+            (
+                frame_curtailed,
+                ProjectInstantiationCacheTaint::SolverFrameCurtailment,
+            ),
+            (
+                interner.is_evaluation_fuel_exhausted(),
+                ProjectInstantiationCacheTaint::EvaluationFuelExhausted,
+            ),
+            (
+                interner.is_poisoned(),
+                ProjectInstantiationCacheTaint::Poisoned,
+            ),
+        ])
     }
 }
 
@@ -93,8 +97,19 @@ mod tests {
 
     #[test]
     fn stable_request_state_allows_project_cache_publication() {
-        let stability =
-            ProjectInstantiationCacheStability::from_taint_flags(false, false, false, false, false);
+        let stability = ProjectInstantiationCacheStability::from_ordered_taints([
+            (false, ProjectInstantiationCacheTaint::UnionTooComplex),
+            (false, ProjectInstantiationCacheTaint::TupleTooLarge),
+            (
+                false,
+                ProjectInstantiationCacheTaint::SolverFrameCurtailment,
+            ),
+            (
+                false,
+                ProjectInstantiationCacheTaint::EvaluationFuelExhausted,
+            ),
+            (false, ProjectInstantiationCacheTaint::Poisoned),
+        ]);
 
         assert_eq!(stability, ProjectInstantiationCacheStability::Stable);
         assert!(stability.is_stable_for_project_cache());
@@ -102,8 +117,10 @@ mod tests {
 
     #[test]
     fn unstable_request_state_names_limit_reason() {
-        let stability =
-            ProjectInstantiationCacheStability::from_taint_flags(false, false, true, false, false);
+        let stability = ProjectInstantiationCacheStability::from_ordered_taints([(
+            true,
+            ProjectInstantiationCacheTaint::SolverFrameCurtailment,
+        )]);
 
         assert_eq!(
             stability,
@@ -116,8 +133,16 @@ mod tests {
 
     #[test]
     fn unstable_request_state_keeps_existing_priority_order() {
-        let stability =
-            ProjectInstantiationCacheStability::from_taint_flags(true, true, true, true, true);
+        let stability = ProjectInstantiationCacheStability::from_ordered_taints([
+            (true, ProjectInstantiationCacheTaint::UnionTooComplex),
+            (true, ProjectInstantiationCacheTaint::TupleTooLarge),
+            (true, ProjectInstantiationCacheTaint::SolverFrameCurtailment),
+            (
+                true,
+                ProjectInstantiationCacheTaint::EvaluationFuelExhausted,
+            ),
+            (true, ProjectInstantiationCacheTaint::Poisoned),
+        ]);
 
         assert_eq!(
             stability,
