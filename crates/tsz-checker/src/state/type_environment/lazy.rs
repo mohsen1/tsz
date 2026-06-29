@@ -764,6 +764,7 @@ impl CheckerState<'_> {
             );
             match crate::query_boundaries::state::type_environment::self_application_arg_weight(
                 db,
+                &*env,
                 type_id,
                 alias_def_id,
             ) {
@@ -772,6 +773,7 @@ impl CheckerState<'_> {
                     let diverges = residuals.iter().any(|&residual| {
                         crate::query_boundaries::state::type_environment::self_application_arg_weight(
                             db,
+                            &*env,
                             residual,
                             alias_def_id,
                         )

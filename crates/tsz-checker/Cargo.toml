@@ -428,6 +428,9 @@ path = "tests/reverse_mapped_inference_tests.rs"
 name = "recursive_alias_resolution_tests"
 path = "tests/recursive_alias_resolution_tests.rs"
 [[test]]
+name = "recursive_alias_named_tuple_arg_ts2589_tests"
+path = "tests/recursive_alias_named_tuple_arg_ts2589_tests.rs"
+[[test]]
 name = "recursive_intersection_assignability_tests"
 path = "tests/recursive_intersection_assignability_tests.rs"
 [[test]]
