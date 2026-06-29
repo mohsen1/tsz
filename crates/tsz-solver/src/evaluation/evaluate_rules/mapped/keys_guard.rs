@@ -39,15 +39,28 @@ thread_local! {
 /// Otherwise it records membership and clears it on drop, so the set is
 /// restored even if `extract_mapped_keys_impl` unwinds.
 #[must_use]
+#[derive(Debug)]
 struct MappedKeysVisitGuard(TypeId);
 
+/// Result of entering the mapped-key extraction active set.
+///
+/// `Entered` owns the RAII membership guard for this extraction.
+/// `AlreadyVisiting` names the re-entrant resolution cycle case that callers
+/// collapse to the existing `None` / "cannot extract keys yet" behavior.
+#[must_use]
+#[derive(Debug)]
+enum MappedKeysVisitState {
+    Entered(MappedKeysVisitGuard),
+    AlreadyVisiting,
+}
+
 impl MappedKeysVisitGuard {
-    fn enter(type_id: TypeId) -> Option<Self> {
+    fn enter(type_id: TypeId) -> MappedKeysVisitState {
         EXTRACT_MAPPED_KEYS_VISITING.with(|visiting| {
             if visiting.borrow_mut().insert(type_id) {
-                Some(Self(type_id))
+                MappedKeysVisitState::Entered(Self(type_id))
             } else {
-                None
+                MappedKeysVisitState::AlreadyVisiting
             }
         })
     }
@@ -68,7 +81,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         &mut self,
         type_id: TypeId,
     ) -> Option<MappedKeys> {
-        let _guard = MappedKeysVisitGuard::enter(type_id)?;
+        let _guard = match MappedKeysVisitGuard::enter(type_id) {
+            MappedKeysVisitState::Entered(guard) => guard,
+            MappedKeysVisitState::AlreadyVisiting => return None,
+        };
         self.extract_mapped_keys_impl(type_id)
     }
 }
@@ -84,10 +100,15 @@ mod tests {
     #[test]
     fn reentry_of_in_flight_type_is_rejected() {
         let t = TypeId(4242);
-        let outer = MappedKeysVisitGuard::enter(t).expect("first entry succeeds");
+        let MappedKeysVisitState::Entered(outer) = MappedKeysVisitGuard::enter(t) else {
+            panic!("first entry succeeds");
+        };
         assert!(is_visiting(t));
         assert!(
-            MappedKeysVisitGuard::enter(t).is_none(),
+            matches!(
+                MappedKeysVisitGuard::enter(t),
+                MappedKeysVisitState::AlreadyVisiting
+            ),
             "re-entering an in-flight TypeId must defer"
         );
         drop(outer);
@@ -101,7 +122,9 @@ mod tests {
     fn membership_is_restored_on_unwind() {
         let t = TypeId(99);
         let result = std::panic::catch_unwind(|| {
-            let _guard = MappedKeysVisitGuard::enter(t).expect("entry succeeds");
+            let MappedKeysVisitState::Entered(_guard) = MappedKeysVisitGuard::enter(t) else {
+                panic!("entry succeeds");
+            };
             assert!(is_visiting(t));
             panic!("simulated mid-extraction panic");
         });
