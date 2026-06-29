@@ -409,6 +409,9 @@ mod member_assignment_narrowing_join_tests;
 #[path = "../tests/merged_symbol_tests.rs"]
 mod merged_symbol_tests;
 #[cfg(test)]
+#[path = "tests/method_return_type_elaboration_tests.rs"]
+mod method_return_type_elaboration_tests;
+#[cfg(test)]
 #[path = "../tests/missing_name_pass_constrained_type_param_tests.rs"]
 mod missing_name_pass_constrained_type_param_tests;
 #[cfg(test)]
