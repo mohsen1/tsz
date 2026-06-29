@@ -46,6 +46,42 @@ impl ConditionalBranchCacheStability {
     }
 }
 
+/// Verdict for publishing a conditional-branch relation to the depth-agnostic
+/// cross-evaluator cache.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ConditionalBranchCacheVerdict {
+    /// Publish that the true branch is assignable.
+    PublishTrueBranch,
+    /// Publish that the false branch is assignable.
+    PublishFalseBranch,
+    /// Do not publish a cross-evaluator verdict for this probe.
+    DoNotPublish,
+}
+
+impl ConditionalBranchCacheVerdict {
+    const fn from_probe(
+        relation: BranchRelation,
+        cache_stability: ConditionalBranchCacheStability,
+    ) -> Self {
+        if !cache_stability.is_depth_agnostic() {
+            return Self::DoNotPublish;
+        }
+        match relation {
+            BranchRelation::Holds => Self::PublishTrueBranch,
+            BranchRelation::Fails => Self::PublishFalseBranch,
+            BranchRelation::Undetermined => Self::DoNotPublish,
+        }
+    }
+
+    const fn as_bool(self) -> Option<bool> {
+        match self {
+            Self::PublishTrueBranch => Some(true),
+            Self::PublishFalseBranch => Some(false),
+            Self::DoNotPublish => None,
+        }
+    }
+}
+
 /// Conditional-branch relation result plus its publication verdict.
 ///
 /// The per-evaluator cache can remember any definitive branch relation. The
@@ -80,12 +116,8 @@ impl ConditionalBranchProbeResult {
         }
     }
 
-    const fn depth_agnostic_cache_verdict(self) -> Option<bool> {
-        if self.cache_stability.is_depth_agnostic() {
-            self.definitive_verdict()
-        } else {
-            None
-        }
+    const fn depth_agnostic_cache_verdict(self) -> ConditionalBranchCacheVerdict {
+        ConditionalBranchCacheVerdict::from_probe(self.relation, self.cache_stability)
     }
 }
 
@@ -779,7 +811,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //    body, and neither operand is tainted — the same whole-run
             //    gates `closed_eval` uses before persisting.
             if conditional_branch_verdict_cache_enabled()
-                && let Some(verdict) = probe.depth_agnostic_cache_verdict()
+                && let Some(verdict) = probe.depth_agnostic_cache_verdict().as_bool()
                 && self.request_state_is_depth_agnostic_cache_stable()
                 && !self.unresolved_def_seen()
                 && !self.is_tainted(check_type)
@@ -999,7 +1031,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
 #[cfg(test)]
 mod conditional_branch_probe_result_tests {
-    use super::{BranchRelation, ConditionalBranchCacheStability, ConditionalBranchProbeResult};
+    use super::{
+        BranchRelation, ConditionalBranchCacheStability, ConditionalBranchCacheVerdict,
+        ConditionalBranchProbeResult,
+    };
 
     #[test]
     fn budget_bounded_probe_keeps_definitive_verdict_but_blocks_depth_cache() {
@@ -1010,7 +1045,11 @@ mod conditional_branch_probe_result_tests {
 
         assert_eq!(probe.relation(), BranchRelation::Fails);
         assert_eq!(probe.definitive_verdict(), Some(false));
-        assert_eq!(probe.depth_agnostic_cache_verdict(), None);
+        assert_eq!(
+            probe.depth_agnostic_cache_verdict(),
+            ConditionalBranchCacheVerdict::DoNotPublish
+        );
+        assert_eq!(probe.depth_agnostic_cache_verdict().as_bool(), None);
     }
 
     #[test]
@@ -1022,7 +1061,11 @@ mod conditional_branch_probe_result_tests {
 
         assert_eq!(probe.relation(), BranchRelation::Undetermined);
         assert_eq!(probe.definitive_verdict(), None);
-        assert_eq!(probe.depth_agnostic_cache_verdict(), None);
+        assert_eq!(
+            probe.depth_agnostic_cache_verdict(),
+            ConditionalBranchCacheVerdict::DoNotPublish
+        );
+        assert_eq!(probe.depth_agnostic_cache_verdict().as_bool(), None);
     }
 
     #[test]
@@ -1034,7 +1077,11 @@ mod conditional_branch_probe_result_tests {
 
         assert_eq!(probe.relation(), BranchRelation::Holds);
         assert_eq!(probe.definitive_verdict(), Some(true));
-        assert_eq!(probe.depth_agnostic_cache_verdict(), Some(true));
+        assert_eq!(
+            probe.depth_agnostic_cache_verdict(),
+            ConditionalBranchCacheVerdict::PublishTrueBranch
+        );
+        assert_eq!(probe.depth_agnostic_cache_verdict().as_bool(), Some(true));
     }
 }
 
