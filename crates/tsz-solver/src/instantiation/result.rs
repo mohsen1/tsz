@@ -12,11 +12,36 @@
 
 use crate::types::TypeId;
 
+/// Whether an instantiation walk ran to completion or hit its depth guard.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstantiationTermination {
+    /// The walk finished within the instantiation recursion-depth budget.
+    Complete,
+    /// The instantiation recursion-depth guard cut the walk short.
+    DepthExceeded,
+}
+
+impl InstantiationTermination {
+    /// Convert the raw per-walk guard bit into a named termination verdict at
+    /// the result boundary.
+    pub const fn from_depth_exceeded(depth_exceeded: bool) -> Self {
+        if depth_exceeded {
+            Self::DepthExceeded
+        } else {
+            Self::Complete
+        }
+    }
+
+    pub const fn depth_exceeded(self) -> bool {
+        matches!(self, Self::DepthExceeded)
+    }
+}
+
 /// The outcome of one instantiation walk.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstantiationResult {
     type_id: TypeId,
-    overflowed: bool,
+    termination: InstantiationTermination,
 }
 
 /// Instantiation result plus the verdict for project-wide cache publication.
@@ -36,7 +61,7 @@ impl InstantiationResult {
     pub const fn ok(type_id: TypeId) -> Self {
         Self {
             type_id,
-            overflowed: false,
+            termination: InstantiationTermination::Complete,
         }
     }
 
@@ -57,20 +82,19 @@ impl InstantiationResult {
     /// of collapsing to `TypeId::ERROR` so a downstream consumer (e.g.
     /// iterator-element resolution on a fully-concrete `Map<K, V>`) does not
     /// fall back to the original un-instantiated declaration and resurface a
-    /// free `T` into a concrete context (#13652). The `overflowed` flag is
+    /// free `T` into a concrete context (#13652). The termination verdict is
     /// still set so the cross-call cache refuses to memoize a budget-limited
     /// result.
     pub const fn overflow_with(type_id: TypeId) -> Self {
         Self {
             type_id,
-            overflowed: true,
+            termination: InstantiationTermination::DepthExceeded,
         }
     }
 
-    /// Construct from a `(type_id, depth_exceeded)` pair as produced by the
-    /// raw instantiator walk.
-    pub const fn from_walk(type_id: TypeId, depth_exceeded: bool) -> Self {
-        if depth_exceeded {
+    /// Construct from the walk's partial type and named termination verdict.
+    pub const fn from_walk(type_id: TypeId, termination: InstantiationTermination) -> Self {
+        if termination.depth_exceeded() {
             Self::overflow_with(type_id)
         } else {
             Self::ok(type_id)
@@ -82,7 +106,11 @@ impl InstantiationResult {
     }
 
     pub const fn depth_exceeded(self) -> bool {
-        self.overflowed
+        self.termination.depth_exceeded()
+    }
+
+    pub const fn termination(self) -> InstantiationTermination {
+        self.termination
     }
 
     /// Collapse the result to a single `TypeId`.
@@ -125,7 +153,7 @@ impl InstantiationMemoResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstantiationMemoResult, InstantiationResult};
+    use super::{InstantiationMemoResult, InstantiationResult, InstantiationTermination};
     use crate::types::TypeId;
 
     #[test]
@@ -133,6 +161,7 @@ mod tests {
         let r = InstantiationResult::ok(TypeId::NUMBER);
         assert_eq!(r.type_id(), TypeId::NUMBER);
         assert!(!r.depth_exceeded());
+        assert_eq!(r.termination(), InstantiationTermination::Complete);
         assert_eq!(r.into_type_id(), TypeId::NUMBER);
     }
 
@@ -140,6 +169,7 @@ mod tests {
     fn overflow_result_reports_sentinel_when_no_partial() {
         let r = InstantiationResult::overflow();
         assert!(r.depth_exceeded());
+        assert_eq!(r.termination(), InstantiationTermination::DepthExceeded);
         // `overflow()` (no partial) still surfaces the `ERROR` sentinel.
         assert_eq!(r.into_type_id(), TypeId::ERROR);
     }
@@ -152,20 +182,36 @@ mod tests {
         // original and resurface a free `T` (#13652).
         let r = InstantiationResult::overflow_with(TypeId::STRING);
         assert!(r.depth_exceeded());
+        assert_eq!(r.termination(), InstantiationTermination::DepthExceeded);
         assert_eq!(r.into_type_id(), TypeId::STRING);
     }
 
     #[test]
     fn from_walk_routes_depth_flag() {
-        let ok = InstantiationResult::from_walk(TypeId::STRING, false);
+        let ok = InstantiationResult::from_walk(TypeId::STRING, InstantiationTermination::Complete);
         assert_eq!(ok.into_type_id(), TypeId::STRING);
+        assert_eq!(ok.termination(), InstantiationTermination::Complete);
 
         // A depth-exceeded walk keeps the partial type the instantiator
         // produced (the relation-preserving bail value) while still flagging
         // the overflow so the cross-call cache refuses to memoize it.
-        let bad = InstantiationResult::from_walk(TypeId::STRING, true);
+        let bad =
+            InstantiationResult::from_walk(TypeId::STRING, InstantiationTermination::DepthExceeded);
         assert!(bad.depth_exceeded());
+        assert_eq!(bad.termination(), InstantiationTermination::DepthExceeded);
         assert_eq!(bad.into_type_id(), TypeId::STRING);
+    }
+
+    #[test]
+    fn termination_names_depth_guard_bit() {
+        assert_eq!(
+            InstantiationTermination::from_depth_exceeded(false),
+            InstantiationTermination::Complete
+        );
+        assert_eq!(
+            InstantiationTermination::from_depth_exceeded(true),
+            InstantiationTermination::DepthExceeded
+        );
     }
 
     #[test]

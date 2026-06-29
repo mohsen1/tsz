@@ -291,11 +291,19 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     );
     assert!(
         instantiation_result_rs.contains("pub(crate) struct InstantiationMemoResult")
+            && instantiation_result_rs.contains("pub enum InstantiationTermination")
+            && instantiation_result_rs.contains("termination: InstantiationTermination")
+            && instantiation_result_rs
+                .contains("fn from_walk(type_id: TypeId, termination: InstantiationTermination)")
             && instantiation_result_rs.contains("fn for_project_cache(")
             && instantiation_result_rs.contains("fn is_stable_for_project_cache(self) -> bool")
             && instantiation_api_rs.contains("ProjectInstantiationCacheLimitSnapshot::capture")
             && instantiation_api_rs.contains("InstantiationMemoResult::for_project_cache")
+            && instantiation_api_rs.contains("InstantiationTermination::from_depth_exceeded")
             && instantiation_api_rs.contains("is_stable_for_project_cache()")
+            && !instantiation_result_rs.contains("overflowed: bool")
+            && !instantiation_result_rs
+                .contains("fn from_walk(type_id: TypeId, depth_exceeded: bool)")
             && !instantiation_api_rs.contains("let limit_tripped ="),
         "project instantiation cache writes must consume InstantiationMemoResult stability instead of rebuilding a raw limit_tripped predicate"
     );
