@@ -1673,17 +1673,24 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             let factory = self.ctx.types.factory();
 
-            return factory.object_with_index(ObjectShape {
+            let result = factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
                 ..ObjectShape::default()
             });
+            // Record the hand-written `{ ... }` annotation so the printer never
+            // repaints it with a utility-application display alias that shares
+            // this content-interned id.
+            self.ctx.types.mark_literal_object_annotation(result);
+            return result;
         }
 
         let factory = self.ctx.types.factory();
-        factory.object(properties)
+        let result = factory.object(properties);
+        self.ctx.types.mark_literal_object_annotation(result);
+        result
     }
 
     /// Resolve a type symbol from a node index.

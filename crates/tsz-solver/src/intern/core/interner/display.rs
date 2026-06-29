@@ -264,6 +264,24 @@ impl TypeInterner {
         self.global_this_surface_display.contains_key(&type_id)
     }
 
+    /// Record that `type_id` is an object type the user wrote directly as an
+    /// object-type literal annotation (`{ ... }`). The printer consults this to
+    /// refuse repainting such an annotation with an unrelated utility-type
+    /// (`Application`) display alias that happens to share the same content-
+    /// interned object id. Display-only provenance.
+    pub fn mark_literal_object_annotation(&self, type_id: TypeId) {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        self.literal_object_annotations.insert(type_id, ());
+    }
+
+    /// Whether `type_id` is a recorded hand-written object-type literal
+    /// annotation.
+    pub fn is_literal_object_annotation(&self, type_id: TypeId) -> bool {
+        self.literal_object_annotations.contains_key(&type_id)
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// Mirrors tsc's `UnionType.origin` mechanism: when `T | null` is built and
