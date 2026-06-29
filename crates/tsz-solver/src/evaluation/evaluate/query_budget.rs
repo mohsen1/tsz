@@ -31,7 +31,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// type opaque so the cross-instance runaway unwinds instead of hanging.
     pub(super) fn enter_eval_query_budget(&mut self) -> Option<EvalQueryFrame> {
         let frame = EvalQueryFrame::enter(resolved_max_eval_ops());
-        if frame.budget_exhausted {
+        if frame.budget_state.is_exhausted() {
             self.mark_deep_recursion_seen();
             self.mark_silent_depth_bailed();
             return None;
@@ -89,8 +89,29 @@ pub(super) fn resolved_max_eval_ops() -> u32 {
 /// whether the budget is now exhausted. On drop it decrements the live frame
 /// count, so the bound is restored on every return path, including panics.
 pub(super) struct EvalQueryFrame {
-    /// Whether the per-query operation budget was exhausted on entry.
-    pub(super) budget_exhausted: bool,
+    /// Whether this frame entered within the operation budget or exhausted it.
+    budget_state: EvalQueryBudgetState,
+}
+
+/// Solver-owned verdict for one `evaluate` operation's per-query budget entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum EvalQueryBudgetState {
+    WithinBudget,
+    Exhausted,
+}
+
+impl EvalQueryBudgetState {
+    const fn from_exhausted(exhausted: bool) -> Self {
+        if exhausted {
+            Self::Exhausted
+        } else {
+            Self::WithinBudget
+        }
+    }
+
+    const fn is_exhausted(self) -> bool {
+        matches!(self, Self::Exhausted)
+    }
 }
 
 impl EvalQueryFrame {
@@ -106,7 +127,7 @@ impl EvalQueryFrame {
             crate::evaluation::cross_eval_guard::reset_query_memo();
         }
         Self {
-            budget_exhausted: entry.ops > max_ops,
+            budget_state: EvalQueryBudgetState::from_exhausted(entry.ops > max_ops),
         }
     }
 }
@@ -120,8 +141,22 @@ impl Drop for EvalQueryFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_MAX_EVAL_OPS_PER_QUERY, EvalQueryFrame, resolved_max_eval_ops};
+    use super::{
+        DEFAULT_MAX_EVAL_OPS_PER_QUERY, EvalQueryBudgetState, EvalQueryFrame, resolved_max_eval_ops,
+    };
     use crate::limits::{eval_query_active, eval_query_ops};
+
+    #[test]
+    fn budget_state_names_entry_verdict() {
+        assert_eq!(
+            EvalQueryBudgetState::from_exhausted(false),
+            EvalQueryBudgetState::WithinBudget
+        );
+        assert_eq!(
+            EvalQueryBudgetState::from_exhausted(true),
+            EvalQueryBudgetState::Exhausted
+        );
+    }
 
     /// The per-query operation counter resets when a fresh top-level query
     /// begins (live frame count returns to zero), so one type position can never
@@ -149,16 +184,13 @@ mod tests {
     #[test]
     fn budget_exhaustion_is_reported_until_query_unwinds() {
         let f1 = EvalQueryFrame::enter(2);
-        assert!(!f1.budget_exhausted, "op 1 of 2 is within budget");
+        assert_eq!(f1.budget_state, EvalQueryBudgetState::WithinBudget);
         let f2 = EvalQueryFrame::enter(2);
-        assert!(!f2.budget_exhausted, "op 2 of 2 is within budget");
+        assert_eq!(f2.budget_state, EvalQueryBudgetState::WithinBudget);
         let f3 = EvalQueryFrame::enter(2);
-        assert!(f3.budget_exhausted, "op 3 exceeds the budget of 2");
+        assert_eq!(f3.budget_state, EvalQueryBudgetState::Exhausted);
         let f4 = EvalQueryFrame::enter(2);
-        assert!(
-            f4.budget_exhausted,
-            "still exhausted while the query is live"
-        );
+        assert_eq!(f4.budget_state, EvalQueryBudgetState::Exhausted);
         drop((f1, f2, f3, f4));
         assert_eq!(eval_query_active(), 0);
     }
