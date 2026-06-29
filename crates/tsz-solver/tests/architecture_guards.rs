@@ -328,6 +328,26 @@ fn narrowing_engine_keeps_request_stage_boundary() {
     );
 }
 
+#[test]
+fn relation_queries_keep_overflow_flags_on_relation_result() {
+    let relation_queries_rs = read_solver_source("relations/relation_queries.rs");
+
+    assert!(
+        relation_queries_rs.contains("pub struct RelationResult")
+            && relation_queries_rs.contains("fn relation_result_from_compat_checker")
+            && relation_queries_rs.contains("fn relation_result_from_subtype_checker")
+            && relation_queries_rs.contains("let result = match kind")
+            && relation_queries_rs
+                .contains("relation_result_from_compat_checker(kind, related, &checker)")
+            && relation_queries_rs
+                .contains("relation_result_from_subtype_checker(kind, related, &checker)")
+            && !relation_queries_rs
+                .contains("let (related, depth_exceeded, iteration_exceeded) = match kind"),
+        "relation query dispatch must keep related/depth/iteration verdicts bundled \
+         as RelationResult instead of passing around anonymous overflow tuples"
+    );
+}
+
 // =============================================================================
 // Identity bridge guard — DefId-as-SymbolId raw-symbol fallback budget (#14344)
 // =============================================================================
