@@ -48,6 +48,24 @@ pub(crate) enum PrimitiveClass {
     Undefined,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValidKeyTypeVisitState {
+    Entered,
+    AlreadyVisited { fallback: bool },
+}
+
+impl ValidKeyTypeVisitState {
+    fn record(type_id: TypeId, defer_unresolved: bool, seen: &mut FxHashSet<TypeId>) -> Self {
+        if seen.insert(type_id) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited {
+                fallback: defer_unresolved,
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Visitor Pattern Implementations
 // =============================================================================
@@ -1254,8 +1272,9 @@ impl<'a> BinaryOpEvaluator<'a> {
         if type_id == TypeId::ANY || type_id == TypeId::NEVER || type_id == TypeId::ERROR {
             return true;
         }
-        if !seen.insert(type_id) {
-            return defer_unresolved;
+        match ValidKeyTypeVisitState::record(type_id, defer_unresolved, seen) {
+            ValidKeyTypeVisitState::Entered => {}
+            ValidKeyTypeVisitState::AlreadyVisited { fallback } => return fallback,
         }
 
         let result = match self.interner.lookup(type_id) {
@@ -1400,5 +1419,64 @@ impl<'a> BinaryOpEvaluator<'a> {
 
         // Non-nullish non-symbol object/function-like types are string-concat-compatible.
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ValidKeyTypeVisitState;
+    use crate::types::TypeId;
+    use rustc_hash::FxHashSet;
+
+    #[test]
+    fn valid_key_type_visit_state_enters_new_type() {
+        let mut seen = FxHashSet::default();
+
+        let state = ValidKeyTypeVisitState::record(TypeId::STRING, false, &mut seen);
+
+        assert_eq!(state, ValidKeyTypeVisitState::Entered);
+        assert!(seen.contains(&TypeId::STRING));
+    }
+
+    #[test]
+    fn valid_key_type_visit_state_reentry_keeps_concrete_fallback() {
+        let mut seen = FxHashSet::default();
+
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::STRING, false, &mut seen),
+            ValidKeyTypeVisitState::Entered
+        );
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::STRING, false, &mut seen),
+            ValidKeyTypeVisitState::AlreadyVisited { fallback: false }
+        );
+    }
+
+    #[test]
+    fn valid_key_type_visit_state_reentry_keeps_deferred_fallback() {
+        let mut seen = FxHashSet::default();
+
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::STRING, true, &mut seen),
+            ValidKeyTypeVisitState::Entered
+        );
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::STRING, true, &mut seen),
+            ValidKeyTypeVisitState::AlreadyVisited { fallback: true }
+        );
+    }
+
+    #[test]
+    fn valid_key_type_visit_state_distinguishes_types() {
+        let mut seen = FxHashSet::default();
+
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::STRING, false, &mut seen),
+            ValidKeyTypeVisitState::Entered
+        );
+        assert_eq!(
+            ValidKeyTypeVisitState::record(TypeId::NUMBER, false, &mut seen),
+            ValidKeyTypeVisitState::Entered
+        );
     }
 }
