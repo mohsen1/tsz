@@ -22,6 +22,20 @@ const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_GLOBAL_INSTANTIAT
 /// Canonical definition in [`crate::limits`].
 const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATION_FUEL;
 
+/// Whether the shared evaluation session can enter another instantiation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EvaluationSessionLimitState {
+    WithinLimits,
+    DepthExceeded,
+    FuelExhausted,
+}
+
+impl EvaluationSessionLimitState {
+    pub const fn is_exceeded(self) -> bool {
+        !matches!(self, Self::WithinLimits)
+    }
+}
+
 /// Explicit evaluation session state.
 ///
 /// Holds depth and fuel counters that must survive across `CheckerContext`
@@ -46,11 +60,22 @@ impl EvaluationSession {
         }
     }
 
+    /// Check which global instantiation limit, if any, is exceeded.
+    #[inline]
+    pub const fn instantiation_limit_state(&self) -> EvaluationSessionLimitState {
+        if self.global_instantiation_depth.get() >= MAX_GLOBAL_INSTANTIATION_DEPTH {
+            EvaluationSessionLimitState::DepthExceeded
+        } else if self.global_instantiation_fuel.get() >= MAX_GLOBAL_INSTANTIATION_FUEL {
+            EvaluationSessionLimitState::FuelExhausted
+        } else {
+            EvaluationSessionLimitState::WithinLimits
+        }
+    }
+
     /// Check if global instantiation limits are exceeded.
     #[inline]
     pub const fn instantiation_limits_exceeded(&self) -> bool {
-        self.global_instantiation_depth.get() >= MAX_GLOBAL_INSTANTIATION_DEPTH
-            || self.global_instantiation_fuel.get() >= MAX_GLOBAL_INSTANTIATION_FUEL
+        self.instantiation_limit_state().is_exceeded()
     }
 
     /// Increment both instantiation depth and fuel before an evaluation.
@@ -99,6 +124,10 @@ mod tests {
         let session = EvaluationSession::new();
         assert_eq!(session.global_instantiation_depth(), 0);
         assert_eq!(session.global_instantiation_fuel(), 0);
+        assert_eq!(
+            session.instantiation_limit_state(),
+            EvaluationSessionLimitState::WithinLimits
+        );
         assert!(!session.instantiation_limits_exceeded());
     }
 
@@ -122,6 +151,10 @@ mod tests {
         for _ in 0..MAX_GLOBAL_INSTANTIATION_DEPTH {
             session.enter_instantiation();
         }
+        assert_eq!(
+            session.instantiation_limit_state(),
+            EvaluationSessionLimitState::DepthExceeded
+        );
         assert!(session.instantiation_limits_exceeded());
     }
 
@@ -133,6 +166,10 @@ mod tests {
             session.enter_instantiation();
             session.leave_instantiation();
         }
+        assert_eq!(
+            session.instantiation_limit_state(),
+            EvaluationSessionLimitState::FuelExhausted
+        );
         assert!(session.instantiation_limits_exceeded());
     }
 
@@ -146,6 +183,24 @@ mod tests {
         assert_eq!(session.global_instantiation_fuel(), 10);
         session.reset_instantiation_fuel();
         assert_eq!(session.global_instantiation_fuel(), 0);
+        assert_eq!(
+            session.instantiation_limit_state(),
+            EvaluationSessionLimitState::WithinLimits
+        );
         assert!(!session.instantiation_limits_exceeded());
+    }
+
+    #[test]
+    fn test_depth_limit_is_primary_when_both_limits_exceeded() {
+        let session = EvaluationSession::new();
+        for _ in 0..MAX_GLOBAL_INSTANTIATION_FUEL {
+            session.enter_instantiation();
+        }
+
+        assert_eq!(
+            session.instantiation_limit_state(),
+            EvaluationSessionLimitState::DepthExceeded,
+            "depth limit should stay the primary session limit once both limits are exceeded"
+        );
     }
 }
