@@ -885,27 +885,17 @@ impl<'a> CheckerState<'a> {
 
             // For union types of tuples/arrays, resolve element type from each member
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+                // Rest element: distribute `sliceTupleType` over an all-tuple
+                // union, otherwise bind a single array of the union's element
+                // type — matching tsc's `getBindingElementTypeFromParentType`.
+                if element_data.dot_dot_dot_token {
+                    return self.union_rest_binding_type(&members, parent_type, element_index);
+                }
                 let mut elem_types = Vec::new();
                 let factory = self.ctx.types.factory();
                 for &member in &members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
-                    if element_data.dot_dot_dot_token {
-                        let elem_type = if let Some(elem) =
-                            query::array_element_type(self.ctx.types, member)
-                        {
-                            factory.array(elem)
-                        } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
-                            let rest_elem = elems
-                                .iter()
-                                .find(|e| e.rest)
-                                .or_else(|| elems.last())
-                                .map_or(TypeId::ANY, |e| e.type_id);
-                            self.rest_binding_array_type(rest_elem)
-                        } else {
-                            continue;
-                        };
-                        elem_types.push(elem_type);
-                    } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
+                    if let Some(elem) = query::array_element_type(self.ctx.types, member) {
                         let mut elem = elem;
                         if self.ctx.no_unchecked_indexed_access() {
                             elem = self.add_undefined_if_missing_for_destructuring(elem);
@@ -934,7 +924,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if elem_types.is_empty() && !element_data.dot_dot_dot_token {
+                if elem_types.is_empty() {
                     // All members are tuples that are out of bounds for this index.
                     // Emit TS2339 "Property 'N' does not exist on type 'X'".
                     let all_tuples_oob = members.iter().all(|&m| {
@@ -969,20 +959,15 @@ impl<'a> CheckerState<'a> {
             let array_like = query::unwrap_readonly_deep(self.ctx.types, parent_type);
             // Rest element: ...rest
             if element_data.dot_dot_dot_token {
-                let elem_type =
-                    if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                        elem
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                        // Best-effort: if the tuple has a rest element, use it; otherwise, fall back to last.
-                        elems
-                            .iter()
-                            .find(|e| e.rest)
-                            .or_else(|| elems.last())
-                            .map_or(TypeId::ANY, |e| e.type_id)
-                    } else {
-                        TypeId::ANY
-                    };
-                return self.rest_binding_array_type(elem_type);
+                if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
+                    // Array source `E[]` → `E[]`.
+                    return self.rest_binding_array_type(elem);
+                } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
+                    // Tuple source → the residual tuple slice from the rest
+                    // position, matching tsc's `sliceTupleType`.
+                    return self.tuple_rest_binding_type(&elems, element_index);
+                }
+                return self.rest_binding_array_type(TypeId::ANY);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {

@@ -10,7 +10,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, keyword_to_text_static};
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::{TupleElement, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     /// Compute the rest type for an object destructuring rest element.
@@ -355,5 +355,87 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.types.factory().array(tuple_member_type)
         }
+    }
+
+    /// Compute the type bound by a `...rest` element of an array binding
+    /// pattern when the destructured source is a tuple.
+    ///
+    /// Mirrors tsc's `sliceTupleType(parentType, index)`: the rest binds the
+    /// residual tuple slice starting at `rest_index`, preserving element
+    /// names, optionality, and any trailing variadic rest. A lone `[...E[]]`
+    /// slice collapses to `E[]` (via the factory's tuple constructor). When the
+    /// binding consumes past the leading fixed region (`rest_index >`
+    /// fixed-element count), tsc yields the array form of the variadic rest, or
+    /// `[]` for a finite tuple with no rest element.
+    ///
+    /// Array sources (`E[]`) keep producing `E[]` through
+    /// [`Self::rest_binding_array_type`]; only finite / mixed-variadic tuples
+    /// slice here.
+    pub(crate) fn tuple_rest_binding_type(
+        &self,
+        elements: &[TupleElement],
+        rest_index: usize,
+    ) -> TypeId {
+        let rest_pos = elements.iter().position(|element| element.rest);
+        let fixed_count = rest_pos.unwrap_or(elements.len());
+        if rest_index > fixed_count {
+            return match rest_pos {
+                Some(pos) => self.rest_binding_array_type(elements[pos].type_id),
+                None => self.ctx.types.factory().tuple(Vec::new()),
+            };
+        }
+        self.ctx
+            .types
+            .factory()
+            .tuple(elements[rest_index..].to_vec())
+    }
+
+    /// Compute the `...rest` binding type when the destructured source is a
+    /// union of array-like members.
+    ///
+    /// Mirrors tsc's `getBindingElementTypeFromParentType`: when **every**
+    /// member is a tuple the rest distributes `sliceTupleType` over each member
+    /// (yielding a union of residual tuples); otherwise — when at least one
+    /// member is a plain array — the rest binds a single
+    /// `createArrayType(elementType)`, where `elementType` is the number-indexed
+    /// element type of the whole union.
+    pub(crate) fn union_rest_binding_type(
+        &mut self,
+        members: &[TypeId],
+        parent_type: TypeId,
+        rest_index: usize,
+    ) -> TypeId {
+        // Resolve each member's tuple elements once. A plain array member (or a
+        // non-array-like member) makes the union not all-tuple, so we stop and
+        // fall back to the single-array form.
+        let mut member_elements: Vec<Vec<TupleElement>> = Vec::with_capacity(members.len());
+        let mut every_tuple = true;
+        for &member in members {
+            let member = query::unwrap_readonly_deep(self.ctx.types, member);
+            if query::array_element_type(self.ctx.types, member).is_some() {
+                every_tuple = false;
+                break;
+            }
+            match query::tuple_elements(self.ctx.types, member) {
+                Some(elems) => member_elements.push(elems),
+                None => {
+                    every_tuple = false;
+                    break;
+                }
+            }
+        }
+        if every_tuple {
+            let slices: Vec<TypeId> = member_elements
+                .iter()
+                .map(|elems| self.tuple_rest_binding_type(elems, rest_index))
+                .collect();
+            return if slices.len() == 1 {
+                slices[0]
+            } else {
+                self.ctx.types.factory().union(slices)
+            };
+        }
+        let element_type = self.get_element_access_type(parent_type, TypeId::NUMBER, None);
+        self.ctx.types.factory().array(element_type)
     }
 }
