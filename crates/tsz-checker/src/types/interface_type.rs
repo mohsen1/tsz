@@ -44,6 +44,24 @@ fn heritage_base_member_incorp_disabled() -> bool {
     })
 }
 
+/// `TSZ_XARENA_HERITAGE_TYPEARG=1` recovers an empty heritage base parameter
+/// list arena-directly when a generic base is re-resolved through a secondary
+/// (importing) arena (issue #14345). Default-OFF, so flag-OFF is byte-parity
+/// with the historical behavior (empty `base_type_params` truncates the
+/// supplied heritage arguments away and the substitution is a no-op, leaving
+/// inherited members bound to the base's free type parameter -- the `T`-leak).
+///
+/// When ON, and only when the broken shape is present (heritage arguments
+/// supplied but `get_type_params_for_symbol` returned no parameters), the base
+/// declaration's parameter names are read directly from its home arena so the
+/// arguments bind structurally (`T -> A`, `tsc` parity). Operates on the
+/// resolved base symbol's declarations + arenas; no name/file string checks.
+fn xarena_heritage_typearg_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_XARENA_HERITAGE_TYPEARG").is_ok_and(|v| v == "1"))
+}
+
 /// Deduplicate call signatures keeping the LAST occurrence of each unique
 /// signature. Two signatures are considered duplicates when they have identical
 /// parameter type lists and return types. This handles diamond inheritance:
@@ -1099,6 +1117,30 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    // A generic base re-resolved through a secondary (importing)
+                    // arena can return an empty `base_type_params` even though the
+                    // heritage clause supplies arguments: the re-entrant heritage
+                    // resolution trips the recursion guard / def-param cache in
+                    // `get_type_params_for_symbol`. Without parameters to bind, the
+                    // arity reconcile below truncates the supplied arguments away
+                    // and the substitution is a no-op, so every inherited member
+                    // stays bound to the base's *free* type parameter (the `T`-leak:
+                    // `interface NonEmptyArray<A> extends Array<A>` keeps the lib
+                    // `Array`'s `T` as its `number` index type -> false TS2411).
+                    //
+                    // Recover the base declaration's parameter names arena-directly
+                    // (the same recovery the lib-priming path performs), so the
+                    // arguments bind structurally (`T -> A`). Gated on the broken
+                    // shape only: heritage arguments supplied and no params resolved.
+                    if xarena_heritage_typearg_enabled()
+                        && base_type_params.is_empty()
+                        && !type_args.is_empty()
+                        && let Some(recovered) =
+                            self.recover_user_heritage_base_type_params(base_sym_id)
+                    {
+                        base_type_params = recovered;
+                    }
+
                     if type_args.len() < base_type_params.len() {
                         for (param_index, param) in
                             base_type_params.iter().enumerate().skip(type_args.len())
@@ -1892,5 +1934,54 @@ impl<'a> CheckerState<'a> {
     fn get_member_name_atom(&mut self, name_idx: NodeIndex) -> Option<Atom> {
         let name = self.get_property_name_resolved(name_idx)?;
         Some(self.ctx.types.intern_string(&name))
+    }
+
+    fn recover_user_heritage_base_type_params(
+        &mut self,
+        base_sym_id: tsz_binder::SymbolId,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        use tsz_binder::symbol_flags;
+        let (flags, declarations, escaped_name) = self
+            .ctx
+            .binder
+            .get_symbol(base_sym_id)
+            .map(|s| (s.flags, s.declarations.clone(), s.escaped_name.clone()))?;
+        if flags & (symbol_flags::CLASS | symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS) == 0 {
+            return None;
+        }
+        // Resolve the base declaration's home arena(s) the same way lib priming
+        // does, then read the parameter list arena-directly. This bypasses both
+        // the recursion guard and the def-param cache in
+        // `get_type_params_for_symbol`, which return an empty list during the
+        // re-entrant heritage resolution that drops the heritage arguments.
+        let fallback_arena = crate::types_domain::queries::lib_decls::resolve_lib_fallback_arena(
+            self.ctx.binder,
+            base_sym_id,
+            &self.ctx.lib_contexts,
+            self.ctx.arena,
+        );
+        let decls_with_arenas =
+            crate::types_domain::queries::lib_decls::collect_lib_decls_with_arenas_in_contexts(
+                self.ctx.binder,
+                base_sym_id,
+                &declarations,
+                fallback_arena,
+                &self.ctx.lib_contexts,
+                Some(self.ctx.arena),
+            );
+        for (decl_idx, decl_arena) in &decls_with_arenas {
+            if decl_arena.get(*decl_idx).is_some()
+                && let Some(params) = self.extract_simple_type_params_from_decl_in_arena(
+                    decl_arena,
+                    flags,
+                    *decl_idx,
+                    &escaped_name,
+                )
+                && !params.is_empty()
+            {
+                return Some(params);
+            }
+        }
+        None
     }
 }
