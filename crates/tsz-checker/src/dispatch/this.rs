@@ -3,7 +3,6 @@
 //! Extracted from `dispatch.rs` to keep that file under the §19 hard limit of 2000 lines.
 //! All `this`-keyword diagnostic checks and type resolution live here.
 
-use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
@@ -133,8 +132,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         if self.checker.is_js_file()
             && let Some(func_idx) = self.checker.find_enclosing_non_arrow_function(idx)
             && let Some(jsdoc) = self.checker.get_jsdoc_for_function(func_idx)
-            && let Some(this_expr) = CheckerState::extract_jsdoc_tag_type_expression(&jsdoc, "this")
-            && let Some(this_type) = self.checker.resolve_jsdoc_reference(this_expr)
+            && let Some(this_type) = self.checker.resolve_jsdoc_this_type(&jsdoc)
         {
             return self.checker.apply_flow_narrowing(idx, this_type);
         }

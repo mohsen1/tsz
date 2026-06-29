@@ -133,6 +133,21 @@ impl<'a> TypeInstantiator<'a> {
         if instantiated == cond {
             return type_id;
         }
-        self.interner.conditional(instantiated)
+        let rebuilt = self.interner.conditional(instantiated);
+        // #14345 dormant re-reduce (default OFF, byte-parity): the general path
+        // interns a fresh deferred `ConditionalType` and never re-runs the
+        // `extends` test. With the flag on, a resolver-aware db threaded in, and
+        // both check/extends now concrete (no type parameters), route the
+        // re-reduce through the resolver so a cross-arena `Lazy` ref in the
+        // condition resolves and the branch is picked. OFF returns the deferred
+        // form (the literal pre-existing behavior).
+        if super::inst_resolver_rereduce_enabled()
+            && self.query_db.is_some()
+            && !crate::visitor::contains_type_parameters(self.interner, instantiated.check_type)
+            && !crate::visitor::contains_type_parameters(self.interner, instantiated.extends_type)
+        {
+            return self.evaluate_type(rebuilt);
+        }
+        rebuilt
     }
 }

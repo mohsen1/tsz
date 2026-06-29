@@ -385,6 +385,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1017 // An index signature cannot have a rest parameter
         | 1019 // An index signature parameter cannot have a question mark
         | 1021 // An index signature must have a type annotation
+        | 1028 // Accessibility modifier already seen
         | 1029 // '{0}' modifier must precede '{1}' modifier
         | 1030 // '{0}' modifier already seen
         | 1031 // '{0}' modifier cannot appear on class elements of this kind

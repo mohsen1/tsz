@@ -735,3 +735,94 @@ fn string_primitive_is_not_member_of_string_intrinsic_over_any() {
         );
     }
 }
+
+// =============================================================================
+// Non-string literal sources vs a string-mapping target (#14788).
+//
+// `#9668` correctly kept `Uppercase<any>` deferred (so `Uppercase<any> = "x"`
+// rejects), but over-corrected by treating the `any` argument exactly like
+// `string` for every source, wrongly rejecting fresh number/boolean/bigint
+// literals that tsc accepts.
+//
+// tsc rule (`isMemberOfStringMapping`): a non-string literal is a fixed point of
+// every case mapping, so it is a member of `Mapping<T>` iff it is a member of the
+// innermost `T`. For these literals that holds only when `T` is `any` (a
+// non-string literal is never assignable to `string`), so `Mapping<any>` accepts
+// them while `Mapping<string>` rejects them — and a widened `number` is never a
+// fixed point, so it stays rejected for both.
+// =============================================================================
+
+#[test]
+fn non_string_literal_is_member_of_string_intrinsic_over_any() {
+    let interner = TypeInterner::new();
+
+    // Vary literal value/shape so the rule is exercised structurally, not for one
+    // spelling.
+    let literals = [
+        interner.literal_number(5.0),
+        interner.literal_number(-42.0),
+        interner.literal_number(0.0),
+        interner.literal_boolean(true),
+        interner.literal_boolean(false),
+        interner.literal_bigint("7"),
+    ];
+
+    for kind in [
+        StringIntrinsicKind::Uppercase,
+        StringIntrinsicKind::Lowercase,
+        StringIntrinsicKind::Capitalize,
+        StringIntrinsicKind::Uncapitalize,
+    ] {
+        let mapping_any = interner.string_intrinsic(kind, TypeId::ANY);
+        let mapping_string = interner.string_intrinsic(kind, TypeId::STRING);
+        // Nested mapping over `any` must unwrap to the innermost `any` and accept.
+        let nested_any = interner.string_intrinsic(kind, mapping_any);
+
+        let mut checker = SubtypeChecker::new(&interner);
+        for &lit in &literals {
+            // Accept over `any` (the #14788 fix flips these from rejected).
+            assert!(
+                checker.is_subtype_of(lit, mapping_any),
+                "non-string literal {lit:?} should be assignable to {kind:?}<any>"
+            );
+            // Nested `M<M<any>>` still accepts.
+            assert!(
+                checker.is_subtype_of(lit, nested_any),
+                "non-string literal {lit:?} should be assignable to {kind:?}<{kind:?}<any>>"
+            );
+            // Reject over `string` (control: the `string` arg is strict).
+            assert!(
+                !checker.is_subtype_of(lit, mapping_string),
+                "non-string literal {lit:?} should NOT be assignable to {kind:?}<string>"
+            );
+        }
+
+        // Control: a widened `number` primitive is not a fixed point of the
+        // mapping, so it stays rejected even over `any`.
+        assert!(
+            !checker.is_subtype_of(TypeId::NUMBER, mapping_any),
+            "widened number should NOT be assignable to {kind:?}<any>"
+        );
+        assert!(
+            !checker.is_subtype_of(TypeId::BOOLEAN, mapping_any),
+            "widened boolean should NOT be assignable to {kind:?}<any>"
+        );
+
+        // Control: a fixed-point string literal still accepted, a non-fixed-point
+        // string literal still rejected (the #9668 case constraint is untouched).
+        let (fixed, broken) = match kind {
+            StringIntrinsicKind::Uppercase => ("X", "x"),
+            StringIntrinsicKind::Lowercase => ("x", "X"),
+            StringIntrinsicKind::Capitalize => ("Xy", "xy"),
+            StringIntrinsicKind::Uncapitalize => ("xy", "Xy"),
+        };
+        assert!(
+            checker.is_subtype_of(interner.literal_string(fixed), mapping_any),
+            "\"{fixed}\" should be assignable to {kind:?}<any>"
+        );
+        assert!(
+            !checker.is_subtype_of(interner.literal_string(broken), mapping_any),
+            "\"{broken}\" should NOT be assignable to {kind:?}<any>"
+        );
+    }
+}

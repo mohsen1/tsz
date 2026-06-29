@@ -92,3 +92,79 @@ enum StrExt {
         "Folded string enum members must not receive numeric reverse mappings.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn const_enum_division_inlines_float_quotient() {
+    // ECMAScript `/` is float division; const-enum inlining must emit the
+    // exact fractional constant, not the truncated integer (regression: 10/4
+    // inlined as 2 instead of 2.5). See issue: enum constant folding `/`.
+    let output = emit_esnext(
+        r#"
+const enum CE { A = 10 / 4, B = 3.14, C = 7 / 2, D = 1 / 3, E = 0.5, F = 100 / 8 }
+let v = [CE.A, CE.B, CE.C, CE.D, CE.E, CE.F];
+"#,
+    );
+    assert!(
+        output.contains(
+            r#"[2.5 /* CE.A */, 3.14 /* CE.B */, 3.5 /* CE.C */, 0.3333333333333333 /* CE.D */, 0.5 /* CE.E */, 12.5 /* CE.F */]"#
+        ),
+        "const-enum division must inline true float quotients byte-for-byte with tsc.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn regular_enum_division_object_member_is_float() {
+    // The shared evaluator feeds the regular-enum object emit too, so the
+    // member assignment must carry the float value.
+    let output = emit_esnext(
+        r#"
+enum RE { A = 10 / 4, B = 7 / 2 }
+"#,
+    );
+    assert!(
+        output.contains(r#"RE[RE["A"] = 2.5] = "A";"#),
+        "regular enum division member A must be 2.5.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"RE[RE["B"] = 3.5] = "B";"#),
+        "regular enum division member B must be 3.5.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn enum_division_with_integral_quotient_stays_integer() {
+    // Quotients that are integral re-narrow to integers, matching tsc (no
+    // spurious `.0`).
+    let output = emit_esnext(
+        r#"
+enum RE { A = 8 / 4, B = 9 / 3 }
+"#,
+    );
+    assert!(
+        output.contains(r#"RE[RE["A"] = 2] = "A";"#)
+            && output.contains(r#"RE[RE["B"] = 3] = "B";"#),
+        "integral quotients must emit as integers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_enum_division_is_float_at_es5_and_esnext() {
+    // The namespace-nested enum IR path (`enum_es5_ir.rs`) must also honor
+    // ECMAScript float division, at both ES5 (its own IR emitter) and ES2015+.
+    let source = "namespace N { export enum E { A = 10 / 4, B = 7 / 2, C = 8 / 4 } }\n";
+    for target in [ScriptTarget::ES5, ScriptTarget::ESNext] {
+        let output = parse_lower_emit(
+            source,
+            PrinterOptions {
+                target,
+                ..Default::default()
+            },
+        );
+        assert!(
+            output.contains(r#"E[E["A"] = 2.5] = "A";"#)
+                && output.contains(r#"E[E["B"] = 3.5] = "B";"#)
+                && output.contains(r#"E[E["C"] = 2] = "C";"#),
+            "namespace enum division must emit float quotients at {target:?}.\nOutput:\n{output}"
+        );
+    }
+}

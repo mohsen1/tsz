@@ -183,12 +183,15 @@ impl<'a> ContextualTypeContext<'a> {
         // Handle Union explicitly - collect parameter types from callable members.
         // Per TypeScript spec: "If S is not empty and the sets of call signatures of the
         // types in S are identical ignoring return types, U has the same set of call
-        // signatures." If parameter types differ across callable members at the same
-        // index, no contextual type is provided (triggers TS7006 under noImplicitAny).
+        // signatures." (`getUnionSignatures`). The decision is **signature-level, not
+        // per-parameter**: if the callable members disagree at *any* shared parameter
+        // position, the union has no combined call signature, so *every* parameter is
+        // implicit-any — not just the position that disagrees. Members with lower arity
+        // simply do not constrain the positions they lack (`getContextualCallSignature`
+        // filters arity-smaller signatures), so a trailing parameter present in only one
+        // member is still contextually typed from that member.
         if let Some(TypeData::Union(members)) = self.interner.lookup(expected) {
             let members = self.interner.type_list(members);
-            let mut param_types: Vec<TypeId> = Vec::new();
-            let mut has_callable_member = false;
 
             // tsc excludes construct-only Function members when any callable member exists,
             // so `ComponentClass<P> | StatelessComponent<P> | string` infers only from the
@@ -208,6 +211,12 @@ impl<'a> ContextualTypeContext<'a> {
                 }
             });
 
+            // Callable members that participate in the contextual signature, plus the
+            // highest declared arity among them — the bound for the signature-
+            // compatibility scan. A rest parameter is counted by its own slot
+            // (positions beyond it are homogeneous with the rest element).
+            let mut callable_members: Vec<TypeId> = Vec::new();
+            let mut max_scan_arity = 0usize;
             for &m in members.iter() {
                 let type_data = self.interner.lookup(m);
                 let is_callable = m == TypeId::FUNCTION
@@ -218,79 +227,115 @@ impl<'a> ContextualTypeContext<'a> {
                 if !is_callable {
                     continue;
                 }
-                if has_non_constructor_callable
-                    && let Some(TypeData::Function(func_id)) = type_data
-                    && self.interner.function_shape(func_id).is_constructor
-                {
-                    continue;
-                }
-                has_callable_member = true;
-
-                let ctx = ContextualTypeContext::with_expected_and_options(
-                    self.interner,
-                    m,
-                    self.no_implicit_any,
-                );
-                match ctx.get_parameter_type(index) {
-                    // A member whose parameter type is one of that member's own
-                    // (un-instantiated) generic type parameters represents a generic
-                    // overload that tsc would instantiate before contextually typing
-                    // the callback. Its contextual contribution is the type parameter's
-                    // constraint, or `any` when unconstrained — not the bare type
-                    // parameter (which would otherwise read as a spurious "disagreement"
-                    // against a concrete sibling overload and block contextual typing,
-                    // e.g. `Array.reduce`'s `(prev: T, ...) => T | (prev: U, ...) => U`
-                    // contextual union for the `previousValue` slot when the
-                    // initializer is `any`).
-                    Some(ty) if self.is_signature_own_free_type_parameter(m, ty) => {
-                        param_types.push(
-                            crate::type_queries::get_type_parameter_constraint(self.interner, ty)
-                                .unwrap_or(TypeId::ANY),
-                        );
-                    }
-                    Some(ty) => param_types.push(ty),
-                    None => {
-                        // Callable member returned None — either:
-                        // - Multiple overloads with disagreeing param types
-                        // - No parameter at this index for any signature
-                        // In either case, the signatures are not identical
-                        // across members, so no contextual type is provided.
-                        // However, for arity differences (member has fewer params),
-                        // tsc still provides contextual types from other members.
-                        // We check: does this callable have ANY signature with a
-                        // param at this index? If yes → internal disagreement → None.
-                        // If no → arity gap → skip this member.
-                        if self.callable_has_param_at_index(m, index) {
-                            return None;
+                // Compute the member's arity from the `type_data` already looked up,
+                // skipping construct-only members when a call member exists.
+                let arity = match type_data {
+                    Some(TypeData::Function(func_id)) => {
+                        let shape = self.interner.function_shape(func_id);
+                        if has_non_constructor_callable && shape.is_constructor {
+                            continue;
                         }
-                        // Arity gap — this member simply has fewer params; skip.
+                        shape.params.len()
                     }
-                }
+                    Some(TypeData::Callable(callable_id)) => self
+                        .interner
+                        .callable_shape(callable_id)
+                        .call_signatures
+                        .iter()
+                        .map(|sig| sig.params.len())
+                        .max()
+                        .unwrap_or(0),
+                    // `TypeId::FUNCTION` intrinsic: no declared params.
+                    _ => 0,
+                };
+                max_scan_arity = max_scan_arity.max(arity);
+                callable_members.push(m);
             }
 
-            if !has_callable_member || param_types.is_empty() {
+            if callable_members.is_empty() {
                 return None;
             }
-            // When all callable union members agree on the parameter type, return it directly.
-            // When they disagree, a direct union of callable types does not provide a
-            // contextual parameter type. This matches conformance cases like
-            // `IWithCallSignatures | IWithCallSignatures3`, where the callback
-            // parameter should remain implicit-any and report TS7006.
-            let first = param_types[0];
-            if param_types.iter().all(|&t| t == first) {
-                return Some(first);
+
+            // Resolve the contextual parameter type contributed by all callable members
+            // at a single position. Returns:
+            // - `Some(Some(ty))` — the members that have a param here agree on `ty`
+            //   (or one of them is `any`, which tsc instantiates to `any`).
+            // - `Some(None)`     — no member has a param at this position (arity gap).
+            // - `None`           — the members disagree; the union has no combined
+            //                       signature at this position.
+            let resolve_position = |this: &Self, position: usize| -> Option<Option<TypeId>> {
+                let mut position_types: Vec<TypeId> = Vec::new();
+                for &m in &callable_members {
+                    let ctx = ContextualTypeContext::with_expected_and_options(
+                        this.interner,
+                        m,
+                        this.no_implicit_any,
+                    );
+                    match ctx.get_parameter_type(position) {
+                        // A member whose parameter type is one of that member's own
+                        // (un-instantiated) generic type parameters represents a generic
+                        // overload that tsc would instantiate before contextually typing
+                        // the callback. Its contextual contribution is the type
+                        // parameter's constraint, or `any` when unconstrained — not the
+                        // bare type parameter (which would otherwise read as a spurious
+                        // "disagreement" against a concrete sibling overload, e.g.
+                        // `Array.reduce`'s `(prev: T, ...) => T | (prev: U, ...) => U`).
+                        Some(ty) if this.is_signature_own_free_type_parameter(m, ty) => {
+                            position_types.push(
+                                crate::type_queries::get_type_parameter_constraint(
+                                    this.interner,
+                                    ty,
+                                )
+                                .unwrap_or(TypeId::ANY),
+                            );
+                        }
+                        Some(ty) => position_types.push(ty),
+                        None => {
+                            // `None` from a member that *does* have a parameter here is
+                            // an internal overload disagreement; a member that lacks the
+                            // position (lower arity) just abstains.
+                            if this.callable_has_param_at_index(m, position) {
+                                return None;
+                            }
+                        }
+                    }
+                }
+
+                let Some(&first) = position_types.first() else {
+                    return Some(None);
+                };
+                if position_types.iter().all(|&t| t == first) {
+                    return Some(Some(first));
+                }
+                // A member contributing `any` (from widening an un-instantiated generic
+                // overload's own type parameter) lets tsc select and instantiate that
+                // overload, contextually typing the parameter as `any` rather than
+                // treating the mix as an irreconcilable disagreement.
+                if position_types.contains(&TypeId::ANY) {
+                    return Some(Some(TypeId::ANY));
+                }
+                None
+            };
+
+            // Signature-level gate: scan every shared position. If any disagrees, the
+            // union has no combined signature, so no position is contextually typed.
+            // Capture the queried index's contribution during the scan to avoid
+            // resolving it twice.
+            let mut queried_param: Option<Option<TypeId>> = None;
+            for position in 0..max_scan_arity {
+                let resolved = resolve_position(self, position)?;
+                if position == index {
+                    queried_param = Some(resolved);
+                }
             }
-            // If a member contributed `any` (from widening an un-instantiated generic
-            // overload's own type parameter above), the contextual parameter type is
-            // `any`: tsc selects and instantiates that generic overload, contextually
-            // typing the parameter as `any` rather than treating the mix of a concrete
-            // and a generic overload as an irreconcilable disagreement. This keeps the
-            // callback parameter contextually typed (no false TS7006) without affecting
-            // unions of purely-concrete callable members, which still return `None`.
-            if param_types.contains(&TypeId::ANY) {
-                return Some(TypeId::ANY);
-            }
-            return None;
+
+            // An `index` at or beyond the scanned arity is an arity gap (or an
+            // intrinsic `Function` member with no declared params); resolve it
+            // directly. `Some(None)` (arity gap) collapses to `None` via `flatten`.
+            return match queried_param {
+                Some(resolved) => resolved,
+                None => resolve_position(self, index).flatten(),
+            };
         }
 
         // Handle Application explicitly.

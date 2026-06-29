@@ -15,7 +15,7 @@ pub(super) fn evaluate_index_union_distribution<R: TypeResolver>(
 ) -> TypeId {
     // Limit to prevent OOM with large unions.
     if members.len() > MAX_UNION_INDEX_SIZE {
-        evaluator.mark_depth_exceeded();
+        evaluator.mark_depth_exceeded_for_request();
         return TypeId::ERROR;
     }
 

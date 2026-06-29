@@ -265,6 +265,34 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 }
             }
         }
+
+        // A non-string primitive literal (number/boolean/bigint) is a fixed point
+        // of every case mapping, since the mapping only transforms strings. Per
+        // tsc's `isMemberOfStringMapping`, such a literal is assignable to
+        // `Mapping<T>` iff (1) mapping it yields itself — always true here — and
+        // (2) it is a member of the innermost mapped type `T`. For these literals
+        // condition (2) holds only when `T` is `any`: a non-string literal is
+        // never assignable to `string` or a template-literal pattern, so any other
+        // `T` (including `string`) rejects. Unwrapping nested mappings reaches the
+        // innermost argument, so `Uppercase<Lowercase<any>>` is handled too.
+        //
+        // This restores tsc parity for `const x: Uppercase<any> = 5` / `= true`
+        // (#14788) without weakening the #9668 string-literal case constraint, the
+        // `Uppercase<string> = 5` rejection, or the widened-`number` rejection (a
+        // widened primitive is not a literal and never reaches `visit_literal`).
+        if matches!(
+            value,
+            LiteralValue::Number(_) | LiteralValue::Boolean(_) | LiteralValue::BigInt(_)
+        ) {
+            let mut arg = self.target;
+            while let Some((_, inner)) = string_intrinsic_components(self.checker.interner, arg) {
+                arg = inner;
+            }
+            if arg != self.target && arg == TypeId::ANY {
+                return SubtypeResult::True;
+            }
+        }
+
         if let Some(t_lit) = literal_value(self.checker.interner, self.target) {
             return if value == &t_lit {
                 SubtypeResult::True

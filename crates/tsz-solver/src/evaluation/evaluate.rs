@@ -24,6 +24,7 @@ use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
+use crate::evaluation::cache_stability::EvaluationCacheLimitSnapshot;
 use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationResult;
@@ -615,7 +616,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         request: EvaluationRequest,
     ) -> EvaluationMemoResult {
         let result = self.evaluate_request_result(request);
-        EvaluationMemoResult::for_depth_agnostic_memo(result, self.recursion_limit_hit())
+        EvaluationMemoResult::for_depth_agnostic_memo(
+            result,
+            self.request_state_is_depth_agnostic_cache_stable(),
+        )
+    }
+
+    /// Whether the current request state is stable enough for depth-agnostic
+    /// cache publication.
+    ///
+    /// This centralizes the #14346 transition from loose evaluator flags to the
+    /// typed request verdict. A typed incomplete verdict catches guard bails
+    /// that the legacy sticky flags did not fully model (for example
+    /// fuel/query-budget bails). The legacy [`Self::recursion_limit_hit`]
+    /// backstop remains until every recursion-taint class is owned by the typed
+    /// termination channel.
+    #[inline]
+    pub(crate) const fn request_state_is_depth_agnostic_cache_stable(&self) -> bool {
+        !self.has_incomplete_request_verdict() && !self.recursion_limit_hit()
     }
 
     // =========================================================================
@@ -791,6 +809,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.note_limit_event();
     }
 
+    /// Mark a depth-style guard bail and surface the typed request verdict.
+    ///
+    /// Use this for producers whose own bailout reason is
+    /// [`TerminationKind::DepthExceeded`]. Producers with a more specific typed
+    /// verdict, such as fuel exhaustion, should keep using
+    /// [`Self::mark_depth_exceeded`] and then record their specific kind.
+    #[inline]
+    pub(crate) fn mark_depth_exceeded_for_request(&mut self) {
+        self.mark_depth_exceeded();
+        self.note_request_termination(TerminationKind::DepthExceeded);
+    }
+
     /// Record that a recursion/depth/iteration/divergence limit just fired.
     ///
     /// Bumping the monotonic `limit_epoch` is how a later
@@ -896,6 +926,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         kind: TerminationKind,
     ) {
         self.request_termination_kind = Some(kind);
+    }
+
+    /// Test hook: expose the typed request-result boundary without exposing the
+    /// raw per-request verdict slot.
+    #[cfg(test)]
+    pub(crate) const fn request_result_for_test(&self, type_id: TypeId) -> EvaluationResult {
+        request_result_verdict(type_id, self.request_termination_kind)
     }
 
     /// Global thread-local depth counter for cross-evaluator stack overflow
@@ -1014,9 +1051,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Top-level frame: evaluate, then commit closed-eval cache writes.
         // See the `closed_eval` module for the safety gates.
-        let union_too_complex_before = self.interner.is_union_too_complex();
+        let limit_snapshot = EvaluationCacheLimitSnapshot::capture(self.interner);
         let result = self.evaluate_guarded(type_id);
-        self.commit_closed_eval_writes(union_too_complex_before);
+        self.commit_closed_eval_writes(limit_snapshot);
         result
     }
 
@@ -1174,8 +1211,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // catch because cycle detection fires first. Flag depth_exceeded so
                 // the checker can emit TS2589.
                 if self.flag_depth_on_app_cycle && matches!(key, Some(TypeData::Application(_))) {
-                    self.guard.mark_exceeded();
-                    self.note_limit_event();
+                    self.mark_depth_exceeded_for_request();
                     return TypeId::ERROR;
                 }
                 return type_id;
@@ -1183,6 +1219,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             RecursionResult::DepthExceeded => {
                 // Depth-bounded run (see `deep_recursion_seen`).
                 self.mark_deep_recursion_seen();
+                self.note_request_termination(TerminationKind::DepthExceeded);
                 // The per-`TypeId` guard's depth limit is structural — it caps the
                 // type-tree walk to protect the stack, not the instantiation chain.
                 // tsc's `instantiationDepth` (the source of TS2589) is mirrored by

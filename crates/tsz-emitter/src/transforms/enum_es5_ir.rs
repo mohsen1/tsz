@@ -68,6 +68,7 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
 #[derive(Clone)]
 enum ResolvedValue {
     Numeric(i64),
+    Float(f64),
     String(std::borrow::Cow<'static, str>),
 }
 
@@ -133,6 +134,9 @@ fn transform_enum_members(
                 EnumMemberValue::Auto(v) | EnumMemberValue::Numeric(v) => {
                     resolved.push((member_name.clone(), ResolvedValue::Numeric(*v)));
                 }
+                EnumMemberValue::Float(f) => {
+                    resolved.push((member_name.clone(), ResolvedValue::Float(*f)));
+                }
                 EnumMemberValue::String(s) => {
                     resolved.push((member_name.clone(), ResolvedValue::String(s.clone())));
                 }
@@ -159,6 +163,7 @@ fn resolve_member(resolved: &[(String, ResolvedValue)], name: &str) -> Option<En
         if n == name {
             return Some(match v {
                 ResolvedValue::Numeric(val) => EnumMemberValue::Numeric(*val),
+                ResolvedValue::Float(val) => EnumMemberValue::Float(*val),
                 ResolvedValue::String(s) => EnumMemberValue::String(s.clone()),
             });
         }
@@ -179,6 +184,75 @@ fn try_eval_numeric(
     }
 }
 
+/// Re-narrow an f64 enum value to an integer [`EnumMemberValue::Numeric`] when
+/// it is integral and in `i64` range, else keep it as [`EnumMemberValue::Float`]
+/// so the printer emits the exact fractional literal. Mirrors the re-narrowing
+/// in `enums/evaluator.rs` and `transforms/enum_es5.rs`.
+fn narrow_enum_float(value: f64) -> EnumMemberValue {
+    if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+        EnumMemberValue::Numeric(value as i64)
+    } else {
+        EnumMemberValue::Float(value)
+    }
+}
+
+/// Evaluate an expression as an f64 for the float fallback path. Handles the
+/// same constant forms as the integer evaluator (literals, same-enum member
+/// references, `+ - * / %`, unary `+ - ~`, parentheses) but in IEEE-754 space,
+/// so a non-integral quotient like `10 / 4` yields `2.5`.
+fn try_eval_float(
+    arena: &NodeArena,
+    idx: NodeIndex,
+    resolved: &[(String, ResolvedValue)],
+) -> Option<f64> {
+    let node = arena.get(idx)?;
+    match node.kind {
+        k if k == SyntaxKind::NumericLiteral as u16 => {
+            let lit = arena.get_literal(node)?;
+            lit.text
+                .parse::<f64>()
+                .ok()
+                .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
+        }
+        k if k == SyntaxKind::Identifier as u16 => {
+            let name = get_identifier_text(arena, idx)?;
+            match resolve_member(resolved, &name)? {
+                EnumMemberValue::Auto(v) | EnumMemberValue::Numeric(v) => Some(v as f64),
+                EnumMemberValue::Float(f) => Some(f),
+                _ => None,
+            }
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            let binary = arena.get_binary_expr(node)?;
+            let l = try_eval_float(arena, binary.left, resolved)?;
+            let r = try_eval_float(arena, binary.right, resolved)?;
+            match binary.operator_token {
+                t if t == SyntaxKind::PlusToken as u16 => Some(l + r),
+                t if t == SyntaxKind::MinusToken as u16 => Some(l - r),
+                t if t == SyntaxKind::AsteriskToken as u16 => Some(l * r),
+                t if t == SyntaxKind::SlashToken as u16 => (r != 0.0).then(|| l / r),
+                t if t == SyntaxKind::PercentToken as u16 => (r != 0.0).then(|| l % r),
+                _ => None,
+            }
+        }
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+            let unary = arena.get_unary_expr(node)?;
+            let operand = try_eval_float(arena, unary.operand, resolved)?;
+            match unary.operator {
+                t if t == SyntaxKind::PlusToken as u16 => Some(operand),
+                t if t == SyntaxKind::MinusToken as u16 => Some(-operand),
+                t if t == SyntaxKind::TildeToken as u16 => Some(!(operand as i64) as f64),
+                _ => None,
+            }
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            let paren = arena.get_parenthesized(node)?;
+            try_eval_float(arena, paren.expression, resolved)
+        }
+        _ => None,
+    }
+}
+
 /// Extract enum member value from an expression, resolving cross-references
 /// to previously computed members of the same enum.
 fn extract_enum_value_with_resolve(
@@ -193,10 +267,15 @@ fn extract_enum_value_with_resolve(
 
     match node.kind {
         k if k == SyntaxKind::NumericLiteral as u16 => {
-            if let Some(lit) = arena.get_literal(node)
-                && let Ok(val) = lit.text.parse::<i64>()
-            {
-                return EnumMemberValue::Numeric(val);
+            if let Some(lit) = arena.get_literal(node) {
+                if let Ok(val) = lit.text.parse::<i64>() {
+                    return EnumMemberValue::Numeric(val);
+                }
+                // Hex/binary/octal/separator/float literals: fold through the
+                // shared numeric parser and keep the fractional part.
+                if let Some(val) = tsz_common::numeric::parse_numeric_literal_value(&lit.text) {
+                    return narrow_enum_float(val);
+                }
             }
             EnumMemberValue::Auto(0)
         }
@@ -234,7 +313,11 @@ fn extract_enum_value_with_resolve(
                         t if t == SyntaxKind::MinusToken as u16 => Some(l - r),
                         t if t == SyntaxKind::AsteriskToken as u16 => Some(l * r),
                         t if t == SyntaxKind::SlashToken as u16 => {
-                            if r != 0 {
+                            // ECMAScript `/` is float division: only fold on the
+                            // integer fast-path when the quotient is exact; a
+                            // non-integral quotient falls through to the float
+                            // evaluator below (producing `2.5` rather than `2`).
+                            if r != 0 && l % r == 0 {
                                 Some(l / r)
                             } else {
                                 None
@@ -254,6 +337,11 @@ fn extract_enum_value_with_resolve(
                         return EnumMemberValue::Numeric(val);
                     }
                 }
+            }
+            // Integer folding failed (e.g. a non-integral `/` quotient, or a
+            // float operand): retry in f64 so the true value is emitted.
+            if let Some(f) = try_eval_float(arena, idx, resolved) {
+                return narrow_enum_float(f);
             }
             EnumMemberValue::Computed(Box::new(IRNode::ASTRef(idx)))
         }

@@ -1671,6 +1671,7 @@ impl CheckerState<'_> {
             std::slice::from_ref(&member_idx),
             interface_arena,
             type_args,
+            false,
         )
         .and_then(|mut results| results.remove(&member_idx))
     }
@@ -1687,6 +1688,7 @@ impl CheckerState<'_> {
         member_indices: &[NodeIndex],
         interface_arena: &tsz_parser::NodeArena,
         type_args: Option<&[TypeId]>,
+        allow_source_file_arena: bool,
     ) -> Option<rustc_hash::FxHashMap<NodeIndex, TypeId>> {
         if std::ptr::eq(interface_arena, self.ctx.arena) {
             return None;
@@ -1732,7 +1734,7 @@ impl CheckerState<'_> {
             interface_arena,
             delegate_binder,
             type_args,
-            false,
+            allow_source_file_arena,
         ) {
             if type_args.is_none()
                 && let Some(file_idx) = delegate_file_idx

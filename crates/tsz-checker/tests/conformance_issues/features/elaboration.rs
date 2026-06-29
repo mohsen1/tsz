@@ -855,6 +855,175 @@ function check<U>(y: Bar<U>, n: number) {
     );
 }
 
+/// A `T[] | undefined` source assigned/returned against a non-nullable `T[]`
+/// target must report TS2322 with the full `T[] | undefined` source — not a
+/// spurious TS2719 ("two different types with this name exist"). The shared
+/// assignment display policy strips a *target* union's nullish; applied to the
+/// source it collapsed `string[] | undefined` to `string[]`, which collided
+/// with the target display and misfired the duplicate-name gate. Repro family
+/// from class-transformer `MetadataStorage.ts` (`Map<string, X[]>.get(...)`),
+/// reproduced here lib-free via an optional property whose value is `string[]`.
+#[test]
+fn test_no_ts2719_for_nullable_array_source_returned() {
+    let code = r#"
+function pull(store: { items?: string[] }): string[] {
+  return store.items;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 for `string[] | undefined` -> `string[]`, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for nullable array source, got: {diagnostics:?}"
+    );
+    let msg = diagnostics
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .map(|(_, m)| m.clone())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("string[] | undefined") && msg.contains("type 'string[]'"),
+        "TS2322 must preserve the source nullish like tsc \
+         (`Type 'string[] | undefined' is not assignable to type 'string[]'`), got: {msg}"
+    );
+}
+
+/// Same structural rule with renamed binders, a `number[]` element type, and a
+/// `const`-initializer assignment position instead of a `return`. Confirms the
+/// gate is not keyed on any identifier, element type, or assignment shape.
+#[test]
+fn test_no_ts2719_for_nullable_array_source_renamed_number_const() {
+    let code = r#"
+function grab(bucket: { payload?: number[] }): void {
+  const out: number[] = bucket.payload;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 for `number[] | undefined` -> `number[]`, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for nullable array source, got: {diagnostics:?}"
+    );
+    let msg = diagnostics
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .map(|(_, m)| m.clone())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("number[] | undefined") && msg.contains("type 'number[]'"),
+        "TS2322 must preserve the source nullish, got: {msg}"
+    );
+}
+
+/// The `| null` flavor of the same collapse (`string[] | null` -> `string[]`)
+/// must likewise report TS2322 with the nullish preserved, never TS2719.
+#[test]
+fn test_no_ts2719_for_null_array_source() {
+    let code = r#"
+declare const maybe: string[] | null;
+function take(): string[] {
+  return maybe;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 for `string[] | null` -> `string[]`, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for nullable array source, got: {diagnostics:?}"
+    );
+    let msg = diagnostics
+        .iter()
+        .find(|(c, _)| *c == 2322)
+        .map(|(_, m)| m.clone())
+        .unwrap_or_default();
+    assert!(
+        msg.contains("string[] | null") && msg.contains("type 'string[]'"),
+        "TS2322 must preserve the source nullish, got: {msg}"
+    );
+}
+
+/// An `as`-cast that yields `string[] | undefined` is the same source shape and
+/// must also fall through to TS2322 rather than TS2719.
+#[test]
+fn test_no_ts2719_for_nullable_array_source_via_as_cast() {
+    let code = r#"
+function coerce(value: unknown): string[] {
+  return value as string[] | undefined;
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_error(&diagnostics, 2719),
+        "Should NOT emit TS2719 for an `as string[] | undefined` source, got: {diagnostics:?}"
+    );
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for nullable array source, got: {diagnostics:?}"
+    );
+}
+
+/// Negative / fallback: a genuine pair of distinct same-named types with no
+/// nullish difference (a type parameter `T` shadowing an interface `T`) must
+/// still emit TS2719 — the nullish-restore guard returns `None` here, leaving
+/// the duplicate-name path intact.
+#[test]
+fn test_ts2719_still_fires_for_distinct_same_named_types_without_nullish() {
+    let code = r#"
+interface T { }
+declare const a: T;
+class Box<T> {
+    x: T;
+    fn() {
+        this.x = a;
+    }
+}
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        code,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_error(&diagnostics, 2719),
+        "Genuine distinct same-named types must still emit TS2719, got: {diagnostics:?}"
+    );
+}
+
 /// CJS modules whose `module.exports = <callable>` produce a merged
 /// callable+properties apparent type. tsc renders the structural form
 /// (`{ (): void; blah: any; }`) for TS2339 receivers, not the

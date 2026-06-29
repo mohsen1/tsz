@@ -16,6 +16,42 @@ impl<'a> CheckerState<'a> {
         self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
 
+    /// Whether `member_idx` is a *redeclaration* of an earlier same-named
+    /// property (with the same static-ness) in the enclosing class.
+    ///
+    /// `tsc` computes a member's implicit-`any` (`TS7008`) once per member
+    /// *symbol*, anchored at the symbol's first declaration. A later
+    /// declaration that shares the name only receives the duplicate-identifier
+    /// (`TS2300`) and initialization/subsequent-type (`TS2564`/`TS2717`)
+    /// diagnostics, never a second `TS7008` — even when that later declaration
+    /// itself lacks a type annotation and initializer. Static and instance
+    /// members occupy separate namespaces, so a `static x` does not shadow an
+    /// instance `x` (each keeps its own `TS7008`).
+    fn member_redeclares_earlier_property(&self, member_idx: NodeIndex, is_static: bool) -> bool {
+        let Some(class_info) = self.ctx.enclosing_class.as_ref() else {
+            return false;
+        };
+        let Some(pos) = class_info
+            .member_nodes
+            .iter()
+            .position(|&idx| idx == member_idx)
+        else {
+            return false;
+        };
+        let earlier_members: Vec<NodeIndex> = class_info.member_nodes[..pos].to_vec();
+        let Some(name) = self.get_member_name(member_idx) else {
+            return false;
+        };
+        earlier_members.iter().any(|&earlier| {
+            self.ctx
+                .arena
+                .get(earlier)
+                .is_some_and(|n| n.kind == syntax_kind_ext::PROPERTY_DECLARATION)
+                && self.is_static_property(earlier) == is_static
+                && self.get_member_name(earlier).as_deref() == Some(name.as_str())
+        })
+    }
+
     pub(crate) fn check_property_declaration_with_request(
         &mut self,
         member_idx: NodeIndex,
@@ -506,6 +542,11 @@ impl<'a> CheckerState<'a> {
             // static blocks (e.g., `static { this.x = 1; }`)
             && !(is_static
                 && self.property_assigned_in_enclosing_class_static_block(prop.name))
+            // A redeclaration of an earlier same-named member is not the
+            // symbol's primary declaration; tsc emits the implicit-any member
+            // error once, on the first declaration (the redeclaration still
+            // gets TS2300/TS2564/TS2717).
+            && !self.member_redeclares_earlier_property(member_idx, is_static)
             && let Some(member_name) = self.get_member_name_display_text(prop.name)
         {
             use crate::diagnostics::diagnostic_codes;
