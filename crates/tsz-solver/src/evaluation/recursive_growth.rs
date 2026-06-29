@@ -16,6 +16,34 @@ use crate::types::{TypeData, TypeId};
 
 use super::evaluate::TypeEvaluator;
 
+/// Typed result of the recursive-growth detector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecursiveGrowthVerdict {
+    /// The recursive application can keep expanding.
+    Continue,
+    /// Expansion is diverging and should be collapsed to the existing `TS2589`
+    /// recovery path.
+    Divergent(RecursiveGrowthLimit),
+}
+
+impl RecursiveGrowthVerdict {
+    const fn is_divergent(self) -> bool {
+        matches!(self, Self::Divergent(_))
+    }
+}
+
+/// Specific recursive-growth limit that triggered a divergence verdict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecursiveGrowthLimit {
+    /// A single recursive argument reached the per-step structural weight cap.
+    StepWeight,
+    /// The `TS2589` detection pass observed too many new maximum argument
+    /// weights for one `DefId`.
+    DetectionRun,
+    /// Shared evaluation fuel was exhausted while charging this expansion.
+    EvaluationFuel,
+}
+
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Per-step structural-weight ceiling for a single recursive argument.
     ///
@@ -79,12 +107,21 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     ///    sub-evaluators that reset per-evaluator state; the shared fuel still
     ///    accumulates and bounds the expansion so it terminates rather than hangs.
     pub(crate) fn detect_recursive_growth(&mut self, def_id: DefId, args: &[TypeId]) -> bool {
+        self.detect_recursive_growth_verdict(def_id, args)
+            .is_divergent()
+    }
+
+    fn detect_recursive_growth_verdict(
+        &mut self,
+        def_id: DefId,
+        args: &[TypeId],
+    ) -> RecursiveGrowthVerdict {
         let weight: u64 = args
             .iter()
             .map(|&arg| self.recursive_growth_weight(arg))
             .sum();
         if weight >= Self::MAX_RECURSIVE_GROWTH_STEP {
-            return true;
+            return RecursiveGrowthVerdict::Divergent(RecursiveGrowthLimit::StepWeight);
         }
         if self.is_depth_detection_pass() {
             let entry = self.detection_growth_runs.entry(def_id).or_insert((0, 0));
@@ -93,12 +130,16 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 let next = new_maxima + 1;
                 *entry = (weight, next);
                 if next >= Self::MAX_DETECTION_GROWTH_STEPS {
-                    return true;
+                    return RecursiveGrowthVerdict::Divergent(RecursiveGrowthLimit::DetectionRun);
                 }
             }
         }
         let charge = u32::try_from(weight).unwrap_or(u32::MAX);
-        self.interner().consume_evaluation_fuel(charge)
+        if self.interner().consume_evaluation_fuel(charge) {
+            RecursiveGrowthVerdict::Divergent(RecursiveGrowthLimit::EvaluationFuel)
+        } else {
+            RecursiveGrowthVerdict::Continue
+        }
     }
 
     /// Instantiate an Application type WITHOUT recursively evaluating the result.
@@ -147,9 +188,12 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
 
         // Bail with TS2589 when the recursive argument is diverging rather than
         // building an ever-larger type.
-        if self.detect_recursive_growth(def_id, &expanded_args) {
-            self.mark_depth_exceeded_for_request();
-            return Some(TypeId::ERROR);
+        match self.detect_recursive_growth_verdict(def_id, &expanded_args) {
+            RecursiveGrowthVerdict::Continue => {}
+            RecursiveGrowthVerdict::Divergent(_) => {
+                self.mark_depth_exceeded_for_request();
+                return Some(TypeId::ERROR);
+            }
         }
 
         // Instantiate the body with the type arguments — but do NOT evaluate.
@@ -161,5 +205,75 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             &expanded_args,
         );
         Some(instantiated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecursiveGrowthLimit, RecursiveGrowthVerdict};
+    use crate::construction::TypeInterner;
+    use crate::def::DefId;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::NoopResolver;
+    use crate::types::TypeId;
+
+    const DEF_ID: DefId = DefId(1);
+
+    #[test]
+    fn recursive_growth_verdict_continues_within_limits() {
+        let db = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&db);
+
+        assert_eq!(
+            evaluator.detect_recursive_growth_verdict(DEF_ID, &[TypeId::STRING]),
+            RecursiveGrowthVerdict::Continue
+        );
+    }
+
+    #[test]
+    fn recursive_growth_verdict_names_step_weight_limit() {
+        let db = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&db);
+        let long_literal = db.literal_string(
+            &"x".repeat(TypeEvaluator::<NoopResolver>::MAX_RECURSIVE_GROWTH_STEP as usize),
+        );
+
+        assert_eq!(
+            evaluator.detect_recursive_growth_verdict(DEF_ID, &[long_literal]),
+            RecursiveGrowthVerdict::Divergent(RecursiveGrowthLimit::StepWeight)
+        );
+    }
+
+    #[test]
+    fn recursive_growth_verdict_names_detection_run_limit() {
+        let db = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&db).with_flag_depth_on_app_cycle();
+        evaluator.detection_growth_runs.insert(
+            DEF_ID,
+            (
+                0,
+                TypeEvaluator::<NoopResolver>::MAX_DETECTION_GROWTH_STEPS - 1,
+            ),
+        );
+
+        assert_eq!(
+            evaluator.detect_recursive_growth_verdict(DEF_ID, &[TypeId::STRING]),
+            RecursiveGrowthVerdict::Divergent(RecursiveGrowthLimit::DetectionRun)
+        );
+    }
+
+    #[test]
+    fn recursive_growth_legacy_bool_collapses_divergent_verdicts() {
+        let db = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&db).with_flag_depth_on_app_cycle();
+        evaluator.detection_growth_runs.insert(
+            DEF_ID,
+            (
+                0,
+                TypeEvaluator::<NoopResolver>::MAX_DETECTION_GROWTH_STEPS - 1,
+            ),
+        );
+
+        assert!(evaluator.detect_recursive_growth(DEF_ID, &[TypeId::STRING]));
     }
 }
