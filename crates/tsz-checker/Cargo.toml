@@ -797,6 +797,9 @@ path = "tests/computed_property_name_type_position_no_ts2454_tests.rs"
 name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 [[test]]
+name = "array_isarray_negative_branch_readonly_tests"
+path = "tests/array_isarray_negative_branch_readonly_tests.rs"
+[[test]]
 name = "typeof_const_member_conditional_tests"
 path = "tests/typeof_const_member_conditional_tests.rs"
 [[test]]
