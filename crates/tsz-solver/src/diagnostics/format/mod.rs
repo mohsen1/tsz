@@ -1462,8 +1462,19 @@ impl<'a> TypeFormatter<'a> {
         // ObjectWithIndex types to a named definition (e.g. a JS constructor's
         // `prototype` property def whose body is this literal). Diagnostics
         // that opt into this mode want the literal's structural shape.
-        let skip_object_def_lookup = self.skip_object_display_alias
-            && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+        // The user wrote this object as a literal annotation (`{ a: number }`).
+        // Object types are content-interned, so it shares its `TypeId` with the
+        // structural result of any utility application / type-alias body of the
+        // same shape; `find_def_for_type` (and the `display_alias` chase below)
+        // would otherwise repaint the hand-written annotation with that unrelated
+        // declaration's name (`P`, `Pick<...>`). `tsc` always renders a literal
+        // object annotation structurally and never stamps an alias symbol on it,
+        // so render the structural shape here.
+        let key_is_object = matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+        let is_literal_object_annotation =
+            key_is_object && self.interner.is_literal_object_annotation(type_id);
+        let skip_object_def_lookup =
+            (self.skip_object_display_alias || is_literal_object_annotation) && key_is_object;
         let key_is_composite_for_def_lookup = matches!(
             &key,
             TypeData::Object(_)
@@ -1824,6 +1835,14 @@ impl<'a> TypeFormatter<'a> {
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
             let skip_object_alias = self.skip_object_display_alias
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
+            // A hand-written object literal annotation never carries a utility
+            // (`Application`) display alias in `tsc`; render it structurally even
+            // when a same-shape utility result recorded one on the shared id.
+            let skip_literal_annotation_application_alias = is_literal_object_annotation
+                && matches!(
+                    self.interner.lookup(alias_origin),
+                    Some(TypeData::Application(_))
+                );
             let skip_primitive_key_union_type_alias = self.is_primitive_key_union_data(&key)
                 && matches!(
                     self.interner.lookup(alias_origin),
@@ -1836,6 +1855,7 @@ impl<'a> TypeFormatter<'a> {
             let skip_alias_chase = skip_intersection_alias
                 || skip_distributive_alias
                 || skip_object_alias
+                || skip_literal_annotation_application_alias
                 || skip_primitive_key_union_type_alias
                 || (self.skip_application_display_alias_chase
                     && matches!(

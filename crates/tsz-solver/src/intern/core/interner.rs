@@ -437,6 +437,20 @@ pub struct TypeInterner {
     /// surface here lets the printer reproduce that name. Display-only — it does
     /// not affect identity or semantics.
     pub(super) global_this_surface_display: DashMap<TypeId, (), FxBuildHasher>,
+    /// Object `TypeId`s that originate from a hand-written object-type literal
+    /// annotation (`{ a: number; b: string }`).
+    ///
+    /// Object types are content-interned, so the structural result of a utility
+    /// application (`Pick`/`Record`/`Omit`/...) and a plain `{ ... }` annotation
+    /// of the same shape share one `TypeId`. The display-alias side table gives
+    /// that shared id a single nominal name (e.g. `Pick<...>`); without a scope,
+    /// that name then escapes onto every structurally-identical plain annotation
+    /// in the compilation. Recording which ids the user actually wrote as an
+    /// object literal lets the printer refuse to repaint such an annotation with
+    /// an unrelated utility name — `tsc` never lets an alias leak onto a
+    /// different declaration's type. Display-only — it does not affect identity
+    /// or semantics. First write wins; the membership is monotonic.
+    pub(super) literal_object_annotations: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -652,6 +666,7 @@ impl TypeInterner {
             application_eval_origin: DashMap::with_hasher(FxBuildHasher),
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             global_this_surface_display: DashMap::with_hasher(FxBuildHasher),
+            literal_object_annotations: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_too_complex: AtomicBool::new(false),
             tuple_too_large: AtomicBool::new(false),

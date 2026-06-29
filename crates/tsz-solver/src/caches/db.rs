@@ -344,6 +344,16 @@ pub trait TypeDisplayProvenance {
         false
     }
 
+    /// Mark `type_id` as a hand-written object-type literal annotation
+    /// (`{ ... }`). See `TypeInterner::mark_literal_object_annotation`.
+    fn mark_literal_object_annotation(&self, _type_id: TypeId) {}
+
+    /// Return whether `type_id` was recorded as a hand-written object-type
+    /// literal annotation.
+    fn is_literal_object_annotation(&self, _type_id: TypeId) -> bool {
+        false
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// The checker calls this from `get_type_from_union_type` so that the
@@ -1150,6 +1160,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn is_global_this_surface_display(&self, type_id: TypeId) -> bool {
         Self::is_global_this_surface_display(self, type_id)
+    }
+
+    fn mark_literal_object_annotation(&self, type_id: TypeId) {
+        Self::mark_literal_object_annotation(self, type_id);
+    }
+
+    fn is_literal_object_annotation(&self, type_id: TypeId) -> bool {
+        Self::is_literal_object_annotation(self, type_id)
     }
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

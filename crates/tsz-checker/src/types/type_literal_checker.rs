@@ -1724,6 +1724,10 @@ impl<'a> CheckerState<'a> {
                 shape.mark_has_late_bound_members();
             }
             let mut result = factory.object_with_index(shape);
+            // Record the hand-written `{ ... }` annotation so the printer never
+            // repaints it with a utility-application display alias that shares
+            // this content-interned id.
+            self.ctx.types.mark_literal_object_annotation(result);
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1734,10 +1738,12 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        if has_late_bound_members {
+        let result = if has_late_bound_members {
             factory.object_with_late_bound_members(properties, None)
         } else {
             factory.object_with_symbol(properties, None)
-        }
+        };
+        self.ctx.types.mark_literal_object_annotation(result);
+        result
     }
 }
