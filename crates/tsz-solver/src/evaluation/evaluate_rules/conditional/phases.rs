@@ -144,14 +144,21 @@ thread_local! {
 
 /// RAII recursion-depth guard for [`check_conditional_subtype`].
 ///
-/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns
-/// the depth observed *before* the increment plus the guard; `Drop` decrements
-/// it, so the counter is restored on the normal return path and when the
-/// guarded subtype walk unwinds via a caught panic. The counter is
+/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns a
+/// [`ConditionalSubtypeDepthEntry`] containing the depth observed *before* the
+/// increment plus the guard; `Drop` decrements it, so the counter is restored on
+/// the normal return path and when the guarded subtype walk unwinds via a caught
+/// panic. The counter is
 /// function-private state that the batch boundary reset cannot reach, so this
 /// self-cleaning guard is the only correct cross-compilation isolation for it.
 #[must_use]
 struct ConditionalSubtypeDepthGuard;
+
+#[must_use]
+struct ConditionalSubtypeDepthEntry {
+    prior_depth: u32,
+    guard: ConditionalSubtypeDepthGuard,
+}
 
 impl ConditionalSubtypeDepthGuard {
     /// Cap above which the conditional-subtype relation conservatively returns
@@ -159,13 +166,27 @@ impl ConditionalSubtypeDepthGuard {
     /// instantiation depth is exceeded.
     const LIMIT: u32 = 50;
 
-    fn enter() -> (u32, Self) {
-        let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
+    fn enter() -> ConditionalSubtypeDepthEntry {
+        let prior_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
             let c = d.get();
             d.set(c + 1);
             c
         });
-        (prev_depth, Self)
+        ConditionalSubtypeDepthEntry {
+            prior_depth,
+            guard: Self,
+        }
+    }
+}
+
+impl ConditionalSubtypeDepthEntry {
+    const fn prior_depth(&self) -> u32 {
+        self.prior_depth
+    }
+
+    fn exit(self) {
+        let Self { guard, .. } = self;
+        drop(guard);
     }
 }
 
@@ -675,7 +696,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // RAII (see `ConditionalSubtypeDepthGuard`) so the depth is restored on
         // every exit including a caught panic-unwind, keeping the relation
         // schedule-independent across batch-worker reuse (#13368).
-        let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter();
+        let depth_entry = ConditionalSubtypeDepthGuard::enter();
         // A verdict produced by the depth bail or by a structural walk that
         // itself tripped a recursion/iteration limit is a *budget-bounded*
         // conservative answer, not a stable function of the type pair: it must
@@ -689,7 +710,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // false (issue #14238). Shared with the array fast path via
         // `classify_branch_relation`.
         let relation = classify_branch_relation(|| {
-            if prev_depth >= ConditionalSubtypeDepthGuard::LIMIT {
+            if depth_entry.prior_depth() >= ConditionalSubtypeDepthGuard::LIMIT {
                 // At excessive depth, conservatively assume not a subtype
                 // (takes the false/else branch of the conditional).
                 // This matches tsc's behavior of returning the deferred
@@ -738,7 +759,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Restore the depth before the cache write to preserve the original
         // decrement ordering; `Drop` would otherwise run at end of scope, but
         // either way the depth is restored on a panic-unwind exit.
-        drop(depth_guard);
+        depth_entry.exit();
         // An `Undetermined` false consumed an unregistered `Lazy` body: do not
         // cache it and do not let it take the false branch — defer so a later
         // resolved pass decides the conditional (issue #14238). Definitive
@@ -1028,16 +1049,20 @@ mod conditional_subtype_depth_guard_tests {
     #[test]
     fn enter_reports_prior_depth_and_drop_restores() {
         assert_eq!(current_depth(), 0, "counter starts clean");
-        let (prev0, g0) = ConditionalSubtypeDepthGuard::enter();
-        assert_eq!(prev0, 0, "first entry observes depth 0");
+        let entry0 = ConditionalSubtypeDepthGuard::enter();
+        assert_eq!(entry0.prior_depth(), 0, "first entry observes depth 0");
         assert_eq!(current_depth(), 1);
         {
-            let (prev1, _g1) = ConditionalSubtypeDepthGuard::enter();
-            assert_eq!(prev1, 1, "nested entry observes the outer depth");
+            let entry1 = ConditionalSubtypeDepthGuard::enter();
+            assert_eq!(
+                entry1.prior_depth(),
+                1,
+                "nested entry observes the outer depth"
+            );
             assert_eq!(current_depth(), 2);
         }
         assert_eq!(current_depth(), 1, "nested drop restores one level");
-        drop(g0);
+        drop(entry0);
         assert_eq!(current_depth(), 0, "outer drop restores the clean slate");
     }
 
@@ -1050,7 +1075,7 @@ mod conditional_subtype_depth_guard_tests {
     fn depth_is_restored_on_unwind() {
         assert_eq!(current_depth(), 0, "counter starts clean");
         let result = std::panic::catch_unwind(|| {
-            let (_prev, _guard) = ConditionalSubtypeDepthGuard::enter();
+            let _entry = ConditionalSubtypeDepthGuard::enter();
             assert_eq!(current_depth(), 1);
             panic!("simulated mid-subtype-walk panic");
         });
