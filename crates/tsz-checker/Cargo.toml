@@ -1316,6 +1316,9 @@ path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
 name = "homomorphic_mapped_symbol_iterator_tests"
 path = "tests/homomorphic_mapped_symbol_iterator_tests.rs"
 [[test]]
+name = "iterator_next_send_type_call_result_tests"
+path = "tests/iterator_next_send_type_call_result_tests.rs"
+[[test]]
 name = "homomorphic_mapped_never_source_tests"
 path = "tests/homomorphic_mapped_never_source_tests.rs"
 [[test]]

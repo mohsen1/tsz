@@ -1463,11 +1463,17 @@ impl<'a> CheckerState<'a> {
         // instantiate the alias body with args but don't recursively evaluate
         // Generator/AsyncGenerator into structural forms. This preserves the
         // Application wrappers we need to extract type args from.
-        if let Some(expanded) = self.shallow_expand_type_alias(type_id) {
-            return self.get_generator_arg_direct(expanded, arg_index);
+        if let Some(expanded) = self.shallow_expand_type_alias(type_id)
+            && let Some(result) = self.get_generator_arg_direct(expanded, arg_index)
+        {
+            return Some(result);
         }
 
-        None
+        // Fallback: a call-result `Generator`/`AsyncGenerator` whose Application
+        // wrapper was eagerly materialized into a structural object still
+        // exposes its iterator factory; reach the surviving Application through
+        // the factory's return type.
+        self.recover_generator_arg_from_iterator_factory(type_id, arg_index)
     }
 
     /// Expand a type alias application by one level: substitute type args into the body
@@ -1505,7 +1511,11 @@ impl<'a> CheckerState<'a> {
     /// Direct extraction of a type argument at `arg_index` from a generator-like Application type.
     /// Also handles union types (e.g., `Generator<Y,R,N> | AsyncGenerator<Y,R,N>`) by extracting
     /// the arg from each union member and combining them into a union.
-    fn get_generator_arg_direct(&mut self, type_id: TypeId, arg_index: usize) -> Option<TypeId> {
+    pub(super) fn get_generator_arg_direct(
+        &mut self,
+        type_id: TypeId,
+        arg_index: usize,
+    ) -> Option<TypeId> {
         // Try direct extraction first (non-union case)
         if let Some(app) = query::type_application(self.ctx.types, type_id) {
             if !app.args.is_empty() && self.is_generator_like_base_type(app.base) {
