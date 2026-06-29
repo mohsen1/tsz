@@ -276,3 +276,110 @@ switch (k) {
         "only the non-member case reports TS2678 for a mixed enum: {c:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// TS2367 operand display: enum-base widening + union subtype reduction.
+//
+// tsc renders each no-overlap operand through `getBaseTypeOfLiteralType`
+// (enum member -> parent enum, literal -> base primitive) and then reduces the
+// resulting union via `getUnionType`. A numeric enum is a subtype of `number`
+// and a string enum of `string`, so when an enum-member operand sits in a
+// union beside a literal of that base primitive the enum collapses into the
+// primitive: `E.A | 1` displays as `number`, `S.X | "lit"` as `string`. A
+// disjoint pairing (string enum beside a numeric literal) is preserved.
+//
+// Owner layer: solver union subtype-reduction (`is_subtype_shallow` now defers
+// an enum to its structural member union). Binder names are varied so the rule
+// is name-independent.
+// ---------------------------------------------------------------------------
+
+use tsz_checker::test_utils::check_source_strict_messages;
+
+fn ts2367_message(src: &str) -> String {
+    check_source_strict_messages(src)
+        .into_iter()
+        .find(|(c, _)| *c == 2367)
+        .map(|(_, m)| m)
+        .unwrap_or_else(|| panic!("expected a TS2367 diagnostic for: {src}"))
+}
+
+#[test]
+fn numeric_enum_member_union_with_literal_displays_as_number() {
+    // `Hue.Red | 1` widens to `Color | number` then reduces to `number`.
+    let msg = ts2367_message(
+        r#"
+enum Hue { Red, Green }
+declare const sample: Hue.Red | 1;
+const cmp = sample === "needle";
+"#,
+    );
+    assert!(
+        msg.contains("'number' and 'string'"),
+        "numeric enum member unioned with a number literal must display as 'number': {msg}"
+    );
+}
+
+#[test]
+fn string_enum_member_union_with_literal_displays_as_string() {
+    // `Tag.Open | "extra"` widens to `Marker | string` then reduces to `string`.
+    let msg = ts2367_message(
+        r#"
+enum Tag { Open = "open", Shut = "shut" }
+declare const sample: Tag.Open | "extra";
+const cmp = sample === 42;
+"#,
+    );
+    assert!(
+        msg.contains("'string' and 'number'"),
+        "string enum member unioned with a string literal must display as 'string': {msg}"
+    );
+}
+
+#[test]
+fn numeric_enum_member_union_with_distinct_value_still_displays_as_number() {
+    // The literal need not be a member value; the base primitive still absorbs.
+    let msg = ts2367_message(
+        r#"
+enum Level { Low = 5, High = 6 }
+declare const sample: Level.Low | 9;
+const cmp = sample === "needle";
+"#,
+    );
+    assert!(
+        msg.contains("'number' and 'string'"),
+        "numeric enum member unioned with any number literal displays as 'number': {msg}"
+    );
+}
+
+#[test]
+fn string_enum_union_with_numeric_literal_is_preserved() {
+    // A string enum is disjoint from `number`, so the union is kept (no collapse).
+    let msg = ts2367_message(
+        r#"
+enum Mode { On = "on", Off = "off" }
+declare const sample: Mode.On | 1;
+const cmp = sample === true;
+"#,
+    );
+    assert!(
+        msg.contains("'number | Mode' and 'boolean'"),
+        "string enum disjoint from number must keep the union 'number | Mode': {msg}"
+    );
+}
+
+#[test]
+fn bare_enum_member_comparison_keeps_enum_name() {
+    // A bare enum-member operand (no union) still widens to the parent enum and
+    // is displayed by name, not collapsed to a primitive.
+    let msg = ts2367_message(
+        r#"
+enum Alpha { A, B }
+enum Beta { X = "x" }
+const cmp = Alpha.A === Beta.X;
+"#,
+    );
+    assert!(
+        msg.contains("'Alpha' and 'Beta'"),
+        "bare enum member comparison must show parent enum names: {msg}"
+    );
+}
