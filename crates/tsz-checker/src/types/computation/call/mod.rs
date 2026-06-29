@@ -1186,9 +1186,7 @@ impl<'a> CheckerState<'a> {
             && let crate::query_boundaries::common::CallResult::Success(return_type) = result
             && let Some(ctx_type) =
                 contextual_type.filter(|&ct| ct != TypeId::ANY && ct != TypeId::UNKNOWN)
-            && (common::contains_type_parameters(self.ctx.types, return_type)
-                || common::contains_infer_types(self.ctx.types, return_type)
-                || common::contains_type_by_id(self.ctx.types, return_type, TypeId::UNKNOWN))
+            && common::return_type_is_unresolved(self.ctx.types, return_type)
             && let Some(shape) = call_checker::get_contextual_signature_for_arity(
                 self.ctx.types,
                 callee_type_for_call,

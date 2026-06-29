@@ -546,6 +546,16 @@ pub(crate) fn contains_type_by_id(db: &dyn TypeDatabase, type_id: TypeId, target
     tsz_solver::contains_type_by_id(db, type_id, target)
 }
 
+/// Whether a generic call's resolved return type is still *unresolved* — it
+/// mentions a type parameter, an `infer` placeholder, or `unknown`. Generic-call
+/// finalize only lets the contextual return type fill the result when this holds;
+/// a fully concrete return type produced by argument inference is authoritative.
+pub(crate) fn return_type_is_unresolved(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_parameters(db, type_id)
+        || contains_infer_types(db, type_id)
+        || contains_type_by_id(db, type_id, TypeId::UNKNOWN)
+}
+
 // ── Call-related query wrappers ──
 
 /// Get the full function shape for a type, if it is a Function type.

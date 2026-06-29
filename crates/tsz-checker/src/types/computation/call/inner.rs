@@ -1378,7 +1378,23 @@ impl<'a> CheckerState<'a> {
                         self.call_arg_relation_outcome_with_env(actual, expected)
                             .related
                     });
+                    // The `contextual_params_fit_args` probe compares each argument
+                    // against the rest parameter's *element* type, which discards
+                    // positional information: for `...args: T` with `T := [string,
+                    // number]` the element type is `string | number`, so a
+                    // position-swapped spread (`f(...t)` where `t: [number,
+                    // string]`) "fits" even though the orderings differ. Replacing
+                    // the solver's already-inferred return type with the contextual
+                    // one is therefore only sound when inference left the return type
+                    // unresolved (still mentions a type parameter, `infer`
+                    // placeholder, or `unknown`) and the contextual value is filling
+                    // it — never when the solver already produced a concrete return
+                    // type from the arguments. A contextual tuple that merely
+                    // reorders elements would otherwise override authoritative
+                    // argument inference (tsc keeps the direct-argument candidate).
+                    // Mirrors the sibling finalize guard in `call/mod.rs`.
                     if contextual_params_fit_args
+                        && common::return_type_is_unresolved(self.ctx.types, return_type)
                         && self
                             .return_relation_outcome_with_env(instantiated_shape_return, ctx_type)
                             .related
@@ -1388,13 +1404,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let CallResult::Success(current_return) = result
                     && current_return == return_type
-                    && (common::contains_type_parameters(self.ctx.types, return_type)
-                        || common::contains_infer_types(self.ctx.types, return_type)
-                        || common::contains_type_by_id(
-                            self.ctx.types,
-                            return_type,
-                            TypeId::UNKNOWN,
-                        ))
+                    && common::return_type_is_unresolved(self.ctx.types, return_type)
                 {
                     let instantiated_return = crate::query_boundaries::common::instantiate_type(
                         self.ctx.types,
