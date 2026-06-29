@@ -289,8 +289,9 @@ impl CheckerState<'_> {
         // Check BOTH per-context and session-level instantiation depth/fuel.
         // Per-context counters reset to 0 on cross-arena delegation (with_parent_cache),
         // but the session is shared via Rc so its counters survive delegation.
+        let session_limit_state = self.ctx.eval_session.instantiation_limit_state();
         if self.ctx.instantiation_depth.get() >= MAX_INSTANTIATION_DEPTH
-            || self.ctx.eval_session.instantiation_limits_exceeded()
+            || session_limit_state.is_exceeded()
         {
             self.ctx.depth_exceeded.set(true);
             self.ctx.application_eval_set.remove(&type_id);
