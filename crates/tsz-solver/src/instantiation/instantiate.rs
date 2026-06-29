@@ -1084,6 +1084,7 @@ impl<'a> TypeInstantiator<'a> {
 }
 
 mod api;
+mod cache_stability;
 mod conditional;
 mod display_properties;
 mod homomorphic;

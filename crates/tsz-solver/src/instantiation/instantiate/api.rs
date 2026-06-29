@@ -1,8 +1,9 @@
 use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::instantiation::instantiate::cache_stability::ProjectInstantiationCacheLimitSnapshot;
 use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
-use crate::instantiation::result::InstantiationResult;
+use crate::instantiation::result::{InstantiationMemoResult, InstantiationResult};
 use crate::types::{ConditionalType, FunctionShape, PropertyInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -864,43 +865,16 @@ pub(crate) fn instantiate_with_request_cached(
         // #13889-class trap one layer down). Snapshot the sticky flags BEFORE so
         // a newly-tripped flag is attributed to THIS instantiation, not an
         // earlier sibling that already set it.
-        let union_too_complex_before = interner.is_union_too_complex();
-        let tuple_too_large_before = interner.is_tuple_too_large();
-        let frame_bail_before = crate::recursion::solver_frame_bail_count();
+        let limit_snapshot = ProjectInstantiationCacheLimitSnapshot::capture(interner);
         let result =
             instantiate_with_request_cached_inner(interner, query_db, allow_alpha_cache, request);
-        // Limit signals, each a reason a result is bounded/degraded:
-        //  - depth_exceeded: per-instance depth cap OR the shared solver-frame
-        //    budget tripping on the instantiator's OWN entry — the
-        //    recursion-limit analog of closed_eval's `recursion_limit_hit`
-        //    (already carried on the result).
-        //  - union_too_complex (TS2590) / tuple_too_large (TS2799): sticky flags
-        //    a nested `evaluate_*` (mapped/conditional body) can trip; gate on
-        //    NEWLY-tripped so a pre-existing sibling flag does not block an
-        //    unrelated result.
-        //  - evaluation fuel exhausted: the global fuel budget; an exhausted run
-        //    yields a bounded result.
-        //  - poisoned: the interner type-count budget degraded new construction
-        //    to `TypeId::ERROR`.
-        //  - solver-frame curtailment: a NESTED `evaluate_*` (instantiate.rs
-        //    evaluate_type/index_access/keyof) curtailed by the shared frame
-        //    budget returns an under-evaluated form WITHOUT flipping the
-        //    instantiator's own `depth_exceeded` (the instantiator's frame is
-        //    already on the stack). This is closed_eval's per-node `tainted`
-        //    exclusion at the instantiation layer: a budget-rich walk would
-        //    otherwise cache an under-evaluated result a budget-poor walk should
-        //    re-derive. The monotonic counter changing across the walk detects it.
-        let newly_too_complex = interner.is_union_too_complex() && !union_too_complex_before;
-        let newly_tuple_too_large = interner.is_tuple_too_large() && !tuple_too_large_before;
-        let frame_curtailed = crate::recursion::solver_frame_bail_count() != frame_bail_before;
-        let limit_tripped = result.depth_exceeded()
-            || newly_too_complex
-            || newly_tuple_too_large
-            || frame_curtailed
-            || interner.is_evaluation_fuel_exhausted()
-            || interner.is_poisoned();
-        if !limit_tripped {
-            interner.insert_proto_instantiation_cache(proto_key, result.type_id());
+        let memo_result = InstantiationMemoResult::for_project_cache(
+            result,
+            limit_snapshot.request_state_is_stable_after(interner),
+        );
+        if memo_result.is_stable_for_project_cache() {
+            interner
+                .insert_proto_instantiation_cache(proto_key, memo_result.into_result().type_id());
         }
         return result;
     }
