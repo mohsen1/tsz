@@ -191,3 +191,62 @@ const show: "X" = tail;
         "expected residual rendered as [string, boolean]; got {msgs:?}"
     );
 }
+
+#[test]
+fn fresh_array_literal_rest_widens_to_array_not_a_slice() {
+    // A *fresh* array-literal destructuring source is widened by tsc
+    // (`getWidenedTypeForVariableLikeDeclaration`), so the `...rest` binds the
+    // element array `number[]`, NOT the residual tuple slice `[number, number]`
+    // that a declared tuple would produce.
+    let assignable_to_array = r#"
+const [head, ...spread] = [1, 2, 3];
+const ok: number[] = spread;
+"#;
+    assert!(
+        !codes(assignable_to_array).contains(&2322),
+        "fresh-literal rest should be number[] (assignable to number[]); got {:?}",
+        codes(assignable_to_array)
+    );
+
+    let not_a_tuple = r#"
+const [lead, ...trailing] = [1, 2, 3];
+const wrong: [number, number] = trailing;
+"#;
+    assert!(
+        codes(not_a_tuple).contains(&2322),
+        "fresh-literal rest is number[], not the tuple [number, number]; got {:?}",
+        codes(not_a_tuple)
+    );
+
+    // `var` fresh literal widens identically.
+    let var_form = r#"
+var [v, ...vrest] = [1, 2, 3];
+const okv: number[] = vrest;
+const wrongv: [number, number] = vrest;
+"#;
+    let cs = codes(var_form);
+    assert!(
+        cs.iter().filter(|&&c| c == 2322).count() == 1,
+        "var fresh-literal rest is number[]: ok for number[], TS2322 for tuple; got {cs:?}"
+    );
+}
+
+#[test]
+fn rest_element_object_pattern_over_fresh_literal_reports_number_array() {
+    // restElementWithBindingPattern2.ts conformance shape: tsc reports
+    //   TS2339 Property 'b' does not exist on type 'number[]'.
+    // The rest source `[0, 1]` widens to `number[]`, so the nested object
+    // pattern resolves the missing property against `number[]`, not against a
+    // tuple `[number, number]`.
+    let source = "var [...{0: a, b }] = [0, 1];\n";
+    let msgs: Vec<String> = check_source_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.code == 2339)
+        .map(|d| d.message_text)
+        .collect();
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("'b'") && m.contains("number[]")),
+        "expected TS2339 against number[] (tsc parity); got {msgs:?}"
+    );
+}

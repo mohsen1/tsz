@@ -379,9 +379,10 @@ impl<'a> CheckerState<'a> {
         let rest_pos = elements.iter().position(|element| element.rest);
         let fixed_count = rest_pos.unwrap_or(elements.len());
         if rest_index > fixed_count {
-            return match rest_pos {
-                Some(pos) => self.rest_binding_array_type(elements[pos].type_id),
-                None => self.ctx.types.factory().tuple(Vec::new()),
+            return if let Some(pos) = rest_pos {
+                self.rest_binding_array_type(elements[pos].type_id)
+            } else {
+                self.ctx.types.factory().tuple(Vec::new())
             };
         }
         self.ctx
@@ -416,12 +417,11 @@ impl<'a> CheckerState<'a> {
                 every_tuple = false;
                 break;
             }
-            match query::tuple_elements(self.ctx.types, member) {
-                Some(elems) => member_elements.push(elems),
-                None => {
-                    every_tuple = false;
-                    break;
-                }
+            if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
+                member_elements.push(elems);
+            } else {
+                every_tuple = false;
+                break;
             }
         }
         if every_tuple {
