@@ -160,6 +160,41 @@ const x: Pick<{ a: number; b: string }, "a"> = { a: 5 as number, extra: 1 };
     );
 }
 
+/// A wrapper alias whose body is a utility application still keeps the wrapper
+/// name. The literal-annotation marker must not globally erase source-facing
+/// aggregate aliases such as the `Value<"dup">` diagnostics in
+/// `infiniteConstraints.ts`.
+#[test]
+fn wrapper_alias_over_record_keeps_its_application_name() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+type Value<V extends string = string> = Record<"val", V>;
+declare function value<V extends string>(val: V): Value<V>;
+declare const plain: { val: string };
+const w: 0 = plain;
+const bad: never = value("dup");
+"#,
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 2322)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'Value<\"dup\">' is not assignable to type 'never'")),
+        "the wrapper alias application must keep its name, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|m| !m.contains("Type '{ val: string; }' is not assignable to type 'never'")),
+        "the wrapper alias application must not be flattened by literal-annotation \
+         provenance, got: {messages:?}"
+    );
+}
+
 /// The fix is display-only: a `Pick` value really has the picked members, so it
 /// stays assignable to a structurally-identical plain object type — no TS2322.
 #[test]

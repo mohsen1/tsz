@@ -908,6 +908,33 @@ impl<'a> TypeFormatter<'a> {
         false
     }
 
+    /// Returns `true` when an `Application` display alias is a direct application
+    /// of a mapped-type alias. Those are the utility-style aliases whose
+    /// evaluated object shape can collide with a hand-written literal annotation.
+    fn application_alias_base_has_mapped_body(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => def_id,
+            _ => match def_store.find_def_for_type(app.base) {
+                Some(def_id) => def_id,
+                None => return false,
+            },
+        };
+        let Some(def) = def_store.get(def_id) else {
+            return false;
+        };
+        def.kind == crate::def::DefKind::TypeAlias
+            && def.body.is_some_and(|body| {
+                crate::visitors::visitor_predicates::is_mapped_type(self.interner, body)
+            })
+    }
+
     /// Create a formatter with access to symbol names.
     pub fn with_symbols(
         interner: &'a dyn TypeDatabase,
@@ -1835,14 +1862,14 @@ impl<'a> TypeFormatter<'a> {
             // application display (e.g. `AsyncGenerator<number, void, unknown>`).
             let skip_object_alias = self.skip_object_display_alias
                 && matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
-            // A hand-written object literal annotation never carries a utility
-            // (`Application`) display alias in `tsc`; render it structurally even
-            // when a same-shape utility result recorded one on the shared id.
+            // A hand-written object literal annotation never carries a direct
+            // mapped-utility (`Application`) display alias in `tsc`; render it
+            // structurally even when a same-shape utility result recorded one on
+            // the shared id. Keep wrapper aliases such as `Value<"dup">` whose
+            // body is not itself the mapped type, matching `tsc`'s source-facing
+            // aggregate diagnostics.
             let skip_literal_annotation_application_alias = is_literal_object_annotation
-                && matches!(
-                    self.interner.lookup(alias_origin),
-                    Some(TypeData::Application(_))
-                );
+                && self.application_alias_base_has_mapped_body(alias_origin);
             let skip_primitive_key_union_type_alias = self.is_primitive_key_union_data(&key)
                 && matches!(
                     self.interner.lookup(alias_origin),
