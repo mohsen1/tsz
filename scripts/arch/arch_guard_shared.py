@@ -578,6 +578,101 @@ FILE_LINE_LIMIT_CHECKS = [
     # These entries pin the current baseline and prevent silent growth.
     # Each file is a candidate for splitting; ratchet down as submodules land.
     (
+        "Solver boundary: narrowing/core.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/narrowing/core.rs",
+        2655,
+    ),
+    (
+        "Solver boundary: def/resolver.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/def/resolver.rs",
+        2506,
+    ),
+    (
+        "Solver boundary: evaluate_rules/infer_pattern.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
+        2343,
+    ),
+    (
+        "Solver boundary: caches/db.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/caches/db.rs",
+        2334,
+    ),
+    (
+        "Emitter boundary: class_es5_ast_to_ir_expressions.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/transforms/class_es5_ast_to_ir_expressions.rs",
+        2223,
+    ),
+    (
+        "Solver boundary: type_queries/data/signatures_and_advanced.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/signatures_and_advanced.rs",
+        2191,
+    ),
+    (
+        "Solver boundary: types.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/types.rs",
+        2166,
+    ),
+    (
+        "CLI boundary: driver/check_tests/check_tests_part1.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/driver/check_tests/check_tests_part1.rs",
+        2158,
+    ),
+    (
+        "CLI boundary: driver/check.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/driver/check.rs",
+        2131,
+    ),
+    (
+        "Emitter boundary: emitter/functions.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/emitter/functions.rs",
+        2121,
+    ),
+    (
+        "Emitter boundary: emitter/expressions/call.rs size ratchet",
+        ROOT / "crates/tsz-emitter/src/emitter/expressions/call.rs",
+        2080,
+    ),
+    (
+        "Common boundary: perf_counters/tests.rs size ratchet",
+        ROOT / "crates/tsz-common/src/perf_counters/tests.rs",
+        2066,
+    ),
+    (
+        "Solver boundary: type_queries/data/content_predicates.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/content_predicates.rs",
+        2043,
+    ),
+    (
+        "Solver boundary: operations/widening.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/operations/widening.rs",
+        2042,
+    ),
+    (
+        "CLI LSP server: main.rs size ratchet",
+        ROOT / "crates/tsz-cli/src/bin/tsz_server/main.rs",
+        2038,
+    ),
+    (
+        "Solver boundary: evaluation/evaluate/support.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/evaluation/evaluate/support.rs",
+        2037,
+    ),
+    (
+        "Solver boundary: type_queries/data/tests.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/type_queries/data/tests.rs",
+        2035,
+    ),
+    (
+        "Solver boundary: intern/core/constructors.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/intern/core/constructors.rs",
+        2026,
+    ),
+    (
+        "Binder boundary: nodes/binding.rs size ratchet",
+        ROOT / "crates/tsz-binder/src/nodes/binding.rs",
+        2018,
+    ),
+    (
         "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
         ROOT
         / "crates"
@@ -1184,26 +1279,8 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
 # site to a tiered facade or checker query-boundary helper should ratchet the
 # cap down in the same diff.
 #
-# Transitional exceptions pinned by the current cap (#8204 successor debt —
-# each file below still reaches computation modules by path and is the
-# migration backlog for sealing the tiered API):
-#   - crates/tsz-cli/src/bin/tsz.rs (relations::subtype thread-local reset)
-#   - crates/tsz-cli/src/driver/check_tests/check_tests_part2.rs
-#     (operations::property::PropertyAccessResult)
-#   - crates/tsz-emitter/src/declaration_emitter/core/emit_class_properties.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/generic_call_literal.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/type_inference.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/
-#     type_inference_return_normalization.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/variable_decl.rs
-#   - crates/tsz-emitter/src/declaration_emitter/helpers/
-#     variable_decl_type_helpers.rs
-#     (operations::widening / operations iterator helpers)
-#   - crates/tsz-emitter/src/lowering/helpers_private_fields.rs
-#     (operations::compound_assignment)
-#   - crates/tsz-lsp/src/code_actions/code_action_extract.rs
-#     (operations::compound_assignment)
-#   - crates/tsz-lsp/src/completions/mod.rs (objects apparent-member helpers)
+# Transitional exceptions remain at 14 module-path references. Ratchet this
+# down as sites migrate to named solver facades or checker query-boundaries.
 #
 # Each entry:
 #   (description, search_roots, exclude_path_prefixes, max_references).
@@ -1217,7 +1294,7 @@ MODULE_PATH_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-wasm" / "src",
         ],
         (),
-        16,
+        14,
     ),
 ]
 
