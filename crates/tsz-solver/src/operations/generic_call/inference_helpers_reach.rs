@@ -10,6 +10,26 @@ use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Round1ReachVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+impl Round1ReachVisitState {
+    fn record(
+        arg_type: TypeId,
+        target_type: TypeId,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> Self {
+        if visited.insert((arg_type, target_type)) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
+}
+
 impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
     /// Collect the inference placeholder vars that round-1 *direct argument*
     /// inference will actually constrain for `arg_type` against `target_type`.
@@ -37,8 +57,9 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
         if var_map.is_empty() {
             return;
         }
-        if !visited.insert((arg_type, target_type)) {
-            return;
+        match Round1ReachVisitState::record(arg_type, target_type, visited) {
+            Round1ReachVisitState::Entered => {}
+            Round1ReachVisitState::AlreadyVisited => return,
         }
 
         // The target is itself a placeholder: the argument constrains it directly.
@@ -213,5 +234,50 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             &mut FxHashMap::default(),
             &mut FxHashSet::default(),
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Round1ReachVisitState;
+    use crate::types::TypeId;
+    use rustc_hash::FxHashSet;
+
+    #[test]
+    fn round1_reach_visit_state_enters_new_pair() {
+        let mut visited = FxHashSet::default();
+
+        let state = Round1ReachVisitState::record(TypeId::STRING, TypeId::NUMBER, &mut visited);
+
+        assert_eq!(state, Round1ReachVisitState::Entered);
+        assert!(visited.contains(&(TypeId::STRING, TypeId::NUMBER)));
+    }
+
+    #[test]
+    fn round1_reach_visit_state_detects_reentry() {
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            Round1ReachVisitState::record(TypeId::STRING, TypeId::NUMBER, &mut visited),
+            Round1ReachVisitState::Entered
+        );
+        assert_eq!(
+            Round1ReachVisitState::record(TypeId::STRING, TypeId::NUMBER, &mut visited),
+            Round1ReachVisitState::AlreadyVisited
+        );
+    }
+
+    #[test]
+    fn round1_reach_visit_state_distinguishes_target_pairs() {
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            Round1ReachVisitState::record(TypeId::STRING, TypeId::NUMBER, &mut visited),
+            Round1ReachVisitState::Entered
+        );
+        assert_eq!(
+            Round1ReachVisitState::record(TypeId::STRING, TypeId::BOOLEAN, &mut visited),
+            Round1ReachVisitState::Entered
+        );
     }
 }
