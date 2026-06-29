@@ -942,7 +942,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             matches!(
                 self.interner.lookup(ret),
                 Some(TypeData::Application(_) | TypeData::Lazy(_))
-            ) && self.evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)
+            ) && self.evaluate_type_with_stability(ret).is_unstable_unknown()
         };
         let needs_raw_fallback = placeholder_fallback
             || unstable_unknown_collapse(source_return)
