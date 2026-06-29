@@ -283,6 +283,9 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     );
     assert!(
         subtype_core_rs.contains("pub(crate) struct RelationEvaluationResult")
+            && subtype_core_rs.contains("enum RelationEvaluationStability")
+            && subtype_core_rs.contains("cache_stability: RelationEvaluationStability")
+            && !subtype_core_rs.contains("stable_for_depth_agnostic_cache: bool")
             && subtype_core_rs
                 .contains("eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>")
             && function_checking_rs

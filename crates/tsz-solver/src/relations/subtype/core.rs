@@ -153,28 +153,50 @@ use super::visitor::SubtypeVisitor;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct RelationEvaluationResult {
     type_id: TypeId,
-    stable_for_depth_agnostic_cache: bool,
+    cache_stability: RelationEvaluationStability,
+}
+
+/// Whether a relation-local evaluation result can be reused from a
+/// depth-agnostic function-relation cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RelationEvaluationStability {
+    Stable,
+    Unstable,
+}
+
+impl RelationEvaluationStability {
+    const fn from_depth_agnostic_memo(result: EvaluationMemoResult) -> Self {
+        if result.is_stable_for_depth_agnostic_cache() {
+            Self::Stable
+        } else {
+            Self::Unstable
+        }
+    }
+
+    const fn is_stable_for_depth_agnostic_cache(self) -> bool {
+        matches!(self, Self::Stable)
+    }
 }
 
 impl RelationEvaluationResult {
     pub(crate) const fn stable(type_id: TypeId) -> Self {
         Self {
             type_id,
-            stable_for_depth_agnostic_cache: true,
+            cache_stability: RelationEvaluationStability::Stable,
         }
     }
 
     pub(crate) const fn unstable(type_id: TypeId) -> Self {
         Self {
             type_id,
-            stable_for_depth_agnostic_cache: false,
+            cache_stability: RelationEvaluationStability::Unstable,
         }
     }
 
     pub(crate) const fn from_depth_agnostic_memo(result: EvaluationMemoResult) -> Self {
         Self {
             type_id: result.type_id(),
-            stable_for_depth_agnostic_cache: result.is_stable_for_depth_agnostic_cache(),
+            cache_stability: RelationEvaluationStability::from_depth_agnostic_memo(result),
         }
     }
 
@@ -183,7 +205,59 @@ impl RelationEvaluationResult {
     }
 
     pub(crate) fn is_unstable_unknown(self) -> bool {
-        self.type_id == TypeId::UNKNOWN && !self.stable_for_depth_agnostic_cache
+        self.type_id == TypeId::UNKNOWN
+            && !self.cache_stability.is_stable_for_depth_agnostic_cache()
+    }
+}
+
+#[cfg(test)]
+mod relation_evaluation_result_tests {
+    use super::{RelationEvaluationResult, RelationEvaluationStability};
+    use crate::evaluation::result::{EvaluationMemoResult, EvaluationResult, TerminationKind};
+    use crate::types::TypeId;
+
+    #[test]
+    fn relation_evaluation_result_names_cache_stability() {
+        let stable = RelationEvaluationResult::stable(TypeId::STRING);
+        assert_eq!(stable.type_id(), TypeId::STRING);
+        assert_eq!(stable.cache_stability, RelationEvaluationStability::Stable);
+        assert!(!stable.is_unstable_unknown());
+
+        let unstable_unknown = RelationEvaluationResult::unstable(TypeId::UNKNOWN);
+        assert_eq!(
+            unstable_unknown.cache_stability,
+            RelationEvaluationStability::Unstable
+        );
+        assert!(unstable_unknown.is_unstable_unknown());
+
+        let unstable_string = RelationEvaluationResult::unstable(TypeId::STRING);
+        assert!(!unstable_string.is_unstable_unknown());
+    }
+
+    #[test]
+    fn relation_evaluation_result_imports_memo_stability() {
+        let complete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
+            EvaluationResult::complete(TypeId::NUMBER),
+            true,
+        );
+        let complete = RelationEvaluationResult::from_depth_agnostic_memo(complete_memo);
+        assert_eq!(complete.type_id(), TypeId::NUMBER);
+        assert_eq!(
+            complete.cache_stability,
+            RelationEvaluationStability::Stable
+        );
+
+        let incomplete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
+            EvaluationResult::incomplete(TypeId::UNKNOWN, TerminationKind::DepthExceeded),
+            true,
+        );
+        let incomplete = RelationEvaluationResult::from_depth_agnostic_memo(incomplete_memo);
+        assert_eq!(incomplete.type_id(), TypeId::UNKNOWN);
+        assert_eq!(
+            incomplete.cache_stability,
+            RelationEvaluationStability::Unstable
+        );
+        assert!(incomplete.is_unstable_unknown());
     }
 }
 
