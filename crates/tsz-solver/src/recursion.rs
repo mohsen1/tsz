@@ -226,6 +226,35 @@ impl RecursionResult {
     }
 }
 
+/// Sticky limit state observed by a [`RecursionGuard`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecursionLimitState {
+    /// No depth or iteration limit has fired.
+    Clear,
+    /// A depth-like guard fired, including explicit external marking.
+    DepthExceeded,
+    /// The iteration/work budget fired.
+    IterationExceeded,
+    /// The iteration/work budget fired, but `clear_exceeded()` cleared the
+    /// legacy main exceeded signal for a controlled retry path.
+    IterationExceededCleared,
+}
+
+impl RecursionLimitState {
+    #[inline]
+    pub(crate) const fn is_exceeded(self) -> bool {
+        matches!(self, Self::DepthExceeded | Self::IterationExceeded)
+    }
+
+    #[inline]
+    pub(crate) const fn iteration_exceeded(self) -> bool {
+        matches!(
+            self,
+            Self::IterationExceeded | Self::IterationExceededCleared
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RecursionGuard
 // ---------------------------------------------------------------------------
@@ -264,10 +293,8 @@ pub struct RecursionGuard<K: Hash + Eq + Copy> {
     max_depth: u32,
     max_iterations: u32,
     max_visiting: u32,
-    exceeded: bool,
-    /// Sticky flag set when the iteration (relation-count) budget is exhausted.
-    /// Distinct from `exceeded` which also covers depth overflow.
-    iteration_exceeded: bool,
+    /// Sticky verdict recording which limit class, if any, has fired.
+    limit_state: RecursionLimitState,
 }
 
 impl<K: Hash + Eq + Copy> RecursionGuard<K> {
@@ -282,8 +309,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
             max_depth,
             max_iterations,
             max_visiting: 10_000,
-            exceeded: false,
-            iteration_exceeded: false,
+            limit_state: RecursionLimitState::Clear,
         }
     }
 
@@ -317,19 +343,18 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.iterations = self.iterations.saturating_add(1);
 
         if self.iterations > self.max_iterations {
-            self.exceeded = true;
-            self.iteration_exceeded = true;
+            self.limit_state = RecursionLimitState::IterationExceeded;
             return RecursionResult::IterationExceeded;
         }
         if self.depth >= self.max_depth {
-            self.exceeded = true;
+            self.mark_exceeded();
             return RecursionResult::DepthExceeded;
         }
         if self.visiting.contains(&key) {
             return RecursionResult::Cycle;
         }
         if self.visiting.len() as u32 >= self.max_visiting {
-            self.exceeded = true;
+            self.mark_exceeded();
             return RecursionResult::DepthExceeded;
         }
 
@@ -459,7 +484,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// subsequent calls (e.g. TS2589 "excessively deep" diagnostics).
     #[inline]
     pub const fn is_exceeded(&self) -> bool {
-        self.exceeded
+        self.limit_state.is_exceeded()
     }
 
     /// Whether the iteration (relation-count) budget was exhausted.
@@ -468,7 +493,14 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// [`reset()`](Self::reset) is called.
     #[inline]
     pub const fn iteration_exceeded(&self) -> bool {
-        self.iteration_exceeded
+        self.limit_state.iteration_exceeded()
+    }
+
+    /// Named sticky limit state for callers/tests that need the owning verdict.
+    #[inline]
+    #[cfg(test)]
+    pub(crate) const fn limit_state(&self) -> RecursionLimitState {
+        self.limit_state
     }
 
     /// Manually mark the guard as exceeded.
@@ -477,7 +509,15 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// further recursion should be blocked.
     #[inline]
     pub const fn mark_exceeded(&mut self) {
-        self.exceeded = true;
+        self.limit_state = match self.limit_state {
+            RecursionLimitState::IterationExceeded
+            | RecursionLimitState::IterationExceededCleared => {
+                RecursionLimitState::IterationExceeded
+            }
+            RecursionLimitState::Clear | RecursionLimitState::DepthExceeded => {
+                RecursionLimitState::DepthExceeded
+            }
+        };
     }
 
     /// Clear the depth-`exceeded` flag while preserving `visiting` / `depth` /
@@ -492,7 +532,13 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
     /// always fatal and must not be silently suppressed.
     #[inline]
     pub(crate) const fn clear_exceeded(&mut self) {
-        self.exceeded = false;
+        self.limit_state = match self.limit_state {
+            RecursionLimitState::IterationExceeded => RecursionLimitState::IterationExceededCleared,
+            RecursionLimitState::DepthExceeded => RecursionLimitState::Clear,
+            RecursionLimitState::Clear | RecursionLimitState::IterationExceededCleared => {
+                self.limit_state
+            }
+        };
     }
 
     // -----------------------------------------------------------------------
@@ -506,8 +552,7 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.visiting.clear();
         self.depth = 0;
         self.iterations = 0;
-        self.exceeded = false;
-        self.iteration_exceeded = false;
+        self.limit_state = RecursionLimitState::Clear;
     }
 }
 
