@@ -844,6 +844,9 @@ impl<'a> Printer<'a> {
         let tag_name = opening.tag_name;
         let attributes = opening.attributes;
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
+        // TypeScript's JSX dev transform creates its source location from
+        // `skipTrivia(source, node.pos)`, so the emitted `__source` points at
+        // the JSX opening token rather than any leading whitespace.
         let element_pos = opening_node.pos;
 
         self.emit_jsx_automatic_call(tag_name, attributes, &children, element_pos);
@@ -913,7 +916,8 @@ impl<'a> Printer<'a> {
             // jsxDEV extra args: key, isStaticChildren, source, self
             self.write(", void 0, ");
             self.write(if is_jsxs { "true" } else { "false" });
-            // Source location for fragment - use the node's own position
+            // Source location for fragment - use the trivia-skipped opening
+            // token position, matching TypeScript's JSX dev location range.
             let (line, col) = self.source_line_col_pos(node.pos);
             self.write(&format!(
                 ", {{ fileName: _jsxFileName, lineNumber: {line}, columnNumber: {col} }}"
