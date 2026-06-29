@@ -113,6 +113,40 @@ pub enum PropertyCollectionResult {
     },
 }
 
+/// Whether a finished property collection may be published to the cross-call
+/// result cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PropertyCollectionCacheVerdict {
+    /// No query cache was supplied, so there is nowhere to publish the result.
+    NoQueryCache,
+    /// The subtree only truncated against frames that are part of this
+    /// collection, so the result is context-free and cacheable.
+    ContextFree,
+    /// The subtree truncated against an outer collector frame, so the result is
+    /// context-dependent and must not be cached.
+    OuterAncestorTruncation,
+}
+
+impl PropertyCollectionCacheVerdict {
+    const fn from_truncation(
+        has_query_cache: bool,
+        subtree_min_truncation: usize,
+        entry_floor: usize,
+    ) -> Self {
+        if !has_query_cache {
+            Self::NoQueryCache
+        } else if subtree_min_truncation >= entry_floor {
+            Self::ContextFree
+        } else {
+            Self::OuterAncestorTruncation
+        }
+    }
+
+    const fn should_publish(self) -> bool {
+        matches!(self, Self::ContextFree)
+    }
+}
+
 /// Cross-call memo surface for context-free `collect_properties_cached` results.
 ///
 /// A supertrait of `QueryDatabase` so the result memo can be reached through a
@@ -324,7 +358,11 @@ where
     });
     // Cacheable iff every truncation this subtree saw was against one of our own
     // in-flight entries (>= our entry floor), never an outer ancestor.
-    let cacheable = query_db.is_some() && subtree_min >= entry_floor;
+    let cache_verdict = PropertyCollectionCacheVerdict::from_truncation(
+        query_db.is_some(),
+        subtree_min,
+        entry_floor,
+    );
 
     let result = if collector.found_any {
         // If we encountered Any at any point, the result is Any (commutative)
@@ -349,7 +387,9 @@ where
 
     // Store only context-free results (no outer-ancestor truncation); see the
     // cache contract at the top of this function.
-    if cacheable && let Some(db) = query_db {
+    if cache_verdict.should_publish()
+        && let Some(db) = query_db
+    {
         db.set_collect_properties_result_cache(type_id, generation, result.clone());
     }
 
@@ -797,6 +837,38 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         merge(&mut self.string_index, shape.string_index.as_ref());
         merge(&mut self.number_index, shape.number_index.as_ref());
         merge(&mut self.symbol_index, shape.symbol_index.as_ref());
+    }
+}
+
+#[cfg(test)]
+mod cache_verdict_tests {
+    use super::PropertyCollectionCacheVerdict;
+
+    #[test]
+    fn no_query_cache_never_publishes() {
+        let verdict = PropertyCollectionCacheVerdict::from_truncation(false, usize::MAX, 0);
+
+        assert_eq!(verdict, PropertyCollectionCacheVerdict::NoQueryCache);
+        assert!(!verdict.should_publish());
+    }
+
+    #[test]
+    fn own_frame_truncation_is_context_free() {
+        let verdict = PropertyCollectionCacheVerdict::from_truncation(true, 3, 3);
+
+        assert_eq!(verdict, PropertyCollectionCacheVerdict::ContextFree);
+        assert!(verdict.should_publish());
+    }
+
+    #[test]
+    fn outer_ancestor_truncation_blocks_publication() {
+        let verdict = PropertyCollectionCacheVerdict::from_truncation(true, 2, 3);
+
+        assert_eq!(
+            verdict,
+            PropertyCollectionCacheVerdict::OuterAncestorTruncation
+        );
+        assert!(!verdict.should_publish());
     }
 }
 
