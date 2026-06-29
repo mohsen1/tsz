@@ -12,7 +12,7 @@ use crate::types::{
 };
 use crate::visitor::callable_shape_id;
 
-use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::super::super::{RelationEvaluationResult, SubtypeChecker, SubtypeResult, TypeResolver};
 use super::erase_type_params_to_constraints;
 
 mod context_instantiation;
@@ -2127,23 +2127,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Results are cached in `eval_cache` to avoid re-evaluating the same type across
     /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
     pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
-        self.evaluate_type_with_stability(type_id).0
+        self.evaluate_type_with_stability(type_id).type_id()
     }
 
     /// Like [`Self::evaluate_type`], but also reports whether the evaluation is
     /// *stable*: it converged without tripping any recursion/depth/budget limit
-    /// and without a cross-instance cycle bail.
+    /// or cross-instance cycle bail.
     ///
-    /// A stable result is the type's converged answer; an unstable one is a
-    /// recursion artifact (e.g. a self-referential application collapsed to
-    /// `unknown` by a cycle guard). Callers that special-case collapsed results
-    /// must consult the flag so a genuinely evaluated `unknown` is not treated
-    /// like a bail artifact.
-    pub(crate) fn evaluate_type_with_stability(&mut self, type_id: TypeId) -> (TypeId, bool) {
+    /// Callers that special-case collapsed `unknown` results must consult the
+    /// flag so a genuine `unknown` is not treated like a bail artifact.
+    pub(crate) fn evaluate_type_with_stability(
+        &mut self,
+        type_id: TypeId,
+    ) -> RelationEvaluationResult {
         // Fast path: intrinsic types (number, string, boolean, void, null, etc.)
         // never need evaluation. Skip cache lookup entirely.
         if type_id.is_intrinsic() {
-            return (type_id, true);
+            return RelationEvaluationResult::stable(type_id);
         }
         // Check local evaluation cache first.
         // Key includes no_unchecked_indexed_access since with that flag evaluation results can vary.
@@ -2161,7 +2161,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `instantiate_and_finalize_application`.
         if let Some(fuel) = self.explain_eval_fuel.as_mut() {
             if *fuel == 0 {
-                return (type_id, false);
+                return RelationEvaluationResult::unstable(type_id);
             }
             *fuel -= 1;
         }
@@ -2189,9 +2189,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 evaluator.evaluate_request_memo_result(request)
             },
         ) else {
-            return (type_id, false);
+            return RelationEvaluationResult::unstable(type_id);
         };
-        let entry = memo_result.into_type_id_and_stability();
+        let entry = RelationEvaluationResult::from_depth_agnostic_memo(memo_result);
         self.eval_cache.insert(cache_key, entry);
         entry
     }
