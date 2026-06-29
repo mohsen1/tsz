@@ -209,6 +209,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
     let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
+    let instantiation_result_rs = read_solver_source("instantiation/result.rs");
+    let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
     let iteration_incomplete_tests =
         read_solver_test("evaluate_tests_parts/iteration_exceeded_incomplete.rs");
@@ -272,6 +274,16 @@ fn evaluation_engine_keeps_request_stage_boundary() {
                 .contains("EvaluationMemoResult::new(EvaluationResult::complete")
             && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete"),
         "unstable complete memo results must use the named EvaluationMemoResult boundary instead of rebuilding the stability bit by hand"
+    );
+    assert!(
+        instantiation_result_rs.contains("pub(crate) struct InstantiationMemoResult")
+            && instantiation_result_rs.contains("fn for_project_cache(")
+            && instantiation_result_rs.contains("fn is_stable_for_project_cache(self) -> bool")
+            && instantiation_api_rs.contains("ProjectInstantiationCacheLimitSnapshot::capture")
+            && instantiation_api_rs.contains("InstantiationMemoResult::for_project_cache")
+            && instantiation_api_rs.contains("is_stable_for_project_cache()")
+            && !instantiation_api_rs.contains("let limit_tripped ="),
+        "project instantiation cache writes must consume InstantiationMemoResult stability instead of rebuilding a raw limit_tripped predicate"
     );
 }
 
