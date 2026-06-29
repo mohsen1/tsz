@@ -5,6 +5,8 @@
 //! generic return context suppression, and argument-level contextual typing
 //! decisions.
 
+mod bare_return_overlap;
+
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
@@ -590,6 +592,27 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
+        }
+
+        // Bare return type parameter `U`: when a context-sensitive callback
+        // argument returns an object literal built entirely from the callback's
+        // own parameters that are already pinned by a concrete sibling argument,
+        // the callback's argument inference for `U` is authoritative. `tsc`
+        // seeds `U` from the outer contextual type but ranks that inference
+        // below the callback's (`InferencePriority.ReturnType`), so the outer
+        // annotation can never refine the literal and the callback body is
+        // checked against the FINAL inferred `U`, not the outer annotation.
+        // Suppressing the contextual return keeps `tsz` from pushing the outer
+        // annotation onto the return-position literal and double-reporting the
+        // mismatch inside the callback body (#14792).
+        if return_is_bare_type_param
+            && self.bare_return_callback_return_pinned_by_concrete_arg(
+                shape,
+                args,
+                &return_type_params,
+            )
+        {
+            return true;
         }
 
         for (i, &arg_idx) in args.iter().enumerate() {

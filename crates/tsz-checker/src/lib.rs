@@ -973,6 +973,9 @@ mod generic_argument_suppression_relation_routing_arch_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_callback_return_outer_annotation_leak_tests.rs"]
+mod generic_callback_return_outer_annotation_leak_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
 mod generic_callback_sibling_arg_inference_tests;
 #[cfg(test)]
