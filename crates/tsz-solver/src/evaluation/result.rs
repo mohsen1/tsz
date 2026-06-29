@@ -155,7 +155,29 @@ impl EvaluationResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EvaluationMemoResult {
     result: EvaluationResult,
-    stable_for_depth_agnostic_cache: bool,
+    cache_stability: EvaluationMemoStability,
+}
+
+/// Whether an evaluated memo result is safe to publish into caches whose key
+/// does not encode ambient recursion/fuel state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EvaluationMemoStability {
+    Stable,
+    Unstable,
+}
+
+impl EvaluationMemoStability {
+    const fn from_result(result: EvaluationResult, request_state_stable: bool) -> Self {
+        if result.is_complete() && request_state_stable {
+            Self::Stable
+        } else {
+            Self::Unstable
+        }
+    }
+
+    const fn is_stable_for_depth_agnostic_cache(self) -> bool {
+        matches!(self, Self::Stable)
+    }
 }
 
 impl EvaluationMemoResult {
@@ -167,7 +189,7 @@ impl EvaluationMemoResult {
     ) -> Self {
         Self {
             result,
-            stable_for_depth_agnostic_cache: result.is_complete() && request_state_stable,
+            cache_stability: EvaluationMemoStability::from_result(result, request_state_stable),
         }
     }
 
@@ -176,7 +198,7 @@ impl EvaluationMemoResult {
     pub(crate) const fn cached(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
-            stable_for_depth_agnostic_cache: true,
+            cache_stability: EvaluationMemoStability::Stable,
         }
     }
 
@@ -185,7 +207,7 @@ impl EvaluationMemoResult {
     pub(crate) const fn unstable_complete(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
-            stable_for_depth_agnostic_cache: false,
+            cache_stability: EvaluationMemoStability::Unstable,
         }
     }
 
@@ -201,7 +223,7 @@ impl EvaluationMemoResult {
     /// Whether this result can be stored in caches whose key does not capture
     /// ambient recursion depth/fuel state.
     pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
-        self.stable_for_depth_agnostic_cache
+        self.cache_stability.is_stable_for_depth_agnostic_cache()
     }
 
     /// Collapse to the request's `TypeId` while preserving today's behavior for
@@ -213,7 +235,10 @@ impl EvaluationMemoResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{EvaluationMemoResult, EvaluationResult, Termination, TerminationKind};
+    use super::{
+        EvaluationMemoResult, EvaluationMemoStability, EvaluationResult, Termination,
+        TerminationKind,
+    };
     use crate::types::TypeId;
 
     #[test]
@@ -258,15 +283,24 @@ mod tests {
         assert_eq!(stable.evaluation_result(), complete);
         assert_eq!(stable.type_id(), TypeId::STRING);
         assert_eq!(stable.into_type_id(), TypeId::STRING);
+        assert_eq!(stable.cache_stability, EvaluationMemoStability::Stable);
         assert!(stable.is_stable_for_depth_agnostic_cache());
 
         let request_state_tainted = EvaluationMemoResult::for_depth_agnostic_memo(complete, false);
+        assert_eq!(
+            request_state_tainted.cache_stability,
+            EvaluationMemoStability::Unstable
+        );
         assert!(!request_state_tainted.is_stable_for_depth_agnostic_cache());
 
         let incomplete =
             EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
         let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(incomplete, true);
         assert_eq!(typed_tainted.into_type_id(), TypeId::NUMBER);
+        assert_eq!(
+            typed_tainted.cache_stability,
+            EvaluationMemoStability::Unstable
+        );
         assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
     }
 
