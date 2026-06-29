@@ -6,7 +6,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Detects the `#14792` shape: a generic call whose return type is a bare
     /// type parameter `U`, where a context-sensitive callback argument (whose
     /// declared signature mentions `U` in its return position) returns an object
@@ -110,7 +110,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             (
-                func.parameters.nodes.to_vec(),
+                func.parameters.nodes.clone(),
                 func.type_annotation.is_some(),
                 func.equals_greater_than_token,
                 func.body,
@@ -159,7 +159,7 @@ impl<'a> CheckerState<'a> {
             let Some(obj) = self.ctx.arena.get_literal_expr(body_node) else {
                 return false;
             };
-            obj.elements.nodes.to_vec()
+            obj.elements.nodes.clone()
         };
         if element_indices.is_empty() {
             return false;
