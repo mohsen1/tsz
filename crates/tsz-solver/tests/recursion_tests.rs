@@ -182,6 +182,7 @@ fn depth_exceeded_at_max() {
     // depth = 2, max = 2, next enter should fail
     assert_eq!(guard.enter(3u32), RecursionResult::DepthExceeded);
     assert!(guard.is_exceeded());
+    assert_eq!(guard.limit_state(), RecursionLimitState::DepthExceeded);
 
     guard.leave(2);
     guard.leave(1);
@@ -231,6 +232,7 @@ fn iteration_exceeded() {
     // 4th attempt exceeds iteration limit
     assert_eq!(guard.enter(4u32), RecursionResult::IterationExceeded);
     assert!(guard.is_exceeded());
+    assert_eq!(guard.limit_state(), RecursionLimitState::IterationExceeded);
 }
 
 #[test]
@@ -307,8 +309,10 @@ fn max_visiting_zero_blocks_all() {
 fn mark_exceeded_manually() {
     let mut guard = RecursionGuard::<u32>::new(10, 100);
     assert!(!guard.is_exceeded());
+    assert_eq!(guard.limit_state(), RecursionLimitState::Clear);
     guard.mark_exceeded();
     assert!(guard.is_exceeded());
+    assert_eq!(guard.limit_state(), RecursionLimitState::DepthExceeded);
 }
 
 #[test]
@@ -318,6 +322,7 @@ fn exceeded_cleared_by_reset() {
     assert!(guard.is_exceeded());
     guard.reset();
     assert!(!guard.is_exceeded());
+    assert_eq!(guard.limit_state(), RecursionLimitState::Clear);
 }
 
 // ===================================================================
@@ -1162,6 +1167,10 @@ fn clear_exceeded_does_not_clear_iteration_exceeded_flag() {
         guard.iteration_exceeded(),
         "clear_exceeded must NOT clear iteration_exceeded"
     );
+    assert_eq!(
+        guard.limit_state(),
+        RecursionLimitState::IterationExceededCleared
+    );
 }
 
 #[test]
@@ -1183,6 +1192,7 @@ fn clear_exceeded_clears_depth_exceeded_when_iteration_is_not_set() {
         !guard.iteration_exceeded(),
         "iteration_exceeded remains false"
     );
+    assert_eq!(guard.limit_state(), RecursionLimitState::Clear);
     guard.leave(1);
 }
 
@@ -1200,6 +1210,7 @@ fn reset_clears_iteration_exceeded_flag() {
         !guard.iteration_exceeded(),
         "reset must clear iteration_exceeded"
     );
+    assert_eq!(guard.limit_state(), RecursionLimitState::Clear);
     // Guard is usable again.
     assert_eq!(guard.enter(1u32), RecursionResult::Entered);
     guard.leave(1);
