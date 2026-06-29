@@ -150,6 +150,7 @@ impl<'a> CheckerState<'a> {
                         &delegatable_member_indices,
                         decl_arena,
                         None,
+                        false,
                     )
                 };
 
@@ -579,6 +580,7 @@ impl<'a> CheckerState<'a> {
                         &delegatable_member_indices,
                         iface_arena,
                         Some(&substitution_args),
+                        false,
                     )
                 };
 

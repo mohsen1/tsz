@@ -161,11 +161,19 @@ impl<'a> CheckerState<'a> {
                 allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena);
             let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                 if direct_source_file_arena {
-                    return self.source_file_local_name_def_id_for_lowering(
-                        delegate_binder,
-                        interface_arena,
-                        type_name,
-                    );
+                    return self
+                        .source_file_local_name_def_id_for_lowering(
+                            delegate_binder,
+                            interface_arena,
+                            type_name,
+                        )
+                        .or_else(|| {
+                            self.source_file_global_name_def_id_for_lowering(
+                                delegate_binder,
+                                interface_arena,
+                                type_name,
+                            )
+                        });
                 }
                 (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
                     .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
