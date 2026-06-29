@@ -176,6 +176,10 @@ name = "cross_module_conditional_constraint_union_param_cli_tests"
 path = "tests/cross_module_conditional_constraint_union_param_cli_tests.rs"
 
 [[test]]
+name = "cross_module_contextual_rest_tuple_spread_ts2556_cli_tests"
+path = "tests/cross_module_contextual_rest_tuple_spread_ts2556_cli_tests.rs"
+
+[[test]]
 name = "merged_unique_symbol_factory_cli_tests"
 path = "tests/merged_unique_symbol_factory_cli_tests.rs"
 
