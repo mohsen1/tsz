@@ -6,7 +6,8 @@
 //! (`statistics`, `estimated_size_bytes`). Telemetry only -- no store mutation.
 
 use super::{
-    DASHMAP_ENTRY_OVERHEAD, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
+    DASHMAP_ENTRY_OVERHEAD, DeclSiteKey, DefId, DefKind, DefinitionInfo, DefinitionStore,
+    EnumMemberValue,
 };
 use crate::types::{ObjectShape, PropertyInfo, TypeId, TypeParamInfo};
 use std::sync::atomic::Ordering;
@@ -223,6 +224,12 @@ impl DefinitionStore {
         // symbol_only_index: u32 -> DefId
         size += self.symbol_only_index.len()
             * (std::mem::size_of::<u32>() + std::mem::size_of::<DefId>() + DASHMAP_ENTRY_OVERHEAD);
+
+        // decl_site_to_def: DeclSiteKey -> DefId
+        size += self.decl_site_to_def.len()
+            * (std::mem::size_of::<DeclSiteKey>()
+                + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
 
         // body_to_alias: TypeId -> DefId
         size += self.body_to_alias.len()

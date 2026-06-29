@@ -123,6 +123,28 @@ fn definition_store_decl_site_equivalence_matches_same_file_node() {
         store.defs_have_same_decl_site(first, second),
         "same (file,node) declaration must converge despite arena-local symbols"
     );
+    assert_eq!(store.canonical_decl_site_def_id(first), first);
+    assert_eq!(store.canonical_decl_site_def_id(second), first);
+    assert_eq!(store.canonical_decl_site_def_for_symbol(200), Some(first));
+}
+
+#[test]
+fn semantic_defs_record_canonical_decl_site_identity() {
+    let interner = create_test_interner();
+    let mut defs = rustc_hash::FxHashMap::default();
+    defs.insert(
+        tsz_binder::SymbolId(10),
+        semantic_def_entry("Box", 7, tsz_binder::SemanticDefKind::Interface),
+    );
+    defs.insert(
+        tsz_binder::SymbolId(20),
+        semantic_def_entry("Box", 7, tsz_binder::SemanticDefKind::Interface),
+    );
+
+    let store = DefinitionStore::from_semantic_defs(&defs, |s| interner.intern_string(s));
+    let left = store.canonical_decl_site_def_for_symbol(10);
+    let right = store.canonical_decl_site_def_for_symbol(20);
+    assert_eq!(left, right);
 }
 
 #[test]
@@ -141,6 +163,10 @@ fn definition_store_decl_site_equivalence_keeps_distinct_decls_apart() {
     different_node.span = Some((43, 43));
     let different_node = store.register(different_node);
     assert!(!store.defs_have_same_decl_site(base, different_node));
+    assert_eq!(
+        store.canonical_decl_site_def_id(different_node),
+        different_node
+    );
 
     let mut different_name =
         DefinitionInfo::interface(interner.intern_string("OtherBox"), Vec::new(), Vec::new());
@@ -148,6 +174,10 @@ fn definition_store_decl_site_equivalence_keeps_distinct_decls_apart() {
     different_name.span = Some((42, 42));
     let different_name = store.register(different_name);
     assert!(!store.defs_have_same_decl_site(base, different_name));
+    assert_eq!(
+        store.canonical_decl_site_def_id(different_name),
+        different_name
+    );
 
     let mut non_program_a = DefinitionInfo::interface(name, Vec::new(), Vec::new());
     non_program_a.file_id = Some(DefinitionStore::NON_PROGRAM_FILE_SENTINEL);
@@ -158,6 +188,10 @@ fn definition_store_decl_site_equivalence_keeps_distinct_decls_apart() {
     non_program_b.span = Some((42, 42));
     let non_program_b = store.register(non_program_b);
     assert!(!store.defs_have_same_decl_site(non_program_a, non_program_b));
+    assert_eq!(
+        store.canonical_decl_site_def_id(non_program_b),
+        non_program_b
+    );
 }
 
 #[test]
