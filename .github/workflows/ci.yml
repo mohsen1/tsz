@@ -759,6 +759,24 @@ jobs:
           path: .
       - name: Unpack dist-fast binaries
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
+      - name: Provision tsc oracle for canary scoring
+        # The per-row tsc oracle (scripts/ci/lib/project-tsc-oracle.sh) subtracts
+        # tsc's own diagnostics from tsz's, so a canary row where tsz reproduces
+        # tsc's errors exactly (e.g. ts-belt TS2305, tiny-invariant TS2591) scores
+        # green (parity) instead of being counted as a tsz-only regression. The
+        # guard resolves the oracle command ONCE at startup, so the pinned
+        # TypeScript must already be installed when it runs; without it every
+        # canary row records diagnostic_counts.tsc=0 / oracle_classification=unknown
+        # and tsz==tsc parity rows over-report (yellow/red). This installs the same
+        # pinned TypeScript the type-challenges oracle already uses
+        # (scripts/package.json -> scripts/node_modules/.bin/tsc, the second entry
+        # in tsz_project_oracle_tsc_command's resolution order). Best-effort: a
+        # registry hiccup leaves the oracle unavailable and the guard falls back to
+        # its pre-oracle behaviour (no regression); the job is continue-on-error.
+        # The oracle only runs for rows where tsz exits with diagnostics (not
+        # green/crash/timeout/oom rows), so this adds at most one skipLibCheck tsc
+        # run per failing row, capped by TSZ_PROJECT_COMPILE_TIMEOUT.
+        run: (cd scripts && npm install --silent --no-audit --no-fund --include=dev) || echo "::warning::tsc oracle provisioning failed; canary rows will score without the tsc oracle (pre-oracle fallback)"
       - name: Run compile canaries
         run: scripts/ci/project-compile-guard.sh
       - name: Upload compile canary logs

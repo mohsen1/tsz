@@ -428,6 +428,9 @@ path = "tests/reverse_mapped_inference_tests.rs"
 name = "recursive_alias_resolution_tests"
 path = "tests/recursive_alias_resolution_tests.rs"
 [[test]]
+name = "recursive_alias_named_tuple_arg_ts2589_tests"
+path = "tests/recursive_alias_named_tuple_arg_ts2589_tests.rs"
+[[test]]
 name = "recursive_intersection_assignability_tests"
 path = "tests/recursive_intersection_assignability_tests.rs"
 [[test]]
@@ -793,6 +796,9 @@ path = "tests/computed_property_name_type_position_no_ts2454_tests.rs"
 [[test]]
 name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
+[[test]]
+name = "array_isarray_negative_branch_readonly_tests"
+path = "tests/array_isarray_negative_branch_readonly_tests.rs"
 [[test]]
 name = "typeof_const_member_conditional_tests"
 path = "tests/typeof_const_member_conditional_tests.rs"
@@ -1180,6 +1186,9 @@ path = "tests/overload_inference_literal_preservation_tests.rs"
 [[test]]
 name = "overload_spread_into_rest_ts2556_tests"
 path = "tests/overload_spread_into_rest_ts2556_tests.rs"
+[[test]]
+name = "spread_any_value_ts2556_tests"
+path = "tests/spread_any_value_ts2556_tests.rs"
 [[test]]
 name = "overload_nontuple_spread_rest_fallback_tests"
 path = "tests/overload_nontuple_spread_rest_fallback_tests.rs"
