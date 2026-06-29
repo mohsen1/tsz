@@ -937,6 +937,9 @@ impl TypeEnvironment {
     /// Register the VALUE-space type a `typeof X` query should resolve to for a
     /// merged interface+value symbol. See `typeof_value_types`.
     pub fn insert_typeof_value_type(&mut self, symbol: SymbolRef, type_id: TypeId) {
+        if let Some(ref store) = self.definition_store {
+            store.register_typeof_value_literal_if_enabled(symbol.0, type_id); // #14345
+        }
         if self.typeof_value_types.get(&symbol.0) == Some(&type_id) {
             return;
         }
@@ -1571,11 +1574,7 @@ impl TypeResolver for TypeEnvironment {
         self.lookup_well_known_symbol_name(symbol)
     }
 
-    fn resolve_type_query(
-        &self,
-        symbol: SymbolRef,
-        _interner: &dyn TypeDatabase,
-    ) -> Option<TypeId> {
+    fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         // For TypeQuery (typeof X), we need the VALUE-space type:
         // - For classes: the constructor type (stored under DefId in the types map)
         // - For other symbols: same as resolve_ref
@@ -1590,13 +1589,14 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&value_ty) = self.typeof_value_types.get(&symbol.0) {
             return Some(value_ty);
         }
-        if let Some(&def_id) = self.symbol_to_def.get(&symbol.0)
-            && let Some(ty) = self.get_def(DefId(def_id.0))
-        {
-            return Some(ty);
-        }
-        // Fallback to SymbolRef lookup for non-class symbols
-        self.get(symbol)
+        // Prefer the class `DefId` constructor type, else the `SymbolRef` lookup,
+        // then #14345-substitute the program-wide literal on a self-loop body.
+        let candidate = (self.symbol_to_def.get(&symbol.0))
+            .and_then(|&def_id| self.get_def(DefId(def_id.0)))
+            .or_else(|| self.get(symbol));
+        (self.definition_store.as_ref())
+            .and_then(|store| store.typeof_self_loop_literal(symbol, candidate, interner))
+            .or(candidate)
     }
 
     fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {

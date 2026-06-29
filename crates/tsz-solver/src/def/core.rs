@@ -27,19 +27,40 @@ pub use observability::StoreStatistics;
 use state_flags::DefStateFlags;
 
 use super::publication_census;
+use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::ObjectFlags;
-use crate::types::{ObjectShape, TypeId, TypeParamInfo};
+use crate::types::{ObjectShape, SymbolRef, TypeData, TypeId, TypeParamInfo};
 use crate::utils::MutexExt;
 use dashmap::{DashMap, DashSet};
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
 use tsz_common::define_id;
 use tsz_common::interner::Atom;
+
+/// `TSZ_TYPEOF_URI_SELFLOOP=1` activates the program-wide value-space literal
+/// substitution for a self-looping `typeof X` query in
+/// `TypeEnvironment::resolve_type_query` (issue #14345). Default-OFF, so
+/// flag-OFF is byte-parity with the historical per-arena-only behavior (the
+/// self-looping `TypeQuery(symbol)` is returned unchanged and stays deferred).
+///
+/// When ON, a `typeof X` whose `SymbolRef`/`DefId` body resolves back to a
+/// self-referential `TypeQuery(symbol)` (the fp-ts `const URI = "Array"; type
+/// URI = typeof URI` higher-kinded-type tag idiom) is resolved to the concrete
+/// value literal published in `DefinitionStore::typeof_value_to_literal`, when
+/// one exists. Substitution is gated on a registered concrete literal, so an
+/// abstract URI / literal-less `typeof` still self-loops/defers (sound). Both
+/// the write-through (`register_typeof_value_literal_if_enabled`) and the read
+/// (`typeof_self_loop_literal`) are gated on this flag.
+pub(crate) fn typeof_uri_selfloop_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_TYPEOF_URI_SELFLOOP").is_ok_and(|v| v == "1"))
+}
 
 /// Global counter for assigning unique instance IDs to `DefinitionStore` instances.
 /// Used for debugging `DefId` collision issues.
@@ -462,6 +483,26 @@ pub struct DefinitionStore {
     /// SymbolRef/body path and continue to return the constructor.
     class_to_instance: DefDashMap<DefId, TypeId>,
 
+    /// Program-wide value-space literal for a merged value+type symbol's
+    /// `typeof X` query, keyed by raw `SymbolRef.0` (issue #14345).
+    ///
+    /// The fp-ts higher-kinded-type tag idiom (`const URI = "Array"; type URI =
+    /// typeof URI`) produces a self-referential type-space alias body: resolving
+    /// `typeof URI` through the `DefId`/`SymbolRef` body re-yields
+    /// `TypeQuery(URI)` and self-loops, so `URItoKind[URI]` never reduces to
+    /// `Kind<"Array", A>`. The checker computes the genuine value-space literal
+    /// (`"Array"`) per-arena into `TypeEnvironment::typeof_value_types`, but that
+    /// registration is gated on a syntactic `typeof <symbol>` node reached while
+    /// checking THIS file; a cross-arena `Kind<URI, A>` body never registers it
+    /// in the consuming arena, so the per-arena map misses. This shared slot is
+    /// the program-wide publish of that literal: producer checkers write-through
+    /// here from `TypeEnvironment::insert_typeof_value_type`, and any arena's
+    /// `resolve_type_query` consults it as the sound substitute for the
+    /// self-loop. Only populated with a concrete value literal (the producer
+    /// rejects unknown/error/any), so an abstract URI / literal-less `typeof`
+    /// stays deferred.
+    typeof_value_to_literal: DefDashMap<u32, TypeId>,
+
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
     /// Populated during `register()` for every definition. Enables O(1) lookup
@@ -541,6 +582,7 @@ impl DefinitionStore {
                 id_capacity / 2,
                 Default::default(),
             ),
+            typeof_value_to_literal: DefDashMap::default(),
             enum_member_to_parent: DefDashMap::default(),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             cross_file_cache: CrossFileQueryCache::default(),
@@ -1271,6 +1313,7 @@ impl DefinitionStore {
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
         self.class_to_instance.clear();
+        self.typeof_value_to_literal.clear();
         self.enum_member_to_parent.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
@@ -1418,6 +1461,73 @@ impl DefinitionStore {
     /// finished building the class yet.
     pub fn get_class_instance_type(&self, class_def: DefId) -> Option<TypeId> {
         self.class_to_instance.get(&class_def).map(|r| *r)
+    }
+
+    /// Publish a merged value+type symbol's value-space `typeof` literal into
+    /// the program-wide slot (see the `typeof_value_to_literal` field doc).
+    ///
+    /// Write-through target for `TypeEnvironment::insert_typeof_value_type`. The
+    /// producing arena's local `typeof_value_types` map only carries entries for
+    /// symbols whose `typeof` query was syntactically reached while checking that
+    /// file; this shared copy lets a consuming arena's `resolve_type_query`
+    /// resolve a cross-arena self-looping `typeof X` to the concrete literal.
+    pub fn register_typeof_value_literal(&self, symbol_id: u32, literal: TypeId) {
+        if self
+            .typeof_value_to_literal
+            .insert(symbol_id, literal)
+            .is_none_or(|prev| prev != literal)
+        {
+            self.bump_generation();
+        }
+    }
+
+    /// Look up the program-wide value-space `typeof` literal for a merged
+    /// value+type symbol, if some checker has published one.
+    pub fn get_typeof_value_literal(&self, symbol_id: u32) -> Option<TypeId> {
+        self.typeof_value_to_literal.get(&symbol_id).map(|r| *r)
+    }
+
+    /// Flag-gated write-through of a merged value+type symbol's value literal
+    /// into the program-wide slot (issue #14345). Called from
+    /// `TypeEnvironment::insert_typeof_value_type`; the producer only passes a
+    /// concrete value type (unknown/error/any are rejected upstream in the
+    /// checker), so the shared slot stays sound. Gated on
+    /// `typeof_uri_selfloop_enabled()` so flag-OFF leaves the shared store (and
+    /// its generation) untouched — fully byte-parity.
+    pub fn register_typeof_value_literal_if_enabled(&self, symbol_id: u32, literal: TypeId) {
+        if typeof_uri_selfloop_enabled() {
+            self.register_typeof_value_literal(symbol_id, literal);
+        }
+    }
+
+    /// Resolve a self-looping `typeof X` query to its program-wide value literal
+    /// (issue #14345). A merged value+type symbol whose type-space body is a
+    /// self-referential `typeof X` (the fp-ts `const URI = "..."; type URI =
+    /// typeof URI` tag idiom) self-loops in `resolve_type_query` — `candidate`
+    /// re-yields `TypeQuery(symbol)`, so `URItoKind[URI]` never reduces. When the
+    /// consuming arena never registered the value literal locally (its `typeof X`
+    /// site lives in another arena), substitute the program-wide literal
+    /// published by the producing arena. Returns `None` (leaving `candidate`
+    /// unchanged) unless the flag is on, `candidate` is exactly the self-loop
+    /// `TypeQuery(symbol)`, and a concrete literal was published — so an abstract
+    /// URI / literal-less `typeof` stays deferred. Flag-gated; OFF is byte-parity.
+    pub fn typeof_self_loop_literal(
+        &self,
+        symbol: SymbolRef,
+        candidate: Option<TypeId>,
+        interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        if !typeof_uri_selfloop_enabled() {
+            return None;
+        }
+        let is_self_loop = candidate.is_some_and(
+            |ty| matches!(interner.lookup(ty), Some(TypeData::TypeQuery(s)) if s == symbol),
+        );
+        if is_self_loop {
+            self.get_typeof_value_literal(symbol.0)
+        } else {
+            None
+        }
     }
 
     /// Publish an enum member `DefId` -> parent enum `DefId` edge into the
