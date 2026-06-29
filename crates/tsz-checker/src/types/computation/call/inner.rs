@@ -23,6 +23,56 @@ use super::post_generic::PostGenericCallDiagnostics;
 mod argument_collection;
 
 impl<'a> CheckerState<'a> {
+    fn spread_arg_pins_returned_rest_tuple_param(
+        &self,
+        args: &[NodeIndex],
+        shape: &tsz_solver::FunctionShape,
+        substitution: &crate::query_boundaries::common::TypeSubstitution,
+    ) -> bool {
+        args.iter().enumerate().any(|(index, &arg_idx)| {
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                return false;
+            };
+            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
+                return false;
+            }
+            let Some(param) = shape
+                .params
+                .get(index)
+                .or_else(|| shape.params.last().filter(|param| param.rest))
+            else {
+                return false;
+            };
+            if !param.rest {
+                return false;
+            }
+
+            let mut rest_param_type_param_names = Vec::new();
+            if let Some(info) = common::type_param_info(self.ctx.types, param.type_id) {
+                rest_param_type_param_names.push(info.name);
+            }
+            if let Some(elements) = common::tuple_elements(self.ctx.types, param.type_id) {
+                rest_param_type_param_names.extend(elements.into_iter().filter_map(|element| {
+                    if element.rest {
+                        common::type_param_info(self.ctx.types, element.type_id)
+                            .map(|info| info.name)
+                    } else {
+                        None
+                    }
+                }));
+            }
+
+            rest_param_type_param_names.into_iter().any(|name| {
+                substitution.get(name).is_some()
+                    && common::contains_type_parameter_named(
+                        self.ctx.types,
+                        shape.return_type,
+                        name,
+                    )
+            })
+        })
+    }
+
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
@@ -1378,7 +1428,21 @@ impl<'a> CheckerState<'a> {
                         self.call_arg_relation_outcome_with_env(actual, expected)
                             .related
                     });
+                    let spread_arg_pins_returned_rest_tuple_param = self
+                        .spread_arg_pins_returned_rest_tuple_param(
+                            args,
+                            &shape,
+                            &return_context_substitution,
+                        );
+                    // The `contextual_params_fit_args` probe compares each spread
+                    // argument against a rest parameter's element type, which discards
+                    // tuple positions. When a spread argument feeds the same bare rest
+                    // type parameter returned by the generic call, the argument-inferred
+                    // tuple is authoritative; otherwise this branch must keep tsc's
+                    // ordinary contextual-return literal preservation for calls like
+                    // `wrap("x")` returned as `Wrap<"x">`.
                     if contextual_params_fit_args
+                        && !spread_arg_pins_returned_rest_tuple_param
                         && self
                             .return_relation_outcome_with_env(instantiated_shape_return, ctx_type)
                             .related
@@ -1388,13 +1452,7 @@ impl<'a> CheckerState<'a> {
                 }
                 if let CallResult::Success(current_return) = result
                     && current_return == return_type
-                    && (common::contains_type_parameters(self.ctx.types, return_type)
-                        || common::contains_infer_types(self.ctx.types, return_type)
-                        || common::contains_type_by_id(
-                            self.ctx.types,
-                            return_type,
-                            TypeId::UNKNOWN,
-                        ))
+                    && common::return_type_is_unresolved(self.ctx.types, return_type)
                 {
                     let instantiated_return = crate::query_boundaries::common::instantiate_type(
                         self.ctx.types,
