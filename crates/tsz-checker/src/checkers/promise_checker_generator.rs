@@ -6,7 +6,7 @@ use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     /// Recover a generator-like type argument for a call-result iterable whose
     /// `Generator`/`AsyncGenerator` return type was eagerly materialized into a
     /// structural object, losing the `Generator<Y, R, N>` Application form the
