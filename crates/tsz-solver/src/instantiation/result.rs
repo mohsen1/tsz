@@ -53,7 +53,30 @@ pub struct InstantiationResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct InstantiationMemoResult {
     result: InstantiationResult,
-    stable_for_project_cache: bool,
+    cache_stability: InstantiationMemoStability,
+}
+
+/// Whether an instantiation result is safe for the project-wide cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstantiationMemoStability {
+    /// The walk completed and surrounding request state stayed cache-stable.
+    Stable,
+    /// The walk or surrounding request state was budget-limited/tainted.
+    Unstable,
+}
+
+impl InstantiationMemoStability {
+    const fn from_result(result: InstantiationResult, request_state_stable: bool) -> Self {
+        if result.depth_exceeded() || !request_state_stable {
+            Self::Unstable
+        } else {
+            Self::Stable
+        }
+    }
+
+    const fn is_stable_for_project_cache(self) -> bool {
+        matches!(self, Self::Stable)
+    }
 }
 
 impl InstantiationResult {
@@ -134,14 +157,14 @@ impl InstantiationMemoResult {
     ) -> Self {
         Self {
             result,
-            stable_for_project_cache: !result.depth_exceeded() && request_state_stable,
+            cache_stability: InstantiationMemoStability::from_result(result, request_state_stable),
         }
     }
 
     /// Whether this result can be stored in the project-wide instantiation
     /// cache, whose key does not capture ambient recursion/fuel state.
     pub(crate) const fn is_stable_for_project_cache(self) -> bool {
-        self.stable_for_project_cache
+        self.cache_stability.is_stable_for_project_cache()
     }
 
     /// Collapse to the request's instantiation result while preserving today's
@@ -153,7 +176,10 @@ impl InstantiationMemoResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{InstantiationMemoResult, InstantiationResult, InstantiationTermination};
+    use super::{
+        InstantiationMemoResult, InstantiationMemoStability, InstantiationResult,
+        InstantiationTermination,
+    };
     use crate::types::TypeId;
 
     #[test]
@@ -220,12 +246,17 @@ mod tests {
             InstantiationResult::ok(TypeId::STRING),
             true,
         );
+        assert_eq!(stable.cache_stability, InstantiationMemoStability::Stable);
         assert!(stable.is_stable_for_project_cache());
         assert_eq!(stable.into_result().type_id(), TypeId::STRING);
 
         let request_state_tainted = InstantiationMemoResult::for_project_cache(
             InstantiationResult::ok(TypeId::NUMBER),
             false,
+        );
+        assert_eq!(
+            request_state_tainted.cache_stability,
+            InstantiationMemoStability::Unstable
         );
         assert!(!request_state_tainted.is_stable_for_project_cache());
         assert_eq!(
@@ -236,6 +267,10 @@ mod tests {
         let overflowed = InstantiationMemoResult::for_project_cache(
             InstantiationResult::overflow_with(TypeId::BOOLEAN),
             true,
+        );
+        assert_eq!(
+            overflowed.cache_stability,
+            InstantiationMemoStability::Unstable
         );
         assert!(!overflowed.is_stable_for_project_cache());
         assert_eq!(overflowed.into_result().type_id(), TypeId::BOOLEAN);
