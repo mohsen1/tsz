@@ -149,30 +149,58 @@ impl ModuleResolutionKind {
 
 /// Default module kind used when `module` is omitted.
 ///
-/// The default differs depending on whether `target` was explicitly supplied,
-/// matching the existing tsc-parity behavior used by config resolution.
+/// Faithful port of tsc 6.0's `_computedOptions.module.computeValue`
+/// (`commandLineParser.ts`), which derives the module from the *effective*
+/// target rather than the raw `target` option:
+///
+/// 1. `_computedOptions.target.computeValue` first folds an omitted target —
+///    and an explicit `ES3`, which tsc 6.0 no longer treats as a distinct
+///    emit target — into `LatestStandard` (`ES2025`).
+/// 2. The module is then chosen from that effective target by descending
+///    capability tiers: `ESNext -> ESNext`, `>= ES2022 -> ES2022`,
+///    `>= ES2020 -> ES2020`, `>= ES2015 -> ES2015`, otherwise `CommonJS`.
+///
+/// This is what distinguishes tsc 6.0 from the older
+/// `target >= ES2015 ? ES2015 : CommonJS` rule. The observable consequences,
+/// both verified against the pinned tsc 6.0.2:
+/// - with no `target`/`module`, the default module is `ES2022` (not `ESNext`),
+///   so capability gates such as TS2823 (import attributes) fire by default
+///   exactly as tsc does instead of being silently suppressed; and
+/// - `--target es3` reports module `ES2022` (folded through `LatestStandard`)
+///   rather than `CommonJS`, so `--showConfig` omits the implied `module` line
+///   just as tsc does.
+///
+/// `target_explicitly_set` distinguishes an omitted `target` from one that was
+/// supplied, because callers pass an already-defaulted [`ScriptTarget`]; only
+/// the omitted case (and an explicit `ES3`) folds to `LatestStandard`.
+///
+/// The `LatestStandard` fold is intentionally *local* to module derivation and
+/// must not be hoisted into a shared "effective target": lib and checker-target
+/// resolution deliberately keep tsz's own default target (`ES2024`, set by
+/// `PrinterOptions::default`) and preserve an explicit `ES3`, so sharing the
+/// fold would change lib-file selection.
 #[must_use]
 pub const fn default_module_kind_for_target(
     target: ScriptTarget,
     target_explicitly_set: bool,
 ) -> ModuleKind {
-    if !target_explicitly_set {
-        return ModuleKind::ESNext;
-    }
+    // Step 1: resolve the effective target. An omitted target and an explicit
+    // `ES3` both collapse to `LatestStandard` (`ES2025`).
+    let effective = if !target_explicitly_set || matches!(target, ScriptTarget::ES3) {
+        ScriptTarget::ES2025
+    } else {
+        target
+    };
 
-    match target {
-        ScriptTarget::ES3 | ScriptTarget::ES5 => ModuleKind::CommonJS,
-        ScriptTarget::ES2015
-        | ScriptTarget::ES2016
-        | ScriptTarget::ES2017
-        | ScriptTarget::ES2018
-        | ScriptTarget::ES2019 => ModuleKind::ES2015,
-        ScriptTarget::ES2020 | ScriptTarget::ES2021 => ModuleKind::ES2020,
-        ScriptTarget::ES2022
-        | ScriptTarget::ES2023
-        | ScriptTarget::ES2024
-        | ScriptTarget::ES2025 => ModuleKind::ES2022,
+    // Step 2: pick the module from the effective target by capability tier,
+    // reusing the shared `ScriptTarget::supports_*` comparators. `ESNext` must
+    // be matched before the tiers because it outranks every dated target.
+    match effective {
         ScriptTarget::ESNext => ModuleKind::ESNext,
+        t if t.supports_es2022() => ModuleKind::ES2022,
+        t if t.supports_es2020() => ModuleKind::ES2020,
+        t if t.supports_es2015() => ModuleKind::ES2015,
+        _ => ModuleKind::CommonJS,
     }
 }
 

@@ -1119,11 +1119,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // Match the defaulting chain `resolve_compiler_options` uses so the
         // pre-resolve TS5098 gate doesn't disagree with the post-resolve
         // option state. tsz's defaults are:
-        //   target unset → default ScriptTarget::ESNext
-        //   module unset → default ESNext (when target unset) else
-        //                  `default_module_kind_for_target(target, true)`
+        //   target unset → `default_module_kind_for_target` folds it to
+        //                  `LatestStandard` per tsc 6.0
+        //   module unset → `default_module_kind_for_target(target, explicit)`
+        //                  (tsc 6.0: `ES2022` when target is unset)
         //   moduleResolution unset → `default_module_resolution_for_module(module)`
-        // and `Bundler` / `Node16` / `NodeNext` all count as "modern".
+        // and `Bundler` / `Node16` / `NodeNext` all count as "modern". The
+        // unset-target module (`ES2022`) still resolves to `Bundler`, so this
+        // gate is unaffected by the exact module kind.
         // See https://github.com/tsz-org/tsz/issues/3509.
         let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
             compiler_opts.get("moduleResolution")
