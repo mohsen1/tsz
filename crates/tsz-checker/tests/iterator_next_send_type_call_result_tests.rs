@@ -17,7 +17,7 @@
 //! all recovered (`yield*` `TReturn` resolution benefits too), and:
 //!   - Generator/AsyncGenerator call results report exactly as their
 //!     `declare const` form does, and
-//!   - non-generator iterables (`Set`, `Map`, IterableIterator, a user
+//!   - non-generator iterables (`Set`, `Map`, `IterableIterator`, a user
 //!     interface whose iterator factory returns a non-generator) report
 //!     nothing, matching tsc.
 //!
