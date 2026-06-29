@@ -443,6 +443,9 @@ path = "tests/intersection_merged_property_write_type_tests.rs"
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 [[test]]
+name = "tuple_rest_destructuring_slice_tests"
+path = "tests/tuple_rest_destructuring_slice_tests.rs"
+[[test]]
 name = "nan_equality_lib_symbol_ids_tests"
 path = "tests/nan_equality_lib_symbol_ids_tests.rs"
 [[test]]

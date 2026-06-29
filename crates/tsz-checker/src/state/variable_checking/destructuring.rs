@@ -344,6 +344,64 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns `true` when an array binding pattern's destructuring source is a
+    /// fresh array-literal initializer (`var [a, ...rest] = [1, 2, 3]`).
+    ///
+    /// tsc widens a fresh array literal to `ElementType[]` via
+    /// `getWidenedTypeForVariableLikeDeclaration`, so a `...rest` element binds
+    /// `createArrayType(elementType)` — *not* the residual tuple slice. tsz
+    /// keeps the un-widened literal tuple as the destructuring source (for
+    /// positional `const` literal-default precision, e.g. `const [first = 0] =
+    /// [10, 20]`), so the rest path detects the fresh-literal origin and widens,
+    /// while declared and `as const` tuple sources keep slicing
+    /// (`sliceTupleType`).
+    ///
+    /// Walks up through nested binding patterns/elements to the enclosing
+    /// `VARIABLE_DECLARATION`. A `[...] as const` initializer is an
+    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it keeps slicing;
+    /// parameter sources (annotated tuple types) are never fresh.
+    pub(crate) fn array_binding_source_is_fresh_array_literal(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> bool {
+        let mut current = pattern_idx;
+        for _ in 0..64 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            let kind = parent_node.kind;
+            if kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node) else {
+                    return false;
+                };
+                if var_decl.initializer.is_none() {
+                    return false;
+                }
+                return self
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init| init.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+            }
+            if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || kind == syntax_kind_ext::BINDING_ELEMENT
+            {
+                current = parent;
+                continue;
+            }
+            return false;
+        }
+        false
+    }
+
     pub(crate) fn report_empty_array_destructuring_bounds(
         &mut self,
         pattern_idx: NodeIndex,
@@ -586,258 +644,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Record source expression info for destructured bindings.
-    /// Maps each binding element symbol to `(source_expression, property_name)` so that
-    /// flow narrowing can check if the source's property has been narrowed by a condition.
-    /// For example, `const { bar } = aFoo` records `bar -> (aFoo_node, "bar")`.
-    pub(crate) fn record_destructured_binding_sources(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_expr: NodeIndex,
-    ) {
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        for &element_idx in &pattern_data.elements.nodes {
-            if element_idx.is_none() {
-                continue;
-            }
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                continue;
-            };
-            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                continue;
-            };
-
-            // Get the property name for this binding element
-            let prop_name = if element_data.property_name.is_some() {
-                // Explicit property name: `{ foo: bar } = obj` — property is "foo"
-                if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                    self.ctx
-                        .arena
-                        .get_identifier(prop_node)
-                        .map(|ident| ident.escaped_text.clone())
-                } else {
-                    None
-                }
-            } else {
-                // Shorthand: `{ bar } = obj` — property name is the identifier name
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
-            };
-
-            let Some(prop_atom) = prop_name else {
-                continue;
-            };
-
-            if name_node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
-                    self.ctx
-                        .destructured_binding_sources
-                        .insert(sym_id, (source_expr, prop_atom));
-                }
-            } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                // Nested: `{ nested: { a, b } } = obj` — recurse with dotted path prefix
-                self.record_nested_destructured_binding_sources(
-                    element_data.name,
-                    source_expr,
-                    &prop_atom,
-                );
-            }
-        }
-    }
-
-    /// Record destructured binding sources for nested object destructuring patterns.
-    ///
-    /// For `{ nested: { a, b: text } } = obj`, records:
-    /// - symbol for `a`  → (obj, "nested.a")
-    /// - symbol for `text` → (obj, "nested.b")
-    fn record_nested_destructured_binding_sources(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_expr: NodeIndex,
-        prefix: &str,
-    ) {
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        for &element_idx in &pattern_data.elements.nodes {
-            if element_idx.is_none() {
-                continue;
-            }
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                continue;
-            };
-            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                continue;
-            };
-
-            // Get the property name for this binding element
-            let prop_name = if element_data.property_name.is_some() {
-                if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                    self.ctx
-                        .arena
-                        .get_identifier(prop_node)
-                        .map(|ident| ident.escaped_text.clone())
-                } else {
-                    None
-                }
-            } else {
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
-            };
-
-            let Some(prop_atom) = prop_name else {
-                continue;
-            };
-
-            let dotted_path = format!("{prefix}.{prop_atom}");
-
-            if name_node.kind == SyntaxKind::Identifier as u16 {
-                if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
-                    self.ctx
-                        .destructured_binding_sources
-                        .insert(sym_id, (source_expr, dotted_path));
-                }
-            } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                // Further nesting — recurse
-                self.record_nested_destructured_binding_sources(
-                    element_data.name,
-                    source_expr,
-                    &dotted_path,
-                );
-            }
-        }
-    }
-
-    /// Record destructured binding group information for correlated narrowing.
-    /// When `const { data, isSuccess } = useQuery()`, this records that both `data` and
-    /// `isSuccess` come from the same union source and can be used for correlated narrowing.
-    pub(crate) fn record_destructured_binding_group(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_type: TypeId,
-        is_const: bool,
-        pattern_kind: u16,
-    ) {
-        use crate::context::DestructuredBindingInfo;
-
-        let group_id = self.ctx.next_binding_group_id;
-        self.ctx.next_binding_group_id += 1;
-
-        let mut stack: Vec<(NodeIndex, TypeId, u16, String)> =
-            vec![(pattern_idx, source_type, pattern_kind, String::new())];
-
-        while let Some((curr_pattern_idx, _curr_source_type, curr_kind, base_path)) = stack.pop() {
-            let Some(curr_pattern_node) = self.ctx.arena.get(curr_pattern_idx) else {
-                continue;
-            };
-            let Some(curr_pattern_data) = self.ctx.arena.get_binding_pattern(curr_pattern_node)
-            else {
-                continue;
-            };
-
-            let curr_is_object = curr_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
-
-            for (i, &element_idx) in curr_pattern_data.elements.nodes.iter().enumerate() {
-                if element_idx.is_none() {
-                    continue;
-                }
-                let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                    continue;
-                };
-                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                    continue;
-                }
-                let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                    continue;
-                };
-
-                let path_segment = if curr_is_object {
-                    if element_data.property_name.is_some() {
-                        if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                            self.ctx
-                                .arena
-                                .get_identifier(prop_node)
-                                .map(|ident| ident.escaped_text.clone())
-                                .unwrap_or_default()
-                        } else {
-                            String::new()
-                        }
-                    } else {
-                        self.ctx
-                            .arena
-                            .get_identifier(name_node)
-                            .map(|ident| ident.escaped_text.clone())
-                            .unwrap_or_default()
-                    }
-                } else {
-                    String::new()
-                };
-
-                let property_name = if curr_is_object {
-                    if base_path.is_empty() {
-                        path_segment
-                    } else if path_segment.is_empty() {
-                        base_path.clone()
-                    } else {
-                        format!("{base_path}.{path_segment}")
-                    }
-                } else {
-                    String::new()
-                };
-
-                if name_node.kind == SyntaxKind::Identifier as u16 {
-                    if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
-                        self.ctx.destructured_bindings.insert(
-                            sym_id,
-                            DestructuredBindingInfo {
-                                source_type,
-                                property_name: property_name.clone(),
-                                element_index: i as u32,
-                                group_id,
-                                is_const,
-                                is_rest: element_data.dot_dot_dot_token,
-                            },
-                        );
-                    }
-                    continue;
-                }
-
-                // Keep correlated narrowing scoped to direct siblings from the same
-                // destructuring layer. TypeScript does not correlate nested aliases
-                // like `const { resp: { data }, type } = value`.
-            }
-        }
-    }
-
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type_with_request(
         &mut self,
@@ -885,27 +691,17 @@ impl<'a> CheckerState<'a> {
 
             // For union types of tuples/arrays, resolve element type from each member
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
+                // Rest element: distribute `sliceTupleType` over an all-tuple
+                // union, otherwise bind a single array of the union's element
+                // type — matching tsc's `getBindingElementTypeFromParentType`.
+                if element_data.dot_dot_dot_token {
+                    return self.union_rest_binding_type(&members, parent_type, element_index);
+                }
                 let mut elem_types = Vec::new();
                 let factory = self.ctx.types.factory();
                 for &member in &members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
-                    if element_data.dot_dot_dot_token {
-                        let elem_type = if let Some(elem) =
-                            query::array_element_type(self.ctx.types, member)
-                        {
-                            factory.array(elem)
-                        } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
-                            let rest_elem = elems
-                                .iter()
-                                .find(|e| e.rest)
-                                .or_else(|| elems.last())
-                                .map_or(TypeId::ANY, |e| e.type_id);
-                            self.rest_binding_array_type(rest_elem)
-                        } else {
-                            continue;
-                        };
-                        elem_types.push(elem_type);
-                    } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
+                    if let Some(elem) = query::array_element_type(self.ctx.types, member) {
                         let mut elem = elem;
                         if self.ctx.no_unchecked_indexed_access() {
                             elem = self.add_undefined_if_missing_for_destructuring(elem);
@@ -934,7 +730,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if elem_types.is_empty() && !element_data.dot_dot_dot_token {
+                if elem_types.is_empty() {
                     // All members are tuples that are out of bounds for this index.
                     // Emit TS2339 "Property 'N' does not exist on type 'X'".
                     let all_tuples_oob = members.iter().all(|&m| {
@@ -969,20 +765,22 @@ impl<'a> CheckerState<'a> {
             let array_like = query::unwrap_readonly_deep(self.ctx.types, parent_type);
             // Rest element: ...rest
             if element_data.dot_dot_dot_token {
-                let elem_type =
-                    if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                        elem
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                        // Best-effort: if the tuple has a rest element, use it; otherwise, fall back to last.
-                        elems
-                            .iter()
-                            .find(|e| e.rest)
-                            .or_else(|| elems.last())
-                            .map_or(TypeId::ANY, |e| e.type_id)
-                    } else {
-                        TypeId::ANY
-                    };
-                return self.rest_binding_array_type(elem_type);
+                if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
+                    // Array source `E[]` → `E[]`.
+                    return self.rest_binding_array_type(elem);
+                } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
+                    // A fresh array-literal source is widened by tsc to
+                    // `createArrayType(elementType)` (it is `E[]`, not a tuple,
+                    // at the destructuring site), so the rest binds the element
+                    // array. Declared / `as const` tuple sources slice the
+                    // residual, matching tsc's `sliceTupleType`.
+                    if self.array_binding_source_is_fresh_array_literal(pattern_idx) {
+                        let elem = self.get_element_access_type(array_like, TypeId::NUMBER, None);
+                        return self.rest_binding_array_type(elem);
+                    }
+                    return self.tuple_rest_binding_type(&elems, element_index);
+                }
+                return self.rest_binding_array_type(TypeId::ANY);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
@@ -1603,4 +1401,5 @@ impl<'a> CheckerState<'a> {
     }
 }
 
+mod recording;
 mod tail;

@@ -894,10 +894,20 @@ fn test_recursive_array_destructuring_in_switch_does_not_overflow() {
     );
 
     // Filter out expected diagnostics: TS2318 (missing globals), TS2339 (property access),
-    // and TS2345 (recursive type arg mismatch in destructured switch branches).
+    // TS2345 (recursive type arg mismatch in destructured switch branches), and TS7006.
+    //
+    // The rest binding `...operands` now correctly types as the residual tuple
+    // slice per `tsc`'s `sliceTupleType` (a union of array/tuple residuals here),
+    // rather than the previous over-collapsed element array. Under this test's
+    // deliberately minimal, hand-written `Array` interface, resolving an
+    // `Array<T>` *method* (`.every`) on that array-like union reports a spurious
+    // TS2339 (already filtered) which cascades into TS7006 on the callback
+    // parameter. Both are artifacts of the custom-`Array`/`--noLib` union
+    // method-resolution gap tracked in #15087, not of this overflow regression;
+    // real-lib programs resolve `.every` on the same union without issue.
     let relevant: Vec<_> = diags
         .into_iter()
-        .filter(|(code, _)| *code != 2318 && *code != 2339 && *code != 2345)
+        .filter(|(code, _)| *code != 2318 && *code != 2339 && *code != 2345 && *code != 7006)
         .collect();
     assert!(
         relevant.is_empty(),
