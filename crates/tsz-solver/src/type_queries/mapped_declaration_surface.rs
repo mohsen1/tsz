@@ -101,6 +101,7 @@ fn mapped_surface_with_optional_undefined_inner(
     let shape = db.object_shape(shape_id);
     let mut changed = false;
     let mut properties = shape.properties.clone();
+    let is_array_like_surface = is_array_like_mapped_surface(db, &shape, &properties);
     for prop in &mut properties {
         let original_type = prop.type_id;
         let nested_type = mapped_surface_with_optional_undefined_inner(db, prop.type_id, depth + 1);
@@ -120,15 +121,20 @@ fn mapped_surface_with_optional_undefined_inner(
             prop.type_id = optional_type;
             changed = true;
         }
-    }
 
-    let is_array_like_surface = shape.number_index.is_some()
-        && properties.iter().any(|prop| {
-            matches!(
-                db.resolve_atom_ref(prop.name).as_ref(),
-                "length" | "toString" | "flatMap" | "[Symbol.unscopables]"
-            )
-        });
+        if is_array_like_surface
+            && db.resolve_atom_ref(prop.name).as_ref() == "[Symbol.unscopables]"
+        {
+            let filtered_type = filter_array_unscopables_surface(db, prop.type_id);
+            if filtered_type != prop.type_id {
+                if prop.write_type == prop.type_id {
+                    prop.write_type = filtered_type;
+                }
+                prop.type_id = filtered_type;
+                changed = true;
+            }
+        }
+    }
 
     if is_array_like_surface && let Some(index) = &shape.number_index {
         let value_type = index.value_type;
@@ -177,6 +183,53 @@ fn mapped_surface_with_optional_undefined_inner(
         }
     } else {
         surface
+    }
+}
+
+fn is_array_like_mapped_surface(
+    db: &dyn TypeDatabase,
+    shape: &ObjectShape,
+    properties: &[PropertyInfo],
+) -> bool {
+    shape.number_index.is_some()
+        && properties.iter().any(|prop| {
+            matches!(
+                db.resolve_atom_ref(prop.name).as_ref(),
+                "length" | "toString" | "flatMap" | "[Symbol.unscopables]"
+            )
+        })
+}
+
+fn filter_array_unscopables_surface(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(type_data) = db.lookup(type_id) else {
+        return type_id;
+    };
+    let (shape_id, with_index) = match type_data {
+        TypeData::Object(shape_id) => (shape_id, false),
+        TypeData::ObjectWithIndex(shape_id) => (shape_id, true),
+        _ => return type_id,
+    };
+    let shape = db.object_shape(shape_id);
+    let properties: Vec<_> = shape
+        .properties
+        .iter()
+        .filter(|prop| super::mapped_display_order::array_property_rank(db, prop.name).is_some())
+        .cloned()
+        .collect();
+    if properties.len() == shape.properties.len() {
+        return type_id;
+    }
+    if with_index {
+        db.object_with_index(ObjectShape {
+            flags: shape.flags,
+            properties,
+            string_index: shape.string_index,
+            number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
+            symbol: shape.symbol,
+        })
+    } else {
+        db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
     }
 }
 

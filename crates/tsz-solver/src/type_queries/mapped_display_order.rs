@@ -225,7 +225,7 @@ pub(crate) fn sort_array_homomorphic_source_properties(
     }
 }
 
-fn array_property_rank(db: &dyn TypeDatabase, name: Atom) -> Option<usize> {
+pub(crate) fn array_property_rank(db: &dyn TypeDatabase, name: Atom) -> Option<usize> {
     [
         "length",
         "toString",

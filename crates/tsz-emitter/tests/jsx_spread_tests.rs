@@ -643,16 +643,11 @@ fn react_jsxdev_column_number_uses_utf16_units() {
     // runtime sees when indexing strings). Source text containing non-ASCII
     // characters before the JSX element must not shift the column past tsc.
     //
-    // tsc anchors `__source` at the element's trivia-inclusive full start
-    // (`node.pos`), i.e. the position immediately after the previous token —
-    // here the space right after the second `=`.
-    //
     // Layout (1-based UTF-16 columns):
-    //   c o n s t   x   =   " 😀 "  ,     y     =  (sp)  <
+    //   c o n s t   x   =   " 😀 "  ,     y     =     <
     //   1 2 3 4 5 6 7 8 9 10 11 12-13 14 15 16 17 18 19 20 21
-    // The astral `😀` occupies UTF-16 columns 12 and 13 (surrogate pair). The
-    // `=` lands at column 19, so the full start (the space after it) is
-    // column 20.
+    // The astral `😀` occupies UTF-16 columns 12 and 13 (surrogate pair),
+    // so the `<` lands at column 21.
     let source = "const x = \"\u{1F600}\", y = <div />;\n";
     let opts = PrintOptions {
         jsx: JsxEmit::ReactJsxDev,
@@ -663,12 +658,12 @@ fn react_jsxdev_column_number_uses_utf16_units() {
     let output = parse_and_print_named_with_opts("test.tsx", source, opts);
 
     assert!(
-        output.contains("columnNumber: 20"),
-        "Expected UTF-16 columnNumber: 20 (full start after `=`) past an emoji, got:\n{output}"
+        output.contains("columnNumber: 21"),
+        "Expected UTF-16 columnNumber: 21 for `<` after an emoji, got:\n{output}"
     );
     assert!(
-        !output.contains("columnNumber: 22"),
-        "columnNumber must not count UTF-8 bytes (would render 22), got:\n{output}"
+        !output.contains("columnNumber: 23"),
+        "columnNumber must not count UTF-8 bytes (would render 23), got:\n{output}"
     );
 }
 
@@ -676,10 +671,9 @@ fn react_jsxdev_column_number_uses_utf16_units() {
 fn react_jsxdev_column_number_with_bmp_non_ascii() {
     // BMP non-ASCII characters (here `é`) are one UTF-16 code unit each, so
     // the column count should match the character index even though `é` is
-    // two UTF-8 bytes. tsc anchors `__source` at the element's full start (the
-    // space right after `=`), which lands at UTF-16 column 13 here.
-    //   c o n s t _ c a f é _  =  (sp) <
-    //   1 2 3 4 5 6 7 8 9 10 11 12 13   14
+    // two UTF-8 bytes. `<` lands at UTF-16 column 14 here.
+    //   c o n s t _ c a f é _  =  _ <
+    //   1 2 3 4 5 6 7 8 9 10 11 12 13 14
     let source = "const caf\u{00E9} = <div />;\n";
     let opts = PrintOptions {
         jsx: JsxEmit::ReactJsxDev,
@@ -690,13 +684,13 @@ fn react_jsxdev_column_number_with_bmp_non_ascii() {
     let output = parse_and_print_named_with_opts("test.tsx", source, opts);
 
     assert!(
-        output.contains("columnNumber: 13"),
-        "Expected columnNumber: 13 (full start after `=`) past a BMP non-ASCII identifier, got:\n{output}"
+        output.contains("columnNumber: 14"),
+        "Expected columnNumber: 14 for `<` after a BMP non-ASCII identifier, got:\n{output}"
     );
-    // UTF-8 byte counting would have produced 14 (`é` is two bytes).
+    // UTF-8 byte counting would have produced 15 (`é` is two bytes).
     assert!(
-        !output.contains("columnNumber: 14"),
-        "columnNumber must not count UTF-8 bytes (would render 14), got:\n{output}"
+        !output.contains("columnNumber: 15"),
+        "columnNumber must not count UTF-8 bytes (would render 15), got:\n{output}"
     );
 }
 

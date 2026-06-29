@@ -585,6 +585,31 @@ impl<'a> DeclarationEmitter<'a> {
         Self::function_type_return_type_text(&callee_type)
     }
 
+    fn higher_order_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(call.expression);
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+
+        let callee_type_text = self
+            .call_expression_reused_type_text(callee_idx)
+            .or_else(|| self.call_expression_source_return_type_text(callee_idx))
+            .or_else(|| self.call_expression_declared_return_type_text(callee_idx))?;
+        let parts = Self::parse_function_type_text(&callee_type_text)?;
+        if parts.return_type.contains("unknown") || parts.return_type == "any" {
+            return None;
+        }
+        Some(parts.return_type)
+    }
+
     fn object_literal_member_call_return_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -991,6 +1016,9 @@ impl<'a> DeclarationEmitter<'a> {
                 // produces the same intersection tsc emits.
                 if let Some(text) = self.mixin_call_intersection_source_text(expr_idx) {
                     return Some(text);
+                }
+                if let Some(type_text) = self.higher_order_call_return_type_text(expr_idx) {
+                    return Some(type_text);
                 }
                 let suppress_declared_conditional_alias_surface =
                     self.call_expression_declared_return_has_source_conditional_alias(expr_idx);
