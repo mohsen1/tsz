@@ -256,16 +256,15 @@ impl<'a> CheckerState<'a> {
             for &member_idx in &dm.members {
                 // Phase 1: read the member shape and position under the
                 // immutable arena borrow only.
-                let mut pos = u32::MAX;
-                let shape = {
+                let (pos, shape) = {
                     let Some(member_node) = self.ctx.arena.get(member_idx) else {
                         continue;
                     };
-                    pos = member_node.pos;
+                    let pos = member_node.pos;
                     let instance = |modifiers: &Option<tsz_parser::parser::NodeList>| {
                         !self.has_static_modifier(modifiers)
                     };
-                    match member_node.kind {
+                    let shape = match member_node.kind {
                         syntax_kind_ext::PROPERTY_DECLARATION if dm.is_class => self
                             .ctx
                             .arena
@@ -318,7 +317,8 @@ impl<'a> CheckerState<'a> {
                             })
                             .unwrap_or(Shape::Skip),
                         _ => Shape::Skip,
-                    }
+                    };
+                    (pos, shape)
                 };
 
                 // Phase 2: resolve the comparison type with `&mut self`.
