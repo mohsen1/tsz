@@ -299,8 +299,10 @@ fn ts2367_message(src: &str) -> String {
     check_source_strict_messages(src)
         .into_iter()
         .find(|(c, _)| *c == 2367)
-        .map(|(_, m)| m)
-        .unwrap_or_else(|| panic!("expected a TS2367 diagnostic for: {src}"))
+        .map_or_else(
+            || panic!("expected a TS2367 diagnostic for: {src}"),
+            |(_, m)| m,
+        )
 }
 
 #[test]
