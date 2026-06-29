@@ -76,7 +76,7 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        if relation_result.iteration_exceeded || relation_result.depth_exceeded {
+        if relation_result.iteration_exceeded() || relation_result.depth_exceeded() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_current_node(

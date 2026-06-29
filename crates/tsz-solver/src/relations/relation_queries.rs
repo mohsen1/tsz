@@ -319,16 +319,86 @@ pub struct RelationContext<'a> {
 pub struct RelationResult {
     pub kind: RelationKind,
     pub related: bool,
-    /// Stack-depth limit (nesting) was exceeded → TS2321 "Excessive stack depth".
-    pub depth_exceeded: bool,
-    /// Iteration-count budget was exhausted → TS2859 "Excessive complexity".
-    pub iteration_exceeded: bool,
+    termination: RelationTermination,
+}
+
+/// Whether a relation query completed or stopped at a relation budget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelationTermination {
+    /// The relation completed within the stack-depth and iteration budgets.
+    Complete,
+    /// The relation stack-depth budget was exceeded → TS2321.
+    DepthExceeded,
+    /// The relation iteration-count budget was exceeded → TS2859.
+    IterationExceeded,
+}
+
+impl RelationTermination {
+    pub const fn from_flags(depth_exceeded: bool, iteration_exceeded: bool) -> Self {
+        if iteration_exceeded {
+            Self::IterationExceeded
+        } else if depth_exceeded {
+            Self::DepthExceeded
+        } else {
+            Self::Complete
+        }
+    }
+
+    /// Whether the relation stopped at any relation budget.
+    ///
+    /// This preserves the legacy broad `depth_exceeded` signal: iteration
+    /// complexity overflow also counts as exceeded for existing propagation
+    /// paths. Use [`Self::iteration_exceeded`] to distinguish TS2859-style
+    /// complexity overflow from stack-depth overflow.
+    pub const fn depth_exceeded(self) -> bool {
+        !matches!(self, Self::Complete)
+    }
+
+    pub const fn iteration_exceeded(self) -> bool {
+        matches!(self, Self::IterationExceeded)
+    }
 }
 
 impl RelationResult {
+    pub const fn complete(kind: RelationKind, related: bool) -> Self {
+        Self {
+            kind,
+            related,
+            termination: RelationTermination::Complete,
+        }
+    }
+
+    const fn new(
+        kind: RelationKind,
+        related: bool,
+        depth_exceeded: bool,
+        iteration_exceeded: bool,
+    ) -> Self {
+        Self {
+            kind,
+            related,
+            termination: RelationTermination::from_flags(depth_exceeded, iteration_exceeded),
+        }
+    }
+
     #[inline]
     pub const fn is_related(self) -> bool {
         self.related
+    }
+
+    #[inline]
+    pub const fn termination(self) -> RelationTermination {
+        self.termination
+    }
+
+    #[inline]
+    pub const fn depth_exceeded(self) -> bool {
+        self.termination.depth_exceeded()
+    }
+
+    #[inline]
+    pub const fn iteration_exceeded(self) -> bool {
+        self.termination.iteration_exceeded()
     }
 }
 
@@ -337,12 +407,12 @@ const fn relation_result_from_compat_checker<R: TypeResolver>(
     related: bool,
     checker: &CompatChecker<'_, R>,
 ) -> RelationResult {
-    RelationResult {
+    RelationResult::new(
         kind,
         related,
-        depth_exceeded: checker.depth_exceeded(),
-        iteration_exceeded: checker.iteration_exceeded(),
-    }
+        checker.depth_exceeded(),
+        checker.iteration_exceeded(),
+    )
 }
 
 const fn relation_result_from_subtype_checker<R: TypeResolver>(
@@ -350,12 +420,12 @@ const fn relation_result_from_subtype_checker<R: TypeResolver>(
     related: bool,
     checker: &SubtypeChecker<'_, R>,
 ) -> RelationResult {
-    RelationResult {
+    RelationResult::new(
         kind,
         related,
-        depth_exceeded: checker.depth_exceeded(),
-        iteration_exceeded: checker.iteration_exceeded(),
-    }
+        checker.depth_exceeded(),
+        checker.iteration_exceeded(),
+    )
 }
 
 /// Structured failure details for assignability diagnostics.
@@ -482,12 +552,12 @@ where
         }
     };
 
-    let result = RelationResult {
+    let result = RelationResult::new(
         kind,
         related,
-        depth_exceeded: checker.depth_exceeded(),
-        iteration_exceeded: checker.iteration_exceeded(),
-    };
+        checker.depth_exceeded(),
+        checker.iteration_exceeded(),
+    );
 
     // The failure analysis runs on the same `checker`, so its relation cache is
     // already warm with the decision's sub-results: the structural reason walk
@@ -622,8 +692,8 @@ pub fn query_relation_with_overrides<
 
     tracing::debug!(
         related = result.related,
-        depth_exceeded = result.depth_exceeded,
-        iteration_exceeded = result.iteration_exceeded,
+        depth_exceeded = result.depth_exceeded(),
+        iteration_exceeded = result.iteration_exceeded(),
         "query_relation result"
     );
 
@@ -644,12 +714,12 @@ pub fn query_erased_overload_params_with_matching_return_base<'a, R: TypeResolve
     let related = checker
         .check_erased_function_type_params_with_matching_return_base(source, target)
         .is_true();
-    RelationResult {
-        kind: RelationKind::Subtype,
+    RelationResult::new(
+        RelationKind::Subtype,
         related,
-        depth_exceeded: checker.depth_exceeded(),
-        iteration_exceeded: checker.iteration_exceeded(),
-    }
+        checker.depth_exceeded(),
+        checker.iteration_exceeded(),
+    )
 }
 
 /// Bundled inputs for relation queries.

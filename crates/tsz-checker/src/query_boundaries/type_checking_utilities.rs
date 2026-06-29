@@ -58,8 +58,8 @@ pub(crate) fn rest_element_array_like_relation_outcome(
 
     super::assignability::RelationOutcome {
         related: result.related,
-        depth_exceeded: result.depth_exceeded,
-        iteration_exceeded: result.iteration_exceeded,
+        depth_exceeded: result.depth_exceeded(),
+        iteration_exceeded: result.iteration_exceeded(),
         failure: None,
         weak_union_violation: false,
         property_classification: None,

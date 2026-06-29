@@ -506,14 +506,13 @@ fn test_bivariant_relation_boundary_preserves_overflow_flags() {
         "bivariant relation helper must return the full solver RelationResult \
          for the AssignableBivariantCallbacks kind"
     );
-    // Bivariant overflow flags must reach the boundary outcome. Accept either
-    // the legacy tuple destructure (`(r.is_related(), r.depth_exceeded, r.iteration_exceeded)`)
-    // or any direct propagation via field reads.
+    // Bivariant overflow verdicts must reach the boundary outcome through the
+    // solver-owned `RelationResult` methods.
     let bivariant_overflow_path = boundary_source
-        .contains("(r.is_related(), r.depth_exceeded, r.iteration_exceeded)")
+        .contains("(r.is_related(), r.depth_exceeded(), r.iteration_exceeded())")
         || (boundary_source.contains(".is_related()")
-            && boundary_source.contains(".depth_exceeded")
-            && boundary_source.contains(".iteration_exceeded"));
+            && boundary_source.contains(".depth_exceeded()")
+            && boundary_source.contains(".iteration_exceeded()"));
     assert!(
         bivariant_overflow_path,
         "execute_relation must forward bivariant callback depth/iteration overflow flags"
@@ -524,8 +523,8 @@ fn test_bivariant_relation_boundary_preserves_overflow_flags() {
     );
     assert!(
         checker_source.contains("self.propagate_overflow_flags(")
-            && checker_source.contains("relation_result.depth_exceeded")
-            && checker_source.contains("relation_result.iteration_exceeded")
+            && checker_source.contains("relation_result.depth_exceeded()")
+            && checker_source.contains("relation_result.iteration_exceeded()")
             && checker_source.contains("let result = relation_result.is_related();"),
         "legacy bivariant boolean wrapper must merge overflow flags before returning/caching the bool"
     );

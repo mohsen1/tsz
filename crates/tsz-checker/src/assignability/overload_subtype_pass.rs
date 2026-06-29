@@ -44,8 +44,8 @@ impl<'a> CheckerState<'a> {
         let result = relation_result.is_related();
 
         self.propagate_overflow_flags(
-            relation_result.depth_exceeded,
-            relation_result.iteration_exceeded,
+            relation_result.depth_exceeded(),
+            relation_result.iteration_exceeded(),
         );
 
         trace!(source = source.0, target = target.0, result, "{label}");
