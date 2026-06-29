@@ -480,6 +480,46 @@ setup_application_package_managers() {
   export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
   export COREPACK_HOME="$pm_home/corepack"
 
+  # Several application fixtures pin an engines.node / packageManager that the
+  # self-hosted runner's baked-in Node (v18 at time of writing) does not satisfy.
+  # Recent pnpm releases refuse to even START on Node < 22.13, and pnpm enforces
+  # a ROOT project's engines.node UNCONDITIONALLY (engine-strict cannot disable
+  # it -- https://pnpm.io/settings), so directus/supabase-studio/umami/
+  # immich-server have no install-flag bypass: they need a modern Node. Best-effort
+  # fetch a current Node 22 LTS into the PM home and prepend it so corepack/node/
+  # npm/yarn/pnpm/bun all run under it. Every failure path falls back to the
+  # runner Node, so this never regresses a row that installed before.
+  local node_dir="$pm_home/node"
+  if ! { command -v node >/dev/null 2>&1 \
+    && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' 2>/dev/null; } \
+    && [ ! -x "$node_dir/bin/node" ]; then
+    local node_os=linux node_arch=x64
+    case "$(uname -s 2>/dev/null)" in Darwin) node_os=darwin ;; esac
+    case "$(uname -m 2>/dev/null)" in aarch64 | arm64) node_arch=arm64 ;; esac
+    local node_base="https://nodejs.org/dist/latest-v22.x"
+    local node_file=""
+    # `|| true`: a network failure here must not abort the (set -euo pipefail)
+    # guard run -- it degrades to the runner Node.
+    node_file="$(curl -fsSL "$node_base/SHASUMS256.txt" 2>/dev/null \
+      | grep -oE "node-v22\.[0-9.]+-${node_os}-${node_arch}\.tar\.gz" | head -1)" || true
+    if [ -n "$node_file" ]; then
+      echo "[pm-setup] provisioning ${node_file} for application fixture installs" >&2
+      mkdir -p "$node_dir" 2>/dev/null || true
+      { curl -fsSL "$node_base/$node_file" -o "$pm_home/node22.tar.gz" 2>/dev/null \
+        && tar -xzf "$pm_home/node22.tar.gz" -C "$node_dir" --strip-components=1 2>/dev/null; } || true
+      rm -f "$pm_home/node22.tar.gz" 2>/dev/null || true
+    fi
+  fi
+  if [ -x "$node_dir/bin/node" ]; then
+    case ":$PATH:" in *":$node_dir/bin:"*) ;; *) export PATH="$node_dir/bin:$PATH" ;; esac
+  fi
+
+  # rocketchat vendors devoto13/yarn-plugin-engines, which hard-fails Yarn Berry
+  # "Project validation" when the runner Node is older than the project's pin
+  # ("The current node version ... does not satisfy the required version ...").
+  # This env disables that plugin's gate; it is a no-op when the plugin is absent.
+  export PLUGIN_YARN_ENGINES_DISABLE=1
+
   # corepack -> yarn + pnpm at each app's pinned version.
   command -v corepack >/dev/null 2>&1 || npm i -g corepack >/dev/null 2>&1 || true
   corepack enable --install-directory "$pm_home/bin" >/dev/null 2>&1 \
@@ -495,7 +535,7 @@ setup_application_package_managers() {
       | env BUN_INSTALL="$pm_home" bash >/dev/null 2>&1 || true
   fi
 
-  echo "[pm-setup] node=$(command -v node || echo -) npm=$(command -v npm || echo -) corepack=$(command -v corepack || echo -) yarn=$(command -v yarn || echo -) pnpm=$(command -v pnpm || echo -) bun=$(command -v bun || echo -)" >&2
+  echo "[pm-setup] node=$(command -v node || echo -) ($(node --version 2>/dev/null || echo '?')) npm=$(command -v npm || echo -) corepack=$(command -v corepack || echo -) yarn=$(command -v yarn || echo -) pnpm=$(command -v pnpm || echo -) bun=$(command -v bun || echo -)" >&2
 }
 
 # Generic handler for category:"application" canary rows: clone the pinned
@@ -1161,7 +1201,7 @@ run_project_row() {
       ;;
     excalidraw-project)
       run_application_row "excalidraw-project" "excalidraw" "$EXCALIDRAW_REPO" "$EXCALIDRAW_REF" \
-        "yarn install --frozen-lockfile --ignore-scripts" "." "packages/excalidraw/tsconfig.json" "packages/excalidraw"
+        "yarn install --frozen-lockfile --ignore-scripts --ignore-engines" "." "packages/excalidraw/tsconfig.json" "packages/excalidraw"
       ;;
     dub-project)
       run_application_row "dub-project" "dub" "$DUB_REPO" "$DUB_REF" \
@@ -1173,11 +1213,11 @@ run_project_row() {
       ;;
     typebot-project)
       run_application_row "typebot-project" "typebot" "$TYPEBOT_REPO" "$TYPEBOT_REF" \
-        "bun install --frozen-lockfile" "." "apps/builder/tsconfig.json" "apps/builder"
+        "bun install --frozen-lockfile --ignore-scripts" "." "apps/builder/tsconfig.json" "apps/builder"
       ;;
     lobe-chat-project)
       run_application_row "lobe-chat-project" "lobe-chat" "$LOBE_CHAT_REPO" "$LOBE_CHAT_REF" \
-        "pnpm install --frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
+        "pnpm install --no-frozen-lockfile --ignore-scripts" "." "tsconfig.json" "src"
       ;;
     supabase-studio-project)
       run_application_row "supabase-studio-project" "supabase-studio" "$SUPABASE_STUDIO_REPO" "$SUPABASE_STUDIO_REF" \
@@ -1221,7 +1261,7 @@ run_project_row() {
       ;;
     documenso-project)
       run_application_row "documenso-project" "documenso" "$DOCUMENSO_REPO" "$DOCUMENSO_REF" \
-        "npm ci --ignore-scripts" "." "apps/remix/tsconfig.json" "apps/remix"
+        "npm install --ignore-scripts --no-audit --no-fund" "." "apps/remix/tsconfig.json" "apps/remix"
       ;;
     affine-project)
       run_application_row "affine-project" "affine" "$AFFINE_REPO" "$AFFINE_REF" \
