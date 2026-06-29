@@ -103,6 +103,22 @@ impl TypeInterner {
             }
         }
 
+        // An enum is a subtype of a non-enum target exactly when its structural
+        // member union is: a numeric enum's members are number literals
+        // (`E <: number`), a string enum's are string literals (`S <: string`).
+        // This lets union/intersection reduction collapse `number | E` to
+        // `number` and `string | S` to `string`, matching tsc's `getUnionType`
+        // reduction (`getBaseTypeOfLiteralType` brands enum members as their base
+        // primitive). Deferring to the structural type keeps enums nominal: a
+        // bare literal is never a subtype of a nominal `Enum` *target*, so an
+        // `Enum` target still falls through to the identity check and `E1 <: E2`
+        // stays false for distinct enums.
+        if let Some(TypeData::Enum(_, structural)) = s_data
+            && !matches!(t_data, Some(TypeData::Enum(..)))
+        {
+            return self.is_subtype_shallow_depth(structural, target, depth);
+        }
+
         // Handle source as member of target union (for built-in/primitive types only).
         if self.is_builtin_type(source)
             && let Some(TypeData::Union(members)) = t_data
