@@ -147,25 +147,55 @@ fn test_ts6046_emitted_for_invalid_module_detection_and_new_line() {
 
 #[test]
 fn test_shared_module_defaults_cover_targets_and_resolution() {
+    // tsc 6.0 `_computedOptions.module.computeValue`: every dated target tier,
+    // verified against the pinned tsc 6.0.2 via `--showConfig`.
     assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES5, true),
         ModuleKind::CommonJS
+    );
+    assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ES2015, true),
+        ModuleKind::ES2015
     );
     assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES2019, true),
         ModuleKind::ES2015
     );
     assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ES2020, true),
+        ModuleKind::ES2020
+    );
+    assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES2021, true),
         ModuleKind::ES2020
+    );
+    assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ES2022, true),
+        ModuleKind::ES2022
     );
     assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES2025, true),
         ModuleKind::ES2022
     );
     assert_eq!(
-        default_module_kind_for_target(ScriptTarget::ES2025, false),
+        default_module_kind_for_target(ScriptTarget::ESNext, true),
         ModuleKind::ESNext
+    );
+    // tsc 6.0 folds an explicit `ES3` into `LatestStandard` before deriving the
+    // module, so it lands on `ES2022` rather than the legacy `CommonJS`.
+    assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ES3, true),
+        ModuleKind::ES2022
+    );
+    // An omitted `target` resolves to `LatestStandard` (`ES2025`) → `ES2022`,
+    // independent of the already-defaulted `ScriptTarget` the caller passes.
+    assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ES2025, false),
+        ModuleKind::ES2022
+    );
+    assert_eq!(
+        default_module_kind_for_target(ScriptTarget::ESNext, false),
+        ModuleKind::ES2022
     );
     assert_eq!(
         default_module_resolution_for_module(ModuleKind::System),
@@ -183,6 +213,34 @@ fn test_shared_module_defaults_cover_targets_and_resolution() {
         default_module_resolution_for_module(ModuleKind::NodeNext),
         ModuleResolutionKind::NodeNext
     );
+}
+
+#[test]
+fn test_omitted_module_resolves_to_tsc6_default_es2022() {
+    // tsc 6.0 derives the default module from `LatestStandard` when `module`
+    // and `target` are both omitted, which lands on `ES2022` (not `ESNext`).
+    // Verified against the pinned tsc 6.0.2: `tsc --showConfig` omits the
+    // implied `module` line for `--target es2022`, proving the default equals
+    // the `ES2022`-derived module.
+    let resolved = resolve_compiler_options(None).unwrap();
+    assert_eq!(resolved.printer.module, ModuleKind::ES2022);
+    assert_eq!(resolved.checker.module, ModuleKind::ES2022);
+    assert!(!resolved.checker.module_explicitly_set);
+
+    // An explicit target with `module` omitted follows the same tiered table.
+    let with_target = |target: &str| {
+        let json = format!(r#"{{"compilerOptions":{{"target":"{target}"}}}}"#);
+        let config: TsConfig = serde_json::from_str(&json).unwrap();
+        resolve_compiler_options(config.compiler_options.as_ref())
+            .unwrap()
+            .printer
+            .module
+    };
+    assert_eq!(with_target("es5"), ModuleKind::CommonJS);
+    assert_eq!(with_target("es2015"), ModuleKind::ES2015);
+    assert_eq!(with_target("es2020"), ModuleKind::ES2020);
+    assert_eq!(with_target("es2022"), ModuleKind::ES2022);
+    assert_eq!(with_target("esnext"), ModuleKind::ESNext);
 }
 
 #[test]
