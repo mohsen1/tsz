@@ -811,6 +811,9 @@ mod computed_alias_source_display_tests;
 #[path = "tests/computed_symbol_name_unification_tests.rs"]
 mod computed_symbol_name_unification_tests;
 #[cfg(test)]
+#[path = "tests/concise_body_return_excess_property_tests.rs"]
+mod concise_body_return_excess_property_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]

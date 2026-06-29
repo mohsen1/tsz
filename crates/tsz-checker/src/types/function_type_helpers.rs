@@ -98,6 +98,27 @@ struct DirectExpressionBodyReturnMismatchCtx {
     actual_return_uses_jsdoc_cast: bool,
     is_closure: bool,
     is_async_for_context: bool,
+    return_annotation: DirectReturnAnnotation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DirectReturnAnnotation {
+    ContextualOnly,
+    Declared,
+}
+
+impl DirectReturnAnnotation {
+    const fn from_parts(has_type_annotation: bool, has_jsdoc_return: bool) -> Self {
+        if has_type_annotation || has_jsdoc_return {
+            Self::Declared
+        } else {
+            Self::ContextualOnly
+        }
+    }
+
+    const fn is_declared(self) -> bool {
+        matches!(self, Self::Declared)
+    }
 }
 
 impl<'a> CheckerState<'a> {
@@ -608,6 +629,10 @@ impl<'a> CheckerState<'a> {
             actual_return_uses_jsdoc_cast,
             is_closure: ctx.is_closure,
             is_async_for_context: ctx.is_async_for_context,
+            return_annotation: DirectReturnAnnotation::from_parts(
+                ctx.has_type_annotation,
+                ctx.jsdoc_return_context.is_some(),
+            ),
         });
     }
 
@@ -716,6 +741,85 @@ impl<'a> CheckerState<'a> {
                 ctx.expected_return_type,
                 ctx.is_async_for_context,
             );
+        }
+        // A concise (expression) body that is directly a fresh object/array
+        // literal must still run the contextual excess-property check against the
+        // declared return type. The block-body path performs this in
+        // `check_return_statement`; the conditional concise path handles it in
+        // `check_conditional_return_branches_against_type` above. The remaining
+        // direct concise path (`(): { x: number } => ({ x: 1, y: 2 })`) had no EPC
+        // pass, so excess properties on fresh literals were silently accepted.
+        //
+        // Only run it when structural assignability already passed: a failed
+        // relation has already emitted TS2353/TS2322 through the failure reason,
+        // and EPC is gated on a declared return type so a purely contextual return
+        // type (an arrow assigned to an interface method) is left untouched, just
+        // as in tsc.
+        if assignability_ok
+            && ctx.return_annotation.is_declared()
+            && !ctx.actual_return_uses_jsdoc_cast
+        {
+            self.check_concise_body_excess_properties(ctx.body, ctx.expected_return_type);
+        }
+    }
+
+    /// Run the contextual excess-property check on a concise (expression-body)
+    /// return whose declared return type is `expected`, recursing through array
+    /// literals so array-of-object and nested concise returns are covered. Fresh
+    /// object literals are routed through `check_object_literal_excess_properties`
+    /// (which itself recurses into nested object property values), matching what
+    /// the block-body return path does for `return <literal>`.
+    ///
+    /// Only parentheses are skipped, never `as`/`satisfies`/type assertions: an
+    /// asserted body (`({ x: 1, y: 2 } as { x: number })`) performs its own
+    /// check, and tsc does not additionally run EPC on it against the return
+    /// type, so stopping at the assertion node keeps parity.
+    fn check_concise_body_excess_properties(&mut self, node: NodeIndex, expected: TypeId) {
+        if expected == TypeId::ANY
+            || expected == TypeId::UNKNOWN
+            || self.type_contains_error(expected)
+        {
+            return;
+        }
+        let node = self.ctx.arena.skip_parenthesized(node);
+        let Some(kind) = self.ctx.arena.get(node).map(|n| n.kind) else {
+            return;
+        };
+        if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let source = self.get_type_of_node(node);
+            self.check_object_literal_excess_properties(source, expected, node);
+        } else if kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            let element_nodes: Vec<NodeIndex> = match self
+                .ctx
+                .arena
+                .get(node)
+                .and_then(|n| self.ctx.arena.get_literal_expr(n))
+            {
+                Some(array) => array.elements.nodes.clone(),
+                None => return,
+            };
+            let tuple_elements =
+                crate::query_boundaries::common::tuple_elements(self.ctx.types, expected);
+            // A plain (non-tuple) array target shares one contextual element type
+            // across every element; only resolve it when there is no tuple shape.
+            let array_element = match tuple_elements {
+                Some(_) => None,
+                None => {
+                    crate::query_boundaries::common::array_element_type(self.ctx.types, expected)
+                }
+            };
+            for (index, &element) in element_nodes.iter().enumerate() {
+                if element.is_none() {
+                    continue;
+                }
+                let expected_element = match &tuple_elements {
+                    Some(elements) => elements.get(index).map(|te| te.type_id),
+                    None => array_element,
+                };
+                if let Some(expected_element) = expected_element {
+                    self.check_concise_body_excess_properties(element, expected_element);
+                }
+            }
         }
     }
 
