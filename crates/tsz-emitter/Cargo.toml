@@ -123,6 +123,10 @@ name = "jsx_spread_tests"
 path = "tests/jsx_spread_tests.rs"
 
 [[test]]
+name = "jsx_fragment_empty_props_tests"
+path = "tests/jsx_fragment_empty_props_tests.rs"
+
+[[test]]
 name = "jsx_auto_import_order_tests"
 path = "tests/jsx_auto_import_order_tests.rs"
 
