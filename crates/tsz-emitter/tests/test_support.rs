@@ -76,6 +76,18 @@ pub fn parse_and_lower_print(source: &str, opts: PrintOptions) -> String {
     lower_and_print(&parser.arena, root, opts).code
 }
 
+/// Like `parse_and_lower_print` but uses a caller-supplied file name. Required
+/// for `.tsx` integration tests that exercise lowering transforms whose output
+/// depends on the module kind (e.g. the CommonJS automatic JSX runtime).
+pub fn parse_and_lower_print_named_with_opts(
+    file_name: &str,
+    source: &str,
+    opts: PrintOptions,
+) -> String {
+    let (parser, root) = parse_source_named(file_name, source);
+    lower_and_print(&parser.arena, root, opts).code
+}
+
 /// Like `parse_and_print_with_opts` but uses a caller-supplied file name.
 /// Required for `.tsx` integration tests where the file name drives JSX
 /// parsing.

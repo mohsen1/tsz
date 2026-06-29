@@ -1013,15 +1013,16 @@ impl<'a> CheckerState<'a> {
             &type_params,
             &app.args,
         );
-        let (mut instantiated, depth_exceeded) =
+        let instantiation_result =
             crate::query_boundaries::common::instantiate_type_with_depth_status(
                 self.ctx.types,
                 body_type,
                 &substitution,
             );
-        if depth_exceeded {
+        if instantiation_result.depth_exceeded() {
             self.ctx.depth_exceeded.set(true);
         }
+        let mut instantiated = instantiation_result.into_type_id();
         if !crate::query_boundaries::common::contains_this_type(self.ctx.types, instantiated) {
             return None;
         }

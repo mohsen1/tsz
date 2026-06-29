@@ -430,6 +430,9 @@ mod nuia_any_index_emits_ts2322_tests;
 #[path = "tests/noUIA_write_index_signature_emits_ts2322_tests.rs"]
 mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
+#[path = "tests/nullish_union_indexed_access_missing_property_tests.rs"]
+mod nullish_union_indexed_access_missing_property_tests;
+#[cfg(test)]
 #[path = "../tests/optional_param_display_tests.rs"]
 mod optional_param_display_tests;
 #[cfg(test)]
@@ -849,6 +852,9 @@ mod cross_file_class_merge_tests;
 #[cfg(test)]
 #[path = "tests/cross_file_generic_alias_union_implements_tests.rs"]
 mod cross_file_generic_alias_union_implements_tests;
+#[cfg(test)]
+#[path = "tests/cross_file_in_operator_indexed_element_narrowing_tests.rs"]
+mod cross_file_in_operator_indexed_element_narrowing_tests;
 #[cfg(test)]
 #[path = "../tests/cross_file_interface_merge_ts2717_tests.rs"]
 mod cross_file_interface_merge_ts2717_tests;

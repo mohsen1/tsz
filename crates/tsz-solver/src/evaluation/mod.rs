@@ -1,3 +1,4 @@
+pub(crate) mod cache_stability;
 pub(crate) mod cross_eval_guard;
 pub mod eval_materialization_probe;
 pub(crate) mod evaluate;

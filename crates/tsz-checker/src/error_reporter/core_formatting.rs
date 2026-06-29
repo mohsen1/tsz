@@ -1294,6 +1294,45 @@ impl<'a> CheckerState<'a> {
                 .is_some()
     }
 
+    /// `tsc` never strips a *source* union's top-level `null`/`undefined`
+    /// members from an assignability message. The shared assignment-source
+    /// display policy, however, strips them when the target is non-nullable —
+    /// correct only for the *target* side ("show the non-nullable part of the
+    /// target"). Applied to the source it drops members `tsc` keeps, collapsing
+    /// e.g. `string[] | undefined` to `string[]`. When that stripped source
+    /// display then equals the target display, the duplicate-name TS2719 gate
+    /// ("two different types with this name exist") misfires where `tsc` reports
+    /// a plain TS2322 (`Type 'string[] | undefined' is not assignable to type
+    /// 'string[]'`).
+    ///
+    /// When the rendered `source_str` has collapsed to equal `target_str` and
+    /// the source structurally carries top-level `null`/`undefined` the target
+    /// lacks, return a source display that preserves those members so the
+    /// diagnostic stays TS2322. This is purely a display correction: the
+    /// relation verdict and the failing union member are unchanged. Returns
+    /// `None` (leaving the existing display, and thus the existing TS2719 path,
+    /// intact) for genuinely distinct same-named nominal types, which carry no
+    /// such nullish difference.
+    pub(crate) fn source_display_preserving_nullish_if_collapsed_to_target(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_str: &str,
+        target_str: &str,
+    ) -> Option<String> {
+        if source_str != target_str {
+            return None;
+        }
+        // Structural witness that the source carries top-level `null`/`undefined`
+        // the target does not: `strip_nullish_for_assignability_display` yields
+        // the stripped form in exactly that case. Use it only as the predicate;
+        // the display itself is recomputed with the nullish-preserving formatter.
+        self.strip_nullish_for_assignability_display(source, target)?;
+        let preserved =
+            self.format_assignability_type_for_message_preserving_nullish(source, target);
+        (preserved != target_str).then_some(preserved)
+    }
+
     pub(super) fn format_enum_member_name_for_message(&mut self, ty: TypeId) -> Option<String> {
         let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;

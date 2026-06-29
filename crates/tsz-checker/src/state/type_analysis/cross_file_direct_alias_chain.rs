@@ -1288,7 +1288,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_local_symbol_can_fall_back_to_global_type(
+    pub(super) fn source_file_local_symbol_can_fall_back_to_global_type(
         arena: &NodeArena,
         binder: &BinderState,
         sym_id: SymbolId,

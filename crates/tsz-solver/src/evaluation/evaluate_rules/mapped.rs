@@ -325,7 +325,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // real-world code (large SDKs, generated API types often have 150-250 keys).
         // 250 covers ~99% of real-world use cases while remaining safe for WASM.
         if key_set.keys.len() + key_set.symbol_keys.len() > self.max_mapped_keys() {
-            self.mark_depth_exceeded();
+            self.mark_depth_exceeded_for_request();
             return TypeId::ERROR;
         }
 

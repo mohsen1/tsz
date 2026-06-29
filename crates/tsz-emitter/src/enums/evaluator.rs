@@ -558,6 +558,19 @@ impl<'a> EnumEvaluator<'a> {
         EnumValue::Computed
     }
 
+    /// Re-narrow an f64 arithmetic result back to an integer [`EnumValue::Number`]
+    /// when it is integral and within `i64` range, otherwise keep it as an
+    /// [`EnumValue::Float`]. This mirrors how JavaScript stores every numeric
+    /// value as an IEEE-754 double yet prints integral results without a
+    /// fractional part, so the inlined enum constant round-trips exactly.
+    fn narrow_f64(result: f64) -> EnumValue {
+        if result.fract() == 0.0 && result >= i64::MIN as f64 && result <= i64::MAX as f64 {
+            EnumValue::Number(result as i64)
+        } else {
+            EnumValue::Float(result)
+        }
+    }
+
     /// Evaluate a binary expression
     fn evaluate_binary(&self, left: NodeIndex, op: u16, right: NodeIndex) -> EnumValue {
         let left_val = self.evaluate_expression(left);
@@ -572,10 +585,15 @@ impl<'a> EnumEvaluator<'a> {
                     k if k == SyntaxKind::MinusToken as u16 => l.wrapping_sub(*r),
                     k if k == SyntaxKind::AsteriskToken as u16 => l.wrapping_mul(*r),
                     k if k == SyntaxKind::SlashToken as u16 => {
+                        // ECMAScript `/` is always IEEE-754 float division, even
+                        // for two integer operands (`10 / 4` is `2.5`, not the
+                        // Rust integer `2`). Route through f64 and re-narrow to an
+                        // integer only when the quotient is integral, exactly as
+                        // the mixed/float arm below does.
                         if *r == 0 {
                             return EnumValue::Computed;
                         }
-                        l / r
+                        return Self::narrow_f64(*l as f64 / *r as f64);
                     }
                     k if k == SyntaxKind::PercentToken as u16 => {
                         if *r == 0 {
@@ -630,11 +648,7 @@ impl<'a> EnumEvaluator<'a> {
                     k if k == SyntaxKind::AsteriskAsteriskToken as u16 => l.powf(r),
                     _ => return EnumValue::Computed,
                 };
-                if result.fract() == 0.0 && result >= i64::MIN as f64 && result <= i64::MAX as f64 {
-                    EnumValue::Number(result as i64)
-                } else {
-                    EnumValue::Float(result)
-                }
+                Self::narrow_f64(result)
             }
             // String concatenation
             (EnumValue::String(l), EnumValue::String(r)) if op == SyntaxKind::PlusToken as u16 => {

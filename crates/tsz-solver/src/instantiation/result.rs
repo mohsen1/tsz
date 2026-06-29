@@ -19,6 +19,18 @@ pub struct InstantiationResult {
     overflowed: bool,
 }
 
+/// Instantiation result plus the verdict for project-wide cache publication.
+///
+/// #14346 is moving cache eligibility away from loose local booleans and into
+/// typed result boundaries. The project-wide instantiation cache needs the
+/// walk's [`InstantiationResult`] and whether surrounding sticky state stayed
+/// clean for this request.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InstantiationMemoResult {
+    result: InstantiationResult,
+    stable_for_project_cache: bool,
+}
+
 impl InstantiationResult {
     /// Construct a successful result.
     pub const fn ok(type_id: TypeId) -> Self {
@@ -85,9 +97,35 @@ impl InstantiationResult {
     }
 }
 
+impl InstantiationMemoResult {
+    /// Construct a memo result from a typed instantiation result and the
+    /// request-state stability verdict.
+    pub(crate) const fn for_project_cache(
+        result: InstantiationResult,
+        request_state_stable: bool,
+    ) -> Self {
+        Self {
+            result,
+            stable_for_project_cache: !result.depth_exceeded() && request_state_stable,
+        }
+    }
+
+    /// Whether this result can be stored in the project-wide instantiation
+    /// cache, whose key does not capture ambient recursion/fuel state.
+    pub(crate) const fn is_stable_for_project_cache(self) -> bool {
+        self.stable_for_project_cache
+    }
+
+    /// Collapse to the request's instantiation result while preserving today's
+    /// behavior for callers that are not yet cache-verdict-aware.
+    pub(crate) const fn into_result(self) -> InstantiationResult {
+        self.result
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::InstantiationResult;
+    use super::{InstantiationMemoResult, InstantiationResult};
     use crate::types::TypeId;
 
     #[test]
@@ -128,5 +166,32 @@ mod tests {
         let bad = InstantiationResult::from_walk(TypeId::STRING, true);
         assert!(bad.depth_exceeded());
         assert_eq!(bad.into_type_id(), TypeId::STRING);
+    }
+
+    #[test]
+    fn memo_result_requires_clean_instantiation_and_request_state() {
+        let stable = InstantiationMemoResult::for_project_cache(
+            InstantiationResult::ok(TypeId::STRING),
+            true,
+        );
+        assert!(stable.is_stable_for_project_cache());
+        assert_eq!(stable.into_result().type_id(), TypeId::STRING);
+
+        let request_state_tainted = InstantiationMemoResult::for_project_cache(
+            InstantiationResult::ok(TypeId::NUMBER),
+            false,
+        );
+        assert!(!request_state_tainted.is_stable_for_project_cache());
+        assert_eq!(
+            request_state_tainted.into_result().type_id(),
+            TypeId::NUMBER
+        );
+
+        let overflowed = InstantiationMemoResult::for_project_cache(
+            InstantiationResult::overflow_with(TypeId::BOOLEAN),
+            true,
+        );
+        assert!(!overflowed.is_stable_for_project_cache());
+        assert_eq!(overflowed.into_result().type_id(), TypeId::BOOLEAN);
     }
 }

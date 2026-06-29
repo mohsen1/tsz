@@ -1063,6 +1063,14 @@ impl<'a> CheckerState<'a> {
         self.resolve_jsdoc_type_name(type_expr)
     }
 
+    /// Extract a JSDoc `@this {T}` tag from a function's JSDoc comment and
+    /// resolve it to a `TypeId`. Returns `None` when there is no `@this` tag
+    /// or the referenced type cannot be resolved.
+    pub(crate) fn resolve_jsdoc_this_type(&mut self, jsdoc: &str) -> Option<TypeId> {
+        let this_expr = Self::extract_jsdoc_tag_type_expression(jsdoc, "this")?;
+        self.resolve_jsdoc_reference(this_expr)
+    }
+
     /// Backward-compatible alias for `resolve_jsdoc_reference`.
     ///
     /// All internal callers within the JSDoc subsystem should prefer

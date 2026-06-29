@@ -724,6 +724,10 @@ pub enum EnumMemberValue {
     Auto(i64),
     /// Explicit numeric value
     Numeric(i64),
+    /// Explicit non-integral numeric value (e.g. `10 / 4` -> `2.5`). Kept
+    /// distinct from `Numeric` so the emitter prints the true IEEE-754 quotient
+    /// instead of a truncated integer.
+    Float(f64),
     /// String value
     String(Cow<'static, str>),
     /// Computed expression (not a simple literal)
@@ -929,9 +933,10 @@ impl EnumMember {
     fn contains_identifier(&self, name: &str) -> bool {
         match &self.value {
             EnumMemberValue::Computed(expr) => expr.contains_identifier(name),
-            EnumMemberValue::Auto(_) | EnumMemberValue::Numeric(_) | EnumMemberValue::String(_) => {
-                false
-            }
+            EnumMemberValue::Auto(_)
+            | EnumMemberValue::Numeric(_)
+            | EnumMemberValue::Float(_)
+            | EnumMemberValue::String(_) => false,
         }
     }
 }

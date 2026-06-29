@@ -502,11 +502,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         };
 
         let members = self.interner.type_list(member_list_id);
+        // Prune only members carrying a *free* (live, transient) inference
+        // placeholder. A bare `TypeData::Infer` reachable only through a type
+        // parameter's conditional-alias constraint (e.g. `K extends Key` where
+        // `type Key = R extends { key: infer T } ? T : …`) is definitional —
+        // bound by that conditional, already resolved at the definition site —
+        // not a leaked inference variable, so it must not drop the member.
+        // `contains_infer_types_db` walked into those constraint chains and
+        // collapsed `undefined | Opt<K>` to bare `undefined` for a cross-module
+        // generic fn whose type parameter has a conditional-type constraint
+        // (spurious TS2345, issue #14753). `contains_free_infer_types` treats
+        // constraint/default and deferred-operation operands as bound, matching
+        // tsc, while still pruning genuinely free leaked placeholders.
         let retained: Vec<_> = members
             .iter()
             .copied()
             .filter(|member| {
-                !crate::type_queries::contains_infer_types_db(
+                !crate::visitor::contains_free_infer_types(
                     self.interner.as_type_database(),
                     *member,
                 )

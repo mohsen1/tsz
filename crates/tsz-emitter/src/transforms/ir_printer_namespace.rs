@@ -90,14 +90,21 @@ impl<'a> IRPrinter<'a> {
         self.write(enum_name);
 
         match &member.value {
-            EnumMemberValue::Auto(value) | EnumMemberValue::Numeric(value) => {
+            EnumMemberValue::Auto(_) | EnumMemberValue::Numeric(_) | EnumMemberValue::Float(_) => {
                 // Numeric enum with reverse mapping: E[E["A"] = 0] = "A";
+                // Non-integral members (`Float`) print the exact IEEE-754
+                // quotient: E[E["A"] = 2.5] = "A";
+                let value_text = match &member.value {
+                    EnumMemberValue::Auto(v) | EnumMemberValue::Numeric(v) => v.to_string(),
+                    EnumMemberValue::Float(v) => crate::text_utils::format_js_number(*v),
+                    _ => unreachable!(),
+                };
                 self.write("[");
                 self.write(enum_name);
                 self.write("[\"");
                 self.write(&member.name);
                 self.write("\"] = ");
-                self.write(&value.to_string());
+                self.write(&value_text);
                 self.write("] = \"");
                 self.write(&member.name);
                 self.write("\";");

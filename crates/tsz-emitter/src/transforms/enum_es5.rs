@@ -1554,7 +1554,15 @@ impl<'a> EnumES5Transformer<'a> {
                     o if o == SyntaxKind::PlusToken as u16 => left.checked_add(right),
                     o if o == SyntaxKind::MinusToken as u16 => left.checked_sub(right),
                     o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
-                    o if o == SyntaxKind::SlashToken as u16 => (right != 0).then(|| left / right),
+                    // ECMAScript `/` is IEEE-754 float division. Only fold on
+                    // the integer fast-path when the quotient is exact; a
+                    // non-integral quotient (e.g. `10 / 4`) returns `None` so the
+                    // caller falls back to `evaluate_constant_float_expression`,
+                    // which produces the true value (`2.5`) instead of the
+                    // truncated integer.
+                    o if o == SyntaxKind::SlashToken as u16 => {
+                        (right != 0 && left % right == 0).then(|| left / right)
+                    }
                     o if o == SyntaxKind::PercentToken as u16 => (right != 0).then(|| left % right),
                     // Bitwise shifts use ECMAScript int32 semantics: the left
                     // operand is coerced to i32, the shift count is the low 5

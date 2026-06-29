@@ -180,3 +180,55 @@ const enum E {
     );
     assert_eq!(values.get("A"), Some(&EnumValue::Number(0)));
 }
+
+#[test]
+fn test_integer_division_is_float_division() {
+    // ECMAScript `/` is always IEEE-754 float division, even for two integer
+    // literals. Regression for the integer-truncation defect (10/4 -> 2, not
+    // 2.5). The structural rule is operator-keyed, not value-keyed: only
+    // non-integral quotients become Float; integral ones re-narrow to Number.
+    let values = evaluate_enum(
+        "const enum E { A = 10 / 4, B = 7 / 2, C = 1 / 3, D = 100 / 8, E = 8 / 4, F = 9 / 3 }",
+    );
+    assert_eq!(values.get("A"), Some(&EnumValue::Float(2.5)));
+    assert_eq!(values.get("B"), Some(&EnumValue::Float(3.5)));
+    assert_eq!(values.get("C"), Some(&EnumValue::Float(1.0 / 3.0)));
+    assert_eq!(values.get("D"), Some(&EnumValue::Float(12.5)));
+    // Integral quotients stay integers (re-narrowed), matching tsc's emit.
+    assert_eq!(values.get("E"), Some(&EnumValue::Number(2)));
+    assert_eq!(values.get("F"), Some(&EnumValue::Number(3)));
+}
+
+#[test]
+fn test_negative_integer_division_keeps_fraction() {
+    // `-7 / 2` must be -3.5 (true division), not -3 (round-toward-zero).
+    let values = evaluate_enum("const enum E { A = -7 / 2, B = 7 / -2, C = -8 / 2 }");
+    assert_eq!(values.get("A"), Some(&EnumValue::Float(-3.5)));
+    assert_eq!(values.get("B"), Some(&EnumValue::Float(-3.5)));
+    assert_eq!(values.get("C"), Some(&EnumValue::Number(-4)));
+}
+
+#[test]
+fn test_division_by_zero_is_computed() {
+    // Division by an integer zero remains non-foldable (Computed), unchanged.
+    let values = evaluate_enum("const enum E { A = 1 / 0 }");
+    assert_eq!(values.get("A"), Some(&EnumValue::Computed));
+}
+
+#[test]
+fn test_integer_modulo_unchanged() {
+    // `%` over two integers already matches JS (integral remainder); the fix
+    // must not perturb it.
+    let values = evaluate_enum("const enum E { A = 10 % 4, B = 10 % 3, C = -7 % 2 }");
+    assert_eq!(values.get("A"), Some(&EnumValue::Number(2)));
+    assert_eq!(values.get("B"), Some(&EnumValue::Number(1)));
+    assert_eq!(values.get("C"), Some(&EnumValue::Number(-1)));
+}
+
+#[test]
+fn test_division_in_larger_constant_expression() {
+    // Division composes with the rest of the integer fast-path operators.
+    let values = evaluate_enum("const enum E { A = 1 + 10 / 4, B = (10 / 4) * 2 }");
+    assert_eq!(values.get("A"), Some(&EnumValue::Float(3.5)));
+    assert_eq!(values.get("B"), Some(&EnumValue::Number(5)));
+}

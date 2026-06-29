@@ -528,7 +528,11 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._query_common_size_check()
-        self.assertEqual(limit, 1901)
+        self.assertEqual(
+            limit,
+            self.arch_guard.QUERY_BOUNDARY_COMMON_LINE_BASELINE
+            + self.arch_guard.QUERY_BOUNDARY_COMMON_LINE_GREEN_HEADROOM,
+        )
         self.assertTrue(
             str(path).endswith("crates/tsz-checker/src/query_boundaries/common.rs")
         )
@@ -540,6 +544,24 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
             hits,
             [],
             "query_boundaries/common.rs cap is too tight for the live file",
+        )
+
+    def test_real_common_file_uses_baseline_or_green_headroom(self):
+        path, limit = self._query_common_size_check()
+        baseline = self.arch_guard.QUERY_BOUNDARY_COMMON_LINE_BASELINE
+        headroom = self.arch_guard.QUERY_BOUNDARY_COMMON_LINE_GREEN_HEADROOM
+        live_lines = len(path.read_text(encoding="utf-8").splitlines())
+        self.assertEqual(limit, baseline + headroom)
+        self.assertGreaterEqual(
+            live_lines,
+            baseline,
+            "query_boundaries/common.rs dropped below the pinned baseline; "
+            "ratchet the baseline/headroom down.",
+        )
+        self.assertLessEqual(
+            live_lines,
+            limit,
+            "query_boundaries/common.rs exhausted the #14351 green headroom.",
         )
 
 

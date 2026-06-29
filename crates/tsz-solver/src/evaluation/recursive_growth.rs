@@ -148,7 +148,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // Bail with TS2589 when the recursive argument is diverging rather than
         // building an ever-larger type.
         if self.detect_recursive_growth(def_id, &expanded_args) {
-            self.mark_depth_exceeded();
+            self.mark_depth_exceeded_for_request();
             return Some(TypeId::ERROR);
         }
 

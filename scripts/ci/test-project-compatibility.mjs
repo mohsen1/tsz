@@ -243,6 +243,82 @@ withTempDir((dir) => {
   }
 });
 
+// Canary tsc-oracle scoring: pin the exact rows the bash guard records once a
+// tsc oracle is available for the canary set (scripts/ci/project-compile-guard.sh
+// check_project). These reproduce the guard's record_project_compatibility calls
+// verbatim — only the UNIFIED COMPAT_DIAGNOSTIC_DELTA is set (the `tsc:`/`tsz:`
+// label-partitioned body the oracle deltas emit), with NO explicit per-source
+// env overrides, so the test exercises the same aggregator path the guard does.
+//
+// Before the oracle was provisioned for the canary CI job, every canary row was
+// recorded with an empty tsc side (diagnostic_counts.tsc=0, no tsc exit code),
+// so a row where tsz reproduces tsc's diagnostics exactly was scored as a
+// tsz-only failure (yellow/red, oracle_classification=unknown). The two cases
+// below are the witnesses from the original report (ts-belt TS2305, tiny-invariant
+// TS2591): parity must cancel to green, and a genuine tsz-only delta must stay red.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+
+  // (1) Parity: tsz reproduces tsc's diagnostic exactly. The guard cancels the
+  // tsz-only delta, normalizes tsz's exit to 0, sets exit_class "exit success"
+  // / status "none", and records both sides via tsc_and_tsz_oracle_delta. tsc
+  // itself still exited nonzero (it flagged the same error), so its exit code is
+  // carried through. This must score GREEN with oracle_classification both-fail-same.
+  const parity = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "ts-belt-project",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+    COMPAT_DIAGNOSTIC_DELTA: [
+      "tsc: src/Dict/Dict.ts(2,17): error TS2305: Module '\"../types\"' has no exported member 'NonNullable'.",
+      "tsz: src/Dict/Dict.ts(2,17): error TS2305: Module '\"../types\"' has no exported member 'NonNullable'.",
+    ].join("\n"),
+    COMPAT_TSZ_EXIT_CODES: "0",
+    COMPAT_TSC_EXIT_CODES: "2",
+  });
+  assert.equal(parity.status, 0, parity.stderr);
+
+  // (2) Genuine tsz-only failure: tsc is clean (exit 0, no diagnostics) but tsz
+  // reports an error tsc does not. The guard records exit_class "nonzero exit"
+  // / "diagnostic mismatch" with only the tsz line (tsz_only_and_tsc_context_delta).
+  // This must stay a tsz-fails-only failure (not green), so genuine regressions
+  // are not hidden by the oracle.
+  const tszOnly = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "tiny-invariant-project",
+    COMPAT_EXIT_CLASS: "nonzero exit",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch or compiler error",
+    COMPAT_DIAGNOSTIC_DELTA:
+      "tsz: src/tiny-invariant.ts(1,31): error TS2591: Cannot find name 'process'.",
+    COMPAT_TSZ_EXIT_CODES: "2",
+    COMPAT_TSC_EXIT_CODES: "0",
+  });
+  assert.equal(tszOnly.status, 0, tszOnly.stderr);
+
+  const [parityRow, tszOnlyRow] = fs
+    .readFileSync(jsonl, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .map(JSON.parse);
+
+  assert.equal(parityRow.name, "ts-belt-project");
+  assert.equal(parityRow.state, "green", "parity row must score green");
+  assert.equal(parityRow.oracle_classification, "both-fail-same", "parity row classification");
+  assert.deepEqual(parityRow.diagnostic_counts, { tsc: 1, tsz: 1, tsgo: 0 });
+  assert.deepEqual(parityRow.tsc_diagnostic_codes, ["TS2305"]);
+  assert.deepEqual(parityRow.tsz_diagnostic_codes, ["TS2305"]);
+  assert.deepEqual(parityRow.exit_codes, { tsc: [2], tsz: [0], tsgo: [] });
+
+  assert.equal(tszOnlyRow.name, "tiny-invariant-project");
+  assert.notEqual(tszOnlyRow.state, "green", "genuine tsz-only delta must not score green");
+  assert.equal(tszOnlyRow.oracle_classification, "tsz-fails-only", "tsz-only row classification");
+  assert.deepEqual(tszOnlyRow.diagnostic_counts, { tsc: 0, tsz: 1, tsgo: 0 });
+  assert.deepEqual(tszOnlyRow.tsc_diagnostic_codes, []);
+  assert.deepEqual(tszOnlyRow.tsz_diagnostic_codes, ["TS2591"]);
+});
+
 // Residency: oom/timeout/crash rows must carry both measurements AND
 // structured reasons (when absent). A bare null without a reason is a schema
 // violation downstream; the runner is expected to pass a reason via env, but
