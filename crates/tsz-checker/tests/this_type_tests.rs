@@ -719,3 +719,116 @@ s.save();
         "pushing this into this[] should not produce diagnostics, got: {diagnostics:?}"
     );
 }
+
+// --- issue #14797: interface `this`-return through a generic-param receiver ---
+//
+// Calling an interface method that returns `this` on a value typed as a generic
+// type parameter `T extends I` must yield `this`/`T`, not the interface
+// constraint `I`. tsz previously collapsed the result to `I` (because resolving
+// the property through the *evaluated* constraint shape bound `this` to the
+// interface), drawing a false TS2322 on `return n.clone()`. The structurally
+// identical class-receiver path was already correct, so these tests pin both.
+
+fn strict() -> CheckerOptions {
+    CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    }
+}
+
+#[test]
+fn interface_this_return_through_generic_param_yields_type_param() {
+    let source = r#"
+interface INode { clone(): this; }
+function cloneI<T extends INode>(n: T): T { return n.clone(); }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "interface `this`-return on a generic-param receiver should yield T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn class_this_return_through_generic_param_yields_type_param_control() {
+    // Parity control: the class path must keep behaving identically.
+    let source = r#"
+class CNode { clone(): this { return this; } }
+function cloneC<T extends CNode>(n: T): T { return n.clone(); }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "class `this`-return on a generic-param receiver should yield T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn chained_interface_this_returns_through_generic_param() {
+    let source = r#"
+interface Chain { next(): this; prev(): this; }
+function chain<T extends Chain>(c: T): T { return c.next().prev(); }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "chained interface `this`-returns on a generic-param receiver should yield T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn interface_this_in_function_valued_property_through_generic_param() {
+    let source = r#"
+interface SelfProp { self: () => this; }
+function selfp<T extends SelfProp>(n: T): T { return n.self(); }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "interface `this`-returning function property on a generic-param receiver should yield T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn generic_interface_application_this_return_through_generic_param() {
+    let source = r#"
+interface Box<X> { val: X; copy(): this; }
+function boxcopy<T extends Box<number>>(b: T): T { return b.copy(); }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "generic-interface `this`-return on a generic-param receiver should yield T, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn bare_interface_value_returned_as_type_param_still_errors() {
+    // Negative control: returning the bare constraint where T is expected is a
+    // genuine TS2322 — the fix must not silence it.
+    let source = r#"
+interface INode { clone(): this; }
+function bad<T extends INode>(n: T): T { const i: INode = n; return i; }
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        has_error(&diagnostics, 2322),
+        "returning a bare interface value where T is expected must still error TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn direct_interface_receiver_this_return_yields_interface() {
+    // A direct (non-generic) receiver of the interface type returns the
+    // interface itself — unchanged by the fix.
+    let source = r#"
+interface INode { clone(): this; }
+declare const direct: INode;
+const d: INode = direct.clone();
+"#;
+    let diagnostics = compile_and_get_diagnostics_with_options(source, strict());
+    assert!(
+        diagnostics.is_empty(),
+        "direct interface receiver `this`-return should yield the interface, got: {diagnostics:?}"
+    );
+}

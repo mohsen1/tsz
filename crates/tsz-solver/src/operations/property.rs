@@ -386,6 +386,41 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
     }
 
+    /// Rebind the polymorphic `this` of a freshly resolved nominal body
+    /// (an interface/class/alias reached through a `Lazy` reference or a generic
+    /// `Application`) to the nominal `receiver` it was accessed on.
+    ///
+    /// This is the `Lazy`/`Application` analogue of [`Self::bind_object_receiver_this`]:
+    /// resolving `Lazy(INode)`/`App(Lazy(Box), <number>)` expands the interface
+    /// body whose members still mention the polymorphic `this`, and a *direct*
+    /// receiver of that type wants `this` bound to the receiver (`x: INode` ⇒
+    /// `x.clone(): INode`).
+    ///
+    /// Crucially it honours `skip_this_binding` exactly like
+    /// `bind_object_receiver_this` does: when the property is being resolved
+    /// through a type parameter's constraint (`T extends INode`), `this` must
+    /// stay polymorphic so the checker can rebind it to the *receiver type
+    /// parameter* `T` at the call's return position. Binding it to the constraint
+    /// here collapses an interface `this`-return to the constraint and draws a
+    /// false TS2322 on `function f<T extends INode>(n: T): T { return n.clone(); }`
+    /// (issue #14797). The structurally identical class-receiver path already
+    /// preserves `T` because it resolves through `bind_object_receiver_this`.
+    pub(crate) fn rebind_resolved_body_this(&self, resolved: TypeId, receiver: TypeId) -> TypeId {
+        if self.skip_this_binding.get() {
+            return resolved;
+        }
+        if crate::contains_this_type(self.interner(), resolved) {
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner(),
+                Some(self.db),
+                resolved,
+                receiver,
+            )
+        } else {
+            resolved
+        }
+    }
+
     fn nominalize_object_receiver(&self, receiver: TypeId) -> TypeId {
         // Fast path: intrinsics aren't `Object(_)` / `ObjectWithIndex(_)`;
         // the match falls through to `_ => receiver`.
@@ -1231,15 +1266,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         if let Some(resolved) =
                             self.resolver().resolve_lazy(def_id, self.interner())
                         {
-                            let resolved = if crate::contains_this_type(self.interner(), resolved) {
-                                crate::instantiation::instantiate::substitute_this_type(
-                                    self.interner(),
-                                    resolved,
-                                    obj_type,
-                                )
-                            } else {
-                                resolved
-                            };
+                            let resolved = self.rebind_resolved_body_this(resolved, obj_type);
                             // Successfully resolved - resolve property on the concrete type
                             self.resolve_property_access_inner(resolved, prop_atom)
                         } else {
