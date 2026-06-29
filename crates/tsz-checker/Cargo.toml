@@ -33,6 +33,9 @@ dashmap = { workspace = true }
 web-time = { workspace = true }
 stacker = "0.1.23"
 [[test]]
+name = "class_interface_merge_member_type_tests"
+path = "tests/class_interface_merge_member_type_tests.rs"
+[[test]]
 name = "namespace_import_export_equals_passthrough_tests"
 path = "tests/namespace_import_export_equals_passthrough_tests.rs"
 [[test]]
