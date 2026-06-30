@@ -1479,12 +1479,18 @@ impl CheckerState<'_> {
         // This can happen during recursive type resolution.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
             if type_params.is_empty() {
-                env.insert(symbol_ref, resolved);
+                self.ctx
+                    .insert_symbol_type_and_mirror(&mut env, symbol_ref, resolved, Vec::new());
                 if let Some(def_id) = def_id {
                     env.insert_def(def_id, resolved);
                 }
             } else {
-                env.insert_with_params(symbol_ref, resolved, type_params.clone());
+                self.ctx.insert_symbol_type_and_mirror(
+                    &mut env,
+                    symbol_ref,
+                    resolved,
+                    type_params.clone(),
+                );
                 if let Some(def_id) = def_id {
                     env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }

@@ -506,6 +506,90 @@ fn insert_def_choosing_params_selects_variant_by_params_emptiness() {
     );
 }
 
+/// A `SymbolRef -> TypeId` registration can be generic too. Replaying a
+/// deferred env write must preserve the symbol's type-parameter list, otherwise
+/// the flow-analyzer env sees a non-generic value/constructor mapping while the
+/// evaluator env sees the generic one.
+#[test]
+fn deferred_symbol_type_write_preserves_params_on_replay() {
+    use super::super::deferred_flow_env_write::DeferredFlowEnvWrite;
+    use tsz_common::interner::Atom;
+    use tsz_solver::{SymbolRef, TypeId};
+
+    let symbol = SymbolRef(17);
+    let params = vec![tsz_solver::TypeParamInfo::simple(Atom::default())];
+    let mut env = TypeEnvironment::new();
+
+    DeferredFlowEnvWrite::InsertSymbolType {
+        symbol,
+        ty: TypeId::STRING,
+        params: params.clone(),
+    }
+    .apply(&mut env);
+
+    assert_eq!(env.get(symbol), Some(TypeId::STRING));
+    assert_eq!(
+        env.get_params(symbol),
+        Some(params.as_slice()),
+        "deferred symbol writes must replay generic params"
+    );
+}
+
+/// `register_symbol_type_in_envs` must use the same deferred-write path for
+/// generic `SymbolRef` mappings as it does for `DefId` mappings. Holding the
+/// flow env borrowed forces the mirror leg onto the queue, proving replay keeps
+/// both envs' params aligned.
+#[test]
+fn symbol_type_registration_deferred_mirror_preserves_params() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::{SymbolRef, TypeId};
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let symbol = SymbolRef(23);
+    let params = vec![tsz_solver::TypeParamInfo::simple(Atom::default())];
+
+    {
+        let held_flow = ctx.type_environment.borrow();
+        ctx.register_symbol_type_in_envs(symbol, TypeId::NUMBER, params.clone());
+
+        assert_eq!(
+            ctx.type_env.borrow().get_params(symbol),
+            Some(params.as_slice()),
+            "evaluator env must receive params immediately"
+        );
+        assert_eq!(
+            held_flow.get(symbol),
+            None,
+            "flow env write must wait while the env is borrowed"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "generic SymbolRef mirror must be queued rather than dropped"
+        );
+    }
+
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    assert_eq!(
+        ctx.type_environment.borrow().get(symbol),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_params(symbol),
+        Some(params.as_slice()),
+        "flow env replay must preserve the same params as the evaluator env"
+    );
+}
+
 /// Regression for #13944 / #13086: a `DefId -> TypeId` body re-published by the
 /// lazy-resolution path (`register_resolved_def_in_envs`, the gateway
 /// `try_insert_def_in_type_env` now uses) must travel the race-safe deferred

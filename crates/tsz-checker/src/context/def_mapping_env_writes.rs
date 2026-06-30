@@ -57,7 +57,12 @@ impl CheckerContext<'_> {
 
     /// Register a symbol's resolved type (`SymbolRef -> TypeId`) in **both** type
     /// environments through the race-safe deferral discipline.
-    pub(crate) fn register_symbol_type_in_envs(&self, symbol: tsz_solver::SymbolRef, ty: TypeId) {
-        self.register_in_envs(DeferredFlowEnvWrite::InsertSymbolType { symbol, ty });
+    pub(crate) fn register_symbol_type_in_envs(
+        &self,
+        symbol: tsz_solver::SymbolRef,
+        ty: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::InsertSymbolType { symbol, ty, params });
     }
 }
