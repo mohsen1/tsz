@@ -31,7 +31,7 @@ fn index_of(output: &str, needle: &str) -> usize {
         .find(needle)
         .unwrap_or_else(|| panic!("expected to find {needle:?} in:\n{output}"));
     assert!(
-        output[first + needle.len()..].find(needle).is_none(),
+        !output[first + needle.len()..].contains(needle),
         "expected {needle:?} exactly once in:\n{output}"
     );
     first
