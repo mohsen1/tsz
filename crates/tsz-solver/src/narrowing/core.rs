@@ -1,10 +1,9 @@
 use crate::caches::db::TypeCompilerOptions;
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
-use crate::narrowing::generation_memo::GenerationMemo;
-#[cfg(test)]
-use crate::narrowing::generation_memo::MAX_GENERATIONS_PER_NARROWING_KEY;
-use crate::narrowing::request::{NarrowTypeStableCacheKey, NarrowingOptions, NarrowingRequest};
+use crate::narrowing::cache::{NarrowExcludingKey, NarrowExcludingStableKey, NarrowingCache};
+use crate::narrowing::guard::{GuardSense, TypeGuard};
+use crate::narrowing::request::{NarrowingOptions, NarrowingRequest};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
@@ -15,227 +14,10 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
-use std::cell::{Cell, RefCell};
-use std::sync::Arc;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
 mod helpers;
-
-/// Describes whether a type guard should be applied in its positive (truthy)
-/// or negative (falsy) sense.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum GuardSense {
-    /// The guard condition is true (e.g., `typeof x === "string"`).
-    Positive,
-    /// The guard condition is false (e.g., `typeof x !== "string"`).
-    Negative,
-}
-
-impl From<bool> for GuardSense {
-    fn from(value: bool) -> Self {
-        if value {
-            GuardSense::Positive
-        } else {
-            GuardSense::Negative
-        }
-    }
-}
-
-type SplitNullishParts = (Option<TypeId>, Option<TypeId>);
-
-/// Cache key for a successful identifier-rooted optional property chain.
-///
-/// The root is semantic (`TypeId`), while the path uses interned property
-/// atoms plus a bit mask for which path segments used `?.`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct OptionalPropertyChainKey {
-    pub root_type: TypeId,
-    pub properties: Vec<Atom>,
-    pub optional_mask: u64,
-    pub no_unchecked_indexed_access: bool,
-}
-
-/// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
-///
-/// Using an enum instead of `String` eliminates heap allocation per typeof guard.
-/// TypeScript's `typeof` operator only returns these 8 values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TypeofKind {
-    String,
-    Number,
-    Boolean,
-    BigInt,
-    Symbol,
-    Undefined,
-    Object,
-    Function,
-}
-
-impl TypeofKind {
-    /// Parse a typeof result string into a `TypeofKind`.
-    /// Returns None for non-standard typeof strings (which don't narrow).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "string" => Some(Self::String),
-            "number" => Some(Self::Number),
-            "boolean" => Some(Self::Boolean),
-            "bigint" => Some(Self::BigInt),
-            "symbol" => Some(Self::Symbol),
-            "undefined" => Some(Self::Undefined),
-            "object" => Some(Self::Object),
-            "function" => Some(Self::Function),
-            _ => None,
-        }
-    }
-
-    /// Get the string representation of this typeof kind.
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::String => "string",
-            Self::Number => "number",
-            Self::Boolean => "boolean",
-            Self::BigInt => "bigint",
-            Self::Symbol => "symbol",
-            Self::Undefined => "undefined",
-            Self::Object => "object",
-            Self::Function => "function",
-        }
-    }
-}
-
-/// AST-agnostic representation of a type narrowing condition.
-///
-/// This enum represents various guards that can narrow a type, without
-/// depending on AST nodes like `NodeIndex` or `SyntaxKind`.
-///
-/// # Examples
-/// ```typescript
-/// typeof x === "string"     -> TypeGuard::Typeof(TypeofKind::String)
-/// x instanceof MyClass      -> TypeGuard::Instanceof(MyClass_type)
-/// x === null                -> TypeGuard::NullishEquality
-/// x                         -> TypeGuard::Truthy
-/// x.kind === "circle"       -> TypeGuard::Discriminant { property: "kind", value: "circle" }
-/// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum TypeGuard {
-    /// `typeof x === "typename"`
-    ///
-    /// Narrows a union to only members matching the typeof result.
-    /// For example, narrowing `string | number` with `Typeof(TypeofKind::String)` yields `string`.
-    Typeof(TypeofKind),
-
-    /// `x instanceof Class`
-    ///
-    /// Narrows to the class type or its subtypes.
-    /// The boolean flag indicates whether the constructor was an explicit global
-    /// name like `Object` or `Function` (true) vs. a resolved/fallback type (false).
-    /// This distinction matters for the false branch: only explicit global constructors
-    /// trigger aggressive narrowing (e.g., excluding all non-primitives for `instanceof Object`).
-    Instanceof(TypeId, bool),
-
-    /// `x === literal` or `x !== literal`
-    ///
-    /// Narrows to exactly that literal type (for equality) or excludes it (for inequality).
-    LiteralEquality(TypeId),
-
-    /// `x == null` or `x != null` (checks both null and undefined)
-    ///
-    /// JavaScript/TypeScript treats `== null` as matching both `null` and `undefined`.
-    NullishEquality,
-
-    /// `x` (truthiness check in a conditional)
-    ///
-    /// Removes falsy types from a union: `null`, `undefined`, `false`, `0`, `""`, `NaN`.
-    Truthy,
-
-    /// `x.prop === literal` or `x.payload.type === "value"` (Discriminated Union narrowing)
-    ///
-    /// Narrows a union of object types based on a discriminant property.
-    ///
-    /// # Examples
-    /// - Top-level: `{ kind: "A" } | { kind: "B" }` with `path: ["kind"]` yields `{ kind: "A" }`
-    /// - Nested: `{ payload: { type: "user" } } | { payload: { type: "product" } }`
-    ///   with `path: ["payload", "type"]` yields `{ payload: { type: "user" } }`
-    Discriminant {
-        /// Property path from base to discriminant (e.g., ["payload", "type"])
-        property_path: Vec<Atom>,
-        /// The literal value to match against
-        value_type: TypeId,
-    },
-
-    /// `prop in x`
-    ///
-    /// Narrows to types that have the specified property.
-    InProperty(Atom),
-
-    /// `x is T` or `asserts x is T` (User-Defined Type Guard)
-    ///
-    /// Narrows a type based on a user-defined type predicate function.
-    ///
-    /// # Examples
-    /// ```typescript
-    /// function isString(x: any): x is string { ... }
-    /// function assertDefined(x: any): asserts x is Date { ... }
-    ///
-    /// if (isString(x)) { x; // string }
-    /// assertDefined(x); x; // Date
-    /// ```
-    ///
-    /// - `type_id: Some(T)`: The type to narrow to (e.g., `string` or `Date`)
-    /// - `type_id: None`: Truthiness assertion (`asserts x`), behaves like `Truthy`
-    /// - `asserts: true`: This is an assertion (throws if false), affects control flow
-    Predicate {
-        type_id: Option<TypeId>,
-        asserts: bool,
-    },
-
-    /// `Array.isArray(x)`
-    ///
-    /// Narrows a type to only array-like types (arrays, tuples, readonly arrays).
-    ///
-    /// # Examples
-    /// ```typescript
-    /// function process(x: string[] | number | { length: number }) {
-    ///   if (Array.isArray(x)) {
-    ///     x; // string[] (not number or the object)
-    ///   }
-    /// }
-    /// ```
-    ///
-    /// This preserves element types - `string[] | number[]` stays as `string[] | number[]`,
-    /// it doesn't collapse to `any[]`.
-    Array,
-
-    /// `array.every(predicate)` where predicate has type predicate
-    ///
-    /// Narrows an array's element type based on a type predicate.
-    ///
-    /// # Examples
-    /// ```typescript
-    /// const arr: (number | string)[] = ['aaa'];
-    /// const isString = (x: unknown): x is string => typeof x === 'string';
-    /// if (arr.every(isString)) {
-    ///   arr; // string[] (element type narrowed from number | string to string)
-    /// }
-    /// ```
-    ///
-    /// This only applies to arrays. For non-array types, the type is unchanged.
-    ArrayElementPredicate {
-        /// The type to narrow array elements to
-        element_type: TypeId,
-    },
-
-    /// `x.constructor === SomeClass`
-    ///
-    /// Narrows based on constructor identity (exact class match).
-    /// Unlike `instanceof` which includes subclasses, constructor equality
-    /// only matches the exact class whose constructor function is compared.
-    /// For example, `C2 | string` narrowed by `Constructor(C1)` yields `never`
-    /// because C2.constructor !== C1 (even though C2 extends C1).
-    Constructor(TypeId),
-}
 
 #[inline]
 pub(crate) fn union_or_single_preserve(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
@@ -294,412 +76,6 @@ pub struct DiscriminantInfo {
     pub property_name: Atom,
     /// Map from literal value to the union member type
     pub variants: Vec<(TypeId, TypeId)>, // (literal_type, member_type)
-}
-
-type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
-type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
-type PropertyCacheKey = (TypeId, Atom);
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CachedPropertyType {
-    pub type_id: TypeId,
-    pub from_index_signature: bool,
-}
-
-impl CachedPropertyType {
-    pub const fn new(type_id: TypeId, from_index_signature: bool) -> Self {
-        Self {
-            type_id,
-            from_index_signature,
-        }
-    }
-
-    pub const fn explicit(type_id: TypeId) -> Self {
-        Self {
-            type_id,
-            from_index_signature: false,
-        }
-    }
-
-    pub const fn index_signature(type_id: TypeId) -> Self {
-        Self {
-            type_id,
-            from_index_signature: true,
-        }
-    }
-}
-
-type NarrowedPropertyCache = GenerationMemo<PropertyCacheKey, Option<CachedPropertyType>>;
-type RequiredPropertyCache = GenerationMemo<PropertyCacheKey, bool>;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NarrowingCacheStatistics {
-    pub resolve_cache_entries: usize,
-    pub narrowed_property_cache_entries: usize,
-    pub required_property_cache_entries: usize,
-    pub split_nullish_cache_entries: usize,
-    pub contains_type_parameters_cache_entries: usize,
-    pub optional_chain_cache_entries: usize,
-    pub optional_property_chain_cache_entries: usize,
-    pub contextual_resolve_cache_entries: usize,
-    pub discriminant_index_entries: usize,
-    pub narrow_type_cache_entries: usize,
-    pub narrow_excluding_cache_entries: usize,
-    pub narrow_assignable_cache_entries: usize,
-    pub narrow_subtype_cache_entries: usize,
-    pub estimated_size_bytes: usize,
-}
-
-impl NarrowingCacheStatistics {
-    #[must_use]
-    pub const fn total_entries(self) -> usize {
-        self.resolve_cache_entries
-            + self.narrowed_property_cache_entries
-            + self.required_property_cache_entries
-            + self.split_nullish_cache_entries
-            + self.contains_type_parameters_cache_entries
-            + self.optional_chain_cache_entries
-            + self.optional_property_chain_cache_entries
-            + self.contextual_resolve_cache_entries
-            + self.discriminant_index_entries
-            + self.narrow_type_cache_entries
-            + self.narrow_excluding_cache_entries
-            + self.narrow_assignable_cache_entries
-            + self.narrow_subtype_cache_entries
-    }
-}
-
-/// Narrowing context for type guards and control flow analysis.
-/// Shared across multiple narrowing contexts to persist resolution results.
-#[derive(Default, Clone, Debug)]
-pub struct NarrowingCache {
-    /// Cache for type resolution (Lazy/App/Template -> Structural)
-    pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
-    /// In-progress type resolution set. `resolve_cache` only records completed
-    /// resolutions, so recursive `keyof` / indexed-access / conditional graphs
-    /// can re-enter before a cache entry exists. Returning the original deferred
-    /// type on a cycle preserves generic form and prevents stack overflow.
-    pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
-    /// Cache for top-level property type lookups (`TypeId`, resolver generation, `PropName`) -> `PropType`
-    pub property_cache: RefCell<NarrowedPropertyCache>,
-    /// Cache for required-property checks in `in`-operator negative narrowing
-    /// (`obj` in `!("prop" in obj)`).
-    pub required_property_cache: RefCell<RequiredPropertyCache>,
-    /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
-    /// Reused by checker optional-chain/property-access hot paths.
-    pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
-    /// Cache for "type contains type parameters" checks.
-    pub contains_type_parameters_cache: RefCell<FxHashMap<TypeId, bool>>,
-    /// Cache for optional chain property access results.
-    /// Keyed by `(object_type_with_nullish, property_atom)` → final result TypeId.
-    /// Unlike `property_cache` which is keyed by resolved (non-nullish) base type,
-    /// this caches the COMPLETE result including nullish union and undefined addition.
-    /// This skips `split_nullish`, `resolve_type`, `contains_type_params`, and property
-    /// lookup on cache hits — eliminating 4+ `RefCell` borrows per repeated access.
-    pub optional_chain_cache: RefCell<FxHashMap<(TypeId, Atom), TypeId>>,
-    /// Cache for full optional property chains such as
-    /// `options?.nested?.transport?.backoff?.base`.
-    ///
-    /// This is keyed by semantic root type and atomized path rather than by AST
-    /// node, so repeated textual chains in generated code can reuse the final
-    /// successful read result without re-walking every segment.
-    pub optional_property_chain_cache: RefCell<FxHashMap<OptionalPropertyChainKey, TypeId>>,
-    /// Cache for contextual type resolution in object literal property typing.
-    /// Maps raw contextual TypeId -> fully resolved TypeId after the
-    /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
-    /// chain for each property of the same object literal.
-    pub contextual_resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
-    /// Discriminant index for fast switch-case narrowing.
-    /// Key: (`union_type`, `discriminant_property`) → Map of `literal_value` → matching members.
-    /// Built once per (union, property) pair, then O(1) lookup per case clause.
-    /// Without this, each case clause iterates ALL union members (O(N) per case = O(N²) total).
-    pub discriminant_index: RefCell<DiscriminantIndex>,
-    /// Cache for applying a semantic predicate guard to an input type.
-    ///
-    /// Keyed by input `TypeId`, predicate payload, branch sense, compiler
-    /// option bits, and resolver generation so lazy alias changes cannot reuse
-    /// stale predicate results. Other guard kinds keep their existing dynamic
-    /// paths because their results depend on structural lookups that are already
-    /// cached at narrower query boundaries.
-    pub(crate) narrow_type_cache: RefCell<GenerationMemo<NarrowTypeStableCacheKey, TypeId>>,
-    /// Memo for [`NarrowingContext::narrow_excluding_type`] keyed by
-    /// `(source, excluded, resolver_generation)`.
-    ///
-    /// False-branch type-predicate narrowing over a recursive-schema union
-    /// (typebox / ts-morph `value is T` guards) drives `narrow_excluding_type`
-    /// into an exponential self-recursion: every intersection / type-parameter
-    /// member re-enters the function on `(member, excluded)`, and the recursive
-    /// alias members expand the same `(source, excluded)` subtree at each depth.
-    /// Memoizing collapses that re-expansion to linear; combined with
-    /// `narrow_excluding_visiting` it is the structural fix for the
-    /// non-terminating typebox row (issue #13242 / #13250).
-    pub(crate) narrow_excluding_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, TypeId>>,
-    /// In-progress `(source, excluded, resolver_generation)` set for
-    /// `narrow_excluding_type`. A recursive-alias member whose resolution
-    /// re-enters the same `(source, excluded)` pair is a cycle; returning the
-    /// source unchanged on re-entry mirrors tsc, which does not exhaustively
-    /// re-expand a recursive union during exclusion narrowing.
-    pub(crate) narrow_excluding_visiting: RefCell<FxHashSet<NarrowExcludingKey>>,
-    /// Memo for the narrowing-boundary assignability check
-    /// ([`NarrowingContext::is_assignable_to`]) keyed by
-    /// `(source, target, resolver_generation)`.
-    ///
-    /// Positive-branch type-predicate narrowing (`narrow_to_type`) filters each
-    /// union member with `is_assignable_to(member, target)`, which falls into a
-    /// full `SubtypeChecker` whose structural comparison of recursive-schema
-    /// interfaces re-materializes the recursive property closure via
-    /// `collect_properties_cached` at each depth. The same `(member, target)`
-    /// pair recurs across the many `IsXxx(s)` guards a typebox/ts-morph file runs
-    /// over one recursive `TSchema`, so memoizing the boolean collapses the
-    /// repeated deep materialization (issue #13242 / #13250).
-    pub(crate) narrow_assignable_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
-    /// Memo for the narrowing-boundary subtype check
-    /// ([`NarrowingContext::is_subtype_for_narrowing`]) keyed by
-    /// `(source, target, resolver_generation)`.
-    ///
-    /// This is the single chokepoint that constructs a fresh `SubtypeChecker`
-    /// for narrowing; both the positive type-predicate branch and
-    /// `is_assignable_to` funnel here, so it is the deepest point at which the
-    /// recursive-schema `collect_properties_cached` walk can be cached once per
-    /// `(source, target)` pair (issue #13242 / #13250).
-    pub(crate) narrow_subtype_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
-    /// Re-entrancy depth of the exclusion-narrowing families
-    /// (`narrow_excluding_type` / `narrow_excluding_function` /
-    /// `narrow_excluding_typeof_object`).
-    ///
-    /// The outermost frame (`depth == 0`) primes [`Self::narrow_excluding_fuel`]
-    /// so the cumulative work bound is scoped *per top-level request* and never
-    /// leaks across the many independent narrowings a shared cache serves.
-    pub(crate) narrow_excluding_depth: Cell<u32>,
-    /// Remaining cumulative work for the current outermost exclusion-narrowing
-    /// request.
-    ///
-    /// `narrow_type_param_excluding` re-mints a fresh `source & narrowed_constraint`
-    /// intersection at every level, so the per-pair [`Self::narrow_excluding_visiting`]
-    /// guard (keyed on a *stable* `(source, excluded)`) never fires for a
-    /// self-referential constraint such as `T extends Foo`: each recursion
-    /// presents a different `source` `TypeId`. A persistent work counter — the
-    /// narrowing analogue of tsc's `instantiationCount` — bounds that
-    /// breadth-fanned recursion regardless of how many fresh types it mints. On
-    /// exhaustion the recursion bails to the unchanged source, the same
-    /// conservative answer the in-flight cycle guard returns.
-    pub(crate) narrow_excluding_fuel: Cell<u32>,
-    /// Per-request work cap used to prime [`Self::narrow_excluding_fuel`]. `0`
-    /// means "use [`NARROW_EXCLUDING_WORK_BUDGET`]"; tests and tuning may lower
-    /// it to exercise the bail path deterministically.
-    pub(crate) narrow_excluding_budget: Cell<u32>,
-}
-
-/// Per-request cumulative work bound shared by the exclusion-narrowing families
-/// (`narrow_excluding_type` / `narrow_excluding_function` /
-/// `narrow_excluding_typeof_object`) and their `narrow_type_param_excluding*`
-/// recursions.
-///
-/// One unit is charged per *fresh* (un-memoized) exclusion narrow. Real flow
-/// narrowing performs at most a few hundred such steps per request, so the bound
-/// is pure headroom on conforming code and only bites the pathological
-/// breadth-fan that re-mints `source & constraint` intersections without
-/// converging (the latent defect tracked in the narrowing-recursion audit). It
-/// mirrors the role of tsc's `instantiationCount` cap: a generous absolute
-/// ceiling that turns a non-terminating expansion into a bounded, conservative
-/// result rather than a tuned per-shape heuristic.
-pub(crate) const NARROW_EXCLUDING_WORK_BUDGET: u32 = 1_000_000;
-
-/// RAII guard for one exclusion-narrowing recursion frame.
-///
-/// Restores the prior re-entrancy depth on every return path (including panic
-/// unwinds), so the per-request budget priming in [`NarrowingContext`] stays
-/// balanced. Shared by all `narrow_excluding_*` entry points.
-pub(in crate::narrowing) struct ExclusionFrame<'b> {
-    depth: &'b Cell<u32>,
-    prior: u32,
-}
-
-impl Drop for ExclusionFrame<'_> {
-    fn drop(&mut self) {
-        self.depth.set(self.prior);
-    }
-}
-
-/// Cache key for [`NarrowingContext::narrow_excluding_type`] and
-/// [`NarrowingContext::is_assignable_to`].
-///
-/// A `(source, target, resolver_generation)` triple. `resolver_generation` is
-/// folded in so a later resolver that resolves a Lazy alias differently cannot
-/// reuse a stale result, matching the keying discipline of
-/// [`NarrowTypeCacheKey`].
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub(crate) struct NarrowExcludingKey {
-    source: TypeId,
-    excluded: TypeId,
-    resolver_generation: u64,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
-pub(crate) struct NarrowExcludingStableKey {
-    source: TypeId,
-    excluded: TypeId,
-}
-
-impl NarrowingCache {
-    pub fn new() -> Self {
-        Self {
-            resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(1024, FxBuildHasher)),
-            resolve_visiting: RefCell::new(FxHashSet::default()),
-            property_cache: RefCell::new(GenerationMemo::default()),
-            required_property_cache: RefCell::new(GenerationMemo::default()),
-            split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
-            contains_type_parameters_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                1024,
-                FxBuildHasher,
-            )),
-            optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
-            optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
-            contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                256,
-                FxBuildHasher,
-            )),
-            discriminant_index: RefCell::new(FxHashMap::default()),
-            narrow_type_cache: RefCell::new(GenerationMemo::default()),
-            narrow_excluding_cache: RefCell::new(GenerationMemo::default()),
-            narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
-            narrow_assignable_cache: RefCell::new(GenerationMemo::default()),
-            narrow_subtype_cache: RefCell::new(GenerationMemo::default()),
-            narrow_excluding_depth: Cell::new(0),
-            narrow_excluding_fuel: Cell::new(0),
-            narrow_excluding_budget: Cell::new(0),
-        }
-    }
-
-    #[must_use]
-    pub fn cache_statistics(&self) -> NarrowingCacheStatistics {
-        NarrowingCacheStatistics {
-            resolve_cache_entries: self.resolve_cache.borrow().len(),
-            narrowed_property_cache_entries: self.property_cache.borrow().len(),
-            required_property_cache_entries: self.required_property_cache.borrow().len(),
-            split_nullish_cache_entries: self.split_nullish_cache.borrow().len(),
-            contains_type_parameters_cache_entries: self
-                .contains_type_parameters_cache
-                .borrow()
-                .len(),
-            optional_chain_cache_entries: self.optional_chain_cache.borrow().len(),
-            optional_property_chain_cache_entries: self
-                .optional_property_chain_cache
-                .borrow()
-                .len(),
-            contextual_resolve_cache_entries: self.contextual_resolve_cache.borrow().len(),
-            discriminant_index_entries: self.discriminant_index.borrow().len(),
-            narrow_type_cache_entries: self.narrow_type_cache.borrow().len(),
-            narrow_excluding_cache_entries: self.narrow_excluding_cache.borrow().len(),
-            narrow_assignable_cache_entries: self.narrow_assignable_cache.borrow().len(),
-            narrow_subtype_cache_entries: self.narrow_subtype_cache.borrow().len(),
-            estimated_size_bytes: self.estimated_size_bytes(),
-        }
-    }
-
-    #[must_use]
-    pub fn estimated_size_bytes(&self) -> usize {
-        const BUCKET_OVERHEAD: usize = 64;
-
-        let mut size = std::mem::size_of::<Self>();
-
-        {
-            let map = self.resolve_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
-        }
-        {
-            let set = self.resolve_visiting.borrow();
-            size += set.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<TypeId>());
-        }
-        {
-            let map = self.property_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-        {
-            let map = self.required_property_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-        {
-            let map = self.split_nullish_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<TypeId>()
-                    + std::mem::size_of::<SplitNullishParts>());
-        }
-        {
-            let map = self.contains_type_parameters_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, bool)>());
-        }
-        {
-            let map = self.optional_chain_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<(TypeId, Atom)>()
-                    + std::mem::size_of::<TypeId>());
-        }
-        {
-            let map = self.optional_property_chain_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<OptionalPropertyChainKey>()
-                    + std::mem::size_of::<TypeId>());
-            size += map
-                .keys()
-                .map(|key| key.properties.capacity() * std::mem::size_of::<Atom>())
-                .sum::<usize>();
-        }
-        {
-            let map = self.contextual_resolve_cache.borrow();
-            size += map.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>());
-        }
-        {
-            let map = self.discriminant_index.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<(TypeId, Atom)>()
-                    + std::mem::size_of::<Arc<DiscriminantMembers>>());
-            for members in map.values() {
-                size += members.capacity()
-                    * (BUCKET_OVERHEAD
-                        + std::mem::size_of::<TypeId>()
-                        + std::mem::size_of::<Vec<TypeId>>());
-                size += members
-                    .values()
-                    .map(|variants| variants.capacity() * std::mem::size_of::<TypeId>())
-                    .sum::<usize>();
-            }
-        }
-        {
-            let map = self.narrow_type_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-        {
-            let map = self.narrow_excluding_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-        {
-            let set = self.narrow_excluding_visiting.borrow();
-            size += set.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<NarrowExcludingKey>());
-        }
-        {
-            let map = self.narrow_assignable_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-        {
-            let map = self.narrow_subtype_cache.borrow();
-            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
-        }
-
-        size
-    }
 }
 
 /// Narrowing context for type guards and control flow analysis.
@@ -783,11 +159,10 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        if !self.cache.resolve_visiting.borrow_mut().insert(type_id) {
+        let Some(_visit_guard) = self.cache.resolve_visit_guard(type_id) else {
             return type_id;
-        }
+        };
         let result = self.resolve_type_uncached(type_id);
-        self.cache.resolve_visiting.borrow_mut().remove(&type_id);
         // Only cache if we actually resolved it — don't cache Lazy → Lazy self-mappings
         // since the TypeEnvironment may be populated later with the real mapping.
         let is_unresolved_symbolic = result == type_id
@@ -1608,55 +983,6 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
-    /// Enter one exclusion-narrowing recursion frame.
-    ///
-    /// The outermost frame (`depth == 0`) primes the per-request cumulative work
-    /// budget; nested frames inherit it. Scoping the bound to one top-level
-    /// narrowing keeps it from accumulating across the many independent requests
-    /// a shared cache serves, while still bounding a recursion that re-mints
-    /// fresh `source & constraint` intersections (which slip past the
-    /// stable-keyed `narrow_excluding_visiting` guard). The returned guard
-    /// restores the prior depth on drop.
-    ///
-    /// Shared by [`Self::narrow_excluding_type`], [`Self::narrow_excluding_function`],
-    /// and [`Self::narrow_excluding_typeof_object`] so the three exclusion families
-    /// draw down one budget, and a self-referential constraint reached through
-    /// any of them terminates the same way.
-    pub(in crate::narrowing) fn enter_exclusion_frame(&self) -> ExclusionFrame<'_> {
-        let depth = &self.cache.narrow_excluding_depth;
-        let prior = depth.get();
-        if prior == 0 {
-            let cap = self.cache.narrow_excluding_budget.get();
-            let cap = if cap == 0 {
-                NARROW_EXCLUDING_WORK_BUDGET
-            } else {
-                cap
-            };
-            self.cache.narrow_excluding_fuel.set(cap);
-        }
-        depth.set(prior + 1);
-        ExclusionFrame { depth, prior }
-    }
-
-    /// Charge one unit of the per-request exclusion-narrowing budget. Returns
-    /// `false` once the budget is spent, signalling the caller to bail to a
-    /// conservative (un-narrowed) result.
-    pub(in crate::narrowing) fn charge_exclusion_work(&self) -> bool {
-        let fuel = self.cache.narrow_excluding_fuel.get();
-        if fuel == 0 {
-            return false;
-        }
-        self.cache.narrow_excluding_fuel.set(fuel - 1);
-        true
-    }
-
-    /// Whether the current request is still within its exclusion-narrowing
-    /// budget. Used to skip memoizing a result whose subtree drained the budget
-    /// (a truncated, request-local answer that must not poison a later request).
-    fn exclusion_within_budget(&self) -> bool {
-        self.cache.narrow_excluding_fuel.get() > 0
-    }
-
     /// Narrow a type to exclude members assignable to target.
     ///
     /// Memoizing entry point. The recursive body (`narrow_excluding_type_uncached`)
@@ -1678,19 +1004,19 @@ impl<'a> NarrowingContext<'a> {
             return self.narrow_excluding_type_uncached(source_type, excluded_type);
         }
 
-        let _frame = self.enter_exclusion_frame();
+        let _frame = self.cache.enter_exclusion_frame();
         self.narrow_excluding_type_budgeted(source_type, excluded_type)
     }
 
     /// Override the per-request exclusion-narrowing work budget shared by every
     /// `narrow_excluding_*` family.
     ///
-    /// `0` restores the default [`NARROW_EXCLUDING_WORK_BUDGET`]. Lets tests
+    /// `0` restores the default exclusion-narrowing work budget. Lets tests
     /// exercise the bail path deterministically without driving a million-step
     /// recursion.
     #[cfg(test)]
     pub(crate) fn set_narrow_excluding_budget(&self, budget: u32) {
-        self.cache.narrow_excluding_budget.set(budget);
+        self.cache.set_narrow_excluding_budget(budget);
     }
 
     /// Memoized, budget-charged body of [`Self::narrow_excluding_type`]. Always
@@ -1719,30 +1045,21 @@ impl<'a> NarrowingContext<'a> {
         // conservative answer the in-flight cycle guard below returns — so a
         // breadth-fanned recursion that keeps minting fresh intersections
         // terminates instead of spinning unbounded.
-        if !self.charge_exclusion_work() {
+        if !self.cache.charge_exclusion_work() {
             return source_type;
         }
         // Re-entry on the same `(source, excluded)` pair is a recursive-alias
         // cycle: leave the source unchanged so the in-flight outer frame owns the
         // result, mirroring tsc's bounded exclusion over a recursive union.
-        if !self
-            .cache
-            .narrow_excluding_visiting
-            .borrow_mut()
-            .insert(key)
-        {
+        let Some(_visit_guard) = self.cache.narrow_excluding_visit_guard(key) else {
             return source_type;
-        }
+        };
         let result = self.narrow_excluding_type_uncached(source_type, excluded_type);
-        self.cache
-            .narrow_excluding_visiting
-            .borrow_mut()
-            .remove(&key);
         // Only memoize when the whole subtree stayed within budget. A result that
         // bottomed out the fuel is truncated and request-local, so caching it
         // would poison a later, fully-budgeted request with the conservative
         // answer.
-        if self.exclusion_within_budget() {
+        if self.cache.exclusion_within_budget() {
             self.cache.narrow_excluding_cache.borrow_mut().insert(
                 stable_key,
                 resolver_generation,
@@ -2561,7 +1878,3 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "core/cache_visibility_tests.rs"]
-mod cache_visibility_tests;

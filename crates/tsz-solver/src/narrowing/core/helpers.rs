@@ -460,8 +460,8 @@ impl<'a> NarrowingContext<'a> {
         // `narrow_type_param_excluding_function`) would otherwise recurse
         // unbounded here too. Charge one unit per call and bail to the unchanged
         // source when the budget is spent.
-        let _frame = self.enter_exclusion_frame();
-        if !self.charge_exclusion_work() {
+        let _frame = self.cache.enter_exclusion_frame();
+        if !self.cache.charge_exclusion_work() {
             return source_type;
         }
 

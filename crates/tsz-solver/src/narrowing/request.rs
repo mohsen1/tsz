@@ -5,7 +5,7 @@
 //! narrowing configuration stay in one place as the monolithic narrowing
 //! engine is staged into explicit pipeline steps.
 
-use crate::narrowing::core::{GuardSense, TypeGuard};
+use crate::narrowing::guard::{GuardSense, TypeGuard};
 use crate::options::IndexAccessOptions;
 use crate::types::TypeId;
 
@@ -115,7 +115,7 @@ impl NarrowingRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::narrowing::core::{GuardSense, TypeGuard, TypeofKind};
+    use crate::narrowing::guard::{GuardSense, TypeGuard, TypeofKind};
     use crate::types::TypeId;
 
     #[test]
