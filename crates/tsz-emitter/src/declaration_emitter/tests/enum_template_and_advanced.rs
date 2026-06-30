@@ -1616,3 +1616,95 @@ fn test_const_enum_division_dts_is_float_value() {
         "const enum division .d.ts values must be float quotients: {result}"
     );
 }
+
+// =====================================================================
+// Ambient enum declaration-emit value preservation (issue #14769)
+//
+// For an ambient (`declare`) non-const enum, tsc preserves each member's
+// source initializer form in the `.d.ts`: members with `= ...` keep it,
+// bare members stay bare. This must hold for both exported and non-exported
+// enums (they previously took separate emit paths) and for enums nested in a
+// `declare namespace`. Const enums always emit values, ambient or not.
+// =====================================================================
+
+#[test]
+fn test_ambient_exported_enum_keeps_bare_members_14769() {
+    // `export declare enum` flows through the exported-enum emit path, which
+    // previously synthesized `A = 0, B = 1`.
+    let result = emit_dts("export declare enum NonConst { A, B }\n");
+    let expected = "export declare enum NonConst {\n    A,\n    B\n}\n";
+    assert_eq!(
+        result, expected,
+        "ambient exported enum must stay bare: {result}"
+    );
+}
+
+#[test]
+fn test_ambient_exported_const_enum_keeps_values_14769() {
+    // Const enums always emit values, even ambient — must not regress.
+    let result = emit_dts("export declare const enum IsConst { X, Y }\n");
+    let expected = "export declare const enum IsConst {\n    X = 0,\n    Y = 1\n}\n";
+    assert_eq!(
+        result, expected,
+        "ambient const enum must keep values: {result}"
+    );
+}
+
+#[test]
+fn test_ambient_nonexported_enum_keeps_bare_members_14769() {
+    // `declare enum` (no export) flows through the non-exported emit path.
+    let result = emit_dts("declare enum Bare { A, B }\n");
+    let expected = "declare enum Bare {\n    A,\n    B\n}\n";
+    assert_eq!(
+        result, expected,
+        "ambient non-exported enum must stay bare: {result}"
+    );
+}
+
+#[test]
+fn test_ambient_mixed_init_enum_preserves_form_14769() {
+    // Only explicitly-initialized members keep `= ...`; bare members stay bare.
+    let result = emit_dts("export declare enum Mixed { A, B = 5, C, D = \"str\" }\n");
+    let expected = "export declare enum Mixed {\n    A,\n    B = 5,\n    C,\n    D = \"str\"\n}\n";
+    assert_eq!(
+        result, expected,
+        "mixed-init ambient enum form must be preserved: {result}"
+    );
+}
+
+#[test]
+fn test_ambient_string_enum_preserves_explicit_values_14769() {
+    // Explicit string initializers are always preserved (already correct).
+    let result = emit_dts("export declare enum Colors { Red = \"red\", Green = \"green\" }\n");
+    let expected = "export declare enum Colors {\n    Red = \"red\",\n    Green = \"green\"\n}\n";
+    assert_eq!(
+        result, expected,
+        "ambient string enum values must be preserved: {result}"
+    );
+}
+
+#[test]
+fn test_enum_in_declare_namespace_keeps_bare_members_14769() {
+    // Inside a `declare namespace`, the member values must be dropped too.
+    let result = emit_dts("declare namespace NS { export enum D { P, Q, R } }\n");
+    assert!(
+        result.contains("enum D {\n        P,\n        Q,\n        R\n    }"),
+        "enum in declare namespace must stay bare: {result}"
+    );
+    assert!(
+        !result.contains("P = 0"),
+        "enum in declare namespace must not synthesize values: {result}"
+    );
+}
+
+#[test]
+fn test_nonambient_exported_enum_still_emits_values_14769() {
+    // Control: a real implementation enum surfaces the computed values in the
+    // `.d.ts`. The ambient guard must NOT suppress these.
+    let result = emit_dts("export enum Impl { A, B }\n");
+    let expected = "export declare enum Impl {\n    A = 0,\n    B = 1\n}\n";
+    assert_eq!(
+        result, expected,
+        "non-ambient enum must keep computed values: {result}"
+    );
+}
