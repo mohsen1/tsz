@@ -198,6 +198,42 @@ fn test_get_property_object() {
 }
 
 #[test]
+fn test_get_index_type_resolves_lazy_object_body() {
+    let mut setup = JudgeSetup::new();
+
+    let alpha = setup.interner.intern_string("alpha");
+    let object = setup
+        .interner
+        .object(vec![PropertyInfo::new(alpha, TypeId::NUMBER)]);
+    let def_id = DefId(40_001);
+    setup.env.insert_def(def_id, object);
+
+    let lazy_object = setup.interner.lazy(def_id);
+    let alpha_key = setup.interner.literal_string("alpha");
+    let judge = setup.judge();
+
+    assert_eq!(judge.get_index_type(lazy_object, alpha_key), TypeId::NUMBER);
+}
+
+#[test]
+fn test_get_keyof_resolves_lazy_object_body() {
+    let mut setup = JudgeSetup::new();
+
+    let beta = setup.interner.intern_string("beta");
+    let object = setup
+        .interner
+        .object(vec![PropertyInfo::new(beta, TypeId::STRING)]);
+    let def_id = DefId(40_002);
+    setup.env.insert_def(def_id, object);
+
+    let lazy_object = setup.interner.lazy(def_id);
+    let beta_key = setup.interner.literal_string("beta");
+    let judge = setup.judge();
+
+    assert_eq!(judge.get_keyof(lazy_object), beta_key);
+}
+
+#[test]
 fn test_get_property_special_types() {
     let setup = JudgeSetup::new();
     let interner = &setup.interner;

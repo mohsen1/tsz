@@ -307,6 +307,12 @@ impl<'a> DefaultJudge<'a> {
 }
 
 impl<'a> DefaultJudge<'a> {
+    fn configured_evaluator(&self) -> TypeEvaluator<'a, TypeEnvironment> {
+        let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
+        evaluator.set_no_unchecked_indexed_access(self.config.no_unchecked_indexed_access);
+        evaluator
+    }
+
     /// Check if `source` is a subtype of `target`.
     pub fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
         // Fast path: identity
@@ -934,12 +940,8 @@ impl<'a> DefaultJudge<'a> {
 
     /// Get the result of indexing: `T[K]`.
     pub fn get_index_type(&self, object: TypeId, key: TypeId) -> TypeId {
-        crate::evaluation::evaluate::evaluate_index_access_with_options(
-            self.db,
-            object,
-            key,
-            self.config.no_unchecked_indexed_access,
-        )
+        self.configured_evaluator()
+            .evaluate_index_access(object, key)
     }
 
     /// Get index signature type (string or number indexer).
@@ -967,7 +969,7 @@ impl<'a> DefaultJudge<'a> {
 
     /// Get `keyof T`.
     pub fn get_keyof(&self, type_id: TypeId) -> TypeId {
-        crate::evaluation::evaluate::evaluate_keyof(self.db, type_id)
+        self.configured_evaluator().evaluate_keyof(type_id)
     }
 
     /// Get the current configuration.
