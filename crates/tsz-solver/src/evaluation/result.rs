@@ -155,6 +155,7 @@ impl EvaluationResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct EvaluationMemoResult {
     result: EvaluationResult,
+    request_stability: EvaluationRequestStability,
     cache_stability: EvaluationMemoStability,
 }
 
@@ -162,19 +163,28 @@ pub(crate) struct EvaluationMemoResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EvaluationRequestStability {
     Stable,
+    /// A typed request result says a guard returned a partial answer.
     IncompleteVerdict,
+    /// A legacy recursion/depth/iteration taint fired before the typed channel
+    /// fully owns that family.
     RecursionLimit,
+    /// A `DefId` body was unresolved, so the result is a registration-window
+    /// artifact rather than a stable function of the request key.
+    UnresolvedDef,
 }
 
 impl EvaluationRequestStability {
     pub(crate) const fn from_request_state(
         has_incomplete_request_verdict: bool,
         recursion_limit_hit: bool,
+        unresolved_def_seen: bool,
     ) -> Self {
         if has_incomplete_request_verdict {
             Self::IncompleteVerdict
         } else if recursion_limit_hit {
             Self::RecursionLimit
+        } else if unresolved_def_seen {
+            Self::UnresolvedDef
         } else {
             Self::Stable
         }
@@ -182,6 +192,18 @@ impl EvaluationRequestStability {
 
     pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
         matches!(self, Self::Stable)
+    }
+
+    /// Whether a complete result with this request-state verdict should remain
+    /// cacheable by ordinary eval memo consumers. `UnresolvedDef` is allowed
+    /// here to preserve pre-existing complete-result behavior; run-wide cache
+    /// publishers such as closed-eval inspect the request state directly.
+    pub(crate) const fn allows_complete_memo_result(self) -> bool {
+        matches!(self, Self::Stable | Self::UnresolvedDef)
+    }
+
+    pub(crate) const fn is_stable_for_per_query_memo(self) -> bool {
+        matches!(self, Self::Stable | Self::UnresolvedDef)
     }
 }
 
@@ -198,7 +220,7 @@ impl EvaluationMemoStability {
         result: EvaluationResult,
         request_stability: EvaluationRequestStability,
     ) -> Self {
-        if result.is_complete() && request_stability.is_stable_for_depth_agnostic_cache() {
+        if result.is_complete() && request_stability.allows_complete_memo_result() {
             Self::Stable
         } else {
             Self::Unstable
@@ -219,6 +241,7 @@ impl EvaluationMemoResult {
     ) -> Self {
         Self {
             result,
+            request_stability,
             cache_stability: EvaluationMemoStability::from_result(result, request_stability),
         }
     }
@@ -228,6 +251,7 @@ impl EvaluationMemoResult {
     pub(crate) const fn cached(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
+            request_stability: EvaluationRequestStability::Stable,
             cache_stability: EvaluationMemoStability::Stable,
         }
     }
@@ -237,6 +261,7 @@ impl EvaluationMemoResult {
     pub(crate) const fn unstable_complete(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
+            request_stability: EvaluationRequestStability::IncompleteVerdict,
             cache_stability: EvaluationMemoStability::Unstable,
         }
     }
@@ -254,6 +279,15 @@ impl EvaluationMemoResult {
     /// ambient recursion depth/fuel state.
     pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
         self.cache_stability.is_stable_for_depth_agnostic_cache()
+    }
+
+    /// Whether this result can be stored in the thread-local per-query memo.
+    ///
+    /// `UnresolvedDef` remains visible to run-state gates such as closed-eval
+    /// publication, but a complete memo result is reusable within the same
+    /// coherent analysis window.
+    pub(crate) const fn is_stable_for_per_query_memo(self) -> bool {
+        self.result.is_complete() && self.request_stability.is_stable_for_per_query_memo()
     }
 
     /// Collapse to the request's `TypeId` while preserving today's behavior for
@@ -329,6 +363,17 @@ mod tests {
         );
         assert!(!request_state_tainted.is_stable_for_depth_agnostic_cache());
 
+        let unresolved_def_named = EvaluationMemoResult::for_depth_agnostic_memo(
+            complete,
+            EvaluationRequestStability::UnresolvedDef,
+        );
+        assert_eq!(
+            unresolved_def_named.cache_stability,
+            EvaluationMemoStability::Stable
+        );
+        assert!(unresolved_def_named.is_stable_for_depth_agnostic_cache());
+        assert!(unresolved_def_named.is_stable_for_per_query_memo());
+
         let incomplete =
             EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
         let typed_tainted = EvaluationMemoResult::for_depth_agnostic_memo(
@@ -346,27 +391,38 @@ mod tests {
     #[test]
     fn request_stability_names_request_state_reason() {
         assert_eq!(
-            EvaluationRequestStability::from_request_state(false, false),
+            EvaluationRequestStability::from_request_state(false, false, false),
             EvaluationRequestStability::Stable
         );
         assert_eq!(
-            EvaluationRequestStability::from_request_state(true, false),
+            EvaluationRequestStability::from_request_state(true, false, false),
             EvaluationRequestStability::IncompleteVerdict
         );
         assert_eq!(
-            EvaluationRequestStability::from_request_state(false, true),
+            EvaluationRequestStability::from_request_state(false, true, false),
             EvaluationRequestStability::RecursionLimit
         );
         assert_eq!(
-            EvaluationRequestStability::from_request_state(true, true),
+            EvaluationRequestStability::from_request_state(false, false, true),
+            EvaluationRequestStability::UnresolvedDef
+        );
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(true, true, true),
             EvaluationRequestStability::IncompleteVerdict,
             "typed incomplete verdict should stay the primary request-state reason"
+        );
+        assert_eq!(
+            EvaluationRequestStability::from_request_state(false, true, true),
+            EvaluationRequestStability::RecursionLimit,
+            "recursion-limit taint should stay primary when both legacy taints are set"
         );
         assert!(EvaluationRequestStability::Stable.is_stable_for_depth_agnostic_cache());
         assert!(
             !EvaluationRequestStability::IncompleteVerdict.is_stable_for_depth_agnostic_cache()
         );
         assert!(!EvaluationRequestStability::RecursionLimit.is_stable_for_depth_agnostic_cache());
+        assert!(!EvaluationRequestStability::UnresolvedDef.is_stable_for_depth_agnostic_cache());
+        assert!(EvaluationRequestStability::UnresolvedDef.is_stable_for_per_query_memo());
     }
 
     #[test]
@@ -388,5 +444,6 @@ mod tests {
         assert_eq!(result.type_id(), TypeId::STRING);
         assert_eq!(result.into_type_id(), TypeId::STRING);
         assert!(!result.is_stable_for_depth_agnostic_cache());
+        assert!(!result.is_stable_for_per_query_memo());
     }
 }

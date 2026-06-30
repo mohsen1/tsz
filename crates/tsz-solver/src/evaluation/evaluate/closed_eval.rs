@@ -121,8 +121,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         // answer a sibling read would observe.
         let is_top_level = closed_eval_cache_enabled() && self.guard.depth() == 0;
         if !is_top_level
-            || !self.request_state_is_depth_agnostic_cache_stable()
-            || self.unresolved_def_seen()
+            || !self
+                .run_state_cache_stability()
+                .is_stable_for_depth_agnostic_cache()
             || !limit_snapshot.union_complexity_stayed_stable_after(self.interner)
         {
             return;
@@ -447,7 +448,7 @@ mod tests {
     use crate::caches::query_cache::QueryCache;
     use crate::construction::TypeInterner;
     use crate::def::DefId;
-    use crate::evaluation::result::TerminationKind;
+    use crate::evaluation::result::{EvaluationRequestStability, TerminationKind};
 
     fn evaluator(interner: &TypeInterner) -> TypeEvaluator<'_> {
         TypeEvaluator::new(interner)
@@ -532,6 +533,69 @@ mod tests {
         assert_eq!(
             cache.lookup_closed_eval_cache(legacy_tainted_node, false),
             None
+        );
+
+        let unresolved_node = interner.index_access(TypeId::BOOLEAN, TypeId::STRING);
+        let mut unresolved = TypeEvaluator::new(&cache)
+            .with_query_db(&cache)
+            .with_closed_eval_writes();
+        unresolved.cache.insert(unresolved_node, TypeId::BOOLEAN);
+        unresolved.mark_unresolved_def_seen();
+        let unresolved_snapshot = EvaluationCacheLimitSnapshot::capture(&cache);
+        unresolved.commit_closed_eval_writes(unresolved_snapshot);
+        assert_eq!(cache.lookup_closed_eval_cache(unresolved_node, false), None);
+    }
+
+    /// An unresolved semantic body is a registration-window artifact, so the
+    /// shared request-state stability verdict should name it before closed-eval
+    /// decides whether to publish any cache entries.
+    #[test]
+    fn unresolved_def_seen_is_reported_by_request_state_stability_gate() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        assert_eq!(
+            evaluator.request_state_cache_stability(),
+            EvaluationRequestStability::Stable
+        );
+
+        evaluator.mark_unresolved_def_seen();
+
+        assert_eq!(
+            evaluator.request_state_cache_stability(),
+            EvaluationRequestStability::UnresolvedDef
+        );
+        assert!(!evaluator.request_state_is_depth_agnostic_cache_stable());
+    }
+
+    /// A run-wide unresolved-def hit blocks closed-eval writes for the whole
+    /// top-level evaluation, but it must not poison later independent request
+    /// memos. Otherwise a clean indexed-access request after an unrelated
+    /// registration-window artifact can lose its stable cross-evaluator memo and
+    /// re-resolve to a different method shape.
+    #[test]
+    fn request_stability_does_not_inherit_prior_unresolved_def_hit() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        evaluator.mark_unresolved_def_seen();
+        assert_eq!(
+            evaluator.run_state_cache_stability(),
+            EvaluationRequestStability::UnresolvedDef
+        );
+
+        let result = evaluator.evaluate_request_result(
+            crate::evaluation::request::EvaluationRequest::new(TypeId::STRING),
+        );
+
+        assert_eq!(result.into_type_id(), TypeId::STRING);
+        assert_eq!(
+            evaluator.request_state_cache_stability(),
+            EvaluationRequestStability::Stable
+        );
+        assert_eq!(
+            evaluator.run_state_cache_stability(),
+            EvaluationRequestStability::UnresolvedDef
         );
     }
 
