@@ -246,6 +246,12 @@ impl DefinitionStore {
                 + std::mem::size_of::<TypeId>()
                 + DASHMAP_ENTRY_OVERHEAD);
 
+        // module_augmented_bodies: DefId -> TypeId
+        size += self.module_augmented_bodies.len()
+            * (std::mem::size_of::<DefId>()
+                + std::mem::size_of::<TypeId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
         // file_to_defs: u32 -> Vec<DefId>
         for entry in &self.file_to_defs {
             size += std::mem::size_of::<u32>() + DASHMAP_ENTRY_OVERHEAD;
