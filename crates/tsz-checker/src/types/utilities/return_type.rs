@@ -76,21 +76,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        crate::query_boundaries::common::tuple_elements(self.ctx.types, return_context).is_some_and(
-            |elements| {
-                !elements.is_empty()
-                    && elements.iter().all(|element| {
-                        let slot = crate::query_boundaries::common::no_infer_inner_type(
-                            self.ctx.types,
-                            element.type_id,
-                        )
-                        .unwrap_or(element.type_id);
-                        !crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            slot,
-                        ) && !crate::query_boundaries::common::is_this_type(self.ctx.types, slot)
-                    })
-            },
+        return_type_queries::array_literal_return_context_has_usable_tuple_slots(
+            self.ctx.types,
+            return_context,
         )
     }
 

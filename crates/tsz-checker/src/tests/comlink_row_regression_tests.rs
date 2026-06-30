@@ -404,3 +404,79 @@ const handler: TransferHandler<object, MessagePort> = {
         "expected TS2322 for short tuple return, got {diags:#?}"
     );
 }
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_array_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Handler<T> {
+  make(): [T[], number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [[123], 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic array tuple slot, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_wrapper_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Wrapped<T> {
+  value: T;
+}
+declare function wrap<T>(value: T): Wrapped<T>;
+interface Handler<T> {
+  make(): [Wrapped<T>, number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [wrap(123), 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic wrapper tuple slot, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_object_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Handler<T> {
+  make(): [{ value: T }, number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [{ value: 123 }, 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic object tuple slot, got {diags:#?}"
+    );
+}
