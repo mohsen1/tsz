@@ -248,6 +248,25 @@ const slot: Slot = build();
     );
 }
 
+/// Control from #14829: an explicitly annotated, already widened source is
+/// unaffected and keeps its declared display.
+#[test]
+fn ts2559_annotated_widened_source_unchanged() {
+    let source = r#"
+interface Weak { a?: number; b?: number; }
+let src: { c: number } = { c: 1 };
+const w: Weak = src;
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '{ c: number; }' has no properties in common with type 'Weak'.".to_string()
+        )],
+    );
+}
+
 /// TS2345 generic parameter display: string literal annotations inside the
 /// inferred generic application's object argument widen, while the literal
 /// key argument is preserved.
