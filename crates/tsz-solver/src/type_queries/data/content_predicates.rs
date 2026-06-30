@@ -5,13 +5,15 @@
 
 use std::ops::ControlFlow;
 
+use super::content_predicate_guards::{
+    AliasConditionalWalkState, CachedContentWalker, EvalInertWalker,
+    NeverIndexAccessSurfaceWalkState,
+};
 use super::type_id_list::TypeIdList;
 use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
-use crate::visitors::child_policy::{
-    ChildPolicy, has_policy_children, try_for_each_child_with_policy,
-};
+use crate::visitors::child_policy::{ChildPolicy, try_for_each_child_with_policy};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -304,10 +306,7 @@ pub fn is_structurally_eval_inert(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     if let Some(cached) = db.structurally_eval_inert_cached(type_id) {
         return cached;
     }
-    let mut walker = EvalInertWalker {
-        db,
-        visiting: FxHashSet::default(),
-    };
+    let mut walker = EvalInertWalker::new(db);
     !walker.contains_eval_affecting(type_id).0
 }
 
@@ -329,7 +328,7 @@ pub fn is_structurally_eval_inert(db: &dyn TypeDatabase, type_id: TypeId) -> boo
 /// reduced shape. Keeping them out of the inert fast path is required for
 /// parity; the local/closed-eval/persistent memos still cover the repeated
 /// work.
-const fn is_eval_affecting_node(key: &TypeData) -> bool {
+pub(super) const fn is_eval_affecting_node(key: &TypeData) -> bool {
     matches!(
         key,
         TypeData::Conditional(_)
@@ -351,74 +350,6 @@ const fn is_eval_affecting_node(key: &TypeData) -> bool {
             | TypeData::Union(_)
             | TypeData::Intersection(_)
     )
-}
-
-/// Cycle-tracking walker backing [`is_structurally_eval_inert`]. Descends the
-/// full structural surface and writes only fully-resolved (untainted) per-node
-/// answers to the shared cache.
-struct EvalInertWalker<'a> {
-    db: &'a dyn TypeDatabase,
-    visiting: FxHashSet<TypeId>,
-}
-
-impl EvalInertWalker<'_> {
-    /// Returns `(contains_eval_affecting, cycle_tainted)`.
-    fn contains_eval_affecting(&mut self, type_id: TypeId) -> (bool, bool) {
-        if type_id.is_intrinsic() {
-            return (false, false);
-        }
-        // The cache stores inertness (the negation), so a cached `true` means
-        // "no eval-affecting node".
-        if let Some(inert) = self.db.structurally_eval_inert_cached(type_id) {
-            return (!inert, false);
-        }
-        let Some(key) = self.db.lookup(type_id) else {
-            return (false, false);
-        };
-        if is_eval_affecting_node(&key) {
-            // A matching node is a definite fact: not inert, untainted.
-            self.db.set_structurally_eval_inert_cache(type_id, false);
-            return (true, false);
-        }
-        if !has_policy_children(&key, &ChildPolicy::EVERYTHING) {
-            // A childless inert leaf: definitely inert.
-            self.db.set_structurally_eval_inert_cache(type_id, true);
-            return (false, false);
-        }
-        if !self.visiting.insert(type_id) {
-            // Re-entering an in-progress node contributes nothing new; mark
-            // tainted so the ancestor does not persist a provisional answer.
-            return (false, true);
-        }
-        let mut tainted = false;
-        let found = try_for_each_child_with_policy::<(), _>(
-            self.db,
-            &key,
-            &ChildPolicy::EVERYTHING,
-            &mut |child| {
-                let (child_found, child_tainted) = self.contains_eval_affecting(child);
-                tainted |= child_tainted;
-                if child_found {
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
-            },
-        )
-        .is_break();
-        self.visiting.remove(&type_id);
-        if found {
-            // A found eval-affecting node is a definite, untainted fact.
-            self.db.set_structurally_eval_inert_cache(type_id, false);
-            (true, false)
-        } else {
-            if !tainted {
-                // Only persist fully-resolved (untainted) inert answers.
-                self.db.set_structurally_eval_inert_cache(type_id, true);
-            }
-            (false, tainted)
-        }
-    }
 }
 
 pub(super) struct SubstitutionDependentPredicate;
@@ -500,8 +431,8 @@ pub fn contains_conditional_through_aliases(
     type_id: TypeId,
     resolve_lazy: &mut dyn FnMut(crate::def::DefId) -> Option<TypeId>,
 ) -> bool {
-    let mut visited = FxHashSet::default();
-    contains_conditional_through_aliases_inner(db, type_id, resolve_lazy, &mut visited, 0)
+    let mut state = AliasConditionalWalkState::new(CONDITIONAL_THROUGH_ALIAS_DEPTH_LIMIT);
+    contains_conditional_through_aliases_inner(db, type_id, resolve_lazy, &mut state, 0)
 }
 
 const CONDITIONAL_THROUGH_ALIAS_DEPTH_LIMIT: usize = 64;
@@ -510,13 +441,10 @@ fn contains_conditional_through_aliases_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     resolve_lazy: &mut dyn FnMut(crate::def::DefId) -> Option<TypeId>,
-    visited: &mut FxHashSet<TypeId>,
+    state: &mut AliasConditionalWalkState,
     depth: usize,
 ) -> bool {
-    if depth > CONDITIONAL_THROUGH_ALIAS_DEPTH_LIMIT || type_id.is_intrinsic() {
-        return false;
-    }
-    if !visited.insert(type_id) {
+    if state.should_stop(type_id, depth) {
         return false;
     }
     let Some(data) = db.lookup(type_id) else {
@@ -537,7 +465,7 @@ fn contains_conditional_through_aliases_inner(
     };
     if let Some(def_id) = alias_base_def
         && let Some(body) = resolve_lazy(def_id)
-        && contains_conditional_through_aliases_inner(db, body, resolve_lazy, visited, depth + 1)
+        && contains_conditional_through_aliases_inner(db, body, resolve_lazy, state, depth + 1)
     {
         return true;
     }
@@ -549,13 +477,8 @@ fn contains_conditional_through_aliases_inner(
         &data,
         &ChildPolicy::CONTENT_PREDICATE,
         &mut |child| {
-            if contains_conditional_through_aliases_inner(
-                db,
-                child,
-                resolve_lazy,
-                visited,
-                depth + 1,
-            ) {
+            if contains_conditional_through_aliases_inner(db, child, resolve_lazy, state, depth + 1)
+            {
                 ControlFlow::Break(())
             } else {
                 ControlFlow::Continue(())
@@ -630,89 +553,8 @@ fn contains_content_cached<P: ContentPredicate>(
     if let Some(cached) = predicate.cached(db, type_id) {
         return cached;
     }
-    let mut walker = CachedContentWalker {
-        db,
-        predicate,
-        policy: predicate.child_policy(),
-        visiting: FxHashSet::default(),
-    };
+    let mut walker = CachedContentWalker::new(db, predicate);
     walker.check(type_id)
-}
-
-struct CachedContentWalker<'a, P: ContentPredicate> {
-    db: &'a dyn TypeDatabase,
-    predicate: &'a P,
-    policy: ChildPolicy,
-    visiting: FxHashSet<TypeId>,
-}
-
-impl<P: ContentPredicate> CachedContentWalker<'_, P> {
-    /// Returns `(predicate_holds, cycle_tainted)`.
-    fn check_tracked(&mut self, type_id: TypeId) -> (bool, bool) {
-        if type_id.is_intrinsic() {
-            return (false, false);
-        }
-        if let Some(cached) = self.predicate.cached(self.db, type_id) {
-            return (cached, false);
-        }
-        let Some(key) = self.db.lookup(type_id) else {
-            return (false, false);
-        };
-        // Direct match on the node itself short-circuits: the answer is `true`
-        // and untainted regardless of any child subtree.
-        if self.predicate.matches_node(self.db, &key) {
-            self.predicate.set_cache(self.db, type_id, true);
-            return (true, false);
-        }
-        // Terminal fast path: a node with no children under the walker's
-        // policy cannot match below itself; skip the visiting-set round-trip.
-        if !has_policy_children(&key, &self.policy) {
-            self.predicate.set_cache(self.db, type_id, false);
-            return (false, false);
-        }
-        if !self.visiting.insert(type_id) {
-            // Re-entering an in-progress node: this path contributes nothing new
-            // (the matching node, if any, is found on the ancestor still being
-            // computed). Mark tainted so the ancestor does not persist a
-            // possibly-incomplete answer.
-            return (false, true);
-        }
-        let result = self.walk_children(&key);
-        self.visiting.remove(&type_id);
-        if !result.1 {
-            // Only persist fully-resolved (untainted) subtree results.
-            self.predicate.set_cache(self.db, type_id, result.0);
-        }
-        result
-    }
-
-    fn check(&mut self, type_id: TypeId) -> bool {
-        self.check_tracked(type_id).0
-    }
-
-    /// Walk the node's children under the predicate's child set.
-    fn walk_children(&mut self, key: &TypeData) -> (bool, bool) {
-        let db = self.db;
-        let policy = self.policy;
-        let mut tainted = false;
-        let found = try_for_each_child_with_policy::<(), _>(db, key, &policy, &mut |child| {
-            let (child_found, child_tainted) = self.check_tracked(child);
-            tainted |= child_tainted;
-            if child_found {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        })
-        .is_break();
-        if found {
-            // A `true` answer is never tainted: a found match is a definite
-            // fact independent of any in-flight cycle node.
-            (true, false)
-        } else {
-            (false, tainted)
-        }
-    }
 }
 
 /// Check if a type contains named type parameters or canonical bound
@@ -802,13 +644,13 @@ pub fn contains_never_index_access_surface(
     type_id: TypeId,
     max_depth: usize,
 ) -> bool {
-    let mut visited = FxHashSet::default();
+    let mut state = NeverIndexAccessSurfaceWalkState::new();
     contains_never_index_access_surface_inner(
         db,
         def_store,
         type_id,
         max_depth.saturating_add(1),
-        &mut visited,
+        &mut state,
     )
 }
 
@@ -817,9 +659,9 @@ fn contains_never_index_access_surface_inner(
     def_store: &DefinitionStore,
     type_id: TypeId,
     remaining_depth: usize,
-    visited: &mut FxHashSet<TypeId>,
+    state: &mut NeverIndexAccessSurfaceWalkState,
 ) -> bool {
-    if remaining_depth == 0 || type_id.is_intrinsic() || !visited.insert(type_id) {
+    if state.should_stop(type_id, remaining_depth) {
         return false;
     }
 
@@ -836,7 +678,7 @@ fn contains_never_index_access_surface_inner(
             def_store,
             alias,
             remaining_depth - 1,
-            visited,
+            state,
         )
     {
         return true;
@@ -851,7 +693,7 @@ fn contains_never_index_access_surface_inner(
             def_store,
             body,
             remaining_depth - 1,
-            visited,
+            state,
         )
     {
         return true;
@@ -865,7 +707,7 @@ fn contains_never_index_access_surface_inner(
                 def_store,
                 child,
                 remaining_depth - 1,
-                visited,
+                state,
             );
         }
     });

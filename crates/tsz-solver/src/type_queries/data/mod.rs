@@ -5,6 +5,7 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 mod accessors;
+mod content_predicate_guards;
 mod content_predicates;
 #[cfg(test)]
 mod free_param_cache_tests;
