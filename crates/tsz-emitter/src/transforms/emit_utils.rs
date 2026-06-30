@@ -260,6 +260,35 @@ pub(crate) fn classify_metadata_entity(arena: &NodeArena, name: &str) -> Metadat
     MetadataEntityKind::ValueOrUnknown
 }
 
+/// `typeof <name> === "function" ? <name> : Object` — the runtime-presence guard
+/// `tsc` wraps a possibly-absent global constructor in for decorator metadata
+/// (`getGlobalBigIntNameWithFallback` / `getGlobalSymbolNameWithFallback`).
+/// Unlike the `isolatedModules`/`noLib` fallback (which hoists a temp), this is
+/// `tsc`'s built-in-global form exactly. Shared by the `Printer` and ES5
+/// transform serializers so they cannot drift.
+pub(crate) fn metadata_global_with_fallback(name: &str) -> String {
+    format!("typeof {name} === \"function\" ? {name} : Object")
+}
+
+/// Serialize the `bigint` decorator-metadata type. `tsc` always guards the
+/// `BigInt` global — its presence is not implied by any target — so a runtime
+/// lacking `BigInt` reads `Object` instead of throwing a `ReferenceError`.
+pub(crate) fn serialize_bigint_metadata_type() -> String {
+    metadata_global_with_fallback("BigInt")
+}
+
+/// Serialize the `symbol` decorator-metadata type. `tsc` guards the `Symbol`
+/// global only for pre-ES2015 targets (`target_below_es2015`); at ES2015+
+/// `Symbol` is assumed present and emitted bare. The threshold lives here so
+/// both serializers share one definition.
+pub(crate) fn serialize_symbol_metadata_type(target_below_es2015: bool) -> String {
+    if target_below_es2015 {
+        metadata_global_with_fallback("Symbol")
+    } else {
+        "Symbol".to_string()
+    }
+}
+
 /// Collect the runtime (non-type-only) bindings of an import clause as
 /// `(name node, name)` pairs: the default name, the namespace name, and each
 /// named specifier's local name. Shared by the printer's and the lowering

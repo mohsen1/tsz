@@ -2,6 +2,7 @@
 
 use crate::transforms::emit_utils::{
     METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity, identifier_text,
+    serialize_bigint_metadata_type, serialize_symbol_metadata_type,
 };
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
@@ -12,8 +13,16 @@ use tsz_scanner::SyntaxKind;
 
 /// Serialize a type annotation to a metadata runtime type string.
 /// Mirrors the `Printer::serialize_type_for_metadata` logic for ES5 context.
-pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex) -> String {
-    serialize_type_for_metadata_impl(arena, type_idx, false, 0)
+///
+/// `target_below_es2015` is `!ScriptTarget::supports_es2015()` (equivalently the
+/// transformer's `target_es5`): `tsc` guards the `Symbol` global only for
+/// pre-ES2015 targets, while `BigInt` is guarded at every target.
+pub(super) fn serialize_type_for_metadata(
+    arena: &NodeArena,
+    type_idx: NodeIndex,
+    target_below_es2015: bool,
+) -> String {
+    serialize_type_for_metadata_impl(arena, type_idx, target_below_es2015, false, 0)
 }
 
 /// `in_alias_target` is set while serializing the resolved target of a type
@@ -23,6 +32,7 @@ pub(super) fn serialize_type_for_metadata(arena: &NodeArena, type_idx: NodeIndex
 fn serialize_type_for_metadata_impl(
     arena: &NodeArena,
     type_idx: NodeIndex,
+    target_below_es2015: bool,
     in_alias_target: bool,
     alias_depth: u32,
 ) -> String {
@@ -34,8 +44,10 @@ fn serialize_type_for_metadata_impl(
         k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
         k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
         k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
-        k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
-        k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+        k if k == sk(SyntaxKind::SymbolKeyword) => {
+            serialize_symbol_metadata_type(target_below_es2015)
+        }
+        k if k == sk(SyntaxKind::BigIntKeyword) => serialize_bigint_metadata_type(),
         k if k == sk(SyntaxKind::VoidKeyword)
             || k == sk(SyntaxKind::UndefinedKeyword)
             || k == sk(SyntaxKind::NullKeyword)
@@ -58,8 +70,8 @@ fn serialize_type_for_metadata_impl(
                 "string" => return "String".to_string(),
                 "number" => return "Number".to_string(),
                 "boolean" => return "Boolean".to_string(),
-                "symbol" => return "Symbol".to_string(),
-                "bigint" => return "BigInt".to_string(),
+                "symbol" => return serialize_symbol_metadata_type(target_below_es2015),
+                "bigint" => return serialize_bigint_metadata_type(),
                 "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
                 "any" | "unknown" | "object" => return "Object".to_string(),
                 _ => {}
@@ -72,7 +84,13 @@ fn serialize_type_for_metadata_impl(
                     if alias_depth >= METADATA_ALIAS_MAX_DEPTH {
                         return "Object".to_string();
                     }
-                    serialize_type_for_metadata_impl(arena, target, true, alias_depth + 1)
+                    serialize_type_for_metadata_impl(
+                        arena,
+                        target,
+                        target_below_es2015,
+                        true,
+                        alias_depth + 1,
+                    )
                 }
                 MetadataEntityKind::TypeOnly => "Object".to_string(),
                 // A local runtime value, or a name with no local type-only
@@ -130,6 +148,7 @@ fn serialize_type_for_metadata_impl(
                     return serialize_type_for_metadata_impl(
                         arena,
                         meaningful[0],
+                        target_below_es2015,
                         in_alias_target,
                         alias_depth,
                     );
@@ -138,13 +157,19 @@ fn serialize_type_for_metadata_impl(
                     let first = serialize_type_for_metadata_impl(
                         arena,
                         meaningful[0],
+                        target_below_es2015,
                         in_alias_target,
                         alias_depth,
                     );
                     if first != "Object"
                         && meaningful[1..].iter().all(|&m| {
-                            serialize_type_for_metadata_impl(arena, m, in_alias_target, alias_depth)
-                                == first
+                            serialize_type_for_metadata_impl(
+                                arena,
+                                m,
+                                target_below_es2015,
+                                in_alias_target,
+                                alias_depth,
+                            ) == first
                         })
                     {
                         return first;
@@ -161,6 +186,7 @@ fn serialize_type_for_metadata_impl(
                 return serialize_type_for_metadata_impl(
                     arena,
                     wrapped.type_node,
+                    target_below_es2015,
                     in_alias_target,
                     alias_depth,
                 );
@@ -174,14 +200,25 @@ fn serialize_type_for_metadata_impl(
                 return match lit_node.kind {
                     lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
                     lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
-                    lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                    lk if lk == sk(SyntaxKind::BigIntLiteral) => serialize_bigint_metadata_type(),
                     lk if lk == sk(SyntaxKind::TrueKeyword)
                         || lk == sk(SyntaxKind::FalseKeyword) =>
                     {
                         "Boolean".to_string()
                     }
                     lk if lk == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
-                    lk if lk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => "Number".to_string(),
+                    // `-1` → Number, `-1n` → the guarded BigInt global.
+                    lk if lk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                        if arena
+                            .get_unary_expr(lit_node)
+                            .and_then(|u| arena.get(u.operand))
+                            .is_some_and(|op| op.kind == sk(SyntaxKind::BigIntLiteral))
+                        {
+                            serialize_bigint_metadata_type()
+                        } else {
+                            "Number".to_string()
+                        }
+                    }
                     _ => "Object".to_string(),
                 };
             }
@@ -193,6 +230,7 @@ fn serialize_type_for_metadata_impl(
                 return serialize_type_for_metadata_impl(
                     arena,
                     type_op.type_node,
+                    target_below_es2015,
                     in_alias_target,
                     alias_depth,
                 );
@@ -204,6 +242,7 @@ fn serialize_type_for_metadata_impl(
                 return serialize_type_for_metadata_impl(
                     arena,
                     wrapped.type_node,
+                    target_below_es2015,
                     in_alias_target,
                     alias_depth,
                 );
@@ -215,12 +254,14 @@ fn serialize_type_for_metadata_impl(
                 let true_type = serialize_type_for_metadata_impl(
                     arena,
                     cond.true_type,
+                    target_below_es2015,
                     in_alias_target,
                     alias_depth,
                 );
                 let false_type = serialize_type_for_metadata_impl(
                     arena,
                     cond.false_type,
+                    target_below_es2015,
                     in_alias_target,
                     alias_depth,
                 );
@@ -237,18 +278,26 @@ fn serialize_type_for_metadata_impl(
 /// For a rest parameter, serialize the element type of the array type annotation.
 /// e.g., `...args: string[]` → "String", `...args: number[]` → "Number".
 /// If the type is not an array type or has no annotation, returns "Object".
-fn serialize_rest_param_element_type(arena: &NodeArena, type_annotation: NodeIndex) -> String {
+fn serialize_rest_param_element_type(
+    arena: &NodeArena,
+    type_annotation: NodeIndex,
+    target_below_es2015: bool,
+) -> String {
     if let Some(type_node) = arena.get(type_annotation)
         && type_node.kind == syntax_kind_ext::ARRAY_TYPE
         && let Some(arr) = arena.get_array_type(type_node)
     {
-        return serialize_type_for_metadata(arena, arr.element_type);
+        return serialize_type_for_metadata(arena, arr.element_type, target_below_es2015);
     }
     "Object".to_string()
 }
 
 /// Serialize parameter types for `design:paramtypes` metadata.
-pub(super) fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) -> String {
+pub(super) fn serialize_param_types(
+    arena: &NodeArena,
+    parameters: &NodeList,
+    target_below_es2015: bool,
+) -> String {
     let mut parts = Vec::new();
     for &param_idx in &parameters.nodes {
         if let Some(param_node) = arena.get(param_idx)
@@ -269,10 +318,18 @@ pub(super) fn serialize_param_types(arena: &NodeArena, parameters: &NodeList) ->
             }
             if param.dot_dot_dot_token {
                 // Rest parameter: serialize the element type of the array type.
-                let serialized = serialize_rest_param_element_type(arena, param.type_annotation);
+                let serialized = serialize_rest_param_element_type(
+                    arena,
+                    param.type_annotation,
+                    target_below_es2015,
+                );
                 parts.push(serialized);
             } else if param.type_annotation.is_some() {
-                parts.push(serialize_type_for_metadata(arena, param.type_annotation));
+                parts.push(serialize_type_for_metadata(
+                    arena,
+                    param.type_annotation,
+                    target_below_es2015,
+                ));
             } else {
                 parts.push("Object".to_string());
             }

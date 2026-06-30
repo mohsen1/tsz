@@ -2,6 +2,7 @@ use super::super::super::Printer;
 use crate::context::transform::TransformDirective;
 use crate::transforms::emit_utils::{
     METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity,
+    serialize_bigint_metadata_type, serialize_symbol_metadata_type,
 };
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -508,8 +509,8 @@ impl<'a> Printer<'a> {
             k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
             k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
             k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
-            k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
-            k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+            k if k == sk(SyntaxKind::SymbolKeyword) => self.serialize_symbol_for_metadata(),
+            k if k == sk(SyntaxKind::BigIntKeyword) => serialize_bigint_metadata_type(),
             k if k == sk(SyntaxKind::VoidKeyword) => "void 0".to_string(),
             k if k == sk(SyntaxKind::UndefinedKeyword) => "void 0".to_string(),
             k if k == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
@@ -632,16 +633,29 @@ impl<'a> Printer<'a> {
                     return match lit_node.kind {
                         lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
                         lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
-                        lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                        lk if lk == sk(SyntaxKind::BigIntLiteral) => {
+                            serialize_bigint_metadata_type()
+                        }
                         lk if lk == sk(SyntaxKind::TrueKeyword)
                             || lk == sk(SyntaxKind::FalseKeyword) =>
                         {
                             "Boolean".to_string()
                         }
                         lk if lk == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
-                        // Negative numeric literal: `-1` → PrefixUnaryExpression → Number
+                        // Prefix-unary literal: `-1` → Number, `-1n` → the guarded
+                        // BigInt global (like a bare bigint literal type), matching
+                        // tsc's `serializeLiteralOfLiteralTypeNode`.
                         lk if lk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                            "Number".to_string()
+                            if self
+                                .arena
+                                .get_unary_expr(lit_node)
+                                .and_then(|u| self.arena.get(u.operand))
+                                .is_some_and(|op| op.kind == sk(SyntaxKind::BigIntLiteral))
+                            {
+                                serialize_bigint_metadata_type()
+                            } else {
+                                "Number".to_string()
+                            }
                         }
                         _ => "Object".to_string(),
                     };
@@ -745,8 +759,8 @@ impl<'a> Printer<'a> {
             "string" => return "String".to_string(),
             "number" => return "Number".to_string(),
             "boolean" => return "Boolean".to_string(),
-            "symbol" => return "Symbol".to_string(),
-            "bigint" => return "BigInt".to_string(),
+            "symbol" => return self.serialize_symbol_for_metadata(),
+            "bigint" => return serialize_bigint_metadata_type(),
             "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
             "any" | "unknown" | "object" => return "Object".to_string(),
             _ => {}
@@ -995,6 +1009,14 @@ impl<'a> Printer<'a> {
         self.ctx.options.no_lib
             && self.ctx.options.isolated_modules
             && !self.ctx.module_state.value_declaration_names.contains(name)
+    }
+
+    /// Serialize the `symbol` type for decorator metadata, guarded only for
+    /// pre-`ES2015` targets. Adapts the printer's `ScriptTarget` to the shared
+    /// `serialize_symbol_metadata_type` threshold (`bigint` has no target gate,
+    /// so its call sites use `serialize_bigint_metadata_type` directly).
+    fn serialize_symbol_for_metadata(&self) -> String {
+        serialize_symbol_metadata_type(!self.ctx.options.target.supports_es2015())
     }
 
     /// Emit `__metadata("design:type", ...)` for a property.

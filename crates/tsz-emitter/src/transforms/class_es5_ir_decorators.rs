@@ -1291,17 +1291,17 @@ impl<'a> ES5ClassTransformer<'a> {
                         .is_some()
                         .then_some(param.type_annotation)
                 })
-                .map(|type_idx| serialize_type_for_metadata(self.arena, type_idx))
+                .map(|type_idx| serialize_type_for_metadata(self.arena, type_idx, self.target_es5))
                 .unwrap_or_else(|| "Object".to_string())
         } else if getter_type.is_some() {
-            serialize_type_for_metadata(self.arena, getter_type)
+            serialize_type_for_metadata(self.arena, getter_type, self.target_es5)
         } else {
             "Object".to_string()
         };
 
         let param_types = setter_parameters
             .as_ref()
-            .map(|params| serialize_param_types(self.arena, params))
+            .map(|params| serialize_param_types(self.arena, params, self.target_es5))
             .unwrap_or_default();
 
         vec![
@@ -1487,7 +1487,11 @@ impl<'a> ES5ClassTransformer<'a> {
             let metadata_strs: Vec<String> = if self.emit_decorator_metadata {
                 match &meta {
                     MemberMeta::Property { type_annotation } => {
-                        let serialized = serialize_type_for_metadata(self.arena, *type_annotation);
+                        let serialized = serialize_type_for_metadata(
+                            self.arena,
+                            *type_annotation,
+                            self.target_es5,
+                        );
                         vec![format!(
                             "{}(\"design:type\", {serialized})",
                             self.helper_name("__metadata")
@@ -1498,9 +1502,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         return_type,
                         async_returns_promise,
                     } => {
-                        let param_types = serialize_param_types(self.arena, parameters);
+                        let param_types =
+                            serialize_param_types(self.arena, parameters, self.target_es5);
                         let ret_type = if return_type.is_some() {
-                            serialize_type_for_metadata(self.arena, *return_type)
+                            serialize_type_for_metadata(self.arena, *return_type, self.target_es5)
                         } else if *async_returns_promise {
                             "Promise".to_string()
                         } else {
@@ -1610,7 +1615,8 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     // Build constructor paramtypes metadata if emit_decorator_metadata is enabled
                     if self.emit_decorator_metadata {
-                        let param_types = serialize_param_types(self.arena, &ctor.parameters);
+                        let param_types =
+                            serialize_param_types(self.arena, &ctor.parameters, self.target_es5);
                         metadata_strs.push(format!(
                             "{}(\"design:paramtypes\", [{param_types}])",
                             self.helper_name("__metadata")
@@ -1730,7 +1736,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     && member_node.kind == syntax_kind_ext::CONSTRUCTOR
                     && let Some(ctor) = self.arena.get_constructor(member_node)
                 {
-                    let param_types = serialize_param_types(self.arena, &ctor.parameters);
+                    let param_types =
+                        serialize_param_types(self.arena, &ctor.parameters, self.target_es5);
                     meta.push(format!(
                         "{}(\"design:paramtypes\", [{param_types}])",
                         self.helper_name("__metadata")
