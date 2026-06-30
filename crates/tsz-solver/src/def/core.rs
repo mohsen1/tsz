@@ -13,6 +13,7 @@
 //! |------|----------|----------|
 //! | CLI  | Sequential allocation | Fresh start each compilation |
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
+mod augmentation_symbols;
 mod content_addressed;
 mod cross_file_cache;
 mod definition_info;
@@ -21,6 +22,7 @@ mod semantic_construction;
 mod state_flags;
 mod symbol_registration;
 
+pub(crate) use augmentation_symbols::module_augmentation_symbol_edge_enabled;
 pub use content_addressed::ContentAddressedDefIds;
 use cross_file_cache::CrossFileQueryCache;
 pub use observability::StoreStatistics;
