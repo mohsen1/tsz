@@ -16,6 +16,22 @@ use crate::types::{IntrinsicKind, LiteralValue, MappedType, PropertyInfo, TypeDa
 use crate::visitor::keyof_inner_type;
 use tsz_common::interner::Atom;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TemplateSourceDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl TemplateSourceDepthState {
+    const fn from_depth(depth: usize, max_depth: usize) -> Self {
+        if depth > max_depth {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Classify a source object's non-numeric index slot into
     /// `(contributes_string, contributes_symbol)`. A symbol-only signature
@@ -692,8 +708,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         depth: usize,
     ) -> Option<TypeId> {
         const MAX_TEMPLATE_SOURCE_DEPTH: usize = 16;
-        if depth > MAX_TEMPLATE_SOURCE_DEPTH {
-            return None;
+        match TemplateSourceDepthState::from_depth(depth, MAX_TEMPLATE_SOURCE_DEPTH) {
+            TemplateSourceDepthState::Continue => {}
+            TemplateSourceDepthState::LimitExceeded => return None,
         }
         match self.interner().lookup(template) {
             Some(TypeData::IndexAccess(obj, idx)) => match self.interner().lookup(idx) {
@@ -760,5 +777,26 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TemplateSourceDepthState;
+
+    #[test]
+    fn template_source_depth_state_continues_at_limit() {
+        assert_eq!(
+            TemplateSourceDepthState::from_depth(16, 16),
+            TemplateSourceDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn template_source_depth_state_stops_past_limit() {
+        assert_eq!(
+            TemplateSourceDepthState::from_depth(17, 16),
+            TemplateSourceDepthState::LimitExceeded
+        );
     }
 }
