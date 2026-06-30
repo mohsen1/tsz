@@ -71,4 +71,36 @@ impl CheckerContext<'_> {
     ) {
         self.register_in_envs(DeferredFlowEnvWrite::InsertSymbolType { symbol, ty, params });
     }
+
+    /// Merge a child environment's `DefId -> TypeId` body into both parent
+    /// environments when the parent lacks the body, deferring on borrow races.
+    pub(crate) fn merge_def_if_missing_in_envs(&self, def_id: DefId, body: TypeId) {
+        self.register_in_envs(DeferredFlowEnvWrite::InsertDefIfMissing { def_id, body });
+    }
+
+    /// Merge a child environment's class instance metadata into both parent
+    /// environments when the parent lacks it, deferring on borrow races.
+    pub(crate) fn merge_class_instance_if_missing_in_envs(
+        &self,
+        def_id: DefId,
+        instance_type: TypeId,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::InsertClassInstanceIfMissing {
+            def_id,
+            instance_type,
+        });
+    }
+
+    /// Merge a child environment's class `extends` metadata into both parent
+    /// environments when the parent lacks it, deferring on borrow races.
+    pub(crate) fn merge_class_extends_if_missing_in_envs(
+        &self,
+        def_id: DefId,
+        parent_def_id: DefId,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterClassExtendsIfMissing {
+            def_id,
+            parent_def_id,
+        });
+    }
 }

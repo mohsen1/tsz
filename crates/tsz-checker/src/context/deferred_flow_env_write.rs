@@ -28,6 +28,9 @@ pub enum DeferredFlowEnvWrite {
     SetDefinitionStore(Arc<tsz_solver::def::DefinitionStore>),
     /// `insert_def` — register a non-generic definition body.
     InsertDef { def_id: DefId, body: TypeId },
+    /// `insert_def` when absent — merge a child env snapshot without
+    /// overwriting an already-published parent body.
+    InsertDefIfMissing { def_id: DefId, body: TypeId },
     /// `insert_def_with_params` (+ optional declared variances) — register a
     /// generic definition body.
     InsertDefWithParams {
@@ -41,8 +44,17 @@ pub enum DeferredFlowEnvWrite {
         def_id: DefId,
         instance_type: TypeId,
     },
+    /// `insert_class_instance_type` when absent — merge a child env snapshot
+    /// without overwriting parent metadata.
+    InsertClassInstanceIfMissing {
+        def_id: DefId,
+        instance_type: TypeId,
+    },
     /// `register_class_extends` — register a class `extends` parent.
     RegisterClassExtends { def_id: DefId, parent_def_id: DefId },
+    /// `register_class_extends` when absent — merge a child env snapshot
+    /// without overwriting a parent edge.
+    RegisterClassExtendsIfMissing { def_id: DefId, parent_def_id: DefId },
     /// `register_def_symbol_mapping` — register the `DefId` <-> `SymbolId` bridge.
     RegisterDefSymbolMapping { def_id: DefId, sym_id: SymbolId },
     /// `register_augmented_def` — re-apply an augmentation merge.
@@ -123,6 +135,11 @@ impl DeferredFlowEnvWrite {
         match self {
             Self::SetDefinitionStore(store) => env.set_definition_store(Arc::clone(store)),
             Self::InsertDef { def_id, body } => env.insert_def(*def_id, *body),
+            Self::InsertDefIfMissing { def_id, body } => {
+                if env.get_def(*def_id).is_none() {
+                    env.insert_def(*def_id, *body);
+                }
+            }
             Self::InsertDefWithParams {
                 def_id,
                 body,
@@ -138,10 +155,26 @@ impl DeferredFlowEnvWrite {
                 def_id,
                 instance_type,
             } => env.insert_class_instance_type(*def_id, *instance_type),
+            Self::InsertClassInstanceIfMissing {
+                def_id,
+                instance_type,
+            } => {
+                if env.get_class_instance_type(*def_id).is_none() {
+                    env.insert_class_instance_type(*def_id, *instance_type);
+                }
+            }
             Self::RegisterClassExtends {
                 def_id,
                 parent_def_id,
             } => env.register_class_extends(*def_id, *parent_def_id),
+            Self::RegisterClassExtendsIfMissing {
+                def_id,
+                parent_def_id,
+            } => {
+                if env.get_class_extends_def(*def_id).is_none() {
+                    env.register_class_extends(*def_id, *parent_def_id);
+                }
+            }
             Self::RegisterDefSymbolMapping { def_id, sym_id } => {
                 env.register_def_symbol_mapping(*def_id, *sym_id);
             }

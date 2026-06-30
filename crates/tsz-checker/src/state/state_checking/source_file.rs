@@ -102,9 +102,9 @@ impl CheckerState<'_> {
         // evaluator env directly and mirror into the flow-analyzer env; a mirror
         // that loses the `RefCell` borrow race during recursive resolution is
         // deferred rather than dropped (issue #8269), so first replay the
-        // deferred queue. A few registrations are evaluator-env-only by design
-        // (e.g. symbol-keyed bodies, enum-parent / numeric-enum metadata); fill
-        // those into the flow-analyzer env with a vacancy-only overlay. Unlike
+        // deferred queue. A few local fields can still arrive via evaluator-env
+        // setup or shared-store/scalar wiring; fill those into the flow-analyzer
+        // env with a vacancy-only overlay. Unlike
         // the previous unconditional full `clone()`, this neither reallocates
         // already-mirrored maps nor discards flow-analyzer-env-only entries.
         self.ctx.flush_deferred_flow_env_writes();
