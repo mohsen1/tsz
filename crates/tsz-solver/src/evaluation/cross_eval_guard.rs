@@ -16,44 +16,17 @@
 //! per-query operation budget bails, leaving an opaque/deferred result instead
 //! of the converged one.
 //!
-//! This thread-local set records the `TypeId`s currently being expanded by a
-//! fresh evaluator anywhere on the thread. Re-entering one that is already in
-//! flight is a cross-instance cycle: the caller skips the re-expansion and
+//! The active set now lives on [`EvaluationSession`](crate::evaluation::session::EvaluationSession).
+//! This adapter keeps the existing fresh-evaluator call sites stable while
+//! routing the state through the session owner. Re-entering a `TypeId` already
+//! in flight is a cross-instance cycle: the caller skips the re-expansion and
 //! treats the type as not-yet-resolved (exactly how the per-instance guard
 //! treats a within-instance cycle), which lets the in-flight expansion — the one
 //! holding the real work — converge and breaks the churn.
 
 use crate::evaluation::result::EvaluationMemoResult;
+use crate::evaluation::session::with_current_session;
 use crate::types::TypeId;
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
-
-thread_local! {
-    static ACTIVE: RefCell<FxHashSet<TypeId>> = RefCell::new(FxHashSet::default());
-
-    /// Per-top-level-query result memo shared across *all* `TypeEvaluator`
-    /// instances on the thread (#11586).
-    ///
-    /// The two fresh-evaluator boundaries — infer-pattern expansion
-    /// (`evaluate_for_infer_match`) and the subtype checker
-    /// (`SubtypeChecker::evaluate_type`) — each construct a brand-new evaluator
-    /// with an empty result cache, so a recursive conditional/`infer` application
-    /// (`Unbox<Box<2>>`, `Awaited<Promise<2>>`, …) is re-evaluated from scratch
-    /// tens of thousands of times as the recursion fans out, exhausting the
-    /// per-query operation budget and bailing opaque instead of converging.
-    ///
-    /// This memo records each root `TypeId` those boundaries evaluate, so a
-    /// repeated evaluation of the same type within one query is served from the
-    /// memo instead of recomputed. It is **cleared at the start of every
-    /// top-level query** (see [`reset_query_memo`], called when the per-query
-    /// budget frame count transitions from zero), so a result never crosses query
-    /// or file boundaries — strictly tighter than the per-file isolation that
-    /// motivated keeping the application cache thread-local (issue #9507). Only
-    /// stable, key-determined results are stored; recursion-bailed artifacts are
-    /// not (see the call sites).
-    static QUERY_MEMO: RefCell<FxHashMap<(TypeId, bool), TypeId>> =
-        RefCell::new(FxHashMap::default());
-}
 
 /// Look up a memoized fresh-evaluator result for the current top-level query.
 ///
@@ -61,11 +34,7 @@ thread_local! {
 /// depend on it (the per-checker `eval_cache` keys on the same flag): a memo
 /// keyed on `TypeId` alone would return a result computed under the wrong mode.
 pub(crate) fn query_memo_get(type_id: TypeId, no_unchecked_indexed_access: bool) -> Option<TypeId> {
-    QUERY_MEMO.with(|memo| {
-        memo.borrow()
-            .get(&(type_id, no_unchecked_indexed_access))
-            .copied()
-    })
+    with_current_session(|session| session.query_memo_get(type_id, no_unchecked_indexed_access))
 }
 
 /// Record a stable fresh-evaluator result for the current top-level query.
@@ -74,16 +43,15 @@ pub(crate) fn query_memo_get(type_id: TypeId, no_unchecked_indexed_access: bool)
 /// (`TypeEvaluator::recursion_limit_hit`), so an opaque cycle/budget bail is
 /// never cached and reused as if it were the converged answer.
 pub(crate) fn query_memo_put(type_id: TypeId, no_unchecked_indexed_access: bool, result: TypeId) {
-    QUERY_MEMO.with(|memo| {
-        memo.borrow_mut()
-            .insert((type_id, no_unchecked_indexed_access), result);
+    with_current_session(|session| {
+        session.query_memo_put(type_id, no_unchecked_indexed_access, result);
     });
 }
 
 /// Clear the per-query memo. Invoked when a fresh top-level evaluation query
 /// begins so results never leak across queries, threads, or files.
 pub(crate) fn reset_query_memo() {
-    QUERY_MEMO.with(|memo| memo.borrow_mut().clear());
+    with_current_session(super::session::EvaluationSession::reset_query_memo);
 }
 
 /// Run a fresh sub-evaluator for `type_id` with cross-instance cycle breaking
@@ -160,21 +128,17 @@ pub(crate) enum CrossEvalExpansionState {
 
 impl CrossEvalExpansionGuard {
     pub(crate) fn enter(type_id: TypeId) -> CrossEvalExpansionState {
-        ACTIVE.with(|set| {
-            if set.borrow_mut().insert(type_id) {
-                CrossEvalExpansionState::Entered(Self(type_id))
-            } else {
-                CrossEvalExpansionState::AlreadyActive
-            }
-        })
+        if with_current_session(|session| session.enter_cross_eval_type(type_id)) {
+            CrossEvalExpansionState::Entered(Self(type_id))
+        } else {
+            CrossEvalExpansionState::AlreadyActive
+        }
     }
 }
 
 impl Drop for CrossEvalExpansionGuard {
     fn drop(&mut self) {
-        ACTIVE.with(|set| {
-            set.borrow_mut().remove(&self.0);
-        });
+        with_current_session(|session| session.leave_cross_eval_type(self.0));
     }
 }
 
