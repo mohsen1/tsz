@@ -124,7 +124,9 @@ impl EvalQueryFrame {
             // A fresh top-level query begins: drop any cross-evaluator result
             // memo from the previous query so results never leak across queries,
             // threads, or files (#11586).
-            crate::evaluation::cross_eval_guard::reset_query_memo();
+            crate::evaluation::session::with_current_session(
+                crate::evaluation::cross_eval_guard::reset_query_memo,
+            );
         }
         Self {
             budget_state: EvalQueryBudgetState::from_exhausted(entry.ops > max_ops),

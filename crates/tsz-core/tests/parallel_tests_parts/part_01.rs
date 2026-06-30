@@ -304,6 +304,7 @@ c = d;
         );
         let context = tsz_solver::relations::relation_queries::RelationContext {
             query_db: Some(&query_cache),
+            evaluation_session: None,
             inheritance_graph: Some(&checker.ctx.inheritance_graph),
             class_check: None,
         };
@@ -1761,4 +1762,3 @@ fn test_compile_with_exports() {
 // =========================================================================
 // Parallel Type Checking Tests
 // =========================================================================
-

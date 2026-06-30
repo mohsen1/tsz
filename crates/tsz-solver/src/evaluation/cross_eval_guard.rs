@@ -25,7 +25,7 @@
 //! holding the real work — converge and breaks the churn.
 
 use crate::evaluation::result::EvaluationMemoResult;
-use crate::evaluation::session::with_current_session;
+use crate::evaluation::session::EvaluationSession;
 use crate::types::TypeId;
 
 /// Look up a memoized fresh-evaluator result for the current top-level query.
@@ -33,8 +33,12 @@ use crate::types::TypeId;
 /// The key includes `no_unchecked_indexed_access` because evaluation results
 /// depend on it (the per-checker `eval_cache` keys on the same flag): a memo
 /// keyed on `TypeId` alone would return a result computed under the wrong mode.
-pub(crate) fn query_memo_get(type_id: TypeId, no_unchecked_indexed_access: bool) -> Option<TypeId> {
-    with_current_session(|session| session.query_memo_get(type_id, no_unchecked_indexed_access))
+pub(crate) fn query_memo_get(
+    session: &EvaluationSession,
+    type_id: TypeId,
+    no_unchecked_indexed_access: bool,
+) -> Option<TypeId> {
+    session.query_memo_get(type_id, no_unchecked_indexed_access)
 }
 
 /// Record a stable fresh-evaluator result for the current top-level query.
@@ -42,16 +46,19 @@ pub(crate) fn query_memo_get(type_id: TypeId, no_unchecked_indexed_access: bool)
 /// Callers must only store results that did not hit a recursion/budget limit
 /// (`TypeEvaluator::recursion_limit_hit`), so an opaque cycle/budget bail is
 /// never cached and reused as if it were the converged answer.
-pub(crate) fn query_memo_put(type_id: TypeId, no_unchecked_indexed_access: bool, result: TypeId) {
-    with_current_session(|session| {
-        session.query_memo_put(type_id, no_unchecked_indexed_access, result);
-    });
+pub(crate) fn query_memo_put(
+    session: &EvaluationSession,
+    type_id: TypeId,
+    no_unchecked_indexed_access: bool,
+    result: TypeId,
+) {
+    session.query_memo_put(type_id, no_unchecked_indexed_access, result);
 }
 
 /// Clear the per-query memo. Invoked when a fresh top-level evaluation query
 /// begins so results never leak across queries, threads, or files.
-pub(crate) fn reset_query_memo() {
-    with_current_session(super::session::EvaluationSession::reset_query_memo);
+pub(crate) fn reset_query_memo(session: &EvaluationSession) {
+    session.reset_query_memo();
 }
 
 /// Run a fresh sub-evaluator for `type_id` with cross-instance cycle breaking
@@ -61,19 +68,19 @@ pub(crate) fn reset_query_memo() {
 /// Returns:
 /// - `Some(result)` on a memo hit or a completed evaluation, and
 /// - `None` when `type_id` is already being expanded by an ancestor fresh
-///   evaluator on this thread (a cross-instance cycle) — the caller must then
+///   evaluator in this session (a cross-instance cycle) — the caller must then
 ///   return `type_id` unchanged **without** caching it elsewhere, since the
 ///   in-flight ancestor owns the real result.
 ///
-/// `compute` runs the fresh evaluation and returns `(result, memoizable)`;
-/// `memoizable` must be `false` for a recursion/budget-bailed run so a
-/// stack-context artifact is never stored and reused as the converged answer.
+/// `compute` runs the fresh evaluation and returns an [`EvaluationMemoResult`]
+/// whose stability decides whether the per-query memo may store it.
 pub(crate) fn memoized_eval(
+    session: &EvaluationSession,
     type_id: TypeId,
     no_unchecked_indexed_access: bool,
     compute: impl FnOnce() -> EvaluationMemoResult,
 ) -> Option<TypeId> {
-    memoized_eval_with_stability(type_id, no_unchecked_indexed_access, compute)
+    memoized_eval_with_stability(session, type_id, no_unchecked_indexed_access, compute)
         .map(EvaluationMemoResult::into_type_id)
 }
 
@@ -85,20 +92,26 @@ pub(crate) fn memoized_eval(
 /// treat a collapsed result (e.g. `unknown`) as suspicious can use the flag to
 /// distinguish a genuinely evaluated answer from a recursion-bail artifact.
 pub(crate) fn memoized_eval_with_stability(
+    session: &EvaluationSession,
     type_id: TypeId,
     no_unchecked_indexed_access: bool,
     compute: impl FnOnce() -> EvaluationMemoResult,
 ) -> Option<EvaluationMemoResult> {
-    if let Some(cached) = query_memo_get(type_id, no_unchecked_indexed_access) {
+    if let Some(cached) = query_memo_get(session, type_id, no_unchecked_indexed_access) {
         return Some(EvaluationMemoResult::cached(cached));
     }
-    let _cross = match CrossEvalExpansionGuard::enter(type_id) {
+    let _cross = match CrossEvalExpansionGuard::enter(session, type_id) {
         CrossEvalExpansionState::Entered(guard) => guard,
         CrossEvalExpansionState::AlreadyActive => return None,
     };
     let memo_result = compute();
     if memo_result.is_stable_for_per_query_memo() {
-        query_memo_put(type_id, no_unchecked_indexed_access, memo_result.type_id());
+        query_memo_put(
+            session,
+            type_id,
+            no_unchecked_indexed_access,
+            memo_result.type_id(),
+        );
     }
     Some(memo_result)
 }
@@ -111,8 +124,10 @@ pub(crate) fn memoized_eval_with_stability(
 /// unchanged. Otherwise it records membership and clears it on drop, so the set
 /// is restored even if evaluation unwinds via panic.
 #[must_use]
-#[derive(Debug)]
-pub(crate) struct CrossEvalExpansionGuard(TypeId);
+pub(crate) struct CrossEvalExpansionGuard<'a> {
+    session: &'a EvaluationSession,
+    type_id: TypeId,
+}
 
 /// Result of entering the cross-evaluator expansion active set.
 ///
@@ -120,25 +135,27 @@ pub(crate) struct CrossEvalExpansionGuard(TypeId);
 /// names the cross-instance cycle case that callers collapse to the existing
 /// "skip expansion and return the input unchanged" behavior.
 #[must_use]
-#[derive(Debug)]
-pub(crate) enum CrossEvalExpansionState {
-    Entered(CrossEvalExpansionGuard),
+pub(crate) enum CrossEvalExpansionState<'a> {
+    Entered(CrossEvalExpansionGuard<'a>),
     AlreadyActive,
 }
 
-impl CrossEvalExpansionGuard {
-    pub(crate) fn enter(type_id: TypeId) -> CrossEvalExpansionState {
-        if with_current_session(|session| session.enter_cross_eval_type(type_id)) {
-            CrossEvalExpansionState::Entered(Self(type_id))
+impl CrossEvalExpansionGuard<'_> {
+    pub(crate) fn enter<'a>(
+        session: &'a EvaluationSession,
+        type_id: TypeId,
+    ) -> CrossEvalExpansionState<'a> {
+        if session.enter_cross_eval_type(type_id) {
+            CrossEvalExpansionState::Entered(CrossEvalExpansionGuard { session, type_id })
         } else {
             CrossEvalExpansionState::AlreadyActive
         }
     }
 }
 
-impl Drop for CrossEvalExpansionGuard {
+impl Drop for CrossEvalExpansionGuard<'_> {
     fn drop(&mut self) {
-        with_current_session(|session| session.leave_cross_eval_type(self.0));
+        self.session.leave_cross_eval_type(self.type_id);
     }
 }
 
@@ -149,42 +166,47 @@ mod tests {
 
     #[test]
     fn memo_keys_on_no_unchecked_indexed_access() {
-        reset_query_memo();
+        let session = EvaluationSession::new();
+        reset_query_memo(&session);
         let t = TypeId(7);
-        query_memo_put(t, false, TypeId(70));
-        query_memo_put(t, true, TypeId(71));
-        assert_eq!(query_memo_get(t, false), Some(TypeId(70)));
-        assert_eq!(query_memo_get(t, true), Some(TypeId(71)));
-        reset_query_memo();
-        assert_eq!(query_memo_get(t, false), None);
+        query_memo_put(&session, t, false, TypeId(70));
+        query_memo_put(&session, t, true, TypeId(71));
+        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(70)));
+        assert_eq!(query_memo_get(&session, t, true), Some(TypeId(71)));
+        reset_query_memo(&session);
+        assert_eq!(query_memo_get(&session, t, false), None);
     }
 
     #[test]
     fn non_stable_fresh_result_is_returned_but_not_memoized() {
-        reset_query_memo();
+        let session = EvaluationSession::new();
+        reset_query_memo(&session);
         let t = TypeId(8);
 
-        let first = memoized_eval(t, false, || {
+        let first = memoized_eval(&session, t, false, || {
             EvaluationMemoResult::unstable_complete(TypeId(80))
         });
 
         assert_eq!(first, Some(TypeId(80)));
-        assert_eq!(query_memo_get(t, false), None);
+        assert_eq!(query_memo_get(&session, t, false), None);
 
-        let second = memoized_eval(t, false, || EvaluationMemoResult::cached(TypeId(81)));
+        let second = memoized_eval(&session, t, false, || {
+            EvaluationMemoResult::cached(TypeId(81))
+        });
 
         assert_eq!(second, Some(TypeId(81)));
-        assert_eq!(query_memo_get(t, false), Some(TypeId(81)));
-        reset_query_memo();
+        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(81)));
+        reset_query_memo(&session);
     }
 
     #[test]
     fn unresolved_def_fresh_result_is_returned_and_memoized_within_query() {
-        reset_query_memo();
+        let session = EvaluationSession::new();
+        reset_query_memo(&session);
         let t = TypeId(9);
         let mut calls = 0;
 
-        let first = memoized_eval(t, false, || {
+        let first = memoized_eval(&session, t, false, || {
             calls += 1;
             EvaluationMemoResult::for_depth_agnostic_memo(
                 EvaluationResult::complete(TypeId(90)),
@@ -193,28 +215,30 @@ mod tests {
         });
 
         assert_eq!(first, Some(TypeId(90)));
-        assert_eq!(query_memo_get(t, false), Some(TypeId(90)));
+        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(90)));
 
-        let second = memoized_eval(t, false, || {
+        let second = memoized_eval(&session, t, false, || {
             calls += 1;
             EvaluationMemoResult::cached(TypeId(91))
         });
 
         assert_eq!(second, Some(TypeId(90)));
         assert_eq!(calls, 1);
-        assert_eq!(query_memo_get(t, false), Some(TypeId(90)));
-        reset_query_memo();
+        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(90)));
+        reset_query_memo(&session);
     }
 
     #[test]
     fn reentry_of_active_type_is_rejected() {
+        let session = EvaluationSession::new();
         let t = TypeId(4242);
-        let CrossEvalExpansionState::Entered(outer) = CrossEvalExpansionGuard::enter(t) else {
+        let CrossEvalExpansionState::Entered(outer) = CrossEvalExpansionGuard::enter(&session, t)
+        else {
             panic!("first entry succeeds");
         };
         assert!(
             matches!(
-                CrossEvalExpansionGuard::enter(t),
+                CrossEvalExpansionGuard::enter(&session, t),
                 CrossEvalExpansionState::AlreadyActive
             ),
             "re-entering an in-flight TypeId must be rejected"
@@ -222,7 +246,7 @@ mod tests {
         drop(outer);
         assert!(
             matches!(
-                CrossEvalExpansionGuard::enter(t),
+                CrossEvalExpansionGuard::enter(&session, t),
                 CrossEvalExpansionState::Entered(_)
             ),
             "once the in-flight guard drops, the TypeId is enterable again"
@@ -231,10 +255,15 @@ mod tests {
 
     #[test]
     fn distinct_types_are_independent() {
-        let CrossEvalExpansionState::Entered(a) = CrossEvalExpansionGuard::enter(TypeId(1)) else {
+        let session = EvaluationSession::new();
+        let CrossEvalExpansionState::Entered(a) =
+            CrossEvalExpansionGuard::enter(&session, TypeId(1))
+        else {
             panic!("a enters");
         };
-        let CrossEvalExpansionState::Entered(b) = CrossEvalExpansionGuard::enter(TypeId(2)) else {
+        let CrossEvalExpansionState::Entered(b) =
+            CrossEvalExpansionGuard::enter(&session, TypeId(2))
+        else {
             panic!("b enters independently");
         };
         drop(a);

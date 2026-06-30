@@ -27,6 +27,7 @@ pub(crate) fn is_assignable_bivariant_with_resolver<
         .with_strict_any_propagation(sound_mode);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
+        evaluation_session: None,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
@@ -83,6 +84,7 @@ pub(crate) fn cached_bivariant_assignability_with_resolver<
 
 pub(crate) fn is_subtype_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
     db: &dyn QueryDatabase,
+    evaluation_session: Option<&tsz_solver::evaluation::session::EvaluationSession>,
     resolver: &R,
     source: TypeId,
     target: TypeId,
@@ -93,6 +95,7 @@ pub(crate) fn is_subtype_with_resolver<R: tsz_solver::relations::subtype::TypeRe
     let policy = relation_policy::from_checker_flags_u16(flags);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
+        evaluation_session,
         inheritance_graph: Some(inheritance_graph),
         class_check,
     };
@@ -123,6 +126,7 @@ pub(crate) fn is_redeclaration_identical_with_resolver<
         .with_strict_any_propagation(sound_mode);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
+        evaluation_session: None,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };

@@ -18,6 +18,7 @@ use crate::def::DefId;
 #[cfg(test)]
 use crate::diagnostics::SubtypeFailureReason;
 use crate::evaluation::result::EvaluationMemoResult;
+use crate::evaluation::session::EvaluationSession;
 use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 use crate::operations::AssignabilityChecker;
 #[cfg(test)]
@@ -271,6 +272,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Optional query database for Salsa-backed memoization.
     /// When set, routes `evaluate_type` and `is_subtype_of` through Salsa.
     pub(crate) query_db: Option<&'a dyn QueryDatabase>,
+    /// Optional owner for fresh-evaluator cross-eval guard state.
+    ///
+    /// Checker-owned relation queries pass the [`EvaluationSession`] shared by
+    /// the current `CheckerContext`; standalone solver callers fall back to the
+    /// thread-local default session at the fresh-evaluator boundary.
+    pub(crate) eval_session: Option<&'a EvaluationSession>,
     pub(crate) resolver: &'a R,
     /// Unified recursion guard for TypeId-pair cycle detection, depth, and iteration limits.
     pub(crate) guard: crate::recursion::RecursionGuard<(TypeId, TypeId)>,
@@ -530,6 +537,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
         SubtypeChecker {
             interner,
             query_db: None,
+            eval_session: None,
             resolver: &NOOP,
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
@@ -585,6 +593,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeChecker {
             interner,
             query_db: None,
+            eval_session: None,
             resolver,
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
@@ -658,6 +667,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// When set, routes `evaluate_type` and `is_subtype_of` through Salsa.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
+        self
+    }
+
+    /// Set the owning evaluation session for fresh relation-side evaluators.
+    #[must_use]
+    pub const fn with_evaluation_session(mut self, session: &'a EvaluationSession) -> Self {
+        self.eval_session = Some(session);
         self
     }
 

@@ -67,6 +67,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             is_subtype_with_resolver(
                 self.ctx.types,
+                Some(self.ctx.eval_session.as_ref()),
                 &*env,
                 source,
                 target,
