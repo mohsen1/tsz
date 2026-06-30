@@ -33,6 +33,12 @@ fn plain_object_property_count(db: &dyn TypeDatabase, ty: TypeId) -> Option<usiz
 }
 
 impl DefinitionStore {
+    /// Whether merged body publication/consumption for empty module-augmented
+    /// registries is active.
+    pub fn module_augmented_body_publication_enabled(&self) -> bool {
+        module_augmentation_body_publish_enabled()
+    }
+
     /// Register a first-wins module-augmentation edge from `symbol_id` to `def_id`.
     pub fn register_module_augmentation_symbol_def(&self, symbol_id: u32, def_id: DefId) {
         if self.find_def_by_symbol(symbol_id).is_some() {
@@ -202,6 +208,29 @@ mod tests {
         assert_eq!(
             store.module_augmented_body_for_registered(def_id, empty, &types),
             Some(augmented)
+        );
+    }
+
+    #[test]
+    fn module_augmented_body_public_lookup_is_raw_when_publication_flag_off() {
+        let store = DefinitionStore::new();
+        if store.module_augmented_body_publication_enabled() {
+            return;
+        }
+        let types = TypeInterner::new();
+        let def_id = DefId(42);
+        let empty = types.object(Vec::new());
+        let augmented = types.object(vec![PropertyInfo::new(
+            types.intern_string("member"),
+            TypeId::STRING,
+        )]);
+
+        assert!(store.register_module_augmented_body(def_id, augmented, &[]));
+
+        assert_eq!(store.module_augmented_body_for(def_id, empty, &types), None);
+        assert_eq!(
+            store.module_augmented_body_or_current(def_id, empty, &types),
+            empty
         );
     }
 
