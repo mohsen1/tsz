@@ -6,6 +6,19 @@ use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{FunctionShape, ObjectFlags, ParamInfo, TypeData, TypeId, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// A lower-bound inference candidate is "concrete evidence" when it carries a
+/// real type the relation can judge — not `any`/`unknown`/error, and free of
+/// unresolved type parameters or `infer` placeholders. Shared by return-position
+/// candidate selection and the contextual-return substitution evidence guard.
+pub(super) fn is_concrete_inference_bound(
+    db: &dyn crate::construction::TypeDatabase,
+    ty: TypeId,
+) -> bool {
+    !ty.is_any_unknown_or_error()
+        && !crate::visitor::contains_type_parameters(db, ty)
+        && !crate::type_queries::contains_infer_types_db(db, ty)
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn eval_type_param_default(
         &mut self,
@@ -315,17 +328,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut concrete_bounds = effective_lower_bounds
             .iter()
             .copied()
-            .filter(|ty| {
-                !ty.is_any_unknown_or_error()
-                    && !crate::visitor::contains_type_parameters(
-                        self.interner.as_type_database(),
-                        *ty,
-                    )
-                    && !crate::type_queries::contains_infer_types_db(
-                        self.interner.as_type_database(),
-                        *ty,
-                    )
-            })
+            .filter(|ty| is_concrete_inference_bound(self.interner.as_type_database(), *ty))
             .collect::<Vec<_>>();
         concrete_bounds.dedup();
         // When the lone surviving "concrete" bound is `never` *and* the

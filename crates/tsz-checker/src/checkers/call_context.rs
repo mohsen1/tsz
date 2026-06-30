@@ -574,6 +574,17 @@ impl<'a> CheckerState<'a> {
             }
             found
         };
+
+        // A callback whose object-literal return is built entirely from
+        // concrete-pinned parameters has a fully-determined return the outer
+        // contextual type cannot refine (#14792 — see the helper's doc comment).
+        // This holds whether the call returns the bare parameter `U` or a
+        // covariant wrapper of it (`U[]`, …), so it takes precedence over the
+        // wrapped-parameter specialization path below.
+        if self.callback_object_return_pinned_by_concrete_arg(shape, args, &return_type_params) {
+            return true;
+        }
+
         if !return_is_bare_type_param
             && (has_bare_return_param_argument || has_wrapped_return_param_argument)
             && let Some(contextual_type) = contextual_type
@@ -593,27 +604,6 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-        }
-
-        // Bare return type parameter `U`: when a context-sensitive callback
-        // argument returns an object literal built entirely from the callback's
-        // own parameters that are already pinned by a concrete sibling argument,
-        // the callback's argument inference for `U` is authoritative. `tsc`
-        // seeds `U` from the outer contextual type but ranks that inference
-        // below the callback's (`InferencePriority.ReturnType`), so the outer
-        // annotation can never refine the literal and the callback body is
-        // checked against the FINAL inferred `U`, not the outer annotation.
-        // Suppressing the contextual return keeps `tsz` from pushing the outer
-        // annotation onto the return-position literal and double-reporting the
-        // mismatch inside the callback body (#14792).
-        if return_is_bare_type_param
-            && self.bare_return_callback_return_pinned_by_concrete_arg(
-                shape,
-                args,
-                &return_type_params,
-            )
-        {
-            return true;
         }
 
         for (i, &arg_idx) in args.iter().enumerate() {

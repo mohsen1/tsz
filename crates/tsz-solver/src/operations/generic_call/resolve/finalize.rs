@@ -750,7 +750,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // are excluded because their inference is authoritative.
                     let indirect_narrowing_override =
                         !direct_param_vars.contains(&var) && should_use && !can_apply;
-                    if (can_apply && should_use) || indirect_narrowing_override {
+                    // The contextual return type may only REFINE the inferred type
+                    // (e.g. a widened lambda return `number` narrowed to the contextual
+                    // `0 | 1 | 2`, whose literal evidence `1` still fits). When a
+                    // concrete bottom-up candidate genuinely does not fit the contextual
+                    // type, the contextual type is a real mismatch, not a refinement, so
+                    // the inferred type must stand and the error surface at the
+                    // call/assignment site (#14792). The evidence check is the second
+                    // `&&` operand so it only runs once the cheap override gate passes.
+                    if ((can_apply && should_use) || indirect_narrowing_override)
+                        && !self.contextual_substitution_contradicts_evidence(
+                            &lower_bounds,
+                            contextual_ty,
+                        )
+                    {
                         contextual_ty
                     } else {
                         ty
@@ -1551,5 +1564,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         CallResult::Success(return_type)
+    }
+
+    /// Whether substituting the contextual return type for a resolved
+    /// return-position type parameter would contradict the bottom-up inference
+    /// evidence: a concrete lower-bound candidate that is not assignable to the
+    /// contextual type marks a genuine mismatch (which tsc keeps in the inferred
+    /// type and reports at the call/assignment site), not a refinement the
+    /// contextual type may apply. See #14792.
+    fn contextual_substitution_contradicts_evidence(
+        &mut self,
+        lower_bounds: &[TypeId],
+        contextual_ty: TypeId,
+    ) -> bool {
+        let db = self.interner.as_type_database();
+        lower_bounds.iter().copied().any(|bound| {
+            super::super::inference_helpers::is_concrete_inference_bound(db, bound)
+                && !self.checker.is_assignable_to(bound, contextual_ty)
+        })
     }
 }
