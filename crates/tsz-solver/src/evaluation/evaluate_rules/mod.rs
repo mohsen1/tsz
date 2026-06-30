@@ -26,6 +26,7 @@ mod index_access_tuple_literal;
 mod index_access_union_distribution;
 mod infer_match_expansion;
 pub mod infer_pattern;
+mod infer_pattern_guard_state;
 mod infer_pattern_helpers;
 mod infer_pattern_object_match;
 mod infer_pattern_template_match;
