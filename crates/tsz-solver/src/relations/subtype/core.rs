@@ -842,6 +842,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.iteration_exceeded()
     }
 
+    /// Record an externally detected relation-complexity overflow.
+    ///
+    /// This is the TS2859 path: callers already proved the relation cross
+    /// product exceeds the work budget, so the subtype checker owns the sticky
+    /// iteration verdict instead of exposing its raw recursion guard.
+    pub(crate) const fn mark_relation_complexity_exceeded(&mut self) {
+        self.guard.mark_iteration_exceeded();
+    }
+
     /// Run `f` with subtype flags configured for tsc's `isTypeIdenticalTo`
     /// identity checking (TS2403 and related redeclaration/identity paths).
     ///

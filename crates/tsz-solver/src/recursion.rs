@@ -520,6 +520,16 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         };
     }
 
+    /// Manually mark the iteration/work budget as exceeded.
+    ///
+    /// Use this for relation-complexity limits that correspond to TS2859
+    /// rather than stack-depth limits. This preserves the broad `is_exceeded`
+    /// signal while keeping [`Self::iteration_exceeded`] true for diagnostics.
+    #[inline]
+    pub const fn mark_iteration_exceeded(&mut self) {
+        self.limit_state = RecursionLimitState::IterationExceeded;
+    }
+
     /// Clear the depth-`exceeded` flag while preserving `visiting` / `depth` /
     /// `iterations` and the `iteration_exceeded` flag.
     ///
