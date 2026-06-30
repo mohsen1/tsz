@@ -1697,14 +1697,13 @@ impl<'a> CheckerState<'a> {
             if let Some(shape) = type_environment::object_shape(self.ctx.types, result) {
                 self.ctx.definition_store.set_instance_shape(def_id, shape);
             }
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.insert_def(def_id, result);
-            }
+            self.ctx
+                .register_augmented_def_in_envs(def_id, result, false);
         }
         result
     }
 
-    /// Update `symbol_types` and `type_env` for augmentation-local interface symbols
+    /// Update `symbol_types` and both environments for augmentation-local interface symbols
     /// so self-referential type references resolve to the merged type.
     /// Searches both the current binder and `all_binders` since the augmentation
     /// may be declared in a different file than the one being checked.
@@ -1758,12 +1757,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Update symbol_types, symbol_instance_types, and type_env for each matching symbol.
+        // Update symbol_types, symbol_instance_types, and env mappings for each matching symbol.
         // symbol_instance_types must be updated because resolve_lazy() checks it
         // BEFORE symbol_types for INTERFACE symbols, so an un-augmented entry there
         // would shadow the updated symbol_types value.
         // Collect def IDs first (get_or_create_def_id borrows ctx mutably),
-        // then batch-insert into type_env with a single borrow.
+        // then publish them through the context-owned dual-env authority.
         let def_ids: Vec<_> = matching_sym_ids
             .iter()
             .map(|&aug_sym_id| {
@@ -1774,10 +1773,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.get_or_create_def_id(aug_sym_id)
             })
             .collect();
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            for aug_def_id in def_ids {
-                env.insert_def(aug_def_id, merged_type);
-            }
+        for aug_def_id in def_ids {
+            self.ctx
+                .register_augmented_def_in_envs(aug_def_id, merged_type, false);
         }
     }
 }
