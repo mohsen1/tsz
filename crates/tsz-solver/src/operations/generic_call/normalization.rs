@@ -9,8 +9,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{constraint_is_primitive_type_with_resolver, write_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    /// Build the arena-invariant store-only resolver shim that the generic-call
-    /// inference sites borrow to expand a cross-arena `Lazy(DefId)` base
+    /// Build the DELEGATING resolver that the generic-call inference sites
+    /// borrow to expand a cross-arena `Lazy(DefId)` base, AUGMENTING the
+    /// original per-arena `query_db` resolver rather than swapping it out
     /// (issue #14344 / #14345 HKT-reduce lever, default-OFF behind
     /// `TSZ_INFER_HKT_REDUCE`).
     ///
@@ -21,14 +22,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// `QueryCache`, whose `resolve_lazy` returns `None` for a cross-arena
     /// `DefId`) and stays byte-identical.
     ///
-    /// The store borrow is taken from the `'a`-lived `interner` field (not a
-    /// `&self` reborrow), so the returned shim lives for `'a` and can be
-    /// assigned to the `InferenceContext`'s `resolver` field. The shim borrows
-    /// only `&'a DefinitionStore` (a shared, program-global read) and never the
+    /// The returned [`DelegatingHktResolver`] holds BOTH the shared store AND
+    /// the original `query_db` resolver (`self.interner` upcast to
+    /// `&dyn TypeResolver`). It overrides only the three store-backed
+    /// `Lazy(DefId)` reductions and delegates every other `TypeResolver` method
+    /// (including `get_type_param_variance`, the variance source) to the wrapped
+    /// per-arena resolver. A bare [`StoreOnlyResolver`] would instead drop ALL
+    /// per-arena answers (variance collapsing to COVARIANT), which under RAYON>1
+    /// leaked a not-yet-collapsed wide HKT union as a non-deterministic false
+    /// positive; the delegation preserves per-arena state and correct variance.
+    ///
+    /// Both the store and the resolver borrow are taken from the `'a`-lived
+    /// `interner` field (not a `&self` reborrow), so the returned resolver lives
+    /// for `'a` and can be assigned to the `InferenceContext`'s `resolver`
+    /// field. It borrows only `&'a` shared, program-global reads and never the
     /// `&mut C` checker, so there is no E0502 here.
     pub(crate) fn build_inference_hkt_reduce_shim(
         &self,
-    ) -> Option<crate::caches::query_cache_evaluation::StoreOnlyResolver<'a>> {
+    ) -> Option<crate::caches::query_cache_evaluation::DelegatingHktResolver<'a>> {
         if !crate::instantiation::instantiate::flags::infer_hkt_reduce_enabled()
             || !crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
             || !crate::instantiation::instantiate::flags::optionb_store_resolver_enabled()
@@ -37,7 +48,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let interner: &'a dyn crate::construction::QueryDatabase = self.interner;
         let store = interner.definition_store_for_inference()?;
-        Some(crate::caches::query_cache_evaluation::StoreOnlyResolver::new(store))
+        let inner: &'a dyn crate::relations::subtype::TypeResolver = interner.as_type_resolver();
+        Some(crate::caches::query_cache_evaluation::DelegatingHktResolver::new(store, inner))
     }
 
     /// Fast path for direct single-parameter generic calls:
