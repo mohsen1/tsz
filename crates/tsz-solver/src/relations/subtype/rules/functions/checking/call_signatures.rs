@@ -9,7 +9,7 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> SubtypeResult {
-        self.check_call_signature_subtype_impl(source, target, false)
+        self.check_call_signature_subtype_impl(source, target, false, false)
     }
 
     pub(crate) fn callable_modality_flags_for_type(&mut self, type_id: TypeId) -> (bool, bool) {
@@ -40,12 +40,18 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         (false, false)
     }
 
+    /// Compare two construct signatures as a constructor relation.
+    ///
+    /// `force_strict_construct_params` carries the target's construct-signature
+    /// origin (see
+    /// [`super::SubtypeChecker::construct_target_requires_strict_params`]).
     pub(crate) fn check_call_signature_subtype_as_constructor(
         &mut self,
         source: &CallSignature,
         target: &CallSignature,
+        force_strict_construct_params: bool,
     ) -> SubtypeResult {
-        self.check_call_signature_subtype_impl(source, target, true)
+        self.check_call_signature_subtype_impl(source, target, true, force_strict_construct_params)
     }
 
     fn check_call_signature_subtype_impl(
@@ -53,6 +59,7 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         source: &CallSignature,
         target: &CallSignature,
         is_constructor: bool,
+        force_strict_construct_params: bool,
     ) -> SubtypeResult {
         let source_fn = FunctionShape {
             type_params: source.type_params.clone(),
@@ -72,7 +79,11 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             is_constructor,
             is_method: target.is_method,
         };
-        self.check_function_subtype(&source_fn, &target_fn)
+        self.check_function_subtype_with_constructor_strictness(
+            &source_fn,
+            &target_fn,
+            force_strict_construct_params,
+        )
     }
 
     pub(crate) fn constructor_signatures_need_strict_params(

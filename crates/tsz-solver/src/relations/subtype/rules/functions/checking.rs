@@ -33,8 +33,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> SubtypeResult {
-        let allow_constructor_bivariance =
-            !Self::constructor_signatures_need_strict_params(source, target);
+        self.check_function_subtype_with_constructor_strictness(source, target, false)
+    }
+
+    /// [`Self::check_function_subtype`], but the construct-signature caller can
+    /// force strict (contravariant) parameter comparison.
+    ///
+    /// When `force_strict_construct_params` is set — a structural construct
+    /// signature, per [`Self::construct_target_requires_strict_params`] —
+    /// constructor bivariance is never granted; otherwise the prior shape-based
+    /// heuristic ([`Self::constructor_signatures_need_strict_params`]) applies,
+    /// leaving class-derived constructor bivariance and the bare-`FunctionShape`
+    /// constructor path (which always passes `false`) unchanged.
+    pub(crate) fn check_function_subtype_with_constructor_strictness(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+        force_strict_construct_params: bool,
+    ) -> SubtypeResult {
+        let allow_constructor_bivariance = !force_strict_construct_params
+            && !Self::constructor_signatures_need_strict_params(source, target);
         let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
         if result.is_true() {
             return result;
@@ -45,6 +63,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return retry;
         }
         result
+    }
+
+    /// Whether the construct signatures of `target` must compare their
+    /// parameters strictly (contravariantly), as `tsc` does for every construct
+    /// signature except a class-derived constructor.
+    ///
+    /// `tsc` keys constructor-parameter bivariance on the target signature's
+    /// declaration kind: only a class `constructor` (`SyntaxKind.Constructor`)
+    /// is bivariant; a `new (...) => T` type-literal (`ConstructorType`) and an
+    /// interface/object-type `new (...): T` member (`ConstructSignature`) compare
+    /// their parameters strictly under `strictFunctionTypes`, exactly like a
+    /// call-signature literal. tsz recovers that origin from the callable's
+    /// nominal `symbol`:
+    /// * no symbol — an anonymous `new (...) =>` / object-type construct
+    ///   signature literal: structural, strict.
+    /// * symbol resolves to an `Interface` — a `ConstructSignature` member:
+    ///   structural, strict.
+    /// * symbol resolves to a `Class`/`ClassConstructor` — a class constructor:
+    ///   nominal, keeps constructor bivariance.
+    /// * symbol present but unresolved in this context — preserve the prior
+    ///   bivariant behavior. A real resolver maps class symbols; defaulting an
+    ///   unresolved symbol to strict could regress a class-to-class constructor
+    ///   assignment into a false `TS2322`.
+    pub(crate) fn construct_target_requires_strict_params(&self, target: &CallableShape) -> bool {
+        match target.symbol {
+            None => true,
+            Some(symbol) => matches!(
+                self.resolver
+                    .symbol_to_def_id(crate::types::SymbolRef(symbol.0))
+                    .and_then(|def_id| self.resolver.get_def_kind(def_id)),
+                Some(crate::def::DefKind::Interface)
+            ),
+        }
     }
 
     /// True when any of `candidate_tp_ids` occurs *free* in `shape`'s parameter
@@ -1780,10 +1831,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // follow the regular property-function relation instead of method-style
         // bivariance. Standalone constructor function types still flow through
         // `check_function_subtype` with `is_constructor = true`.
+        // Only the construct-signature loop consumes this, so skip the resolver
+        // lookup entirely when the target has no construct signatures.
+        let target_construct_is_structural = !target.construct_signatures.is_empty()
+            && self.construct_target_requires_strict_params(target);
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
-                let result = self.check_call_signature_subtype_as_constructor(s_sig, t_sig);
+                let result = self.check_call_signature_subtype_as_constructor(
+                    s_sig,
+                    t_sig,
+                    target_construct_is_structural,
+                );
                 if result.is_true() {
                     found_match = true;
                     break;
@@ -1794,7 +1853,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             {
                 for s_sig in &source.construct_signatures {
                     if self
-                        .check_erased_call_signature_subtype_as_constructor(s_sig, t_sig)
+                        .check_erased_call_signature_subtype_as_constructor(
+                            s_sig,
+                            t_sig,
+                            target_construct_is_structural,
+                        )
                         .is_true()
                     {
                         found_match = true;

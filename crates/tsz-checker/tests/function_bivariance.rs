@@ -399,3 +399,91 @@ fn test_plain_function_call_callback_contravariance_errors() {
         2345,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Construct-signature parameter variance (issue #14859).
+//
+// Standalone `new (...) =>` type-literal construct signatures and interface
+// `new (...): T` construct signatures compare their parameters CONTRAVARIANTLY
+// under strictFunctionTypes, exactly like call-signature literals. Only a
+// class-derived constructor (`typeof Class`) keeps constructor-parameter
+// bivariance. Binder names are varied so a spelling-level fix would not pass.
+// ---------------------------------------------------------------------------
+
+/// `new (x: number) =>` literal target must reject a `new (x: 1) =>` source
+/// (the wrong-direction strict-subtype parameter), like tsc TS2322.
+#[test]
+fn test_construct_signature_literal_param_contravariant_errors() {
+    test_function_variance(
+        r#"
+        type MakeWidget = new (size: number) => object;
+        type MakeUnit = new (size: 1) => object;
+        declare let makeWidget: MakeWidget;
+        declare let makeUnit: MakeUnit;
+        makeWidget = makeUnit;
+        "#,
+        2322,
+    );
+}
+
+/// Interface construct signatures are strict too (declaration kind
+/// `ConstructSignature`, not `Constructor`).
+#[test]
+fn test_construct_signature_interface_param_contravariant_errors() {
+    test_function_variance(
+        r#"
+        interface BuildNumeric { new (token: number): object }
+        interface BuildLiteral { new (token: 1): object }
+        declare let buildNumeric: BuildNumeric;
+        declare let buildLiteral: BuildLiteral;
+        buildNumeric = buildLiteral;
+        "#,
+        2322,
+    );
+}
+
+/// A later contravariant-bad parameter in a multi-parameter construct literal
+/// is still caught.
+#[test]
+fn test_construct_signature_multi_param_contravariant_errors() {
+    test_function_variance(
+        r#"
+        type SpawnWide = new (label: string, rank: number) => object;
+        type SpawnNarrow = new (label: string, rank: 1) => object;
+        declare let spawnWide: SpawnWide;
+        declare let spawnNarrow: SpawnNarrow;
+        spawnWide = spawnNarrow;
+        "#,
+        2322,
+    );
+}
+
+/// The contravariant-OK direction (widening the parameter) stays accepted.
+#[test]
+fn test_construct_signature_literal_contravariant_ok() {
+    test_no_errors(
+        r#"
+        type MakeWide = new (size: number) => object;
+        type MakeNarrow = new (size: 1) => object;
+        declare let makeWide: MakeWide;
+        declare let makeNarrow: MakeNarrow;
+        makeNarrow = makeWide;
+        "#,
+    );
+}
+
+/// Class-derived constructor (`typeof Class`) keeps constructor-parameter
+/// bivariance in BOTH directions — this must not regress into a TS2322.
+#[test]
+fn test_class_constructor_param_bivariance_preserved() {
+    test_no_errors(
+        r#"
+        class HostNumeric { constructor(slot: number) {} }
+        class HostLiteral { constructor(slot: 1) {} }
+        declare let hostNumeric: typeof HostNumeric;
+        declare let hostLiteral: typeof HostLiteral;
+        hostNumeric = hostLiteral;
+        hostLiteral = hostNumeric;
+        "#,
+    );
+}

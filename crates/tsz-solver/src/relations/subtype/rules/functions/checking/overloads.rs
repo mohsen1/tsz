@@ -118,10 +118,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Compare constructor signatures after erasing type parameters to `any`.
     /// Used in N x M constructor-signature comparison to match tsc behavior.
+    ///
+    /// `force_strict_construct_params` carries the target's construct-signature
+    /// origin (see
+    /// [`super::SubtypeChecker::construct_target_requires_strict_params`]) so the
+    /// erased multi-overload fallback applies the same `strictFunctionTypes`
+    /// contravariance as the primary path; only type parameters are erased, the
+    /// declared parameter types still drive variance.
     pub(super) fn check_erased_call_signature_subtype_as_constructor(
         &mut self,
         source: &CallSignature,
         target: &CallSignature,
+        force_strict_construct_params: bool,
     ) -> SubtypeResult {
         for (s_param, t_param) in source.params.iter().zip(target.params.iter()) {
             let (s_has_call, s_has_construct) =
@@ -140,7 +148,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut t_erased = erase_call_sig_to_any(target, self.interner);
         s_erased.is_constructor = true;
         t_erased.is_constructor = true;
-        self.check_function_subtype(&s_erased, &t_erased)
+        self.check_function_subtype_with_constructor_strictness(
+            &s_erased,
+            &t_erased,
+            force_strict_construct_params,
+        )
     }
 
     fn check_function_subtype_either_direction(
