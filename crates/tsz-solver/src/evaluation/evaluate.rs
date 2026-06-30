@@ -906,7 +906,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// universal `into_type_id` collapse — and the emitted type and diagnostics
     /// — are exactly as before.
     #[inline]
-    fn note_request_termination(&mut self, kind: TerminationKind) {
+    pub(in crate::evaluation) fn note_request_termination(&mut self, kind: TerminationKind) {
         // First-wins: keep the kind that first truncated the walk.
         self.request_termination_kind.get_or_insert(kind);
         use tsz_common::perf_counters::EvaluationTerminationGuard as Guard;
@@ -921,6 +921,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TerminationKind::IterationExceeded => return,
         };
         tsz_common::perf_counters::record_eval_termination_guard(guard);
+    }
+
+    /// Record a limit event from an evaluation-rule-local guard and surface it
+    /// through the typed request verdict.
+    ///
+    /// Most bails flow through the evaluator's main recursion guard, whose
+    /// `mark_*` helpers bump `limit_epoch` before recording the request
+    /// verdict. Operation-local guards such as mapped-key constraint reduction
+    /// return their own opaque fallback without touching that main guard; they
+    /// must still advance `limit_epoch` so application-body cache writes do not
+    /// publish a budget-truncated result.
+    #[inline]
+    pub(in crate::evaluation) fn record_request_limit_event(&mut self, kind: TerminationKind) {
+        self.note_limit_event();
+        self.note_request_termination(kind);
     }
 
     /// Record that an application's base `DefId` had no resolvable body in
