@@ -312,6 +312,100 @@ fn application_eval_cache_invalidation_uses_recorded_def_dependencies() {
 }
 
 #[test]
+fn application_eval_cache_overwrite_replaces_recorded_result_dependencies() {
+    // Structural rule: the dependency index describes the cache entry that is
+    // currently stored for a key. Re-inserting the same application-eval key
+    // with a new result must detach the key from the old result's `DefId`
+    // bucket, or an invalidation of the old body would evict a live result.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let base_def = DefId(50);
+    let stale_result_def = DefId(60);
+    let current_result_def = DefId(70);
+    let stale_result = interner.lazy(stale_result_def);
+    let current_result = interner.lazy(current_result_def);
+
+    db.insert_application_eval_cache(base_def, &[TypeId::STRING], false, stale_result);
+    db.insert_application_eval_cache(base_def, &[TypeId::STRING], false, current_result);
+
+    assert_eq!(db.application_eval_dependency_key_count(base_def), 1);
+    assert_eq!(
+        db.application_eval_dependency_key_count(stale_result_def),
+        0,
+        "overwriting a key must remove dependency edges for the old result"
+    );
+    assert_eq!(
+        db.application_eval_dependency_key_count(current_result_def),
+        1
+    );
+
+    db.invalidate_application_eval_cache_for_def(stale_result_def);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[TypeId::STRING], false),
+        Some(current_result),
+        "invalidating a stale result dependency must not evict the replacement"
+    );
+
+    db.invalidate_application_eval_cache_for_def(current_result_def);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[TypeId::STRING], false),
+        None,
+        "invalidating the current result dependency must evict the entry"
+    );
+    assert_eq!(
+        db.application_eval_dependency_key_count(base_def),
+        0,
+        "eviction by result dependency must remove the base-def reverse edge"
+    );
+}
+
+#[test]
+fn shared_application_eval_cache_overwrite_replaces_recorded_result_dependencies() {
+    // Structural rule: the opt-in shared application-eval cache has the same
+    // exact-dependency invariant as the file-local cache. A stale dependency
+    // edge in the shared index can otherwise evict the current value for fresh
+    // sibling file checkers.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new_for_instantiation_family_test(true);
+
+    let base_def = DefId(80);
+    let stale_result_def = DefId(90);
+    let current_result_def = DefId(100);
+    let stale_result = interner.lazy(stale_result_def);
+    let current_result = interner.lazy(current_result_def);
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        db_a.insert_application_eval_cache(base_def, &[TypeId::NUMBER], false, stale_result);
+        db_a.insert_application_eval_cache(base_def, &[TypeId::NUMBER], false, current_result);
+        db_a.invalidate_application_eval_cache_for_def(stale_result_def);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_b.lookup_application_eval_cache(base_def, &[TypeId::NUMBER], false),
+            Some(current_result),
+            "invalidating a stale shared dependency must not evict the replacement"
+        );
+    }
+
+    {
+        let db_c = QueryCache::new_with_shared(&interner, &shared);
+        db_c.invalidate_application_eval_cache_for_def(current_result_def);
+    }
+    {
+        let db_d = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_d.lookup_application_eval_cache(base_def, &[TypeId::NUMBER], false),
+            None,
+            "invalidating the current shared dependency must evict the entry"
+        );
+    }
+}
+
+#[test]
 fn instantiation_cache_is_per_file_isolated() {
     // Structural rule: `instantiation_cache` is intentionally NOT shared
     // cross-file. The same class of ordering-sensitivity that affects

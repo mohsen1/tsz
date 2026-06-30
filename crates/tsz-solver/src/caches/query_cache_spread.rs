@@ -75,6 +75,7 @@ impl QueryCache<'_> {
                     self.interner,
                     &self.application_eval_dependency_index,
                     &key,
+                    None,
                     result,
                 );
                 self.application_eval_cache_stats.record_hit();
@@ -103,13 +104,15 @@ impl QueryCache<'_> {
             self.application_eval_cache_stats.record_shared_insert();
             tsz_common::perf_counters::record_shared_application_eval_cache_insert();
         }
-        self.application_eval_cache
+        let old_result = self
+            .application_eval_cache
             .borrow_mut()
             .insert(key.clone(), result);
         application_eval_index::record_dependencies(
             self.interner,
             &self.application_eval_dependency_index,
             &key,
+            old_result,
             result,
         );
     }
