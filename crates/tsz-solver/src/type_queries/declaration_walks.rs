@@ -9,6 +9,7 @@
 //! type-cache view and applies binder-backed policies, while the solver owns
 //! the recursion shape over type structure.
 
+use super::declaration_walk_guard_state as guard_state;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::types::{ConditionalType, FunctionShape, TypeData, TypeId};
@@ -43,8 +44,9 @@ fn contains_mapped_type_inner(
     resolve_lazy: &mut dyn FnMut(DefId) -> Option<TypeId>,
     depth: usize,
 ) -> bool {
-    if depth > DECLARATION_WALK_DEPTH_LIMIT {
-        return false;
+    match guard_state::declaration_walk_depth_state(depth, DECLARATION_WALK_DEPTH_LIMIT) {
+        guard_state::DeclarationWalkDepthState::Continue => {}
+        guard_state::DeclarationWalkDepthState::DepthExceeded => return false,
     }
     let Some(type_data) = db.lookup(type_id) else {
         return false;
@@ -104,8 +106,9 @@ fn contains_conditional_alias_application_inner(
     resolve_lazy: &mut dyn FnMut(DefId) -> Option<TypeId>,
     depth: usize,
 ) -> bool {
-    if depth > DECLARATION_WALK_DEPTH_LIMIT {
-        return false;
+    match guard_state::declaration_walk_depth_state(depth, DECLARATION_WALK_DEPTH_LIMIT) {
+        guard_state::DeclarationWalkDepthState::Continue => {}
+        guard_state::DeclarationWalkDepthState::DepthExceeded => return false,
     }
     let Some(type_data) = db.lookup(type_id) else {
         return false;
@@ -195,8 +198,9 @@ fn collect_lazy_application_base_defs_inner(
     defs: &mut FxHashSet<DefId>,
     depth: usize,
 ) {
-    if depth > DECLARATION_WALK_DEPTH_LIMIT {
-        return;
+    match guard_state::declaration_walk_depth_state(depth, DECLARATION_WALK_DEPTH_LIMIT) {
+        guard_state::DeclarationWalkDepthState::Continue => {}
+        guard_state::DeclarationWalkDepthState::DepthExceeded => return,
     }
     let Some(type_data) = db.lookup(type_id) else {
         return;
@@ -249,8 +253,9 @@ fn rebuild_reduced_inner(
     evaluate: &mut dyn FnMut(TypeId) -> TypeId,
     depth: usize,
 ) -> TypeId {
-    if depth > DECLARATION_WALK_DEPTH_LIMIT {
-        return type_id;
+    match guard_state::declaration_walk_depth_state(depth, DECLARATION_WALK_DEPTH_LIMIT) {
+        guard_state::DeclarationWalkDepthState::Continue => {}
+        guard_state::DeclarationWalkDepthState::DepthExceeded => return type_id,
     }
 
     if let Some(reduced) = reduce_application(type_id)
@@ -505,6 +510,30 @@ mod tests {
     }
 
     #[test]
+    fn conditional_alias_application_respects_depth_fuel() {
+        let interner = TypeInterner::new();
+        let cond_body = interner.conditional(ConditionalType {
+            check_type: TypeId::STRING,
+            extends_type: TypeId::STRING,
+            true_type: TypeId::NUMBER,
+            false_type: TypeId::BOOLEAN,
+            is_distributive: false,
+        });
+        let def = DefId(12);
+        let mut current = interner.application(interner.lazy(def), vec![TypeId::STRING]);
+        for _ in 0..(DECLARATION_WALK_DEPTH_LIMIT + 2) {
+            current = interner.function(FunctionShape::new(vec![], current));
+        }
+
+        let mut resolve = |def_id: DefId| (def_id == def).then_some(cond_body);
+        assert!(!contains_conditional_alias_application_through_lazy(
+            &interner,
+            current,
+            &mut resolve
+        ));
+    }
+
+    #[test]
     fn collect_application_base_defs_applies_policy() {
         let interner = TypeInterner::new();
         let keep = DefId(21);
@@ -518,6 +547,24 @@ mod tests {
         assert!(defs.contains(&keep));
         assert!(!defs.contains(&drop));
         assert_eq!(defs.len(), 1);
+    }
+
+    #[test]
+    fn collect_application_base_defs_respects_depth_fuel() {
+        let interner = TypeInterner::new();
+        let keep = DefId(23);
+        let wrapper = DefId(24);
+        let mut current = interner.application(interner.lazy(keep), vec![TypeId::STRING]);
+        for _ in 0..(DECLARATION_WALK_DEPTH_LIMIT + 2) {
+            current = interner.application(interner.lazy(wrapper), vec![current]);
+        }
+
+        let mut include = |def_id: DefId| def_id == keep;
+        let defs = collect_lazy_application_base_defs_matching(&interner, current, &mut include);
+        assert!(
+            defs.is_empty(),
+            "depth fuel should keep deeply nested application bases out of the result: {defs:?}"
+        );
     }
 
     #[test]
@@ -565,6 +612,26 @@ mod tests {
         let rebuilt =
             rebuild_with_reduced_alias_applications(&interner, cond, &mut reduce, &mut evaluate);
         assert_eq!(rebuilt, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn rebuild_reduced_alias_applications_respects_depth_fuel() {
+        let interner = TypeInterner::new();
+        let def = DefId(42);
+        let app = interner.application(interner.lazy(def), vec![TypeId::STRING]);
+        let mut current = app;
+        for _ in 0..(DECLARATION_WALK_DEPTH_LIMIT + 2) {
+            current = interner.function(FunctionShape::new(vec![], current));
+        }
+
+        let mut reduce = |ty: TypeId| (ty == app).then_some(TypeId::NUMBER);
+        let mut evaluate = |ty: TypeId| ty;
+        let rebuilt =
+            rebuild_with_reduced_alias_applications(&interner, current, &mut reduce, &mut evaluate);
+        assert_eq!(
+            rebuilt, current,
+            "depth fuel should preserve the existing opaque fallback"
+        );
     }
 
     #[test]
