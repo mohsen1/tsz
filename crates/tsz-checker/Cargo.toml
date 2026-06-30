@@ -1843,6 +1843,9 @@ path = "tests/bare_alias_display_tests.rs"
 name = "string_mapping_alias_display_tests"
 path = "tests/string_mapping_alias_display_tests.rs"
 [[test]]
+name = "template_intrinsic_literal_union_alias_display_tests"
+path = "tests/template_intrinsic_literal_union_alias_display_tests.rs"
+[[test]]
 name = "class_field_mapped_type_indexed_access_tests"
 path = "tests/class_field_mapped_type_indexed_access_tests.rs"
 [[test]]
