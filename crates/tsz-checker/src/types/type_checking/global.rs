@@ -540,7 +540,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn register_function_def_ids_early(&mut self) {
         use crate::query_boundaries::common::IntrinsicKind;
 
-        if !self.ctx.has_lib_loaded() {
+        // Mirror `register_boxed_types`: under `--noLib` a user-declared
+        // ambient `Function` interface must still be identified so `T extends
+        // Function` constraint checks resolve. The `file_locals` lookup below
+        // recovers it; lib-context loops are simply empty without lib files.
+        if !self.ctx.has_lib_loaded() && !self.has_user_declared_registerable_global() {
             return;
         }
 
