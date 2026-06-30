@@ -2,6 +2,7 @@
 
 use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::result::TerminationKind;
 use crate::recursion::RecursionResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
@@ -38,6 +39,15 @@ impl KeyofConstraintStepState {
             | Self::DepthExceeded
             | Self::IterationExceeded
             | Self::SolverFrameExhausted => Some(current),
+        }
+    }
+
+    const fn termination_kind(self) -> Option<TerminationKind> {
+        match self {
+            Self::Entered | Self::AlreadyVisited => None,
+            Self::DepthExceeded => Some(TerminationKind::DepthExceeded),
+            Self::IterationExceeded => Some(TerminationKind::IterationExceeded),
+            Self::SolverFrameExhausted => Some(TerminationKind::SolverStackFrames),
         }
     }
 }
@@ -93,7 +103,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.keyof_constraint_guard.enter(current),
             ) {
                 KeyofConstraintStepState::Entered => entered.push(current),
-                state => break state.fallback_type(current).unwrap_or(current),
+                state => {
+                    if let Some(kind) = state.termination_kind() {
+                        self.record_request_limit_event(kind);
+                    }
+                    break state.fallback_type(current).unwrap_or(current);
+                }
             }
 
             // Shared cross-operation stack-frame breaker (issue #7574): bound
@@ -102,9 +117,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let Some(step) = crate::recursion::with_solver_frame(|| {
                 self.evaluate_keyof_or_constraint_inner(current)
             }) else {
-                break KeyofConstraintStepState::SolverFrameExhausted
-                    .fallback_type(current)
-                    .unwrap_or(current);
+                let state = KeyofConstraintStepState::SolverFrameExhausted;
+                if let Some(kind) = state.termination_kind() {
+                    self.record_request_limit_event(kind);
+                }
+                break state.fallback_type(current).unwrap_or(current);
             };
 
             match KeyofConstraintReductionState::from_evaluated_step(self.interner(), current, step)
@@ -186,7 +203,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recursion::RecursionResult;
+    use crate::construction::TypeInterner;
+    use crate::evaluation::result::Termination;
+    use crate::recursion::{RecursionGuard, RecursionResult};
+
+    fn assert_request_verdict(
+        evaluator: &TypeEvaluator<'_, crate::relations::subtype::NoopResolver>,
+        partial: TypeId,
+        kind: TerminationKind,
+    ) {
+        let result = evaluator.request_result_for_test(partial);
+        assert_eq!(
+            result.termination(),
+            Termination::Incomplete { kind, partial }
+        );
+        assert_eq!(result.into_type_id(), partial);
+    }
 
     #[test]
     fn step_state_names_every_guard_fallback() {
@@ -216,6 +248,24 @@ mod tests {
             KeyofConstraintStepState::SolverFrameExhausted.fallback_type(current),
             Some(current)
         );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::Cycle).termination_kind(),
+            None
+        );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::DepthExceeded)
+                .termination_kind(),
+            Some(TerminationKind::DepthExceeded)
+        );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::IterationExceeded)
+                .termination_kind(),
+            Some(TerminationKind::IterationExceeded)
+        );
+        assert_eq!(
+            KeyofConstraintStepState::SolverFrameExhausted.termination_kind(),
+            Some(TerminationKind::SolverStackFrames)
+        );
     }
 
     #[test]
@@ -236,6 +286,72 @@ mod tests {
         assert_eq!(
             KeyofConstraintReductionState::from_evaluated_step(&interner, current, current),
             KeyofConstraintReductionState::Done(current)
+        );
+    }
+
+    #[test]
+    fn local_depth_bail_records_request_verdict() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let current = interner.keyof(TypeId::STRING);
+        let mut entered = Vec::new();
+
+        for offset in 0..evaluator.keyof_constraint_guard.max_depth() {
+            let type_id = TypeId(10_000 + offset);
+            assert!(evaluator.keyof_constraint_guard.enter(type_id).is_entered());
+            entered.push(type_id);
+        }
+
+        assert_eq!(evaluator.evaluate_keyof_or_constraint(current), current);
+        assert_request_verdict(&evaluator, current, TerminationKind::DepthExceeded);
+
+        for type_id in entered.into_iter().rev() {
+            evaluator.keyof_constraint_guard.leave(type_id);
+        }
+    }
+
+    #[test]
+    fn local_iteration_bail_records_request_verdict() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let current = interner.keyof(TypeId::STRING);
+        evaluator.keyof_constraint_guard = RecursionGuard::new(100, 0);
+
+        assert_eq!(evaluator.evaluate_keyof_or_constraint(current), current);
+        assert_request_verdict(&evaluator, current, TerminationKind::IterationExceeded);
+    }
+
+    #[test]
+    fn solver_frame_bail_records_request_verdict() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let current = interner.keyof(TypeId::STRING);
+        crate::recursion::reset_solver_stack_frames();
+        let mut held = Vec::with_capacity(crate::recursion::MAX_SOLVER_STACK_FRAMES as usize);
+
+        for _ in 0..crate::recursion::MAX_SOLVER_STACK_FRAMES {
+            held.push(crate::recursion::try_enter_solver_frame().expect("under frame cap"));
+        }
+
+        assert_eq!(evaluator.evaluate_keyof_or_constraint(current), current);
+        drop(held);
+        crate::recursion::reset_solver_stack_frames();
+        assert_request_verdict(&evaluator, current, TerminationKind::SolverStackFrames);
+    }
+
+    #[test]
+    fn cycle_fallback_does_not_record_request_verdict() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let current = interner.keyof(TypeId::STRING);
+
+        assert!(evaluator.keyof_constraint_guard.enter(current).is_entered());
+        assert_eq!(evaluator.evaluate_keyof_or_constraint(current), current);
+        evaluator.keyof_constraint_guard.leave(current);
+
+        assert_eq!(
+            evaluator.request_result_for_test(current).termination(),
+            Termination::Complete
         );
     }
 }

@@ -242,6 +242,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let evaluate_application_rs = read_solver_source("evaluation/evaluate/application.rs");
+    let mapped_keyof_constraint_rs =
+        read_solver_source("evaluation/evaluate_rules/mapped/keyof_constraint.rs");
     let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
     let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
     let infer_match_expansion_rs =
@@ -314,6 +316,19 @@ fn evaluation_engine_keeps_request_stage_boundary() {
                 .count()
                 >= 2,
         "application evaluation depth/divergence bails must route through the typed request termination producer"
+    );
+    assert!(
+        evaluate_rs.contains("fn record_request_limit_event(&mut self, kind: TerminationKind)")
+            && mapped_keyof_constraint_rs.contains("record_request_limit_event(kind)")
+            && mapped_keyof_constraint_rs
+                .contains("Self::DepthExceeded => Some(TerminationKind::DepthExceeded)")
+            && mapped_keyof_constraint_rs
+                .contains("Self::IterationExceeded => Some(TerminationKind::IterationExceeded)")
+            && mapped_keyof_constraint_rs
+                .contains("Self::SolverFrameExhausted => Some(TerminationKind::SolverStackFrames)"),
+        "mapped keyof/constraint local guard bails must advance the evaluator-owned \
+         request termination channel instead of returning opaque fallbacks as \
+         complete results"
     );
     assert!(
         result_rs.contains("fn unstable_complete(type_id: TypeId) -> Self")
