@@ -15,6 +15,29 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tracing::trace;
 
+const REVERSE_MAPPED_DEPTH_CAP: u32 = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReverseMappedRecursionState {
+    Entered,
+    AlreadyActive,
+    DepthLimitExceeded,
+}
+
+fn classify_reverse_mapped_recursion(
+    active_pairs: &FxHashSet<(TypeId, TypeId)>,
+    pair: (TypeId, TypeId),
+    depth: u32,
+) -> ReverseMappedRecursionState {
+    if active_pairs.contains(&pair) {
+        ReverseMappedRecursionState::AlreadyActive
+    } else if depth >= REVERSE_MAPPED_DEPTH_CAP {
+        ReverseMappedRecursionState::DepthLimitExceeded
+    } else {
+        ReverseMappedRecursionState::Entered
+    }
+}
+
 // Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
 // in this module. Mirrors the pool pattern from #4722 / #4790 / #4801 /
 // #4805 / #4807 / #4810 / #4816 / #4818 / #4820.
@@ -133,6 +156,22 @@ fn apparent_intrinsic_kind_for_reverse_mapped(
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn record_reverse_mapped_recursion_state(
+        &self,
+        pair: (TypeId, TypeId),
+    ) -> (ReverseMappedRecursionState, u32) {
+        let depth = self.reverse_mapped_depth.get();
+        let state = {
+            let active_pairs = self.reverse_mapped_visited.borrow();
+            classify_reverse_mapped_recursion(&active_pairs, pair, depth)
+        };
+        if state == ReverseMappedRecursionState::Entered {
+            self.reverse_mapped_depth.set(depth + 1);
+            self.reverse_mapped_visited.borrow_mut().insert(pair);
+        }
+        (state, depth)
+    }
+
     /// IteratorResult-specific inference: infer from yield branches only.
     ///
     /// For unions like `{ done: false, value: T } | { done: true, value: undefined }`,
@@ -1098,13 +1137,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 //
                 // We also keep a hard depth cap as a safety net for pathological inputs.
                 let pair = (template, source_value);
-                if self.reverse_mapped_visited.borrow().contains(&pair) {
-                    return Some(source_value);
-                }
-                let depth = self.reverse_mapped_depth.get();
-                const REVERSE_MAPPED_DEPTH_CAP: u32 = 64;
-                if depth >= REVERSE_MAPPED_DEPTH_CAP {
-                    return Some(source_value);
+                let (recursion_state, depth) = self.record_reverse_mapped_recursion_state(pair);
+                match recursion_state {
+                    ReverseMappedRecursionState::Entered => {}
+                    ReverseMappedRecursionState::AlreadyActive
+                    | ReverseMappedRecursionState::DepthLimitExceeded => return Some(source_value),
                 }
 
                 let source_props = source_obj.properties.clone();
@@ -1112,9 +1149,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let source_number_idx = source_obj.number_index;
                 let mut reverse_properties = Vec::with_capacity(source_props.len());
                 let mut any_reversed = false;
-
-                self.reverse_mapped_depth.set(depth + 1);
-                self.reverse_mapped_visited.borrow_mut().insert(pair);
 
                 for prop in &source_props {
                     // Instantiate the mapped template with the concrete key.
@@ -1619,5 +1653,217 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .into_iter()
             .filter_map(|nested| var_map.get(&nested).copied())
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod reverse_mapped_recursion_state_tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use crate::relations::compat::CompatChecker;
+    use crate::types::{MappedType, TypeParamInfo, TypeParamOrigin};
+    use tsz_common::interner::Atom;
+
+    #[test]
+    fn classifies_new_pair_under_cap_as_entered() {
+        let active_pairs = FxHashSet::default();
+        assert_eq!(
+            classify_reverse_mapped_recursion(
+                &active_pairs,
+                (TypeId(100), TypeId(200)),
+                REVERSE_MAPPED_DEPTH_CAP - 1,
+            ),
+            ReverseMappedRecursionState::Entered
+        );
+    }
+
+    #[test]
+    fn classifies_active_pair_as_already_active_before_depth_limit() {
+        let pair = (TypeId(100), TypeId(200));
+        let mut active_pairs = FxHashSet::default();
+        active_pairs.insert(pair);
+        assert_eq!(
+            classify_reverse_mapped_recursion(&active_pairs, pair, REVERSE_MAPPED_DEPTH_CAP),
+            ReverseMappedRecursionState::AlreadyActive
+        );
+    }
+
+    #[test]
+    fn classifies_new_pair_at_cap_as_depth_limit_exceeded() {
+        let active_pairs = FxHashSet::default();
+        assert_eq!(
+            classify_reverse_mapped_recursion(
+                &active_pairs,
+                (TypeId(100), TypeId(200)),
+                REVERSE_MAPPED_DEPTH_CAP,
+            ),
+            ReverseMappedRecursionState::DepthLimitExceeded
+        );
+    }
+
+    #[test]
+    fn records_entered_pair_and_depth() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let evaluator = CallEvaluator::new(&interner, &mut checker);
+        let pair = (TypeId(100), TypeId(200));
+
+        let (state, previous_depth) = evaluator.record_reverse_mapped_recursion_state(pair);
+
+        assert_eq!(state, ReverseMappedRecursionState::Entered);
+        assert_eq!(previous_depth, 0);
+        assert_eq!(evaluator.reverse_mapped_depth.get(), 1);
+        assert!(evaluator.reverse_mapped_visited.borrow().contains(&pair));
+    }
+
+    #[test]
+    fn already_active_fallback_preserves_current_recursion_state() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let evaluator = CallEvaluator::new(&interner, &mut checker);
+        let pair = (TypeId(100), TypeId(200));
+        evaluator.reverse_mapped_depth.set(7);
+        evaluator.reverse_mapped_visited.borrow_mut().insert(pair);
+
+        let (state, previous_depth) = evaluator.record_reverse_mapped_recursion_state(pair);
+
+        assert_eq!(state, ReverseMappedRecursionState::AlreadyActive);
+        assert_eq!(previous_depth, 7);
+        assert_eq!(evaluator.reverse_mapped_depth.get(), 7);
+        assert_eq!(evaluator.reverse_mapped_visited.borrow().len(), 1);
+        assert!(evaluator.reverse_mapped_visited.borrow().contains(&pair));
+    }
+
+    #[test]
+    fn depth_limit_fallback_preserves_current_recursion_state() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let evaluator = CallEvaluator::new(&interner, &mut checker);
+        let pair = (TypeId(100), TypeId(200));
+        evaluator.reverse_mapped_depth.set(REVERSE_MAPPED_DEPTH_CAP);
+
+        let (state, previous_depth) = evaluator.record_reverse_mapped_recursion_state(pair);
+
+        assert_eq!(state, ReverseMappedRecursionState::DepthLimitExceeded);
+        assert_eq!(previous_depth, REVERSE_MAPPED_DEPTH_CAP);
+        assert_eq!(
+            evaluator.reverse_mapped_depth.get(),
+            REVERSE_MAPPED_DEPTH_CAP
+        );
+        assert!(!evaluator.reverse_mapped_visited.borrow().contains(&pair));
+    }
+
+    #[test]
+    fn entered_state_descends_finite_mapped_template_and_restores_state() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+        let (source, mapped_template, target_placeholder, prop_name) =
+            reverse_mapped_fixture(&interner);
+
+        let reversed = evaluator
+            .reverse_infer_through_template(source, mapped_template, target_placeholder)
+            .expect("finite mapped template should reverse through its property");
+
+        assert_object_property(&interner, reversed, prop_name, TypeId::NUMBER);
+        assert_eq!(evaluator.reverse_mapped_depth.get(), 0);
+        assert!(
+            evaluator.reverse_mapped_visited.borrow().is_empty(),
+            "entered pair should be removed after finite descent"
+        );
+    }
+
+    #[test]
+    fn already_active_state_falls_back_to_source_value() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+        let (source, mapped_template, target_placeholder, _prop_name) =
+            reverse_mapped_fixture(&interner);
+        let pair = (mapped_template, source);
+        evaluator.reverse_mapped_depth.set(5);
+        evaluator.reverse_mapped_visited.borrow_mut().insert(pair);
+
+        let reversed = evaluator
+            .reverse_infer_through_template(source, mapped_template, target_placeholder)
+            .expect("active recursive pair should converge to the source value");
+
+        assert_eq!(reversed, source);
+        assert_eq!(evaluator.reverse_mapped_depth.get(), 5);
+        assert!(evaluator.reverse_mapped_visited.borrow().contains(&pair));
+    }
+
+    #[test]
+    fn depth_limit_state_falls_back_to_source_value() {
+        let interner = TypeInterner::new();
+        let mut checker = CompatChecker::new(&interner);
+        let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+        let (source, mapped_template, target_placeholder, _prop_name) =
+            reverse_mapped_fixture(&interner);
+        let pair = (mapped_template, source);
+        evaluator.reverse_mapped_depth.set(REVERSE_MAPPED_DEPTH_CAP);
+
+        let reversed = evaluator
+            .reverse_infer_through_template(source, mapped_template, target_placeholder)
+            .expect("depth-limited recursive pair should converge to the source value");
+
+        assert_eq!(reversed, source);
+        assert_eq!(
+            evaluator.reverse_mapped_depth.get(),
+            REVERSE_MAPPED_DEPTH_CAP
+        );
+        assert!(!evaluator.reverse_mapped_visited.borrow().contains(&pair));
+    }
+
+    fn reverse_mapped_fixture(interner: &TypeInterner) -> (TypeId, TypeId, TypeId, Atom) {
+        let t_name = interner.intern_string("T");
+        let k_name = interner.intern_string("K");
+        let t_type = interner.type_param(TypeParamInfo {
+            name: t_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        });
+        let k_param = TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        };
+        let k_type = interner.type_param(k_param);
+        let template = interner.index_access(t_type, k_type);
+        let mapped_template = interner.mapped(MappedType {
+            type_param: k_param,
+            constraint: interner.keyof(t_type),
+            name_type: None,
+            template,
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+        let prop_name = interner.intern_string("node");
+        let source = interner.object(vec![PropertyInfo::new(prop_name, TypeId::NUMBER)]);
+
+        (source, mapped_template, t_type, prop_name)
+    }
+
+    fn assert_object_property(
+        interner: &TypeInterner,
+        object: TypeId,
+        name: Atom,
+        expected_type: TypeId,
+    ) {
+        let shape_id = match interner.lookup(object) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            other => panic!("expected object type, got {other:?}"),
+        };
+        let shape = interner.object_shape(shape_id);
+        let prop = shape
+            .properties
+            .iter()
+            .find(|prop| prop.name == name)
+            .unwrap_or_else(|| panic!("missing property {name:?}"));
+        assert_eq!(prop.type_id, expected_type);
     }
 }
