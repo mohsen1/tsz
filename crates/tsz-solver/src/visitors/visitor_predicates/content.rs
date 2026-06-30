@@ -179,8 +179,10 @@ fn worklist_contains_matching(
     with_predicate_buffers(|visited, stack| {
         stack.push(root);
         while let Some(current) = stack.pop() {
-            if current.is_intrinsic() || !visited.insert(current) {
-                continue;
+            match PredicateWorklistVisitState::enter(current, visited) {
+                PredicateWorklistVisitState::Entered => {}
+                PredicateWorklistVisitState::IgnoredIntrinsic
+                | PredicateWorklistVisitState::AlreadyVisited => continue,
             }
             let data = types.lookup(current);
             if node_matches(current, data.as_ref()) {
@@ -197,6 +199,25 @@ fn worklist_contains_matching(
         }
         false
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PredicateWorklistVisitState {
+    Entered,
+    AlreadyVisited,
+    IgnoredIntrinsic,
+}
+
+impl PredicateWorklistVisitState {
+    fn enter(current: TypeId, visited: &mut FxHashSet<TypeId>) -> Self {
+        if current.is_intrinsic() {
+            Self::IgnoredIntrinsic
+        } else if visited.insert(current) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
 }
 
 fn type_parameter_identity_matches(
@@ -358,8 +379,10 @@ fn resolution_path_contains_matching(
     with_predicate_buffers(|visited, stack| {
         stack.push(root);
         while let Some(current) = stack.pop() {
-            if current.is_intrinsic() || !visited.insert(current) {
-                continue;
+            match PredicateWorklistVisitState::enter(current, visited) {
+                PredicateWorklistVisitState::Entered => {}
+                PredicateWorklistVisitState::IgnoredIntrinsic
+                | PredicateWorklistVisitState::AlreadyVisited => continue,
             }
             let data = types.lookup(current);
             if node_matches(current, data.as_ref()) {
@@ -397,8 +420,9 @@ pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeI
         if current == target {
             return true;
         }
-        if !visited.insert(current) {
-            continue;
+        match ContainsTypeByIdVisitState::enter(current, &mut visited) {
+            ContainsTypeByIdVisitState::Entered => {}
+            ContainsTypeByIdVisitState::AlreadyVisited => continue,
         }
         crate::visitors::visitor::for_each_child_by_id(types, current, |child| {
             if !visited.contains(&child) {
@@ -407,6 +431,22 @@ pub fn contains_type_by_id(types: &dyn TypeDatabase, root: TypeId, target: TypeI
         });
     }
     false
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContainsTypeByIdVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+impl ContainsTypeByIdVisitState {
+    fn enter(current: TypeId, visited: &mut FxHashSet<TypeId>) -> Self {
+        if visited.insert(current) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
 }
 
 /// The single deep boolean-containment driver behind every `contains_*`
@@ -684,7 +724,54 @@ pub fn contains_free_type_parameters_except_name(
 mod tests {
     use super::*;
     use crate::intern::TypeInterner;
-    use crate::types::TypeParamInfo;
+    use crate::types::{TupleElement, TypeParamInfo};
+
+    #[test]
+    fn predicate_worklist_visit_state_names_intrinsic_entered_and_revisit() {
+        let interner = TypeInterner::new();
+        let type_id = interner.object(vec![]);
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            PredicateWorklistVisitState::enter(TypeId::ANY, &mut visited),
+            PredicateWorklistVisitState::IgnoredIntrinsic
+        );
+        assert!(visited.is_empty());
+        assert_eq!(
+            PredicateWorklistVisitState::enter(type_id, &mut visited),
+            PredicateWorklistVisitState::Entered
+        );
+        assert_eq!(
+            PredicateWorklistVisitState::enter(type_id, &mut visited),
+            PredicateWorklistVisitState::AlreadyVisited
+        );
+    }
+
+    #[test]
+    fn contains_type_by_id_visit_state_names_entered_and_revisit() {
+        let interner = TypeInterner::new();
+        let type_id = interner.object(vec![]);
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            ContainsTypeByIdVisitState::enter(type_id, &mut visited),
+            ContainsTypeByIdVisitState::Entered
+        );
+        assert_eq!(
+            ContainsTypeByIdVisitState::enter(type_id, &mut visited),
+            ContainsTypeByIdVisitState::AlreadyVisited
+        );
+    }
+
+    #[test]
+    fn contains_type_by_id_handles_shared_child_once() {
+        let interner = TypeInterner::new();
+        let child = interner.object(vec![]);
+        let root = interner.tuple(vec![TupleElement::fixed(child), TupleElement::fixed(child)]);
+
+        assert!(contains_type_by_id(&interner, root, child));
+        assert!(!contains_type_by_id(&interner, root, TypeId::STRING));
+    }
 
     #[test]
     fn predicate_checker_memo_entry_counts_are_observable() {
