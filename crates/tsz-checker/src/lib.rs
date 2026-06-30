@@ -1282,6 +1282,9 @@ mod new_expression_source_display_tests;
 #[path = "../tests/new_typeof_property_tests.rs"]
 mod new_typeof_property_tests;
 #[cfg(test)]
+#[path = "tests/nolib_user_global_array_member_tests.rs"]
+mod nolib_user_global_array_member_tests;
+#[cfg(test)]
 #[path = "tests/non_generic_spread_tuple_alias_display_tests.rs"]
 mod non_generic_spread_tuple_alias_display_tests;
 #[cfg(test)]
