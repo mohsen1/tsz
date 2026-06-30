@@ -4,6 +4,34 @@ use crate::type_queries::{get_array_element_type, get_callable_shape_for_type, g
 use crate::types::{CallSignature, ParamInfo, TypeData, TypeId};
 use tsz_common::Atom;
 
+const MAX_COMPARABILITY_DEPTH: u32 = 5;
+
+/// Named recursion-depth state for comparability walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComparabilityDepthState {
+    /// The current recursion depth is still inside the existing walk budget.
+    WithinLimit,
+    /// The current recursion depth exceeded the existing walk budget.
+    LimitExceeded,
+}
+
+impl ComparabilityDepthState {
+    const fn from_depth(depth: u32) -> Self {
+        if depth > MAX_COMPARABILITY_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::WithinLimit
+        }
+    }
+
+    const fn fallback_result(self) -> Option<bool> {
+        match self {
+            Self::WithinLimit => None,
+            Self::LimitExceeded => Some(false),
+        }
+    }
+}
+
 /// Check if two types are "comparable" for TS2352 type assertion overlap check.
 ///
 /// TSC uses `isTypeComparableTo` which is more relaxed than assignability.
@@ -51,9 +79,8 @@ pub(in crate::type_queries) fn types_are_comparable_for_assertion_inner(
     depth: u32,
     nested: bool,
 ) -> bool {
-    // Prevent infinite recursion
-    if depth > 5 {
-        return false;
+    if let Some(result) = ComparabilityDepthState::from_depth(depth).fallback_result() {
+        return result;
     }
 
     // Same type is always comparable
@@ -623,9 +650,8 @@ fn types_are_comparable_inner(
     target: TypeId,
     depth: u32,
 ) -> bool {
-    // Prevent infinite recursion
-    if depth > 5 {
-        return false;
+    if let Some(result) = ComparabilityDepthState::from_depth(depth).fallback_result() {
+        return result;
     }
 
     // Same type is always comparable
@@ -1092,4 +1118,58 @@ fn types_have_common_properties(
         }
     }
     found_common
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+
+    #[test]
+    fn comparability_depth_state_names_cap_boundary() {
+        assert_eq!(
+            ComparabilityDepthState::from_depth(MAX_COMPARABILITY_DEPTH),
+            ComparabilityDepthState::WithinLimit
+        );
+        assert_eq!(
+            ComparabilityDepthState::from_depth(MAX_COMPARABILITY_DEPTH + 1),
+            ComparabilityDepthState::LimitExceeded
+        );
+        assert_eq!(
+            ComparabilityDepthState::LimitExceeded.fallback_result(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn comparability_depth_state_preserves_strict_and_assertion_fallback() {
+        let interner = TypeInterner::new();
+
+        assert!(types_are_comparable_inner(
+            &interner,
+            TypeId::STRING,
+            TypeId::STRING,
+            MAX_COMPARABILITY_DEPTH
+        ));
+        assert!(!types_are_comparable_inner(
+            &interner,
+            TypeId::STRING,
+            TypeId::STRING,
+            MAX_COMPARABILITY_DEPTH + 1
+        ));
+        assert!(types_are_comparable_for_assertion_inner(
+            &interner,
+            TypeId::STRING,
+            TypeId::STRING,
+            MAX_COMPARABILITY_DEPTH,
+            false
+        ));
+        assert!(!types_are_comparable_for_assertion_inner(
+            &interner,
+            TypeId::STRING,
+            TypeId::STRING,
+            MAX_COMPARABILITY_DEPTH + 1,
+            false
+        ));
+    }
 }
