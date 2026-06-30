@@ -1,5 +1,6 @@
 use crate::caches::db::TypeApplicationEvalCache;
 use crate::construction::{QueryCache, QueryCacheStatistics, RelationCacheProbe};
+use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::RelationPolicy;
 use crate::{
     LiteralValue, ObjectFlags, PropertyInfo, QueryDatabase, RelationCacheConfig, RelationCacheKey,
@@ -84,6 +85,82 @@ fn query_cache_caches_evaluate_and_subtype() {
     assert_eq!(db.subtype_cache_len(), 1);
     assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.subtype_cache_len(), 1);
+}
+
+#[test]
+fn property_cache_skips_unresolved_lazy_result() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let prop = interner.intern_string("value");
+    let unresolved = interner.lazy(crate::def::DefId(9001));
+
+    let result = db.resolve_property_access_atom(unresolved, prop);
+    assert!(
+        matches!(
+            result,
+            PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                ..
+            }
+        ),
+        "unresolved lazy fallback should still be returned, got {result:?}"
+    );
+    assert_eq!(
+        db.property_cache_len(),
+        0,
+        "unresolved lazy fallback must not publish into the property cache"
+    );
+}
+
+#[test]
+fn property_cache_skips_unresolved_application_base_result() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let prop = interner.intern_string("value");
+    let unresolved_base = interner.lazy(crate::def::DefId(9002));
+    let app = interner.application(unresolved_base, vec![TypeId::STRING]);
+
+    let result = db.resolve_property_access_atom(app, prop);
+    assert!(
+        matches!(
+            result,
+            PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                ..
+            }
+        ),
+        "unresolved application fallback should still be returned, got {result:?}"
+    );
+    assert_eq!(
+        db.property_cache_len(),
+        0,
+        "unresolved lazy application fallback must not publish into the property cache"
+    );
+}
+
+#[test]
+fn property_cache_keeps_resolved_object_property_result() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let prop = interner.intern_string("value");
+    let obj = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
+
+    let result = db.resolve_property_access_atom(obj, prop);
+    assert!(
+        matches!(
+            result,
+            PropertyAccessResult::Success {
+                type_id: TypeId::NUMBER,
+                ..
+            }
+        ),
+        "resolved object property should still be returned, got {result:?}"
+    );
+    assert_eq!(
+        db.property_cache_len(),
+        1,
+        "resolved object property access should still publish into the property cache"
+    );
 }
 
 /// Test cache poisoning prevention.

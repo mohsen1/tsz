@@ -219,6 +219,10 @@ pub struct PropertyAccessEvaluator<'a> {
     /// fields. Ordinary string/index lookups keep this false so ES-private
     /// fields do not leak through dynamic property access.
     allow_private_identifier_properties: Cell<bool>,
+    /// Set when this access observes a deferred `Lazy(DefId)` whose body cannot
+    /// be resolved by the current resolver. Such results depend on publication
+    /// timing, so callers must not publish them into resolver-independent caches.
+    unresolved_lazy_property_seen: Cell<bool>,
     /// Per-access memo for deferred (`Application`/`Lazy`) property resolution.
     ///
     /// `resolve_application_property` and the deferred-`Lazy` walk re-instantiate
@@ -258,6 +262,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             )),
             skip_this_binding: Cell::new(false),
             allow_private_identifier_properties: Cell::new(false),
+            unresolved_lazy_property_seen: Cell::new(false),
             deferred_property_memo: RefCell::new(FxHashMap::default()),
         }
     }
@@ -294,6 +299,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     pub(crate) const fn allow_private_identifier_properties(&self) -> bool {
         self.allow_private_identifier_properties.get()
+    }
+
+    pub(crate) fn mark_unresolved_lazy_property_seen(&self) {
+        self.unresolved_lazy_property_seen.set(true);
+    }
+
+    pub const fn property_result_cacheable(&self) -> bool {
+        !self.unresolved_lazy_property_seen.get()
     }
 
     /// Helper to access the underlying `TypeDatabase`
@@ -626,9 +639,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
             .insert(key, DeferredPropertyMemo::InProgress);
         let result = resolve();
         let truncated = !exceeded_before && self.guard.borrow().is_exceeded();
-        if truncated {
+        let unresolved_lazy_seen = self.unresolved_lazy_property_seen.get();
+        if truncated || unresolved_lazy_seen {
             // Degraded by a depth/iteration limit: not a pure function of the
-            // key, so drop the in-progress marker without caching the result.
+            // key, or by an unresolved lazy body whose answer depends on the
+            // current resolver window, so drop the marker without caching.
             self.deferred_property_memo.borrow_mut().remove(&key);
         } else {
             self.deferred_property_memo
@@ -1270,6 +1285,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             // Successfully resolved - resolve property on the concrete type
                             self.resolve_property_access_inner(resolved, prop_atom)
                         } else {
+                            self.mark_unresolved_lazy_property_seen();
                             // Can't resolve lazy type - try apparent members
                             if let Some(result) = self.resolve_object_member(prop_atom) {
                                 result
