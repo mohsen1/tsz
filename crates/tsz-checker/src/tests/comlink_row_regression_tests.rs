@@ -12,9 +12,15 @@
 //! 4. Object-literal method block returns must keep contextual tuple return
 //!    types from generic transfer-handler interfaces (comlink proxy handler,
 //!    TS2322).
+//! 5. Bare generic DOM event annotations must apply declaration defaults
+//!    (`MessageEvent<T = any>`), so `ev.data` remains any-like unless an
+//!    explicit type argument says otherwise (comlink endpoint listener, TS2339).
 
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_lib_files};
+use crate::test_utils::{
+    check_multi_file_with_libs_stamped, check_source_diagnostics, check_source_with_libs,
+    load_lib_files,
+};
 
 // ---------------------------------------------------------------------------
 // Family 1: merged var + generic interface, self-instantiation annotation
@@ -478,5 +484,228 @@ function create<T>(): Handler<T> {
     assert!(
         diags.iter().any(|d| d.code == 2322),
         "expected TS2322 for unresolved generic object tuple slot, got {diags:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Family 5: bare `MessageEvent` annotations apply default `T = any`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bare_message_event_annotation_defaults_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent) {
+  ev.data.argumentList;
+  ev.data.value;
+  ev.data.id;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected bare MessageEvent to apply T = any for data, got {diags:#?}"
+    );
+}
+
+#[test]
+fn guarded_bare_message_event_data_keeps_default_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent) {
+  if (!ev || !ev.data) {
+    return;
+  }
+  ev.data.argumentList;
+  ev.data.value;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected guarded bare MessageEvent data to keep T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn endpoint_listener_callback_annotation_defaults_message_event_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+interface EndpointLike {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+function expose(ep: EndpointLike) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    ev.data.argumentList;
+    ev.data.value;
+  } as any);
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected listener callback's bare MessageEvent annotation to apply T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_endpoint_listener_defaults_message_event_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let files = [
+        (
+            "protocol.ts",
+            r#"
+export interface EventSource {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+export interface Endpoint extends EventSource {
+  postMessage(message: any, transfer?: Transferable[]): void;
+}
+"#,
+        ),
+        (
+            "comlink.ts",
+            r#"
+import { Endpoint } from "./protocol";
+
+export function expose(ep: Endpoint) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    ev.data.argumentList;
+    ev.data.value;
+  } as any);
+}
+"#,
+        ),
+    ];
+    let diags = check_multi_file_with_libs_stamped(
+        &files,
+        "comlink.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected imported endpoint listener's bare MessageEvent annotation to apply T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn explicit_message_event_type_argument_keeps_data_shape() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent<{ id: string }>) {
+  ev.data.id.length;
+  ev.data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "expected explicit MessageEvent payload to reject missing property, got {diags:#?}"
+    );
+}
+
+#[test]
+fn bare_message_event_assertion_defaults_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: Event) {
+  const { data } = ev as MessageEvent;
+  data.id;
+  data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected bare MessageEvent assertion to apply T = any for data, got {diags:#?}"
+    );
+}
+
+#[test]
+fn guarded_message_event_assertion_data_keeps_default_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: Event) {
+  const { data } = ev as MessageEvent;
+  if (!data || !data.id) {
+    return;
+  }
+  data.id;
+  data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected guarded bare MessageEvent assertion data to keep T = any, got {diags:#?}"
     );
 }

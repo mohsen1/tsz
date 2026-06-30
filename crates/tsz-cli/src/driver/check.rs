@@ -54,7 +54,18 @@ use check_file::{
     CheckFilesReuseCtx, check_file_for_parallel, check_files_cost_balanced_pool,
     check_files_in_parallel_chunks_with_reuse, check_files_sequentially_with_reuse,
 };
-use check_scheduling::*;
+#[cfg(test)]
+use check_scheduling::{
+    CheckerPoolEnv, FILE_SESSION_REUSE_TEST_OVERRIDE, file_session_reuse_from_env,
+    file_session_reuse_from_workload,
+};
+use check_scheduling::{
+    FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE, FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES,
+    checker_pool_disabled, checker_pool_env, file_session_reuse_requested,
+    needs_separate_boxed_prime_checker, parallel_file_session_reuse_requested,
+    pool_refused_for_order_sensitive_global_lib, resolve_checker_pool_size,
+    should_use_sequential_fresh_checking,
+};
 use checker_diagnostics::{
     keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
     program_has_real_syntax_errors, program_has_unsupported_js_root,

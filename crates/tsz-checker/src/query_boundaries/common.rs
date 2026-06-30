@@ -186,6 +186,20 @@ pub(crate) fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>
     tsz_solver::computation::resolve_unbound_type_params_to_defaults(db, member_type, in_scope)
 }
 
+/// Resolve dangling property-member type parameters only when their declaration
+/// has a fallback; unconstrained mapped/conditional helpers stay abstract.
+pub(crate) fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+) -> TypeId {
+    tsz_solver::computation::resolve_unbound_type_params_to_declared_fallbacks(
+        db,
+        member_type,
+        in_scope,
+    )
+}
+
 /// Check if a type parameter has a constraint that contains a conditional type.
 /// This is used to suppress false-positive TS2339 errors when accessing properties
 /// on generic conditional types like `Parameters<T>["length"]` where the property

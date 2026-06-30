@@ -1380,6 +1380,428 @@ const element = <span />;
         );
     }
 
+    fn comlink_node_adapter_source() -> &'static str {
+        r#"
+import { Endpoint } from "./protocol";
+
+export interface NodeEndpoint {
+  postMessage(message: any, transfer?: any[]): void;
+  on(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  off(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  start?: () => void;
+}
+
+export default function nodeEndpoint(nep: NodeEndpoint): Endpoint {
+  const listeners = new WeakMap();
+  return {
+    postMessage: nep.postMessage.bind(nep),
+    addEventListener: (_, eh) => {
+      const l = (data: any) => {
+        if ("handleEvent" in eh) {
+          eh.handleEvent({ data } as MessageEvent);
+        } else {
+          eh({ data } as MessageEvent);
+        }
+      };
+      nep.on("message", l);
+      listeners.set(eh, l);
+    },
+    removeEventListener: (_, eh) => {
+      const l = listeners.get(eh);
+      if (!l) {
+        return;
+      }
+      nep.off("message", l);
+      listeners.delete(eh);
+    },
+    start: nep.start && nep.start.bind(nep),
+  };
+}
+"#
+    }
+
+    #[test]
+    fn skip_lib_check_preserves_dom_message_event_default_type_arg() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "protocol.ts",
+                    r#"
+export interface EventSource {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+export interface Endpoint extends EventSource {
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  postMessage(message: any, transfer?: Transferable[]): void;
+  start?: () => void;
+}
+
+export const enum WireValueType {
+  RAW = "RAW",
+  PROXY = "PROXY",
+  THROW = "THROW",
+  HANDLER = "HANDLER",
+}
+
+export type MessageID = string;
+
+export interface RawWireValue {
+  id?: string;
+  type: WireValueType.RAW;
+  value: {};
+}
+
+export interface HandlerWireValue {
+  id?: string;
+  type: WireValueType.HANDLER;
+  name: string;
+  value: unknown;
+}
+
+export type WireValue = RawWireValue | HandlerWireValue;
+
+export const enum MessageType {
+  GET = "GET",
+  SET = "SET",
+  APPLY = "APPLY",
+  CONSTRUCT = "CONSTRUCT",
+  ENDPOINT = "ENDPOINT",
+  RELEASE = "RELEASE",
+}
+
+export interface GetMessage {
+  id?: MessageID;
+  type: MessageType.GET;
+  path: string[];
+}
+
+export interface SetMessage {
+  id?: MessageID;
+  type: MessageType.SET;
+  path: string[];
+  value: WireValue;
+}
+
+export interface ApplyMessage {
+  id?: MessageID;
+  type: MessageType.APPLY;
+  path: string[];
+  argumentList: WireValue[];
+}
+
+export interface ConstructMessage {
+  id?: MessageID;
+  type: MessageType.CONSTRUCT;
+  path: string[];
+  argumentList: WireValue[];
+}
+
+export interface EndpointMessage {
+  id?: MessageID;
+  type: MessageType.ENDPOINT;
+}
+
+export interface ReleaseMessage {
+  id?: MessageID;
+  type: MessageType.RELEASE;
+}
+
+export type Message =
+  | GetMessage
+  | SetMessage
+  | ApplyMessage
+  | ConstructMessage
+  | EndpointMessage
+  | ReleaseMessage;
+"#,
+                ),
+                (
+                    "main.ts",
+                    r#"
+	import { Endpoint, Message, MessageType, WireValue } from "./protocol";
+
+	export const proxyMarker = Symbol("Comlink.proxy");
+	export const createEndpoint = Symbol("Comlink.endpoint");
+	export const releaseProxy = Symbol("Comlink.releaseProxy");
+	export const finalizer = Symbol("Comlink.finalizer");
+	const throwMarker = Symbol("Comlink.thrown");
+	export interface ProxyMarked {
+	  [proxyMarker]: true;
+	}
+	type Promisify<T> = T extends Promise<unknown> ? T : Promise<T>;
+	type Unpromisify<P> = P extends Promise<infer T> ? T : P;
+	type RemoteProperty<T> = T extends Function | ProxyMarked ? Remote<T> : Promisify<T>;
+	type LocalProperty<T> = T extends Function | ProxyMarked ? Local<T> : Unpromisify<T>;
+	export type ProxyOrClone<T> = T extends ProxyMarked ? Remote<T> : T;
+	export type UnproxyOrClone<T> = T extends RemoteObject<ProxyMarked> ? Local<T> : T;
+	export type RemoteObject<T> = { [P in keyof T]: RemoteProperty<T[P]> };
+	export type LocalObject<T> = { [P in keyof T]: LocalProperty<T[P]> };
+	export interface ProxyMethods {
+	  [createEndpoint]: () => Promise<MessagePort>;
+	  [releaseProxy]: () => void;
+	}
+	export type Remote<T> =
+	  RemoteObject<T> &
+	    (T extends (...args: infer TArguments) => infer TReturn
+	      ? (
+	          ...args: { [I in keyof TArguments]: UnproxyOrClone<TArguments[I]> }
+	        ) => Promisify<ProxyOrClone<Unpromisify<TReturn>>>
+	      : unknown) &
+	    (T extends { new (...args: infer TArguments): infer TInstance }
+	      ? {
+	          new (
+	            ...args: {
+	              [I in keyof TArguments]: UnproxyOrClone<TArguments[I]>;
+	            }
+	          ): Promisify<Remote<TInstance>>;
+	        }
+	      : unknown) &
+	    ProxyMethods;
+	type MaybePromise<T> = Promise<T> | T;
+	export type Local<T> =
+	  Omit<LocalObject<T>, keyof ProxyMethods> &
+	    (T extends (...args: infer TArguments) => infer TReturn
+	      ? (
+	          ...args: { [I in keyof TArguments]: ProxyOrClone<TArguments[I]> }
+	        ) => MaybePromise<UnproxyOrClone<Unpromisify<TReturn>>>
+	      : unknown) &
+	    (T extends { new (...args: infer TArguments): infer TInstance }
+	      ? {
+	          new (
+	            ...args: {
+	              [I in keyof TArguments]: ProxyOrClone<TArguments[I]>;
+	            }
+	          ): MaybePromise<Local<Unpromisify<TInstance>>>;
+	        }
+	      : unknown);
+
+	const isObject = (val: unknown): val is object =>
+	  (typeof val === "object" && val !== null) || typeof val === "function";
+
+	export interface TransferHandler<T, S> {
+	  canHandle(value: unknown): value is T;
+	  serialize(value: T): [S, Transferable[]];
+	  deserialize(value: S): T;
+	}
+
+	const proxyTransferHandler: TransferHandler<object, MessagePort> = {
+	  canHandle: (val): val is ProxyMarked =>
+	    isObject(val) && (val as ProxyMarked)[proxyMarker],
+	  serialize(obj) {
+	    const { port1, port2 } = new MessageChannel();
+	    expose(port1);
+	    return [port2, [port2]];
+	  },
+	  deserialize(port) {
+	    port.start();
+	    return wrap(port);
+	  },
+	};
+
+	interface ThrownValue {
+	  [throwMarker]: unknown;
+	  value: unknown;
+	}
+	type SerializedThrownValue =
+	  | { isError: true; value: Error }
+	  | { isError: false; value: unknown };
+	const throwTransferHandler: TransferHandler<
+	  ThrownValue,
+	  SerializedThrownValue
+	> = {
+	  canHandle: (value): value is ThrownValue =>
+	    isObject(value) && throwMarker in value,
+	  serialize({ value }) {
+	    if (value instanceof Error) {
+	      return [
+	        {
+	          isError: true,
+	          value,
+	        },
+	        [],
+	      ];
+	    }
+	    return [{ isError: false, value }, []];
+	  },
+	  deserialize(serialized) {
+	    if (serialized.isError) {
+	      throw serialized.value;
+	    }
+	    throw serialized.value;
+	  },
+	};
+
+	const transferHandlers = new Map<
+	  string,
+	  TransferHandler<unknown, unknown>
+	>([
+	  ["proxy", proxyTransferHandler],
+	  ["throw", throwTransferHandler],
+	]);
+
+type PendingListenersMap = Map<
+  string,
+  (value: WireValue | PromiseLike<WireValue>) => void
+>;
+
+declare const pendingListeners: PendingListenersMap;
+declare const allowedOrigins: (string | RegExp)[];
+declare const obj: any;
+declare function isAllowedOrigin(
+  allowedOrigins: (string | RegExp)[],
+  origin: string
+): boolean;
+declare function fromWireValue(value: WireValue): unknown;
+declare function toWireValue(value: unknown): [WireValue, Transferable[]];
+declare function transfer(value: MessagePort, transferables: Transferable[]): WireValue;
+declare function proxy(value: unknown): WireValue;
+declare function closeEndPoint(ep: Endpoint): void;
+
+export function expose(ep: Endpoint) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    if (!ev || !ev.data) {
+      return;
+    }
+    if (!isAllowedOrigin(allowedOrigins, ev.origin)) {
+      return;
+    }
+    const { id, type, path } = {
+      path: [] as string[],
+      ...(ev.data as Message),
+    };
+    const argumentList = (ev.data.argumentList || []).map(fromWireValue);
+    let returnValue;
+    try {
+      const parent = path.slice(0, -1).reduce((obj, prop) => obj[prop], obj);
+      const rawValue = path.reduce((obj, prop) => obj[prop], obj);
+      switch (type) {
+        case MessageType.GET:
+          {
+            returnValue = rawValue;
+          }
+          break;
+        case MessageType.SET:
+          {
+            parent[path.slice(-1)[0]] = fromWireValue(ev.data.value);
+            returnValue = true;
+          }
+          break;
+        case MessageType.APPLY:
+          {
+            returnValue = rawValue.apply(parent, argumentList);
+          }
+          break;
+        case MessageType.CONSTRUCT:
+          {
+            const value = new rawValue(...argumentList);
+            returnValue = proxy(value);
+          }
+          break;
+        case MessageType.ENDPOINT:
+          {
+            const { port1, port2 } = new MessageChannel();
+            expose(port2);
+            returnValue = transfer(port1, [port1]);
+          }
+          break;
+        case MessageType.RELEASE:
+          {
+            returnValue = undefined;
+          }
+          break;
+        default:
+          return;
+      }
+    } catch (value) {
+      returnValue = { value };
+    }
+    Promise.resolve(returnValue)
+      .catch((value) => ({ value }))
+      .then((returnValue) => {
+        const [wireValue, transferables] = toWireValue(returnValue);
+        ep.postMessage({ ...wireValue, id }, transferables);
+        if (type === MessageType.RELEASE) {
+          ep.removeEventListener("message", callback as any);
+          closeEndPoint(ep);
+        }
+      });
+  } as any);
+}
+
+	export function wrap<T>(ep: Endpoint): Remote<T> {
+	  ep.addEventListener("message", function handleMessage(ev: Event) {
+	    const { data } = ev as MessageEvent;
+	    if (!data || !data.id) {
+	      return;
+	    }
+	    const resolver = pendingListeners.get(data.id);
+	    if (!resolver) {
+	      return;
+	    }
+	    resolver(data);
+	    pendingListeners.delete(data.id);
+	  });
+	  return {} as any;
+	}
+	"#,
+                ),
+                (
+                    "node-adapter.ts",
+                    comlink_node_adapter_source(),
+                ),
+            ],
+            |resolved| {
+                resolved.skip_lib_check = true;
+                resolved.printer.target = ScriptTarget::ES2022;
+                resolved.checker.target = ScriptTarget::ES2022;
+                resolved.printer.module = ModuleKind::ESNext;
+                resolved.checker.module = ModuleKind::ESNext;
+                resolved.module_resolution = Some(crate::config::ModuleResolutionKind::Bundler);
+                resolved.types = Some(Vec::new());
+                resolved.checker.types_explicitly_set = true;
+                resolved.lib_files = crate::config::resolve_lib_files(&[
+                    "es2022".to_string(),
+                    "dom".to_string(),
+                    "dom.iterable".to_string(),
+                ])
+                .expect("resolve explicit libs");
+                resolved.lib_is_default = false;
+            },
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        | diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                )
+            })
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck must preserve defaulted MessageEvent<T = any> for source consumers: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn generic_intrinsic_lma_display_uses_dynamic_representative_tag() {
         let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(

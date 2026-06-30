@@ -638,8 +638,17 @@ impl<'a> CheckerState<'a> {
 
         // Use the environment-aware resolver so that array methods, boxed
         // primitive types, and other lib-registered types are available.
-        let mut result =
-            self.resolve_property_access_with_env(object_type_for_access, property_name);
+        let lookup_object_type = self
+            .defaulted_property_access_receiver(original_object_type)
+            .or_else(|| {
+                crate::query_boundaries::common::is_generic_application(
+                    self.ctx.types,
+                    original_object_type,
+                )
+                .then_some(original_object_type)
+            })
+            .unwrap_or(object_type_for_access);
+        let mut result = self.resolve_property_access_with_env(lookup_object_type, property_name);
         let direct_class_this_receiver = self.is_this_expression(access.expression)
             && (self.ctx.enclosing_class.is_some()
                 || self.nearest_enclosing_class(access.expression).is_some())

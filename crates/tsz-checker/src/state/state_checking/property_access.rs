@@ -286,6 +286,42 @@ impl<'a> CheckerState<'a> {
             && !crate::query_boundaries::common::contains_this_type(self.ctx.types, *type_id)
     }
 
+    pub(crate) fn resolve_unbound_property_member_defaults(&self, member_type: TypeId) -> TypeId {
+        if !crate::query_boundaries::common::contains_free_type_parameters(
+            self.ctx.types,
+            member_type,
+        ) {
+            return member_type;
+        }
+
+        let in_scope: rustc_hash::FxHashSet<TypeId> =
+            self.ctx.type_parameter_scope.values().copied().collect();
+        crate::query_boundaries::common::resolve_unbound_type_params_to_declared_fallbacks(
+            self.ctx.types,
+            member_type,
+            &in_scope,
+        )
+    }
+
+    fn resolve_unbound_property_result_defaults(
+        &self,
+        result: tsz_solver::operations::property::PropertyAccessResult,
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
+        match result {
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                from_index_signature,
+            } => tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: self.resolve_unbound_property_member_defaults(type_id),
+                write_type: write_type
+                    .map(|write_type| self.resolve_unbound_property_member_defaults(write_type)),
+                from_index_signature,
+            },
+            other => other,
+        }
+    }
+
     /// Resolve property access using `TypeEnvironment` (includes lib.d.ts types).
     ///
     /// This method creates a `PropertyAccessEvaluator` with the `TypeEnvironment` as the resolver,
@@ -301,6 +337,9 @@ impl<'a> CheckerState<'a> {
         // The solver-internal evaluator has no TypeResolver, so TypeQuery types
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
+        let object_type = self
+            .defaulted_property_access_receiver(object_type)
+            .unwrap_or(object_type);
         let original_object_type = object_type;
 
         // Cycle breaker: a self-referential receiver (typically a malformed
@@ -324,7 +363,7 @@ impl<'a> CheckerState<'a> {
         // Gated by the `TSZ_DISABLE_LAZY_MEMBER_ACCESS` kill-switch inside the
         // eligibility predicate for byte-identical A/B comparison.
         if let Some(result) = self.try_lazy_lib_member_property_access(object_type, prop_name) {
-            return result;
+            return self.resolve_unbound_property_result_defaults(result);
         }
 
         // Ensure preconditions are ready in the environment for non-trivial
@@ -598,7 +637,7 @@ impl<'a> CheckerState<'a> {
             && let Some(mapped_property) =
                 self.resolve_mapped_property_with_env(mapped_candidate_type, prop_name)
         {
-            return mapped_property;
+            return self.resolve_unbound_property_result_defaults(mapped_property);
         }
 
         if matches!(
@@ -641,11 +680,13 @@ impl<'a> CheckerState<'a> {
                     1 => member_results[0],
                     _ => self.ctx.types.factory().intersection(member_results),
                 };
-                return tsz_solver::operations::property::PropertyAccessResult::Success {
-                    type_id,
-                    write_type: None,
-                    from_index_signature: any_from_index,
-                };
+                return self.resolve_unbound_property_result_defaults(
+                    tsz_solver::operations::property::PropertyAccessResult::Success {
+                        type_id,
+                        write_type: None,
+                        from_index_signature: any_from_index,
+                    },
+                );
             }
 
             if saw_deferred_any_fallback {
@@ -666,7 +707,7 @@ impl<'a> CheckerState<'a> {
         ) && let Some(merged_result) =
             self.resolve_actual_lib_namespace_merged_property(resolved_object_type, prop_name)
         {
-            return merged_result;
+            return self.resolve_unbound_property_result_defaults(merged_result);
         }
 
         // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
@@ -683,11 +724,13 @@ impl<'a> CheckerState<'a> {
                 && expanded != TypeId::ANY
                 && expanded != TypeId::ERROR
             {
-                return self.resolve_property_access_via_boundary(expanded, prop_name);
+                let expanded_result =
+                    self.resolve_property_access_via_boundary(expanded, prop_name);
+                return self.resolve_unbound_property_result_defaults(expanded_result);
             }
         }
 
-        result
+        self.resolve_unbound_property_result_defaults(result)
     }
 
     fn resolve_actual_lib_namespace_merged_property(

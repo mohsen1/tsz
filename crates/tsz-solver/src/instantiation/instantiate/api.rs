@@ -1180,6 +1180,24 @@ pub fn resolve_unbound_type_params_to_defaults<S: std::hash::BuildHasher>(
     })
 }
 
+/// Resolve dangling free type parameters only when their declaration supplies
+/// a concrete fallback (`default` or `constraint`).
+///
+/// This is the property-access version of [`resolve_unbound_type_params_to_defaults`]
+/// for member surfaces that can also be produced by mapped/conditional
+/// evaluation. Such evaluators legitimately leave unconstrained helper
+/// parameters abstract for diagnostic display, so this variant avoids the final
+/// `unknown` fallback for unconstrained parameters.
+pub fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    in_scope: &std::collections::HashSet<TypeId, S>,
+) -> TypeId {
+    resolve_type_params_to_defaults_core(db, member_type, |param_id, info| {
+        !in_scope.contains(&param_id) && (info.default.is_some() || info.constraint.is_some())
+    })
+}
+
 /// Resolve the type parameters whose declared name is in `names` and appear
 /// free in `ty` to their `default → constraint → unknown`, matching tsc's
 /// instantiation of a *failed* generic call's result with default type
