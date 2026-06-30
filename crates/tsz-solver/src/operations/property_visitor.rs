@@ -118,7 +118,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         shape_id: u32,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
-        use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::objects::index_signatures::IndexKind;
 
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
         let obj_type = self
@@ -160,15 +160,13 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Check for index signatures (some Object types may have index signatures that aren't in ObjectWithIndex)
-        let resolver = IndexSignatureResolver::new(self.interner());
-
         // Try string index signature first (most common).
         // Symbol-keyed properties (internal "__unique_N" names) must NOT
         // fall through to string index signatures.
         if !prop_name.starts_with("__unique_")
-            && resolver.has_index_signature(obj_type, IndexKind::String)
-            && let Some(value_type) = resolver.resolve_string_index(obj_type)
-            && resolver
+            && self.has_index_signature(obj_type, IndexKind::String)
+            && let Some(value_type) = self.resolve_string_index_signature(obj_type)
+            && self
                 .get_index_info(obj_type)
                 .string_index
                 .as_ref()
@@ -180,8 +178,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Try numeric index signature if property name looks numeric
-        if resolver.is_numeric_index_name(prop_name)
-            && let Some(value_type) = resolver.resolve_number_index(obj_type)
+        if self.is_numeric_index_name(prop_name)
+            && let Some(value_type) = self.resolve_number_index_signature(obj_type)
         {
             return Some(PropertyAccessResult::from_index(
                 self.add_undefined_if_unchecked(
@@ -201,8 +199,6 @@ impl<'a> PropertyAccessEvaluator<'a> {
         shape_id: u32,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
-        use crate::objects::index_signatures::IndexSignatureResolver;
-
         let shape = self.interner().object_shape(ObjectShapeId(shape_id));
         let obj_type = self
             .interner()
@@ -245,8 +241,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // Check numeric index signature FIRST if property name looks numeric.
         // Number index signatures take precedence over string index signatures
         // for numeric keys (e.g., obj["0"] or obj[0] prefers [n: number] over [s: string]).
-        let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name)
+        if self.is_numeric_index_name(prop_name)
             && let Some(ref idx) = shape.number_index
         {
             let bound = self.bind_object_receiver_this(obj_type, idx.value_type);
@@ -280,7 +275,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         list_id: u32,
         prop_atom: Atom,
     ) -> Option<PropertyAccessResult> {
-        use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
+        use crate::objects::index_signatures::IndexKind;
 
         // Re-enable `this` binding for union member resolution. When a union is
         // nested inside an intersection (e.g., `(A & B) | (C & D)`), the
@@ -500,15 +495,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
 
             // Before giving up, check union-level index signatures
-            let resolver = IndexSignatureResolver::new(self.interner());
             let obj_type = obj_type_for_error();
             let prop_name_arc = self.interner().resolve_atom_ref(prop_atom);
             let prop_name = prop_name_arc.as_ref();
 
             if !prop_name.starts_with("__unique_")
-                && resolver.has_index_signature(obj_type, IndexKind::String)
-                && let Some(value_type) = resolver.resolve_string_index(obj_type)
-                && resolver
+                && self.has_index_signature(obj_type, IndexKind::String)
+                && let Some(value_type) = self.resolve_string_index_signature(obj_type)
+                && self
                     .get_index_info(obj_type)
                     .string_index
                     .as_ref()
@@ -519,8 +513,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 ));
             }
 
-            if resolver.is_numeric_index_name(prop_name)
-                && let Some(value_type) = resolver.resolve_number_index(obj_type)
+            if self.is_numeric_index_name(prop_name)
+                && let Some(value_type) = self.resolve_number_index_signature(obj_type)
             {
                 return Some(PropertyAccessResult::from_index(
                     self.add_undefined_if_unchecked(value_type),

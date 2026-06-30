@@ -199,6 +199,40 @@ fn read_solver_test(rel: &str) -> String {
 }
 
 #[test]
+fn property_access_uses_evaluator_owned_index_signature_resolver() {
+    let files = [
+        "operations/property.rs",
+        "operations/property_helpers.rs",
+        "operations/property_visitor.rs",
+    ];
+    let mut violations = Vec::new();
+
+    for rel in files {
+        let src = read_solver_source(rel);
+        for (line_num, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("///") {
+                continue;
+            }
+            if line.contains("IndexSignatureResolver::new(") {
+                violations.push(format!(
+                    "  {rel}:{} — query through PropertyAccessEvaluator's resolver-aware index-signature helpers",
+                    line_num + 1
+                ));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Property access must use its evaluator-owned index-signature resolver so \
+         deferred application/lazy materialization sees the same resolver surface. \
+         Violations found:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn evaluation_engine_keeps_request_stage_boundary() {
     let mod_rs = read_solver_source("evaluation/mod.rs");
     let request_rs = read_solver_source("evaluation/request.rs");

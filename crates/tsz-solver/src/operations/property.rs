@@ -376,6 +376,45 @@ impl<'a> PropertyAccessEvaluator<'a> {
         self.resolver.unwrap_or_else(|| self.db.as_type_resolver())
     }
 
+    fn with_index_signature_resolver<T>(
+        &self,
+        f: impl FnOnce(
+            &crate::objects::index_signatures::IndexSignatureResolver<'_, &dyn TypeResolver>,
+        ) -> T,
+    ) -> T {
+        let resolver = self.resolver();
+        let index_resolver =
+            crate::objects::index_signatures::IndexSignatureResolver::with_resolver(
+                self.interner(),
+                &resolver,
+            );
+        f(&index_resolver)
+    }
+
+    pub(crate) fn has_index_signature(
+        &self,
+        obj: TypeId,
+        kind: crate::objects::index_signatures::IndexKind,
+    ) -> bool {
+        self.with_index_signature_resolver(|resolver| resolver.has_index_signature(obj, kind))
+    }
+
+    pub(crate) fn resolve_string_index_signature(&self, obj: TypeId) -> Option<TypeId> {
+        self.with_index_signature_resolver(|resolver| resolver.resolve_string_index(obj))
+    }
+
+    pub(crate) fn resolve_number_index_signature(&self, obj: TypeId) -> Option<TypeId> {
+        self.with_index_signature_resolver(|resolver| resolver.resolve_number_index(obj))
+    }
+
+    pub(crate) fn get_index_info(&self, obj: TypeId) -> crate::types::IndexInfo {
+        self.with_index_signature_resolver(|resolver| resolver.get_index_info(obj))
+    }
+
+    pub(crate) fn is_numeric_index_name(&self, prop_name: &str) -> bool {
+        self.with_index_signature_resolver(|resolver| resolver.is_numeric_index_name(prop_name))
+    }
+
     pub(crate) fn bind_object_receiver_this(&self, receiver: TypeId, type_id: TypeId) -> TypeId {
         if self.skip_this_binding.get() {
             return type_id;
@@ -755,11 +794,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         };
                     }
                 }
-                // Check numeric index signature first for numeric property names
-                use crate::objects::index_signatures::IndexSignatureResolver;
-                let resolver = IndexSignatureResolver::new(self.interner());
+                // Check numeric index signature first for numeric property names.
                 if let Some(ref idx) = shape.number_index
-                    && resolver
+                    && self
                         .is_numeric_index_name(self.interner().resolve_atom_ref(prop_atom).as_ref())
                 {
                     return PropertyAccessResult::from_index(
@@ -888,13 +925,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     // Before giving up, check if any member has an index signature
                     // For intersections, if ANY member has an index signature, the property access should succeed
-                    use crate::objects::index_signatures::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.interner());
+                    use crate::objects::index_signatures::IndexKind;
 
                     // Check string index signature on all members
                     for &member in members.iter() {
-                        if resolver.has_index_signature(member, IndexKind::String)
-                            && let Some(value_type) = resolver.resolve_string_index(member)
+                        if self.has_index_signature(member, IndexKind::String)
+                            && let Some(value_type) = self.resolve_string_index_signature(member)
                         {
                             return PropertyAccessResult::from_index(
                                 self.add_undefined_if_unchecked(value_type),
@@ -903,11 +939,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     }
 
                     // Check numeric index signature if property name looks numeric
-                    if resolver
+                    if self
                         .is_numeric_index_name(self.interner().resolve_atom_ref(prop_atom).as_ref())
                     {
                         for &member in members.iter() {
-                            if let Some(value_type) = resolver.resolve_number_index(member) {
+                            if let Some(value_type) = self.resolve_number_index_signature(member) {
                                 return PropertyAccessResult::from_index(
                                     self.add_undefined_if_unchecked(value_type),
                                 );
