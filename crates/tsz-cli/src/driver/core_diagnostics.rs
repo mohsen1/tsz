@@ -999,6 +999,8 @@ pub(super) fn compile_inner(
             program: &program,
             options: &resolved,
             base_dir: &base_dir,
+            reference_path_current_directory: (!args.files.is_empty())
+                .then_some(base_dir.as_path()),
             checker_libs: &checker_libs,
             typescript_dom_replacement_globals,
             has_deprecation_diagnostics,

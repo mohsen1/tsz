@@ -165,6 +165,13 @@ pub struct ProgramContext {
     /// per project run by the driver and shared via `Arc` across every
     /// checker.
     pub cross_file_type_params_cache: Option<CrossFileTypeParamsCache>,
+    /// Current directory for explicit-file reference-path diagnostics.
+    ///
+    /// `tsc entry.ts` keeps source identities relative to
+    /// `host.getCurrentDirectory()`, so TS6053/TS6054 reference paths render
+    /// relative to this directory. Project/config mode stores resolved source
+    /// paths and leaves this unset, so diagnostics use resolved paths instead.
+    pub current_directory: Option<Arc<str>>,
 }
 
 impl Default for ProgramContext {
@@ -208,6 +215,7 @@ impl Default for ProgramContext {
             last_skeleton_fingerprint: None,
             shared_definition_store: None,
             cross_file_type_params_cache: None,
+            current_directory: None,
         }
     }
 }
@@ -230,6 +238,7 @@ impl ProgramContext {
             self.typescript_dom_replacement_globals.2,
         );
         ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
+        ctx.current_directory.clone_from(&self.current_directory);
         // Pre-install global indices before set_all_arenas/set_all_binders so
         // those methods can skip re-computing indices already provided here.
         if let Some(ref idx) = self.global_file_name_index {

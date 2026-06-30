@@ -175,6 +175,7 @@ pub(super) struct CollectDiagnosticsInput<'a> {
     pub(super) program: &'a MergedProgram,
     pub(super) options: &'a ResolvedCompilerOptions,
     pub(super) base_dir: &'a Path,
+    pub(super) reference_path_current_directory: Option<&'a Path>,
     pub(super) checker_libs: &'a CheckerLibSet,
     pub(super) typescript_dom_replacement_globals: (bool, bool, bool),
     pub(super) has_deprecation_diagnostics: bool,
@@ -217,6 +218,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program,
         options,
         base_dir,
+        reference_path_current_directory,
         checker_libs,
         typescript_dom_replacement_globals,
         has_deprecation_diagnostics,
@@ -668,6 +670,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program_alias_partners: Some(program_alias_partners),
         cross_file_type_params_cache: std::env::var_os("TSZ_CROSS_FILE_TYPE_PARAMS_CACHE")
             .map(|_| Arc::new(dashmap::DashMap::new())),
+        // In explicit-file CLI mode, `tsc file.ts` keeps source identities
+        // relative to the process cwd and TS6053 reference paths render that
+        // way. Project/config mode resolves source identities and reports the
+        // resolved reference path instead, so it leaves this unset.
+        current_directory: reference_path_current_directory
+            .map(|dir| Arc::from(dir.to_string_lossy().as_ref())),
         ..Default::default()
     };
     // Use fingerprint-aware rebuild when a skeleton index is available.

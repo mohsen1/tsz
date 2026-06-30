@@ -53,6 +53,7 @@ fn empty_program_context() -> ProgramContext {
         last_skeleton_fingerprint: None,
         shared_definition_store: None,
         cross_file_type_params_cache: None,
+        current_directory: None,
     }
 }
 

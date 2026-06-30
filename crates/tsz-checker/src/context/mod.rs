@@ -647,6 +647,10 @@ pub struct CheckerContext<'a> {
     /// Current file name.
     pub file_name: String,
 
+    /// Explicit-file cwd for TS6053/TS6054 reference paths; `None` keeps
+    /// resolved project/config paths.
+    pub current_directory: Option<Arc<str>>,
+
     /// Compiler options for type checking.
     pub compiler_options: CheckerOptions,
 
