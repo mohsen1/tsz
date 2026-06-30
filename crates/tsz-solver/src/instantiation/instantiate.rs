@@ -1087,7 +1087,7 @@ mod api;
 mod cache_stability;
 mod conditional;
 mod display_properties;
-mod flags;
+pub(crate) mod flags;
 mod homomorphic;
 mod indexed;
 mod mapped;

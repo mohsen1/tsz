@@ -4,11 +4,17 @@ use crate::caches::db::TypeDatabase;
 use crate::caches::query_cache::QueryCache;
 use crate::def::resolver::NoopResolver;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled;
 
 /// A `query_db`-backed evaluator: a `TypeEvaluator` with the `NoopResolver`
 /// (matching `evaluate_type_with_options`) whose cross-call caches are wired to
 /// a `QueryCache`. See [`QueryCache::query_backed_evaluator`].
 pub(crate) type QueryBackedEvaluator<'a> = TypeEvaluator<'a, NoopResolver>;
+
+/// A resolver-backed query evaluator for the dormant instantiation re-reduce
+/// path. It may read the resolver-independent application cache but must not
+/// write resolver-dependent answers into it.
+pub(crate) type StoreBackedQueryEvaluator<'eval, 'cache> = TypeEvaluator<'eval, QueryCache<'cache>>;
 
 impl<'a> QueryCache<'a> {
     /// Build a `TypeEvaluator` wired to this cache's cross-call instantiation
@@ -26,5 +32,21 @@ impl<'a> QueryCache<'a> {
     /// caching behavior changes, never the computed result.
     pub(crate) fn query_backed_evaluator(&self) -> QueryBackedEvaluator<'_> {
         TypeEvaluator::new(self as &dyn TypeDatabase).with_query_db(self)
+    }
+
+    /// Build a resolver-backed evaluator only when the staged
+    /// instantiation-time re-reduce gate is active and this cache carries a
+    /// shared `DefinitionStore`.
+    pub(crate) fn store_backed_rereduce_evaluator<'eval>(
+        &'eval self,
+    ) -> Option<StoreBackedQueryEvaluator<'eval, 'a>> {
+        if !inst_resolver_rereduce_enabled() || !self.has_definition_store() {
+            return None;
+        }
+        Some(
+            TypeEvaluator::with_resolver(self as &dyn TypeDatabase, self)
+                .with_query_db(self)
+                .with_limited_resolver(),
+        )
     }
 }

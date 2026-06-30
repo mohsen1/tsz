@@ -40,11 +40,11 @@ impl Drop for InstResolverRereduceFlagGuard {
 ///
 /// When `TSZ_INST_RESOLVER_REREDUCE=1`, the instantiator keeps the
 /// resolver-aware [`QueryDatabase`](crate::caches::db::QueryDatabase) it was
-/// handed and, at the deferred-leak
-/// sites, re-runs reduction through that resolver once the base/check became
-/// concrete. The flag stays OFF until the materialize-once stages provide the
-/// fully published bodies those reductions need.
-pub(super) fn inst_resolver_rereduce_enabled() -> bool {
+/// handed and, at the deferred-leak sites, re-runs reduction through that
+/// resolver once the base/check became concrete. The flag stays OFF until the
+/// materialize-once stages provide the fully published bodies those reductions
+/// need.
+pub(crate) fn inst_resolver_rereduce_enabled() -> bool {
     #[cfg(test)]
     if let Some(enabled) = INST_RESOLVER_REREDUCE_TEST_OVERRIDE.with(std::cell::Cell::get) {
         return enabled;
