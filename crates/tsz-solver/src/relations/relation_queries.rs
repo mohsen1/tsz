@@ -7,6 +7,7 @@
 use crate::caches::db::QueryDatabase;
 use crate::classes::inheritance::InheritanceGraph;
 use crate::construction::TypeDatabase;
+use crate::evaluation::session::EvaluationSession;
 use crate::operations::AssignabilityChecker;
 use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
@@ -310,6 +311,7 @@ mod legacy_policy_flags {
 #[derive(Clone, Copy, Default)]
 pub struct RelationContext<'a> {
     pub query_db: Option<&'a dyn QueryDatabase>,
+    pub evaluation_session: Option<&'a EvaluationSession>,
     pub inheritance_graph: Option<&'a InheritanceGraph>,
     pub class_check: Option<&'a dyn Fn(SymbolRef) -> bool>,
 }
@@ -762,6 +764,9 @@ pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
         configure_subtype_checker_policy(SubtypeChecker::with_resolver(interner, resolver), policy);
     if let Some(query_db) = context.query_db {
         checker = checker.with_query_db(query_db);
+    }
+    if let Some(session) = context.evaluation_session {
+        checker = checker.with_evaluation_session(session);
     }
     if let Some(inheritance_graph) = context.inheritance_graph {
         checker = checker.with_inheritance_graph(inheritance_graph);

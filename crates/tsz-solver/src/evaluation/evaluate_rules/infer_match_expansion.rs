@@ -354,17 +354,19 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// matching, bounded by a thread-global cross-evaluator recursion budget.
     pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
         let nuia = self.no_unchecked_indexed_access();
-        crate::evaluation::cross_eval_guard::memoized_eval(type_id, nuia, || {
-            let Ok(_guard) = InferMatchExpansionGuard::enter() else {
-                return EvaluationMemoResult::unstable_complete(type_id);
-            };
-            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-            if let Some(query_db) = self.query_db() {
-                evaluator = evaluator.with_query_db(query_db);
-            }
-            let request = crate::evaluation::request::EvaluationRequest::new(type_id)
-                .with_no_unchecked_indexed_access(nuia);
-            evaluator.evaluate_request_memo_result(request)
+        crate::evaluation::session::with_current_session(|session| {
+            crate::evaluation::cross_eval_guard::memoized_eval(session, type_id, nuia, || {
+                let Ok(_guard) = InferMatchExpansionGuard::enter() else {
+                    return EvaluationMemoResult::unstable_complete(type_id);
+                };
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let request = crate::evaluation::request::EvaluationRequest::new(type_id)
+                    .with_no_unchecked_indexed_access(nuia);
+                evaluator.evaluate_request_memo_result(request)
+            })
         })
         .unwrap_or(type_id)
     }

@@ -35,6 +35,7 @@ fn assignability_policy_and_context<'a>(
         .with_strict_any_propagation(sound_mode);
     let context = RelationContext {
         query_db: Some(db),
+        evaluation_session: None,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
@@ -932,6 +933,7 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::relations::subtype::Ty
         .with_skip_weak_type_checks(true);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
+        evaluation_session: None,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
@@ -1749,6 +1751,7 @@ pub(crate) fn check_application_variance_assignability<
         .with_strict_any_propagation(sound_mode);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
+        evaluation_session: None,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };

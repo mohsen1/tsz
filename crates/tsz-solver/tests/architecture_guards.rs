@@ -248,7 +248,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let instantiation_result_rs = read_solver_source("instantiation/result.rs");
     let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
     let subtype_core_rs = read_solver_source("relations/subtype/core.rs");
-    let function_checking_rs = read_solver_source("relations/subtype/rules/functions/checking.rs");
+    let function_checking_eval_rs =
+        read_solver_source("relations/subtype/rules/functions/checking/evaluation.rs");
     let functions_mod_rs = read_solver_source("relations/subtype/rules/functions/mod.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
     let iteration_incomplete_tests =
@@ -332,12 +333,20 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && !subtype_core_rs.contains("stable_for_depth_agnostic_cache: bool")
             && subtype_core_rs
                 .contains("eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>")
-            && function_checking_rs
+            && function_checking_eval_rs
                 .contains("RelationEvaluationResult::from_depth_agnostic_memo(memo_result)")
             && functions_mod_rs.contains(".is_unstable_unknown()")
             && !functions_mod_rs
                 .contains("evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)"),
         "function-relation evaluation caches must carry stability through RelationEvaluationResult instead of anonymous (TypeId, bool) tuples"
+    );
+    assert!(
+        cross_eval_guard_rs.contains("use crate::evaluation::session::EvaluationSession;")
+            && cross_eval_guard_rs.contains("session: &EvaluationSession")
+            && !cross_eval_guard_rs.contains("with_current_session")
+            && function_checking_eval_rs.contains("self.eval_session")
+            && function_checking_eval_rs.contains("memoized_eval_with_stability("),
+        "fresh subtype-function evaluators must route cross-eval guard state through the owning EvaluationSession instead of the thread-local default session"
     );
     assert!(
         instantiation_result_rs.contains("pub(crate) struct InstantiationMemoResult")
@@ -356,6 +365,22 @@ fn evaluation_engine_keeps_request_stage_boundary() {
                 .contains("fn from_walk(type_id: TypeId, depth_exceeded: bool)")
             && !instantiation_api_rs.contains("let limit_tripped ="),
         "project instantiation cache writes must consume InstantiationMemoResult stability instead of rebuilding a raw limit_tripped predicate"
+    );
+}
+
+#[test]
+fn subtype_function_fresh_evaluators_use_explicit_session() {
+    let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
+    let function_checking_eval_rs =
+        read_solver_source("relations/subtype/rules/functions/checking/evaluation.rs");
+
+    assert!(
+        cross_eval_guard_rs.contains("use crate::evaluation::session::EvaluationSession;")
+            && cross_eval_guard_rs.contains("session: &EvaluationSession")
+            && !cross_eval_guard_rs.contains("with_current_session")
+            && function_checking_eval_rs.contains("self.eval_session")
+            && function_checking_eval_rs.contains("memoized_eval_with_stability("),
+        "fresh subtype-function evaluators must route cross-eval guard state through the owning EvaluationSession instead of the thread-local default session"
     );
 }
 
