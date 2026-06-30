@@ -7,7 +7,7 @@
 //! - Updating cached symbol types for self-referential augmentations
 
 use crate::state::CheckerState;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tsz_binder::{ModuleAugmentation, symbol_flags};
@@ -261,56 +261,44 @@ impl<'a> CheckerState<'a> {
                 })
             });
 
+        let mut seen = FxHashSet::default();
+        let mut push_aug = |file_idx: usize, mut aug: ModuleAugmentation| {
+            if aug.name != interface_name || !seen.insert((file_idx, aug.node)) {
+                return;
+            }
+            if aug.arena.is_none()
+                && let Some(arenas) = self.ctx.all_arenas.as_ref()
+                && let Some(arena) = arenas.get(file_idx)
+            {
+                aug.arena = Some(Arc::clone(arena));
+            }
+            result.push(aug);
+        };
+
         for candidate in &candidates {
             if let Some(augmentations) = self.ctx.binder.module_augmentations.get(candidate) {
-                result.extend(
-                    augmentations
-                        .iter()
-                        .filter(|aug| aug.name == interface_name)
-                        .cloned(),
-                );
+                for aug in augmentations.iter().cloned() {
+                    push_aug(self.ctx.current_file_idx, aug);
+                }
             }
         }
 
-        // Use global module augmentations index for O(1) lookup instead of O(N) binder scan.
-        // Cross-file augmentations need their arena populated so the node index is
-        // interpreted in the correct AST arena (not the current file's arena).
-        if result.is_empty() {
-            if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
-                for candidate in &candidates {
-                    if let Some(entries) = aug_index.get(candidate) {
-                        for (file_idx, aug) in entries.iter() {
-                            if aug.name != interface_name {
-                                continue;
-                            }
-                            let mut cloned = aug.clone();
-                            if cloned.arena.is_none()
-                                && let Some(arenas) = self.ctx.all_arenas.as_ref()
-                                && let Some(arena) = arenas.get(*file_idx)
-                            {
-                                cloned.arena = Some(Arc::clone(arena));
-                            }
-                            result.push(cloned);
-                        }
+        // Use the global module augmentations index in addition to local binder
+        // hits: the current file can augment the same interface as siblings.
+        if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for candidate in &candidates {
+                if let Some(entries) = aug_index.get(candidate) {
+                    for (file_idx, aug) in entries.iter() {
+                        push_aug(*file_idx, aug.clone());
                     }
                 }
-            } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                for (file_idx, binder) in all_binders.iter().enumerate() {
-                    for candidate in &candidates {
-                        if let Some(augmentations) = binder.module_augmentations.get(candidate) {
-                            for aug in augmentations.iter() {
-                                if aug.name != interface_name {
-                                    continue;
-                                }
-                                let mut cloned = aug.clone();
-                                if cloned.arena.is_none()
-                                    && let Some(arenas) = self.ctx.all_arenas.as_ref()
-                                    && let Some(arena) = arenas.get(file_idx)
-                                {
-                                    cloned.arena = Some(Arc::clone(arena));
-                                }
-                                result.push(cloned);
-                            }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                for candidate in &candidates {
+                    if let Some(augmentations) = binder.module_augmentations.get(candidate) {
+                        for aug in augmentations.iter().cloned() {
+                            push_aug(file_idx, aug);
                         }
                     }
                 }
@@ -473,6 +461,35 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn module_augmentation_source_files(&self, module_spec: &str) -> Vec<u32> {
+        let candidates = self.module_augmentation_key_candidates(module_spec);
+        let mut files = FxHashSet::default();
+
+        for candidate in &candidates {
+            if self.ctx.binder.module_augmentations.contains_key(candidate) {
+                files.insert(self.ctx.current_file_idx as u32);
+            }
+        }
+        if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for candidate in &candidates {
+                if let Some(entries) = aug_index.get(candidate) {
+                    files.extend(entries.iter().map(|(file_idx, _)| *file_idx as u32));
+                }
+            }
+        } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+            for (file_idx, binder) in all_binders.iter().enumerate() {
+                if candidates
+                    .iter()
+                    .any(|candidate| binder.module_augmentations.contains_key(candidate))
+                {
+                    files.insert(file_idx as u32);
+                }
+            }
+        }
+
+        files.into_iter().collect()
     }
 
     pub(crate) fn module_augmentation_value_type(
@@ -1247,11 +1264,27 @@ impl<'a> CheckerState<'a> {
                 // object-level flags so the augmented type keeps its canonical
                 // declaration name (e.g. `Tool` rather than an expanded
                 // `{ ... }` literal) and stays a single interned identity.
-                factory.object_with_flags_and_symbol(
+                let augmented = factory.object_with_flags_and_symbol(
                     merged_properties,
                     base_shape.flags,
                     base_shape.symbol,
-                )
+                );
+                if let Some(def_id) = base_def_id
+                    && base_shape.symbol.is_some()
+                    && self
+                        .ctx
+                        .definition_store
+                        .register_module_augmented_body_if_enabled(
+                            def_id,
+                            resolved_base,
+                            augmented,
+                            self.ctx.types,
+                            &self.module_augmentation_source_files(module_spec),
+                        )
+                {
+                    self.ctx.clear_type_evaluation_caches_for_def(def_id);
+                }
+                augmented
             }
             AugmentationTargetKind::ObjectWithIndex(shape_id) => {
                 let base_shape = self.ctx.types.object_shape(shape_id);

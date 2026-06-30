@@ -68,6 +68,17 @@ impl<'a> CheckerContext<'a> {
             .unwrap_or(false)
     }
 
+    fn module_augmented_body_or_current(
+        &self,
+        def_id: DefId,
+        body: TypeId,
+        interner: &dyn TypeDatabase,
+    ) -> TypeId {
+        self.definition_store
+            .module_augmented_body_for(def_id, body, interner)
+            .unwrap_or(body)
+    }
+
     /// On a `resolve_lazy` miss for a force-eligible simple lib interface,
     /// recover its already-flattened body from the by-name lib-type cache and
     /// register it into the type environments, so a structurally-consuming
@@ -803,7 +814,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn resolve_lazy_lookup_only(
         &self,
         def_id: DefId,
-        _interner: &dyn TypeDatabase,
+        interner: &dyn TypeDatabase,
     ) -> Option<TypeId> {
         use tsz_binder::symbol_flags;
 
@@ -884,7 +895,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 && let Some(real_def_id) = self.get_existing_def_id(sym_id)
                 && real_def_id != def_id
             {
-                return self.resolve_lazy(real_def_id, _interner);
+                return self.resolve_lazy(real_def_id, interner);
             }
 
             // For classes/interfaces/type aliases, check if we should return
@@ -917,7 +928,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                         // fall through to the type environment or
                         // DefinitionStore body for transparent aliases.
                         if !type_alias_self_wrapper {
-                            return Some(instance_type);
+                            return Some(self.module_augmented_body_or_current(
+                                def_id,
+                                instance_type,
+                                interner,
+                            ));
                         }
                     }
                 } else {
@@ -932,7 +947,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                                 | symbol_flags::TYPE_ALIAS,
                         )
                     {
-                        return Some(instance_type);
+                        return Some(self.module_augmented_body_or_current(
+                            def_id,
+                            instance_type,
+                            interner,
+                        ));
                     }
                 }
             }
@@ -1004,7 +1023,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                             .map_or("?", |s| s.escaped_name.as_str()),
                         "resolve_lazy: found in symbol_types cache"
                     );
-                    return Some(ty);
+                    return Some(self.module_augmented_body_or_current(def_id, ty, interner));
                 }
             }
         }
@@ -1031,7 +1050,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 type_id = body.0,
                 "resolve_lazy: found in type_env"
             );
-            return Some(body);
+            return Some(self.module_augmented_body_or_current(def_id, body, interner));
         }
 
         if let Some(sym_id) = self.def_to_symbol_id_with_fallback(def_id)
@@ -1095,7 +1114,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 type_id = resolved.0,
                 "resolve_lazy: found in SYMBOL_TYPE bucket"
             );
-            return Some(resolved);
+            return Some(self.module_augmented_body_or_current(def_id, resolved, interner));
         }
 
         // Final fallback: consult the shared `DefinitionStore` for a body
@@ -1112,7 +1131,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 type_id = body.0,
                 "resolve_lazy: found in DefinitionStore body"
             );
-            return Some(body);
+            return Some(self.module_augmented_body_or_current(def_id, body, interner));
         }
         tracing::trace!(def_id = def_id.0, "resolve_lazy: NOT FOUND");
         None

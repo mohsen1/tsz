@@ -1064,12 +1064,7 @@ impl TypeEnvironment {
         self.bump_generation();
     }
 
-    /// Get a `DefId`'s resolved type.
-    ///
-    /// First checks the local `def_types` cache, then falls back to the shared
-    /// `DefinitionStore.get_body()` if available. The fallback enables cross-file
-    /// delegation results to be visible without explicit merge-back: the child
-    /// checker writes to `DefinitionStore` and the parent reads via this fallback.
+    /// Get a `DefId`'s resolved type from the local cache or shared store fallback.
     pub fn get_def(&self, def_id: DefId) -> Option<TypeId> {
         self.def_types.get(&def_id.0).copied().or_else(|| {
             let body = self.definition_store.as_ref()?.get_body(def_id)?;
@@ -1613,20 +1608,22 @@ impl TypeResolver for TypeEnvironment {
             .or(candidate)
     }
 
-    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+    fn resolve_lazy(&self, def_id: DefId, interner: &dyn TypeDatabase) -> Option<TypeId> {
+        let augment = |def_id, ty| {
+            self.definition_store.as_ref().map_or(ty, |store| {
+                store.module_augmented_body_or_current(def_id, ty, interner)
+            })
+        };
         // For classes, return the instance type (type position) instead of the constructor type
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
         }
         if let Some(ty) = self.get_def(def_id) {
-            return Some(ty);
+            return Some(augment(def_id, ty));
         }
 
-        // Fallback: `interner.reference(SymbolRef(N))` creates a zombie
-        // `Lazy(DefId(N))` whose numeric value is a raw `SymbolId`; redirect to
-        // the real `DefId`. `raw_symbol_fallback_def` returns `None` for a
-        // registered `DefId` so its value is never mis-read as a colliding
-        // `SymbolId` (#13862).
+        // Fallback: a zombie `Lazy(DefId(N))` may carry raw `SymbolId(N)`.
+        // Registered `DefId`s never redirect through this path (#13862).
         let real_def = self.raw_symbol_fallback_def(def_id)?;
         tsz_common::perf_counters::record_type_environment_raw_symbol_lazy_fallback();
         tracing::trace!(
@@ -1638,7 +1635,7 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
             return Some(instance_type);
         }
-        self.get_def(real_def)
+        self.get_def(real_def).map(|ty| augment(real_def, ty))
     }
 
     fn resolve_this_type(&self, _interner: &dyn TypeDatabase) -> Option<TypeId> {
