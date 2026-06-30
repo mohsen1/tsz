@@ -9,8 +9,12 @@
 //!    `toWireValue` shorthand against a discriminated union, TS2322).
 //! 3. Switch-clause narrowing must work when the case label is a property
 //!    access on an imported enum (comlink `fromWireValue`, TS2339).
+//! 4. Object-literal method block returns must keep contextual tuple return
+//!    types from generic transfer-handler interfaces (comlink proxy handler,
+//!    TS2322).
 
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_lib_files};
 
 // ---------------------------------------------------------------------------
 // Family 1: merged var + generic interface, self-instantiation annotation
@@ -194,6 +198,7 @@ namespace Geo {
     LINE = "LINE",
   }
 }
+
 interface Dot {
   form: Geo.Form.DOT;
   x: number;
@@ -249,5 +254,153 @@ export function bad(state: State): any {
     assert!(
         diags.iter().any(|d| d.code == 2339),
         "expected TS2339 for member from the other arm after narrowing, got {diags:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Family 4: contextually typed method block returns stay tuple-shaped
+// ---------------------------------------------------------------------------
+
+#[test]
+fn object_literal_method_block_return_preserves_tuple_context() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Transferable {}
+interface MessagePort extends Transferable {
+  start(): void;
+}
+declare class MessageChannel {
+  port1: MessagePort;
+  port2: MessagePort;
+}
+declare function expose(value: object, port: MessagePort): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    const { port1, port2 } = new MessageChannel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected contextual tuple return for transfer handler method, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected contextual method parameter type, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_preserves_tuple_context_with_generic_receiver_member() {
+    let diags = check_source_diagnostics(
+        r#"
+interface EventTargetLike<T> {
+  onmessage: ((this: T) => any) | null;
+}
+interface Port extends EventTargetLike<Port> {
+  start(): void;
+}
+declare class Channel {
+  port1: Port;
+  port2: Port;
+}
+declare function expose(value: object, port: Port): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Port[]];
+}
+
+const handler: TransferHandler<object, Port> = {
+  serialize(value) {
+    const { port1, port2 } = new Channel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected contextual tuple return through closed generic receiver member, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected contextual method parameter type, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_preserves_dom_tuple_context() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+declare function expose(value: object, port: MessagePort): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    const { port1, port2 } = new MessageChannel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected DOM-backed contextual tuple return for transfer handler method, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected DOM-backed contextual method parameter type, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| matches!(d.code, 2304 | 2583 | 2584)),
+        "expected DOM-backed witness globals to resolve, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_still_rejects_short_tuple() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Transferable {}
+interface MessagePort extends Transferable {}
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    return [value];
+  },
+};
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for short tuple return, got {diags:#?}"
     );
 }
