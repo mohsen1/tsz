@@ -1147,7 +1147,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "evaluation"
         / "evaluate_rules"
         / "index_access.rs",
-        1818,
+        1835,
     ),
     (
         "Solver boundary: subtype/rules/generics.rs size ratchet",

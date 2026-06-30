@@ -828,10 +828,27 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         use crate::visitors::visitor::{object_shape_id, object_with_index_shape_id};
 
         let symbol = symbol?;
+        // Consult the channel through the evaluator's own resolver first (the
+        // `TypeEnvironment`/`DefinitionStore`-backed path used at top-level
+        // evaluation). If that misses because this evaluator carries a
+        // resolver-less `NoopResolver` — the case at instantiation-time
+        // re-reduce, where `TSZ_INST_RESOLVER_REREDUCE` threads the store-backed
+        // `QueryCache` as the `query_db` but the `query_backed_evaluator` is
+        // built with `NoopResolver` — fall back to the threaded `query_db`,
+        // which carries the same `augmented_base_body_for_symbol` override
+        // (`QueryDatabase: TypeResolver`). This composes the dormant re-reduce
+        // with the symbol→home-body channel at the empty-Object leak site.
+        // Still gated structurally: the edge is only published when the redirect
+        // flag is ON, so flag-OFF returns `None` on both paths (byte-parity).
         let merged_body = self
             .evaluator
             .resolver()
-            .augmented_base_body_for_symbol(symbol.0)?;
+            .augmented_base_body_for_symbol(symbol.0)
+            .or_else(|| {
+                self.evaluator
+                    .query_db()
+                    .and_then(|db| db.augmented_base_body_for_symbol(symbol.0))
+            })?;
         // The merged body may arrive as a `Lazy`/`Application`; evaluate it to a
         // concrete shape before re-indexing. The merged registry interface is a
         // plain object, but accept an indexed object form defensively.
