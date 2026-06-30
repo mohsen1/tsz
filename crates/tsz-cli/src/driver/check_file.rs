@@ -143,6 +143,30 @@ pub(super) type CheckFileResult = (
     tsz_solver::StoreStatistics,
 );
 
+pub(super) struct CheckFileResultRecorder<'a> {
+    pub(super) diagnostics: &'a mut Vec<Diagnostic>,
+    pub(super) type_cache_output: &'a mut FxHashMap<PathBuf, TypeCache>,
+    pub(super) per_file_ts7016_diagnostics: &'a [Vec<Diagnostic>],
+    pub(super) request_cache_counters: &'a mut RequestCacheCounters,
+    pub(super) query_cache_stats: &'a mut tsz_solver::construction::QueryCacheStatistics,
+    pub(super) program: &'a MergedProgram,
+}
+
+impl CheckFileResultRecorder<'_> {
+    pub(super) fn record(&mut self, file_idx: usize, result: CheckFileResult) {
+        let (file_diags, type_cache, file_counters, qc_stats, _ds_stats) = result;
+        self.diagnostics.extend(file_diags);
+        self.diagnostics
+            .extend(self.per_file_ts7016_diagnostics[file_idx].iter().cloned());
+        self.request_cache_counters.merge(file_counters);
+        self.query_cache_stats.merge(&qc_stats);
+        if let Some(tc) = type_cache {
+            let file_path = PathBuf::from(&self.program.files[file_idx].file_name);
+            self.type_cache_output.insert(file_path, tc);
+        }
+    }
+}
+
 /// Boolean flags that govern per-file semantic checking behavior.
 ///
 /// Shared by `run_check_on_existing_checker`,
@@ -203,6 +227,7 @@ fn run_check_on_existing_checker<'a>(
         no_check,
         check_js,
         explicit_check_js_false,
+        skip_lib_check,
         program_has_real_syntax_errors,
         program_has_unsupported_js_root,
         ..
@@ -244,6 +269,35 @@ fn run_check_on_existing_checker<'a>(
             .map(|d| parse_diagnostic_to_checker(&file.file_name, d))
             .collect()
     };
+
+    if skip_lib_check && is_declaration_file(&file.file_name) {
+        let check_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
+        tsz::checker::reset_stack_overflow_flag();
+        checker.check_source_file(file.source_file);
+        tsz_common::perf_counters::record_interner_working_set_for_file();
+        let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+        let effective_options = ResolvedCompilerOptions {
+            check_js,
+            explicit_check_js_false,
+            ..ResolvedCompilerOptions::default()
+        };
+        post_process_checker_diagnostics(
+            &mut checker_diagnostics,
+            file,
+            &effective_options,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+            program_context.has_deprecation_diagnostics,
+        );
+        if let Some(start) = check_start {
+            tsz_common::perf_counters::record_slow_check_file_timing(
+                &file.file_name,
+                start.elapsed().as_nanos() as u64,
+                checker_diagnostics.len() as u64,
+            );
+        }
+        return file_diagnostics;
+    }
 
     // Note: We always run checking for all files (JS and TS).
     // TypeScript reports syntax/semantic errors like TS1210 (strict mode violations)
@@ -352,16 +406,6 @@ pub(super) fn check_file_for_parallel<'a>(
     tsz::checker::reset_per_file_resolution_guards();
 
     let file = &program.files[file_idx];
-    // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
-    if skip_lib_check && is_declaration_file(&file.file_name) {
-        return (
-            Vec::new(),
-            None,
-            RequestCacheCounters::default(),
-            tsz_solver::construction::QueryCacheStatistics::default(),
-            tsz_solver::StoreStatistics::default(),
-        );
-    }
 
     // Create a per-thread QueryCache (uses RefCell/Cell, no atomic overhead).
     // For multi-file projects, use shared L2 cache to avoid redundant computation.
@@ -543,7 +587,6 @@ where
         shared_query_cache,
     } = ctx;
     let &CheckFileFlags {
-        skip_lib_check,
         program_has_real_syntax_errors,
         extract_type_cache,
         ..
@@ -580,21 +623,6 @@ where
 
     for (loop_idx, &file_idx) in work_items.iter().enumerate() {
         let file = &program.files[file_idx];
-
-        // skipLibCheck: skip type checking of declaration files. Same
-        // contract as `check_file_for_parallel`'s early-return; we
-        // emit an empty result and do *not* touch the shared
-        // `CheckerState` for this file.
-        if skip_lib_check && is_declaration_file(&file.file_name) {
-            results.push((
-                Vec::new(),
-                None,
-                RequestCacheCounters::default(),
-                tsz_solver::construction::QueryCacheStatistics::default(),
-                tsz_solver::StoreStatistics::default(),
-            ));
-            continue;
-        }
 
         let resolved_modules: Arc<rustc_hash::FxHashSet<String>> = resolved_modules_per_file
             .get(file_idx)

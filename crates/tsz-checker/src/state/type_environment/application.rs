@@ -1,4 +1,9 @@
-use crate::{query_boundaries::state::type_environment as query, state::CheckerState};
+use crate::{
+    query_boundaries::{
+        state::type_environment as query, type_defaults::fill_application_defaults,
+    },
+    state::CheckerState,
+};
 use tsz_common::Atom;
 use tsz_solver::{TypeId, TypeParamInfo};
 
@@ -45,6 +50,18 @@ impl<'a> CheckerState<'a> {
         let Some(base_def_info) = self.ctx.definition_store.get(base_def_id) else {
             return self.evaluate_application_type(type_id);
         };
+        let (type_id, args) = if let Some(type_params) = self.ctx.get_def_type_params(base_def_id)
+            && args.len() < type_params.len()
+            && let Some(defaulted_args) =
+                fill_application_defaults(self.ctx.types, &args, &type_params)
+        {
+            (
+                self.ctx.types.application(base, defaulted_args.clone()),
+                defaulted_args,
+            )
+        } else {
+            (type_id, args)
+        };
         if base_def_info
             .file_id
             .is_none_or(|file_id| file_id == self.ctx.current_file_idx as u32)
@@ -85,6 +102,40 @@ impl<'a> CheckerState<'a> {
             &args,
             type_id,
         )
+    }
+
+    pub(crate) fn defaulted_property_access_receiver(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let (base, args) =
+            if let Some((base, args)) = query::application_info(self.ctx.types, type_id) {
+                (base, args)
+            } else if query::lazy_def_id(self.ctx.types, type_id).is_some() {
+                (type_id, Vec::new())
+            } else if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+                && let Some((base, args)) = query::application_info(self.ctx.types, alias)
+            {
+                (base, args)
+            } else {
+                return None;
+            };
+        let def_id = query::lazy_def_id(self.ctx.types, base)?;
+        let mut type_params = self.ctx.get_def_type_params(def_id);
+        if type_params.as_ref().is_none_or(|params| {
+            params
+                .iter()
+                .all(|param| param.constraint.is_none() && param.default.is_none())
+        }) && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+        {
+            let declared_params = self.get_type_params_for_symbol(sym_id);
+            if !declared_params.is_empty() {
+                type_params = Some(declared_params);
+            }
+        }
+        let type_params = type_params?;
+        if type_params.is_empty() || args.len() >= type_params.len() {
+            return None;
+        }
+        let defaulted_args = fill_application_defaults(self.ctx.types, &args, &type_params)?;
+        Some(self.ctx.types.application(base, defaulted_args))
     }
 
     /// Materialize a property-access receiver that is a generic *type-alias*

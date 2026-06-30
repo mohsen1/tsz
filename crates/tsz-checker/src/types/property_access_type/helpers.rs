@@ -875,6 +875,7 @@ impl<'a> CheckerState<'a> {
         skip_flow_narrowing: bool,
         skip_result_flow_for_result: bool,
     ) -> TypeId {
+        let result_type = self.resolve_unbound_property_member_defaults(result_type);
         if self.ctx.types.take_union_too_complex()
             || self.property_access_result_exceeds_complexity_limit(result_type)
         {

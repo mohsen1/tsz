@@ -1047,7 +1047,15 @@ impl<'a> CheckerState<'a> {
                     {
                         props_type = attrs_type;
                     }
-                    self.get_jsx_library_managed_attributes_application(component, props_type)
+                    let display_props_type = self.get_jsx_dynamic_intrinsic_display_props_type(
+                        opts.tag_name_idx,
+                        component,
+                        props_type,
+                    );
+                    self.get_jsx_library_managed_attributes_application(
+                        component,
+                        display_props_type,
+                    )
                 })
                 .or_else(|| {
                     if outcome.provided_attrs.is_empty() {

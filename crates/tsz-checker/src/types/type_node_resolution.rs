@@ -742,7 +742,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         def_id
     }
 
-    fn ensure_declared_type_params_cached(
+    pub(super) fn ensure_declared_type_params_cached(
         &self,
         sym_id: tsz_binder::SymbolId,
         def_id: tsz_solver::def::DefId,
@@ -1627,6 +1627,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .get_or_create_def_id_for_symbol_name(sym_id, name.as_str())
             };
+            self.ensure_declared_type_params_cached(sym_id, def_id);
             self.ensure_type_alias_resolved(sym_id, def_id);
             return Some(def_id);
         }
@@ -1643,6 +1644,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx
                     .get_or_create_def_id_for_symbol_name(sym_id, expected_name)
             };
+            self.ensure_declared_type_params_cached(sym_id, def_id);
             self.ensure_type_alias_resolved(sym_id, def_id);
             return Some(def_id);
         }
@@ -1662,6 +1664,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             } else {
                 self.ensure_def_id_with_alias(sym_id)
             };
+            self.ensure_declared_type_params_cached(sym_id, def_id);
             self.ensure_type_alias_resolved(sym_id, def_id);
             return Some(def_id);
         }

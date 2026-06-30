@@ -48,7 +48,7 @@ pub(super) fn check_checker_lib_file_for_interfaces(
     let options = env.options;
     let checker_libs = env.checker_libs;
     let lib_file = &checker_libs.files[lib_idx];
-    if should_skip_type_checking_for_file(&lib_file.file_name, options, true) {
+    if options.skip_default_lib_check {
         return (
             Vec::new(),
             RequestCacheCounters::default(),
@@ -139,7 +139,7 @@ pub(super) fn check_checker_lib_file_baseline(
     tsz_solver::StoreStatistics,
 ) {
     let lib_file = &checker_libs.files[lib_idx];
-    if should_skip_type_checking_for_file(&lib_file.file_name, options, true) {
+    if options.skip_default_lib_check {
         return (
             Vec::new(),
             RequestCacheCounters::default(),

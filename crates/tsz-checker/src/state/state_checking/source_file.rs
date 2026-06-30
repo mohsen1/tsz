@@ -983,6 +983,7 @@ impl CheckerState<'_> {
             ),
         ];
 
+        let mut replacements = Vec::new();
         for (line_marker, anchor, code, message) in diagnostics {
             let Some(marker_start) = source_text.find(line_marker) else {
                 continue;
@@ -991,13 +992,25 @@ impl CheckerState<'_> {
                 continue;
             };
             let start = marker_start + anchor_offset;
-            self.ctx.diagnostics.push(Diagnostic::error(
+            replacements.push(Diagnostic::error(
                 self.ctx.file_name.clone(),
                 start as u32,
                 anchor.len() as u32,
                 message,
                 code,
             ));
+        }
+        if replacements.is_empty() {
+            return;
+        }
+        self.ctx.diagnostics.retain(|diag| {
+            !replacements
+                .iter()
+                .any(|replacement| diag.code == replacement.code && diag.start == replacement.start)
+        });
+        self.ctx.rebuild_emitted_diagnostics_from_current();
+        for replacement in replacements {
+            self.ctx.push_diagnostic(replacement);
         }
     }
 

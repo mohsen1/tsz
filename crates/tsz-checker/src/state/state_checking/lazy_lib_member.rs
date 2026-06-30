@@ -211,12 +211,19 @@ impl CheckerState<'_> {
         {
             return None;
         }
-        if !global_lazy_receiver_preserve_disabled()
-            && self.lazy_lib_member_receiver_def_id(current_type).is_some()
-        {
-            return None;
-        }
         let value_type = self.type_of_value_symbol_by_name(ident_text);
+        if !global_lazy_receiver_preserve_disabled()
+            && let Some(current_def_id) = self.lazy_lib_member_receiver_def_id(current_type)
+        {
+            let value_def_id = self.lazy_lib_member_receiver_def_id(value_type);
+            if value_type == TypeId::UNKNOWN
+                || value_type == TypeId::ERROR
+                || value_type == current_type
+                || value_def_id == Some(current_def_id)
+            {
+                return None;
+            }
+        }
         (value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR).then_some(value_type)
     }
 

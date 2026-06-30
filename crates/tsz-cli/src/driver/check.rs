@@ -40,17 +40,31 @@ const fn checker_resolution_request_kind(
 }
 
 mod check_file;
+mod check_scheduling;
 #[cfg(test)]
 mod check_tests;
 mod checker_diagnostics;
 mod checker_lib_diagnostics;
 mod no_check_diagnostics;
+mod parse_only_diagnostics;
 mod source_resolution_setup;
 
 use check_file::{
-    CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
-    check_file_for_parallel, check_files_cost_balanced_pool,
+    CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFileResultRecorder,
+    CheckFilesReuseCtx, check_file_for_parallel, check_files_cost_balanced_pool,
     check_files_in_parallel_chunks_with_reuse, check_files_sequentially_with_reuse,
+};
+#[cfg(test)]
+use check_scheduling::{
+    CheckerPoolEnv, FILE_SESSION_REUSE_TEST_OVERRIDE, file_session_reuse_from_env,
+    file_session_reuse_from_workload,
+};
+use check_scheduling::{
+    FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE, FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES,
+    checker_pool_disabled, checker_pool_env, file_session_reuse_requested,
+    needs_separate_boxed_prime_checker, parallel_file_session_reuse_requested,
+    pool_refused_for_order_sensitive_global_lib, resolve_checker_pool_size,
+    should_use_sequential_fresh_checking,
 };
 use checker_diagnostics::{
     keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
@@ -66,6 +80,7 @@ use checker_lib_diagnostics::{
     should_preserve_datetimeformatpart_spelling_baseline,
 };
 use no_check_diagnostics::{NoCheckDiagnosticsInput, collect_no_check_diagnostics_for_files};
+use parse_only_diagnostics::{ParseOnlyDiagnosticsInput, collect_parse_only_diagnostics_result};
 use source_resolution_setup::{
     SourceResolutionSetup, SourceResolutionSetupInput, prepare_source_resolution_setup,
 };
@@ -98,106 +113,6 @@ pub(super) struct CollectDiagnosticsResult {
     pub module_dep_stats: Option<super::ModuleDependencyStats>,
 }
 
-/// Inputs for parse-only short-circuit paths that bypass the full checker
-/// pipeline (either `--noCheck` without `--declaration`, or `--noEmit
-/// --skipLibCheck` on a pure `.d.ts` project).
-struct ParseOnlyDiagnosticsInput<'a> {
-    program: &'a MergedProgram,
-    options: &'a ResolvedCompilerOptions,
-    program_has_real_syntax_errors: bool,
-    include_isolated_declaration_diagnostics: bool,
-    per_file_ts7016_diagnostics: &'a [Vec<Diagnostic>],
-    cache: Option<&'a mut CompilationCache>,
-    base_dir: &'a Path,
-    file_is_esm_map: &'a FxHashMap<String, bool>,
-    resolved_module_paths: &'a FxHashMap<(usize, String), usize>,
-    collect_compile_stats: bool,
-    request_cache_counters: RequestCacheCounters,
-}
-
-/// Collect parse-only diagnostics and return an early `CollectDiagnosticsResult`
-/// for paths that skip the full checker pipeline.
-///
-/// Used by two short-circuit arms in `collect_diagnostics_with_source_resolutions`:
-/// - `--noCheck` (without `--declaration`): collects parse + isolated-declarations
-///   diagnostics and returns before any checker binder or `ProgramContext` setup.
-/// - `--noEmit --skipLibCheck` on a pure `.d.ts` project: collects parse
-///   diagnostics only and returns before expensive checker infrastructure.
-///
-/// Both arms share the same post-collection steps: extend with per-file TS7016
-/// diagnostics, trim the `CompilationCache`, detect missing-tslib helpers, and
-/// build the optional module-dependency stats.
-fn collect_parse_only_diagnostics_result(
-    input: ParseOnlyDiagnosticsInput<'_>,
-) -> CollectDiagnosticsResult {
-    let ParseOnlyDiagnosticsInput {
-        program,
-        options,
-        program_has_real_syntax_errors,
-        include_isolated_declaration_diagnostics,
-        per_file_ts7016_diagnostics,
-        cache,
-        base_dir,
-        file_is_esm_map,
-        resolved_module_paths,
-        collect_compile_stats,
-        request_cache_counters,
-    } = input;
-
-    let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
-
-    let mut diagnostics: Vec<Diagnostic> =
-        collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
-            files: &program.files,
-            file_indices: &all_file_indices,
-            options,
-            program_has_real_syntax_errors,
-            include_isolated_declaration_diagnostics,
-        })
-        .into_iter()
-        .flat_map(|file_diags| file_diags.diagnostics)
-        .collect();
-
-    let mut used_paths =
-        FxHashSet::with_capacity_and_hasher(program.files.len(), Default::default());
-    for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
-        diagnostics.extend(file_diags.iter().cloned());
-        if let Some(file) = program.files.get(file_idx) {
-            used_paths.insert(PathBuf::from(&file.file_name));
-        }
-    }
-
-    if let Some(c) = cache {
-        c.type_caches.retain(|path, _| used_paths.contains(path));
-        c.diagnostics.retain(|path, _| used_paths.contains(path));
-        c.export_hashes.retain(|path, _| used_paths.contains(path));
-    }
-
-    diagnostics.extend(detect_missing_tslib_helper_diagnostics(
-        program,
-        options,
-        base_dir,
-        file_is_esm_map,
-    ));
-
-    let module_dep_stats = if collect_compile_stats {
-        Some(compute_module_dependency_stats(
-            program.files.len(),
-            resolved_module_paths,
-        ))
-    } else {
-        None
-    };
-
-    CollectDiagnosticsResult {
-        diagnostics,
-        request_cache_counters,
-        query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
-        def_store_stats: None,
-        module_dep_stats,
-    }
-}
-
 #[derive(Default)]
 pub(super) struct CheckerLibSet {
     pub(super) files: Vec<Arc<LibFile>>,
@@ -209,327 +124,6 @@ pub(super) struct CheckerLibSet {
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
-
-fn is_node_modules_declaration_file(name: &str) -> bool {
-    is_declaration_file(name)
-        && Path::new(name)
-            .components()
-            .any(|component| component.as_os_str() == "node_modules")
-}
-
-fn defer_node_modules_declaration_roots(work_items: &mut [usize], program: &MergedProgram) {
-    work_items.sort_by_key(|&idx| is_node_modules_declaration_file(&program.files[idx].file_name));
-}
-
-#[cfg(test)]
-thread_local! {
-    static FILE_SESSION_REUSE_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
-        const { std::cell::Cell::new(None) };
-}
-
-#[cfg(test)]
-fn file_session_reuse_test_override() -> Option<bool> {
-    FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get)
-}
-
-// File-session reuse policy.
-//
-// Previously this defaulted to ON for all batch CLI projects (PRs #6870
-// sequential and #6893 parallel), optimising the counter `state_constructed`
-// on 40-400 file projects. At 1k+ files the reuse path regresses wall time by
-// 4-14x; see PR #7521 and
-// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`. Measurements across
-// the full scale-cliff matrix (monorepo-001..006) show reuse OFF is faster at
-// every large fixture size we tested:
-//
-//   101 files:    1.5x faster off
-//   1,010 files:  3.9x faster off
-//   5,099 files:  4.6x faster off
-//   5,251 files:  5.4x faster off (cross-pkg mapped types)
-//   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
-//
-// Tiny no-emit TypeScript projects are a different regime where fresh-checker
-// construction and boxed-lib priming dominate the wall-clock floor. Route those
-// projects through the deterministic sequential reuse path by default; JS/JSX
-// and larger batches remain reuse-off unless explicitly opted in until the
-// scale-cliff and byte-identity gaps close.
-// Two env knobs remain:
-//   * `TSZ_FILE_SESSION_REUSE=1` opts larger projects back in (legacy explicit-opt-in knob
-//     from the pre-#6870 era).
-//   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
-//     scripts that already pin the off behaviour. Takes precedence over
-//     the enable knob.
-//
-// The LSP server binaries (`tsz_lsp`, `tsz_server`) do not consume this
-// driver and are unaffected — they reuse state through the `tsz-lsp`
-// `Project` API by construction.
-
-const FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES: usize = 32;
-
-/// Pure policy function so tests can assert the env-var rules without
-/// touching process-global state. `disable_set` is true when
-/// `TSZ_DISABLE_FILE_SESSION_REUSE` is present in the environment;
-/// `enable_set` is true when `TSZ_FILE_SESSION_REUSE` is present.
-const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> bool {
-    if disable_set {
-        return false;
-    }
-    enable_set
-}
-
-const fn file_session_reuse_from_workload(
-    disable_set: bool,
-    enable_set: bool,
-    work_item_count: usize,
-    has_js_or_jsx_workload: bool,
-) -> bool {
-    if disable_set {
-        return false;
-    }
-    if enable_set {
-        return true;
-    }
-    if has_js_or_jsx_workload {
-        return false;
-    }
-    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
-}
-
-fn file_session_reuse_requested(work_item_count: usize, has_js_or_jsx_workload: bool) -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = file_session_reuse_test_override() {
-        return enabled;
-    }
-
-    file_session_reuse_from_workload(
-        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
-        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
-        work_item_count,
-        has_js_or_jsx_workload,
-    )
-}
-
-fn parallel_file_session_reuse_requested() -> bool {
-    #[cfg(test)]
-    if let Some(enabled) = file_session_reuse_test_override() {
-        return enabled;
-    }
-
-    file_session_reuse_from_env(
-        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
-        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
-    )
-}
-
-/// The user's explicit `TSZ_CHECKER_POOL` request, parsed once.
-///
-/// The bounded checker pool checks files on a fixed pool of `N` long-lived
-/// `CheckerState`s (cost-balanced file assignment, each reused via
-/// `switch_to_file`) instead of the per-file fresh checker. This amortises the
-/// O(program) per-file setup over `files / N` files — the lever that unblocks
-/// large multi-file projects.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CheckerPoolEnv {
-    /// `TSZ_CHECKER_POOL` unset or invalid: defer to the lane default.
-    Unset,
-    /// `TSZ_CHECKER_POOL=0` or empty: force the pool off on every lane,
-    /// overriding the large-lane default.
-    ForceOff,
-    /// `TSZ_CHECKER_POOL=N` explicit width (`auto`/`1` -> available
-    /// parallelism): use this width on any lane.
-    Width(usize),
-}
-
-/// Parse the explicit `TSZ_CHECKER_POOL` request. `=auto` (or `=1`) sizes the
-/// pool to `available_parallelism`; `=N` sets an explicit width; `0` / empty
-/// forces it off; unset / invalid defers to [`resolve_checker_pool_size`]
-/// (which defaults the pool ON for the large non-DOM parallel lane).
-fn checker_pool_env() -> CheckerPoolEnv {
-    let Ok(raw) = std::env::var("TSZ_CHECKER_POOL") else {
-        return CheckerPoolEnv::Unset;
-    };
-    match raw.trim() {
-        "" | "0" => CheckerPoolEnv::ForceOff,
-        "auto" | "1" => CheckerPoolEnv::Width(
-            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
-        ),
-        n => n
-            .parse::<usize>()
-            .ok()
-            .filter(|&w| w >= 1)
-            .map_or(CheckerPoolEnv::Unset, CheckerPoolEnv::Width),
-    }
-}
-
-/// Whether the bounded checker pool is force-disabled via the
-/// `TSZ_DISABLE_CHECKER_POOL` kill switch. An explicit `TSZ_CHECKER_POOL=<n>`
-/// width still wins over this switch; the switch only suppresses the default-on
-/// behavior on the large non-DOM parallel lane.
-fn checker_pool_disabled() -> bool {
-    std::env::var_os("TSZ_DISABLE_CHECKER_POOL").is_some()
-}
-
-/// Resolve the effective bounded-checker-pool width, folding the explicit env
-/// request, the kill switch, and the default-on lane policy into one decision.
-///
-/// Precedence, highest first:
-///   1. an explicit `TSZ_CHECKER_POOL=<n|auto>` width always wins, on any lane;
-///   2. an explicit `TSZ_CHECKER_POOL=0` / empty, or the
-///      `TSZ_DISABLE_CHECKER_POOL` kill switch, forces the pool off;
-///   3. on the large non-DOM parallel lane (`default_eligible`) the pool
-///      defaults ON, sized to `available_parallelism`;
-///   4. otherwise the pool stays off and checking falls through to the
-///      fresh-checker / sequential-reuse arms.
-///
-/// `default_eligible` is the large non-DOM parallel lane: more files than the
-/// small-project boundary, no order-sensitive global lib (DOM/webworker), and
-/// no explicit `TSZ_FILE_SESSION_REUSE` opt-in (which selects its own reuse
-/// arm). The per-partition body is the proven sequential-reuse path, so
-/// diagnostics stay byte-identical to the fresh-checker arm regardless of
-/// partitioning.
-const fn resolve_checker_pool_size(
-    env: CheckerPoolEnv,
-    kill_switch: bool,
-    default_eligible: bool,
-    available_parallelism: usize,
-) -> Option<usize> {
-    match env {
-        // Explicit positive width wins on any lane, even over the kill switch.
-        CheckerPoolEnv::Width(width) => Some(width),
-        // Explicit `0`/empty forces off, overriding the large-lane default.
-        CheckerPoolEnv::ForceOff => None,
-        CheckerPoolEnv::Unset => {
-            if kill_switch {
-                None
-            } else if default_eligible {
-                Some(available_parallelism)
-            } else {
-                None
-            }
-        }
-    }
-}
-
-/// Decide whether fresh per-file checkers run sequentially instead of on the
-/// rayon pool.
-///
-/// Tiny batches stay sequential to avoid pool overhead. DOM/webworker-lib
-/// projects (PR #7312) stay
-/// sequential because correctness and termination on type-heavy projects
-/// currently depend on checking files in deterministic order with a
-/// progressively warmed `SharedQueryCache`.
-///
-/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` is a diagnosis-only escape hatch for
-/// the DOM/webworker gate-lift campaign: it bypasses only the order-sensitive
-/// global-lib gate so forced-parallel rows can be byte-compared against the
-/// sequential baseline without also changing tiny-batch policy.
-///
-/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` is a second diagnosis-only escape
-/// hatch (`force_tiny_batch_parallel`) that *additionally* bypasses the
-/// tiny-batch floor, forcing the genuine rayon `par_iter` fresh-checker path
-/// even for a handful of files. The schedule-determinism regression guards in
-/// `parallel_sequential_agreement_tests` rely on it: their distilled witnesses
-/// are far below the [`FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`] floor, so
-/// `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` alone left them on the sequential arm
-/// (sequential-vs-sequential, a silent no-op). This flag never changes the
-/// production default — tiny batches still run sequentially unless it is set.
-///
-/// Large wildcard barrels are still detected and tested separately, but they
-/// no longer force the entire project onto one core: the mutation-isolation
-/// and cold-start cache work that landed before #13244 made the whole-project
-/// fallback too blunt for large-ts-repo-sized projects.
-///
-/// Investigated 2026-06 while attempting to lift the DOM gate for the
-/// ts-toolbelt row: the blocker is not (only) racing shared state. Checking
-/// `ts-toolbelt/sources/Function/AutoPath.ts` *alone* (cold caches, fully
-/// sequential) is a runaway evaluation, and `sources/Number/Greater.ts`
-/// alone emits a false `TS2344` (`'undefined'` vs the `Iteration` tuple
-/// constraint). The sequential project run masks both because earlier files
-/// warm the shared eval/relation caches before the heavy files are reached.
-/// Under parallel fresh checking, workers start those files cold, so runs
-/// nondeterministically hang or surface the false diagnostics. Lifting this
-/// gate requires fixing the cold-start conditional/`infer` evaluation
-/// family first (then re-running the 10x byte-diff determinism loop on
-/// ts-toolbelt at full width).
-///
-/// Deep-dive 2026-06-11 (gate-lift campaign, `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK`
-/// repro on ts-toolbelt at 4 workers; 0/5 runs correct on the pre-fix binary —
-/// 3/5 livelocked >150s, 2/5 emitted false `TS2344`s): the root family is
-/// **in-flight shared-`DefinitionStore` state**. Every fresh checker
-/// re-derives def bodies into the shared store (last-writer-wins; ~6.4k
-/// re-publications with different `TypeId` forms per sequential ts-toolbelt
-/// run — benign there because each checker reads its own writes through its
-/// `TypeEnvironment` before falling back to the store, and foreign bodies are
-/// only read after their writer completed). Under parallelism, sibling
-/// workers consume bodies/params mid-rewrite, so deferred-type evaluation
-/// (`keyof`/indexed-access/conditional checks) observes half-constructed
-/// foreign forms: generic conditionals were resolved to definitive false
-/// branches (e.g. `` `${N}` extends keyof IterationMap `` while `N` is still
-/// generic -> `IterationMap['__']`), which both emits false `TS2344`s and
-/// feeds self-sustaining recursive expansions (`RangeForth` over the `'__'`
-/// sentinel tuple) whose accumulator grows fresh `TypeId`s every step —
-/// defeating every TypeId-keyed cycle guard and burning the full 2M-op
-/// per-query budget per call site (the observed livelock; 67k
-/// generic-check false-branch decisions per run vs 106 sequentially).
-/// Two structural fixes landed from this investigation (tsc-parity generic
-/// check-type deferral in conditional evaluation; atomic body+params
-/// publication), which remove the dominant false-branch storm, but
-/// write-once/session-scoped visibility experiments on the def store show
-/// several more in-flight channels (delegation buckets, lib cache,
-/// interner side-state) still leak; the gate stays until the
-/// mutation-isolation campaign makes shared def state schedule-independent.
-const fn should_use_sequential_fresh_checking(
-    work_item_count: usize,
-    has_parallel_order_sensitive_global_lib: bool,
-    force_parallel_order_sensitive_global_lib: bool,
-    force_tiny_batch_parallel: bool,
-) -> bool {
-    (work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES && !force_tiny_batch_parallel)
-        || (has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib)
-}
-
-/// Whether the bounded checker pool (`TSZ_CHECKER_POOL`) must be refused
-/// because the program includes a parallel-order-sensitive global lib
-/// (DOM/webworker).
-///
-/// The pool runs `pool_size` long-lived `CheckerState`s in parallel over one
-/// shared `DefinitionStore`, so it is subject to the same schedule-dependent
-/// lib-interface materialization hazard as the fresh-parallel lane gated by
-/// [`should_use_sequential_fresh_checking`]: DOM/SVG element interfaces with
-/// deep heritage are first-demand materialized concurrently, and sibling
-/// workers observe pre-finalize body forms, producing non-deterministic
-/// diagnostics. The pool dispatch is evaluated before that gate, so the
-/// refusal is enforced here independently — DOM programs take the sequential
-/// path whether the pool was reached via an explicit `TSZ_CHECKER_POOL=N` or
-/// a default-on policy. The `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK` diagnosis
-/// override lifts the refusal so forced-parallel byte-diffs can be driven from
-/// the env; non-determinism is never the default.
-const fn pool_refused_for_order_sensitive_global_lib(
-    has_parallel_order_sensitive_global_lib: bool,
-    force_parallel_order_sensitive_global_lib: bool,
-) -> bool {
-    has_parallel_order_sensitive_global_lib && !force_parallel_order_sensitive_global_lib
-}
-
-const fn needs_separate_boxed_prime_checker(
-    no_emit: bool,
-    emit_declarations: bool,
-    reuse_requested: bool,
-    file_count: usize,
-    has_libs: bool,
-) -> bool {
-    if file_count == 0 || !has_libs {
-        return false;
-    }
-
-    let reused_checker_covers_prime = no_emit
-        && !emit_declarations
-        && reuse_requested
-        && file_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES;
-    !reused_checker_covers_prime
-}
-
-const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
 
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
     importing_file
@@ -789,8 +383,10 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
-    let can_recheck_checker_libs =
-        !options.no_check && !options.skip_lib_check && !checker_libs.files.is_empty();
+    // `skipLibCheck` suppresses checker-lib diagnostics, not checker-lib
+    // materialization. Source files can still consume utility/JSX shapes whose
+    // post-merge lib pass publishes optionality and heritage details.
+    let can_recheck_checker_libs = !options.no_check && !checker_libs.files.is_empty();
     let affected_lib_interfaces = if can_recheck_checker_libs {
         affected_lib_interface_names(program, checker_libs)
     } else {
@@ -1287,16 +883,19 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let mut work_items: Vec<usize> = Vec::with_capacity(work_queue.len());
+        let mut skip_lib_check_preparation_items: Vec<usize> = Vec::new();
         let mut skipped_file_indices: Vec<usize> = Vec::new();
         for file_idx in work_queue {
             let file = &program.files[file_idx];
-            if should_skip_type_checking_for_file(&file.file_name, options, false) {
+            if skip_lib_check && is_declaration_file(&file.file_name) {
+                skip_lib_check_preparation_items.push(file_idx);
+            } else if should_skip_type_checking_for_file(&file.file_name, options, false) {
                 skipped_file_indices.push(file_idx);
             } else {
                 work_items.push(file_idx);
             }
         }
-        defer_node_modules_declaration_roots(&mut work_items, program);
+        order_fresh_check_work_items(&mut work_items, &resolved_module_paths, program);
         for mut file_diags in collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
             files: &program.files,
             file_indices: &skipped_file_indices,
@@ -1353,12 +952,14 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // the parallel fresh-checking campaign: it disables the cross-file
         // shared cache so cache-poisoning races can be isolated from other
         // parallel-lane defects.
-        let shared_query_cache =
-            if work_items.len() > 1 && std::env::var_os("TSZ_EXPERIMENT_NO_SHARED_QC").is_none() {
-                Some(tsz_solver::construction::SharedQueryCache::new())
-            } else {
-                None
-            };
+        let checker_item_count = work_items.len() + skip_lib_check_preparation_items.len();
+        let shared_query_cache = if checker_item_count > 1
+            && std::env::var_os("TSZ_EXPERIMENT_NO_SHARED_QC").is_none()
+        {
+            Some(tsz_solver::construction::SharedQueryCache::new())
+        } else {
+            None
+        };
 
         let check_file_with_fresh_checker = |file_idx: usize| {
             let binder = build_checker_binder(file_idx);
@@ -1382,6 +983,25 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             };
             check_file_for_parallel(context)
         };
+
+        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
+        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
+        {
+            let mut tc_out = type_cache_output
+                .lock()
+                .expect("type_cache_output mutex poisoned");
+            let mut recorder = CheckFileResultRecorder {
+                diagnostics: &mut diagnostics,
+                type_cache_output: &mut tc_out,
+                per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+                request_cache_counters: &mut request_cache_counters,
+                query_cache_stats: &mut parallel_qc_stats,
+                program,
+            };
+            for file_idx in skip_lib_check_preparation_items.iter().copied() {
+                recorder.record(file_idx, check_file_with_fresh_checker(file_idx));
+            }
+        }
 
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
@@ -1605,25 +1225,20 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // come from the shared store computed once after the loop (workers
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
-        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
-        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters, qc_stats, _ds_stats)) in
-                file_results.into_iter().enumerate()
-            {
-                diagnostics.extend(file_diags);
-                // Inject pre-computed TS7016 diagnostics for CJS require() calls.
-                let file_idx = work_items[idx];
-                diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
-                request_cache_counters.merge(file_counters);
-                parallel_qc_stats.merge(&qc_stats);
-                if let Some(tc) = type_cache {
-                    let file_path = PathBuf::from(&program.files[file_idx].file_name);
-                    tc_out.insert(file_path, tc);
-                }
+            let mut recorder = CheckFileResultRecorder {
+                diagnostics: &mut diagnostics,
+                type_cache_output: &mut tc_out,
+                per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+                request_cache_counters: &mut request_cache_counters,
+                query_cache_stats: &mut parallel_qc_stats,
+                program,
+            };
+            for (idx, result) in file_results.into_iter().enumerate() {
+                recorder.record(work_items[idx], result);
             }
         }
         // PERF: see `needs_lib_recheck` above — when no user-defined global
@@ -1646,7 +1261,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 );
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                diagnostics.extend(lib_diags);
+                if !options.skip_lib_check {
+                    diagnostics.extend(lib_diags);
+                }
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
@@ -1874,6 +1491,17 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             }
             // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
             if options.skip_lib_check && is_declaration_file(&file.file_name) {
+                tsz::checker::reset_stack_overflow_flag();
+                checker.check_source_file(file.source_file);
+                let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+                post_process_checker_diagnostics(
+                    &mut checker_diagnostics,
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    has_deprecation_diagnostics,
+                );
                 diagnostics.extend(file_diagnostics);
                 request_cache_counters.merge(checker.ctx.request_cache_counters);
                 continue;
@@ -1977,7 +1605,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                diagnostics.extend(lib_diags);
+                if !options.skip_lib_check {
+                    diagnostics.extend(lib_diags);
+                }
                 request_cache_counters.merge(lib_counters);
             }
         }

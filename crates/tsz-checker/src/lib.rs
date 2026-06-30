@@ -883,6 +883,9 @@ mod cross_file_unresolved_alias_union_simplification_tests;
 #[path = "tests/cross_module_generic_interface_heritage_tests.rs"]
 mod cross_module_generic_interface_heritage_tests;
 #[cfg(test)]
+#[path = "tests/declaration_extract_key_path_tests.rs"]
+mod declaration_extract_key_path_tests;
+#[cfg(test)]
 #[path = "tests/destructured_binding_narrowed_property_tests.rs"]
 mod destructured_binding_narrowed_property_tests;
 #[cfg(test)]
@@ -1512,6 +1515,9 @@ mod super_call_ts2376_ts17009_priority_tests;
 #[cfg(test)]
 #[path = "tests/switch_distinct_literal_memo_narrowing_tests.rs"]
 mod switch_distinct_literal_memo_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/symbol_env_registration_arch_tests.rs"]
+mod symbol_env_registration_arch_tests;
 #[cfg(test)]
 #[path = "tests/symbol_for_identity_helper_tests.rs"]
 mod symbol_for_identity_helper_tests;

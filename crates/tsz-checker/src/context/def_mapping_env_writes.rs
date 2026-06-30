@@ -46,6 +46,12 @@ impl CheckerContext<'_> {
         self.register_in_envs(DeferredFlowEnvWrite::RegisterEnumNamespaceType { def_id, ns_type });
     }
 
+    /// Register an enum as numeric in **both** type environments through the
+    /// race-safe deferral discipline.
+    pub(crate) fn register_numeric_enum_in_envs(&self, def_id: DefId) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterNumericEnum { def_id });
+    }
+
     /// Register an enum member's parent enum in **both** type environments
     /// through the race-safe deferral discipline.
     pub(crate) fn register_enum_parent_in_envs(&self, member_def_id: DefId, parent_def_id: DefId) {

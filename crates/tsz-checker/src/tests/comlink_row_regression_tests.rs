@@ -9,8 +9,18 @@
 //!    `toWireValue` shorthand against a discriminated union, TS2322).
 //! 3. Switch-clause narrowing must work when the case label is a property
 //!    access on an imported enum (comlink `fromWireValue`, TS2339).
+//! 4. Object-literal method block returns must keep contextual tuple return
+//!    types from generic transfer-handler interfaces (comlink proxy handler,
+//!    TS2322).
+//! 5. Bare generic DOM event annotations must apply declaration defaults
+//!    (`MessageEvent<T = any>`), so `ev.data` remains any-like unless an
+//!    explicit type argument says otherwise (comlink endpoint listener, TS2339).
 
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{
+    check_multi_file_with_libs_stamped, check_source_diagnostics, check_source_with_libs,
+    load_lib_files,
+};
 
 // ---------------------------------------------------------------------------
 // Family 1: merged var + generic interface, self-instantiation annotation
@@ -194,6 +204,7 @@ namespace Geo {
     LINE = "LINE",
   }
 }
+
 interface Dot {
   form: Geo.Form.DOT;
   x: number;
@@ -249,5 +260,452 @@ export function bad(state: State): any {
     assert!(
         diags.iter().any(|d| d.code == 2339),
         "expected TS2339 for member from the other arm after narrowing, got {diags:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Family 4: contextually typed method block returns stay tuple-shaped
+// ---------------------------------------------------------------------------
+
+#[test]
+fn object_literal_method_block_return_preserves_tuple_context() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Transferable {}
+interface MessagePort extends Transferable {
+  start(): void;
+}
+declare class MessageChannel {
+  port1: MessagePort;
+  port2: MessagePort;
+}
+declare function expose(value: object, port: MessagePort): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    const { port1, port2 } = new MessageChannel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected contextual tuple return for transfer handler method, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected contextual method parameter type, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_preserves_tuple_context_with_generic_receiver_member() {
+    let diags = check_source_diagnostics(
+        r#"
+interface EventTargetLike<T> {
+  onmessage: ((this: T) => any) | null;
+}
+interface Port extends EventTargetLike<Port> {
+  start(): void;
+}
+declare class Channel {
+  port1: Port;
+  port2: Port;
+}
+declare function expose(value: object, port: Port): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Port[]];
+}
+
+const handler: TransferHandler<object, Port> = {
+  serialize(value) {
+    const { port1, port2 } = new Channel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected contextual tuple return through closed generic receiver member, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected contextual method parameter type, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_preserves_dom_tuple_context() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+declare function expose(value: object, port: MessagePort): void;
+
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    const { port1, port2 } = new MessageChannel();
+    expose(value, port1);
+    return [port2, [port2]];
+  },
+};
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2322),
+        "expected DOM-backed contextual tuple return for transfer handler method, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "expected DOM-backed contextual method parameter type, got {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|d| matches!(d.code, 2304 | 2583 | 2584)),
+        "expected DOM-backed witness globals to resolve, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_still_rejects_short_tuple() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Transferable {}
+interface MessagePort extends Transferable {}
+interface TransferHandler<T, S> {
+  serialize(value: T): [S, Transferable[]];
+}
+
+const handler: TransferHandler<object, MessagePort> = {
+  serialize(value) {
+    return [value];
+  },
+};
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for short tuple return, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_array_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Handler<T> {
+  make(): [T[], number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [[123], 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic array tuple slot, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_wrapper_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Wrapped<T> {
+  value: T;
+}
+declare function wrap<T>(value: T): Wrapped<T>;
+interface Handler<T> {
+  make(): [Wrapped<T>, number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [wrap(123), 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic wrapper tuple slot, got {diags:#?}"
+    );
+}
+
+#[test]
+fn object_literal_method_block_return_rejects_unresolved_tuple_object_slot() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Handler<T> {
+  make(): [{ value: T }, number];
+}
+
+function create<T>(): Handler<T> {
+  return {
+    make() {
+      return [{ value: 123 }, 0];
+    },
+  };
+}
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "expected TS2322 for unresolved generic object tuple slot, got {diags:#?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Family 5: bare `MessageEvent` annotations apply default `T = any`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bare_message_event_annotation_defaults_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent) {
+  ev.data.argumentList;
+  ev.data.value;
+  ev.data.id;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected bare MessageEvent to apply T = any for data, got {diags:#?}"
+    );
+}
+
+#[test]
+fn guarded_bare_message_event_data_keeps_default_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent) {
+  if (!ev || !ev.data) {
+    return;
+  }
+  ev.data.argumentList;
+  ev.data.value;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected guarded bare MessageEvent data to keep T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn endpoint_listener_callback_annotation_defaults_message_event_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+interface EndpointLike {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+function expose(ep: EndpointLike) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    ev.data.argumentList;
+    ev.data.value;
+  } as any);
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected listener callback's bare MessageEvent annotation to apply T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_endpoint_listener_defaults_message_event_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let files = [
+        (
+            "protocol.ts",
+            r#"
+export interface EventSource {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+export interface Endpoint extends EventSource {
+  postMessage(message: any, transfer?: Transferable[]): void;
+}
+"#,
+        ),
+        (
+            "comlink.ts",
+            r#"
+import { Endpoint } from "./protocol";
+
+export function expose(ep: Endpoint) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    ev.data.argumentList;
+    ev.data.value;
+  } as any);
+}
+"#,
+        ),
+    ];
+    let diags = check_multi_file_with_libs_stamped(
+        &files,
+        "comlink.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected imported endpoint listener's bare MessageEvent annotation to apply T = any, got {diags:#?}"
+    );
+}
+
+#[test]
+fn explicit_message_event_type_argument_keeps_data_shape() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: MessageEvent<{ id: string }>) {
+  ev.data.id.length;
+  ev.data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2339),
+        "expected explicit MessageEvent payload to reject missing property, got {diags:#?}"
+    );
+}
+
+#[test]
+fn bare_message_event_assertion_defaults_data_to_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: Event) {
+  const { data } = ev as MessageEvent;
+  data.id;
+  data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected bare MessageEvent assertion to apply T = any for data, got {diags:#?}"
+    );
+}
+
+#[test]
+fn guarded_message_event_assertion_data_keeps_default_any() {
+    let libs = load_lib_files(&["es5.d.ts", "dom.d.ts", "dom.iterable.d.ts"]);
+    let diags = check_source_with_libs(
+        r#"
+function handle(ev: Event) {
+  const { data } = ev as MessageEvent;
+  if (!data || !data.id) {
+    return;
+  }
+  data.id;
+  data.argumentList;
+}
+export {};
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 2339),
+        "expected guarded bare MessageEvent assertion data to keep T = any, got {diags:#?}"
     );
 }

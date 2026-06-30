@@ -32,6 +32,11 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
     ) -> Option<TypeId> {
         let return_context = return_context?;
+        let return_context = self.evaluate_type_with_env(return_context);
+        let return_context = self.resolve_lazy_type(return_context);
+        let return_context = self.evaluate_application_type(return_context);
+        let tuple_context_can_shape_array_literal =
+            self.array_literal_return_context_has_usable_tuple_slots(expr_idx, return_context);
         // Only suppress the contextual return type when it is still genuinely
         // uninstantiated, i.e. it carries *free* type parameters or `infer`
         // placeholders (e.g. the bare `T` of `<T>() => T`, where contextual
@@ -46,7 +51,8 @@ impl<'a> CheckerState<'a> {
         // literals so they type as tuples.
         if return_context == TypeId::ANY
             || return_context == TypeId::UNKNOWN
-            || return_type_queries::contains_free_type_parameters(self.ctx.types, return_context)
+            || (return_type_queries::contains_free_type_parameters(self.ctx.types, return_context)
+                && !tuple_context_can_shape_array_literal)
             || return_type_queries::contains_infer_types(self.ctx.types, return_context)
         {
             return None;
@@ -54,6 +60,26 @@ impl<'a> CheckerState<'a> {
 
         crate::computation::contextual::expression_needs_contextual_return_type(self, expr_idx)
             .then(|| self.contextual_type_for_expression(return_context))
+    }
+
+    fn array_literal_return_context_has_usable_tuple_slots(
+        &self,
+        expr_idx: NodeIndex,
+        return_context: TypeId,
+    ) -> bool {
+        if self
+            .ctx
+            .arena
+            .get(expr_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+        {
+            return false;
+        }
+
+        return_type_queries::array_literal_return_context_has_usable_tuple_slots(
+            self.ctx.types,
+            return_context,
+        )
     }
 
     fn should_preserve_tuple_literals_for_generic_return(

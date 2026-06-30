@@ -184,9 +184,16 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// real body, a fresh evaluation produces a different (correct) answer.
     /// Persisting the window artifact in the project-wide `closed_eval_cache`
     /// would permanently shadow that answer, so the commit gate checks this
-    /// flag. The `application_eval_cache` is protected per-application through
-    /// the `limit_epoch` bump in [`Self::mark_unresolved_def_seen`].
+    /// flag.
     unresolved_def_seen: bool,
+    /// Monotonic counter bumped whenever `unresolved_def_seen` is set. The
+    /// counter gives `application_eval_cache` the same per-body precision as
+    /// `limit_epoch`: a later unrelated application body may still be cacheable,
+    /// while the body that observed a registration-window artifact is not.
+    unresolved_def_epoch: u32,
+    /// Snapshot of `unresolved_def_epoch` for the innermost in-flight
+    /// application body. Saved/restored beside `app_body_limit_epoch`.
+    app_body_unresolved_def_epoch: u32,
     /// Whether this evaluator may *write* the `closed_eval_cache`. Only the
     /// checker's authoritative, context-free type-resolution pass opts in (via
     /// `with_closed_eval_writes`). Evaluators running mid-relation, mid-inference
@@ -318,6 +325,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             limit_epoch: 0,
             app_body_limit_epoch: 0,
             unresolved_def_seen: false,
+            unresolved_def_epoch: 0,
+            app_body_unresolved_def_epoch: 0,
             closed_eval_writes_allowed: false,
             tainted: FxHashSet::default(),
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
@@ -586,6 +595,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.limit_epoch = 0;
         self.app_body_limit_epoch = 0;
         self.unresolved_def_seen = false;
+        self.unresolved_def_epoch = 0;
+        self.app_body_unresolved_def_epoch = 0;
     }
 
     /// Evaluate a normalized request, applying option-sensitive configuration
@@ -926,6 +937,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(super) const fn mark_unresolved_def_seen(&mut self) {
         self.unresolved_def_seen = true;
         self.request_unresolved_def_seen = true;
+        self.unresolved_def_epoch = self.unresolved_def_epoch.wrapping_add(1);
         self.note_limit_event();
     }
 

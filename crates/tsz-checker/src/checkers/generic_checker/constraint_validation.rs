@@ -1670,8 +1670,15 @@ impl CheckerState<'_> {
 
                 // Instantiate before resolving so dependent constraints like
                 // `Required<Options>` keep the earlier type-argument binding.
-                let written_keyof_constraint_display =
-                    self.written_keyof_constraint_display(constraint, type_params, type_args_list);
+                let written_keyof_constraint_display = self
+                    .written_keyof_any_constraint_display(constraint)
+                    .or_else(|| {
+                        self.written_keyof_constraint_display(
+                            constraint,
+                            type_params,
+                            type_args_list,
+                        )
+                    });
                 let constraint =
                     self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                 let constraint = self.resolve_lazy_type(constraint);

@@ -1195,3 +1195,677 @@ const wrongLeaf: CountTree = wide;
             );
         }
     }
+
+    #[test]
+    fn skip_lib_check_prepares_declaration_heritage_for_jsx_consumers() {
+        let mut options = project_mode_es2015_strict_options();
+        options.skip_lib_check = true;
+        options.checker.jsx_mode = JsxMode::React;
+        options.checker.es_module_interop = true;
+        options.checker.allow_synthetic_default_imports = true;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+interface MiniElement {}
+declare namespace React {
+  type ElementType = keyof JSX.IntrinsicElements | ((props: any) => any);
+  interface DOMAttributes<T> {
+    onClick?: (event: { currentTarget: T }) => void;
+  }
+  interface HTMLAttributes<T> extends DOMAttributes<T> {
+    title?: string;
+  }
+  interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
+    href?: string;
+    download?: unknown;
+  }
+  type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+  type ComponentPropsWithRef<T extends ElementType> =
+    T extends keyof JSX.IntrinsicElements ? JSX.IntrinsicElements[T] : never;
+}
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {
+    a: React.DetailedHTMLProps<React.AnchorHTMLAttributes<MiniElement>, MiniElement>;
+    button: React.DetailedHTMLProps<React.HTMLAttributes<MiniElement>, MiniElement>;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/main.tsx",
+                    r#"
+function MiniLink<T extends React.ElementType = React.ElementType>(
+  props: React.ComponentPropsWithRef<React.ElementType extends T ? "a" : T>,
+) {
+  return <a />;
+}
+
+<MiniLink onClick={(event) => { event.currentTarget; }} />;
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| matches!(diag.code, 2339 | 2740 | 7006))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck must still prepare skipped declaration heritage for JSX consumers: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
+
+    fn collect_es2015_default_lib_diagnostics_multifile_with_options(
+        files: &[(&str, &str)],
+        configure: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut file_paths = Vec::with_capacity(files.len());
+        for (name, source) in files {
+            let path = dir.path().join(name);
+            std::fs::write(&path, source).expect("write source");
+            file_paths.push(path);
+        }
+
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        configure(&mut resolved);
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            module_resolutions: _,
+            type_reference_errors,
+            resolution_mode_errors,
+            ..
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
+            None,
+            &type_cache_output,
+        )
+        .diagnostics
+    }
+
+    #[test]
+    fn skip_lib_check_preserves_declared_global_console_receiver() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {
+    span: {};
+  }
+}
+"#,
+                ),
+                (
+                    "main.tsx",
+                    r#"
+/// <reference path="./react-lite.d.ts" />
+console.log("ok");
+const element = <span />;
+"#,
+                ),
+            ],
+            |resolved| {
+                resolved.skip_lib_check = true;
+                resolved.checker.jsx_mode = JsxMode::React;
+                resolved.checker.es_module_interop = true;
+                resolved.checker.allow_synthetic_default_imports = true;
+            },
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && diag.message_text.contains("Property 'log'")
+            })
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck copied declaration materialization must not replace console with a stale lazy lib receiver: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
+
+    fn comlink_node_adapter_source() -> &'static str {
+        r#"
+import { Endpoint } from "./protocol";
+
+export interface NodeEndpoint {
+  postMessage(message: any, transfer?: any[]): void;
+  on(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  off(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  start?: () => void;
+}
+
+export default function nodeEndpoint(nep: NodeEndpoint): Endpoint {
+  const listeners = new WeakMap();
+  return {
+    postMessage: nep.postMessage.bind(nep),
+    addEventListener: (_, eh) => {
+      const l = (data: any) => {
+        if ("handleEvent" in eh) {
+          eh.handleEvent({ data } as MessageEvent);
+        } else {
+          eh({ data } as MessageEvent);
+        }
+      };
+      nep.on("message", l);
+      listeners.set(eh, l);
+    },
+    removeEventListener: (_, eh) => {
+      const l = listeners.get(eh);
+      if (!l) {
+        return;
+      }
+      nep.off("message", l);
+      listeners.delete(eh);
+    },
+    start: nep.start && nep.start.bind(nep),
+  };
+}
+"#
+    }
+
+    #[test]
+    fn skip_lib_check_preserves_dom_message_event_default_type_arg() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "protocol.ts",
+                    r#"
+export interface EventSource {
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+}
+
+export interface Endpoint extends EventSource {
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: {}
+  ): void;
+  postMessage(message: any, transfer?: Transferable[]): void;
+  start?: () => void;
+}
+
+export const enum WireValueType {
+  RAW = "RAW",
+  PROXY = "PROXY",
+  THROW = "THROW",
+  HANDLER = "HANDLER",
+}
+
+export type MessageID = string;
+
+export interface RawWireValue {
+  id?: string;
+  type: WireValueType.RAW;
+  value: {};
+}
+
+export interface HandlerWireValue {
+  id?: string;
+  type: WireValueType.HANDLER;
+  name: string;
+  value: unknown;
+}
+
+export type WireValue = RawWireValue | HandlerWireValue;
+
+export const enum MessageType {
+  GET = "GET",
+  SET = "SET",
+  APPLY = "APPLY",
+  CONSTRUCT = "CONSTRUCT",
+  ENDPOINT = "ENDPOINT",
+  RELEASE = "RELEASE",
+}
+
+export interface GetMessage {
+  id?: MessageID;
+  type: MessageType.GET;
+  path: string[];
+}
+
+export interface SetMessage {
+  id?: MessageID;
+  type: MessageType.SET;
+  path: string[];
+  value: WireValue;
+}
+
+export interface ApplyMessage {
+  id?: MessageID;
+  type: MessageType.APPLY;
+  path: string[];
+  argumentList: WireValue[];
+}
+
+export interface ConstructMessage {
+  id?: MessageID;
+  type: MessageType.CONSTRUCT;
+  path: string[];
+  argumentList: WireValue[];
+}
+
+export interface EndpointMessage {
+  id?: MessageID;
+  type: MessageType.ENDPOINT;
+}
+
+export interface ReleaseMessage {
+  id?: MessageID;
+  type: MessageType.RELEASE;
+}
+
+export type Message =
+  | GetMessage
+  | SetMessage
+  | ApplyMessage
+  | ConstructMessage
+  | EndpointMessage
+  | ReleaseMessage;
+"#,
+                ),
+                (
+                    "main.ts",
+                    r#"
+	import { Endpoint, Message, MessageType, WireValue } from "./protocol";
+
+	export const proxyMarker = Symbol("Comlink.proxy");
+	export const createEndpoint = Symbol("Comlink.endpoint");
+	export const releaseProxy = Symbol("Comlink.releaseProxy");
+	export const finalizer = Symbol("Comlink.finalizer");
+	const throwMarker = Symbol("Comlink.thrown");
+	export interface ProxyMarked {
+	  [proxyMarker]: true;
+	}
+	type Promisify<T> = T extends Promise<unknown> ? T : Promise<T>;
+	type Unpromisify<P> = P extends Promise<infer T> ? T : P;
+	type RemoteProperty<T> = T extends Function | ProxyMarked ? Remote<T> : Promisify<T>;
+	type LocalProperty<T> = T extends Function | ProxyMarked ? Local<T> : Unpromisify<T>;
+	export type ProxyOrClone<T> = T extends ProxyMarked ? Remote<T> : T;
+	export type UnproxyOrClone<T> = T extends RemoteObject<ProxyMarked> ? Local<T> : T;
+	export type RemoteObject<T> = { [P in keyof T]: RemoteProperty<T[P]> };
+	export type LocalObject<T> = { [P in keyof T]: LocalProperty<T[P]> };
+	export interface ProxyMethods {
+	  [createEndpoint]: () => Promise<MessagePort>;
+	  [releaseProxy]: () => void;
+	}
+	export type Remote<T> =
+	  RemoteObject<T> &
+	    (T extends (...args: infer TArguments) => infer TReturn
+	      ? (
+	          ...args: { [I in keyof TArguments]: UnproxyOrClone<TArguments[I]> }
+	        ) => Promisify<ProxyOrClone<Unpromisify<TReturn>>>
+	      : unknown) &
+	    (T extends { new (...args: infer TArguments): infer TInstance }
+	      ? {
+	          new (
+	            ...args: {
+	              [I in keyof TArguments]: UnproxyOrClone<TArguments[I]>;
+	            }
+	          ): Promisify<Remote<TInstance>>;
+	        }
+	      : unknown) &
+	    ProxyMethods;
+	type MaybePromise<T> = Promise<T> | T;
+	export type Local<T> =
+	  Omit<LocalObject<T>, keyof ProxyMethods> &
+	    (T extends (...args: infer TArguments) => infer TReturn
+	      ? (
+	          ...args: { [I in keyof TArguments]: ProxyOrClone<TArguments[I]> }
+	        ) => MaybePromise<UnproxyOrClone<Unpromisify<TReturn>>>
+	      : unknown) &
+	    (T extends { new (...args: infer TArguments): infer TInstance }
+	      ? {
+	          new (
+	            ...args: {
+	              [I in keyof TArguments]: ProxyOrClone<TArguments[I]>;
+	            }
+	          ): MaybePromise<Local<Unpromisify<TInstance>>>;
+	        }
+	      : unknown);
+
+	const isObject = (val: unknown): val is object =>
+	  (typeof val === "object" && val !== null) || typeof val === "function";
+
+	export interface TransferHandler<T, S> {
+	  canHandle(value: unknown): value is T;
+	  serialize(value: T): [S, Transferable[]];
+	  deserialize(value: S): T;
+	}
+
+	const proxyTransferHandler: TransferHandler<object, MessagePort> = {
+	  canHandle: (val): val is ProxyMarked =>
+	    isObject(val) && (val as ProxyMarked)[proxyMarker],
+	  serialize(obj) {
+	    const { port1, port2 } = new MessageChannel();
+	    expose(port1);
+	    return [port2, [port2]];
+	  },
+	  deserialize(port) {
+	    port.start();
+	    return wrap(port);
+	  },
+	};
+
+	interface ThrownValue {
+	  [throwMarker]: unknown;
+	  value: unknown;
+	}
+	type SerializedThrownValue =
+	  | { isError: true; value: Error }
+	  | { isError: false; value: unknown };
+	const throwTransferHandler: TransferHandler<
+	  ThrownValue,
+	  SerializedThrownValue
+	> = {
+	  canHandle: (value): value is ThrownValue =>
+	    isObject(value) && throwMarker in value,
+	  serialize({ value }) {
+	    if (value instanceof Error) {
+	      return [
+	        {
+	          isError: true,
+	          value,
+	        },
+	        [],
+	      ];
+	    }
+	    return [{ isError: false, value }, []];
+	  },
+	  deserialize(serialized) {
+	    if (serialized.isError) {
+	      throw serialized.value;
+	    }
+	    throw serialized.value;
+	  },
+	};
+
+	const transferHandlers = new Map<
+	  string,
+	  TransferHandler<unknown, unknown>
+	>([
+	  ["proxy", proxyTransferHandler],
+	  ["throw", throwTransferHandler],
+	]);
+
+type PendingListenersMap = Map<
+  string,
+  (value: WireValue | PromiseLike<WireValue>) => void
+>;
+
+declare const pendingListeners: PendingListenersMap;
+declare const allowedOrigins: (string | RegExp)[];
+declare const obj: any;
+declare function isAllowedOrigin(
+  allowedOrigins: (string | RegExp)[],
+  origin: string
+): boolean;
+declare function fromWireValue(value: WireValue): unknown;
+declare function toWireValue(value: unknown): [WireValue, Transferable[]];
+declare function transfer(value: MessagePort, transferables: Transferable[]): WireValue;
+declare function proxy(value: unknown): WireValue;
+declare function closeEndPoint(ep: Endpoint): void;
+
+export function expose(ep: Endpoint) {
+  ep.addEventListener("message", function callback(ev: MessageEvent) {
+    if (!ev || !ev.data) {
+      return;
+    }
+    if (!isAllowedOrigin(allowedOrigins, ev.origin)) {
+      return;
+    }
+    const { id, type, path } = {
+      path: [] as string[],
+      ...(ev.data as Message),
+    };
+    const argumentList = (ev.data.argumentList || []).map(fromWireValue);
+    let returnValue;
+    try {
+      const parent = path.slice(0, -1).reduce((obj, prop) => obj[prop], obj);
+      const rawValue = path.reduce((obj, prop) => obj[prop], obj);
+      switch (type) {
+        case MessageType.GET:
+          {
+            returnValue = rawValue;
+          }
+          break;
+        case MessageType.SET:
+          {
+            parent[path.slice(-1)[0]] = fromWireValue(ev.data.value);
+            returnValue = true;
+          }
+          break;
+        case MessageType.APPLY:
+          {
+            returnValue = rawValue.apply(parent, argumentList);
+          }
+          break;
+        case MessageType.CONSTRUCT:
+          {
+            const value = new rawValue(...argumentList);
+            returnValue = proxy(value);
+          }
+          break;
+        case MessageType.ENDPOINT:
+          {
+            const { port1, port2 } = new MessageChannel();
+            expose(port2);
+            returnValue = transfer(port1, [port1]);
+          }
+          break;
+        case MessageType.RELEASE:
+          {
+            returnValue = undefined;
+          }
+          break;
+        default:
+          return;
+      }
+    } catch (value) {
+      returnValue = { value };
+    }
+    Promise.resolve(returnValue)
+      .catch((value) => ({ value }))
+      .then((returnValue) => {
+        const [wireValue, transferables] = toWireValue(returnValue);
+        ep.postMessage({ ...wireValue, id }, transferables);
+        if (type === MessageType.RELEASE) {
+          ep.removeEventListener("message", callback as any);
+          closeEndPoint(ep);
+        }
+      });
+  } as any);
+}
+
+	export function wrap<T>(ep: Endpoint): Remote<T> {
+	  ep.addEventListener("message", function handleMessage(ev: Event) {
+	    const { data } = ev as MessageEvent;
+	    if (!data || !data.id) {
+	      return;
+	    }
+	    const resolver = pendingListeners.get(data.id);
+	    if (!resolver) {
+	      return;
+	    }
+	    resolver(data);
+	    pendingListeners.delete(data.id);
+	  });
+	  return {} as any;
+	}
+	"#,
+                ),
+                (
+                    "node-adapter.ts",
+                    comlink_node_adapter_source(),
+                ),
+            ],
+            |resolved| {
+                resolved.skip_lib_check = true;
+                resolved.printer.target = ScriptTarget::ES2022;
+                resolved.checker.target = ScriptTarget::ES2022;
+                resolved.printer.module = ModuleKind::ESNext;
+                resolved.checker.module = ModuleKind::ESNext;
+                resolved.module_resolution = Some(crate::config::ModuleResolutionKind::Bundler);
+                resolved.types = Some(Vec::new());
+                resolved.checker.types_explicitly_set = true;
+                resolved.lib_files = crate::config::resolve_lib_files(&[
+                    "es2022".to_string(),
+                    "dom".to_string(),
+                    "dom.iterable".to_string(),
+                ])
+                .expect("resolve explicit libs");
+                resolved.lib_is_default = false;
+            },
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                        | diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                )
+            })
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck must preserve defaulted MessageEvent<T = any> for source consumers: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn generic_intrinsic_lma_display_uses_dynamic_representative_tag() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+declare namespace React {
+  interface HTMLAttributes<T> {
+    owner?: T;
+  }
+  type DetailedHTMLProps<E, T> = E & { ref?: T };
+  type SFC<P = {}> = (props: P) => JSX.Element;
+}
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicAttributes {}
+  type LibraryManagedAttributes<C, P> =
+    C extends { propTypes: infer T; defaultProps: infer D; }
+      ? P
+      : C extends { propTypes: infer T; }
+        ? P
+        : C extends { defaultProps: infer D; }
+          ? P
+          : P;
+  interface IntrinsicElements {
+    div: React.DetailedHTMLProps<React.HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
+    span: React.DetailedHTMLProps<React.HTMLAttributes<HTMLSpanElement>, HTMLSpanElement>;
+  }
+}
+"#,
+                ),
+                (
+                    "main.tsx",
+                    r#"
+/// <reference path="./react-lite.d.ts" />
+type ElementTags = "span" | "div";
+export const Hoc = <Tag extends ElementTags>(TagElement: Tag): React.SFC => {
+  const Component = () => <TagElement />;
+  return Component;
+};
+"#,
+                ),
+            ],
+            |resolved| {
+                resolved.checker.jsx_mode = JsxMode::React;
+                resolved.checker.es_module_interop = true;
+                resolved.checker.allow_synthetic_default_imports = true;
+            },
+        );
+
+        let diag = diagnostics
+            .iter()
+            .find(|diag| {
+                diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && diag
+                        .message_text
+                        .contains("LibraryManagedAttributes<Tag, DetailedHTMLProps")
+            })
+            .expect("expected TS2322 for generic intrinsic LibraryManagedAttributes target");
+        assert!(
+            diag.message_text.contains("HTMLDivElement")
+                && !diag.message_text.contains("HTMLSpanElement"),
+            "generic intrinsic display must use the tsc representative tag: {diag:?}; all: {diagnostics:?}"
+        );
+    }

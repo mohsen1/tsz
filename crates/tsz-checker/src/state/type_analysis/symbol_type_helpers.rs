@@ -1,7 +1,7 @@
 //! Helper methods for symbol type resolution: circular constraint detection,
 //! type parameter identity checks, provisional function types, and numeric enum registration.
 
-use crate::query_boundaries::common::{TypeEnvironment, type_param_info};
+use crate::query_boundaries::common::type_param_info;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -503,13 +503,13 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a symbol is a numeric enum and register it in the `TypeEnvironment`.
+    /// Check if a symbol is a numeric enum and register it in both
+    /// `TypeEnvironment`s.
     ///
     /// This is used for Rule #7 (Open Numeric Enums) where number types are
     /// assignable to/from numeric enums.
     pub(crate) fn maybe_register_numeric_enum(
         &self,
-        env: &mut TypeEnvironment,
         sym_id: SymbolId,
         def_id: tsz_solver::def::DefId,
     ) {
@@ -562,7 +562,7 @@ impl<'a> CheckerState<'a> {
 
         // Register as numeric enum if it's numeric (not string-only)
         if saw_numeric && !saw_string {
-            env.register_numeric_enum(def_id);
+            self.ctx.register_numeric_enum_in_envs(def_id);
         }
     }
 }

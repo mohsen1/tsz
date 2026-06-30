@@ -432,6 +432,11 @@ impl<'a> CheckerState<'a> {
             && let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, constraint)
         {
+            if let Some(props_type) =
+                self.get_jsx_declared_intrinsic_display_props_type(tag_name_idx, &members)
+            {
+                return props_type;
+            }
             for member in members.into_iter().rev() {
                 if let Some(tag_name) = self.get_jsx_single_string_literal_tag_name(member)
                     && let Some(props_type) =
@@ -443,6 +448,44 @@ impl<'a> CheckerState<'a> {
         }
 
         fallback_type
+    }
+
+    fn get_jsx_declared_intrinsic_display_props_type(
+        &mut self,
+        tag_name_idx: NodeIndex,
+        members: &[TypeId],
+    ) -> Option<TypeId> {
+        let mut allowed_tags = rustc_hash::FxHashSet::default();
+        for &member in members {
+            let tag_atom =
+                crate::query_boundaries::common::string_literal_value(self.ctx.types, member)?;
+            allowed_tags.insert(tag_atom);
+        }
+        if allowed_tags.is_empty() {
+            return None;
+        }
+
+        let intrinsic_elements_type = self.get_intrinsic_elements_type()?;
+        let evaluated_intrinsic_elements = self.evaluate_type_with_env(intrinsic_elements_type);
+        let shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            evaluated_intrinsic_elements,
+        )?;
+
+        let tag_atom = shape
+            .properties
+            .iter()
+            .filter(|prop| {
+                prop.declaration_order > 0
+                    && !prop.is_symbol_named
+                    && allowed_tags.contains(&prop.name)
+            })
+            .min_by_key(|prop| prop.declaration_order)
+            .map(|prop| prop.name)?;
+
+        let tag_name = self.ctx.types.resolve_atom(tag_atom).as_str().to_string();
+        self.get_jsx_intrinsic_props_for_tag(tag_name_idx, &tag_name, false)
+            .filter(|&props_type| props_type != TypeId::ERROR)
     }
 
     pub(in crate::checkers_domain::jsx) fn jsx_dynamic_intrinsic_type_has_known_tag_constraint(

@@ -126,16 +126,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        // Phase 5 — evaluate the body under a fresh application-body epoch
-        // snapshot. Any `application_eval_cache` write made while finalizing THIS
-        // application (or a nested one, which saves/restores this field in turn)
-        // compares `limit_epoch` against `app_body_limit_epoch` to learn whether
-        // its own body subtree bailed, independent of an earlier unrelated
-        // sibling that already set the sticky `deep_recursion_seen` flag (#10834).
+        // Phase 5 — evaluate the body under fresh application-body epoch
+        // snapshots. Any `application_eval_cache` write made while finalizing
+        // THIS application (or a nested one, which saves/restores these fields
+        // in turn) compares the live epochs against the snapshots to learn
+        // whether its own body subtree bailed or observed an unresolved def,
+        // independent of earlier unrelated siblings (#10834).
         let saved_app_body_epoch = self.app_body_limit_epoch;
+        let saved_app_body_unresolved_def_epoch = self.app_body_unresolved_def_epoch;
         self.app_body_limit_epoch = self.limit_epoch;
+        self.app_body_unresolved_def_epoch = self.unresolved_def_epoch;
         let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
         self.app_body_limit_epoch = saved_app_body_epoch;
+        self.app_body_unresolved_def_epoch = saved_app_body_unresolved_def_epoch;
 
         // Phase 6 — outcome-dependent cleanup. ShortCircuit matches the
         // historical decrement-and-return shape; Computed restores the
@@ -929,6 +932,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.limit_epoch == self.app_body_limit_epoch
     }
 
+    #[inline]
+    const fn application_body_saw_unresolved_def(&self) -> bool {
+        self.unresolved_def_epoch != self.app_body_unresolved_def_epoch
+    }
+
     /// Insert into the application-eval cache iff `query_db` is connected and
     /// the result is safe to persist under the resolver-independent
     /// `(DefId, expanded_args, no_unchecked)` key.
@@ -942,7 +950,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// sibling reads. Reads use the same explicit `query_db` gate for the same
     /// reason.
     ///
-    /// The result is persisted when *either* permit holds:
+    /// A body that observed an unresolved def is never persisted: the concrete
+    /// fixpoint permit cannot prove stability once an under-resolved conditional
+    /// has collapsed to a concrete sentinel like `never`.
+    ///
+    /// Otherwise the result is persisted when *either* permit holds:
     /// - [`application_eval_result_cacheable`](Self::application_eval_result_cacheable):
     ///   no cycle/depth/iteration/divergence event fired in this application's
     ///   body subtree, so the result is not a stack-context artifact; or
@@ -957,8 +969,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         no_unchecked_indexed_access: bool,
         evaluated: TypeId,
     ) {
-        let cacheable = self.application_eval_result_cacheable()
-            || self.is_concrete_application_fixpoint(expanded_args, evaluated);
+        let body_saw_unresolved_def = self.application_body_saw_unresolved_def();
+        let cacheable = !body_saw_unresolved_def
+            && (self.application_eval_result_cacheable()
+                || self.is_concrete_application_fixpoint(expanded_args, evaluated));
         crate::evaluation::eval_materialization_probe::record_application_cache_insert(
             cacheable,
             self.query_db.is_some(),
@@ -1569,6 +1583,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 application: original_type_id,
             },
             AliasApplicationPriority::PreferApplication,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+    use crate::intern::TypeInterner;
+
+    #[test]
+    fn unresolved_def_body_blocks_concrete_fixpoint_application_cache_write() {
+        let types = TypeInterner::new();
+        let query_cache = QueryCache::new(&types);
+        let mut evaluator = TypeEvaluator::new(&types).with_query_db(&query_cache);
+        let def_id = DefId(901_001);
+        let args = [TypeId::STRING];
+
+        evaluator.app_body_limit_epoch = evaluator.limit_epoch;
+        evaluator.app_body_unresolved_def_epoch = evaluator.unresolved_def_epoch;
+        evaluator.mark_unresolved_def_seen();
+        evaluator.insert_application_eval_cache_if_some(def_id, &args, false, TypeId::NEVER);
+
+        assert_eq!(
+            query_cache.lookup_application_eval_cache(def_id, &args, false),
+            None,
+            "a concrete-looking result computed after a registration-window unresolved def \
+             must not enter the application_eval_cache",
+        );
+    }
+
+    #[test]
+    fn prior_unresolved_def_does_not_block_later_clean_application_cache_write() {
+        let types = TypeInterner::new();
+        let query_cache = QueryCache::new(&types);
+        let mut evaluator = TypeEvaluator::new(&types).with_query_db(&query_cache);
+        let def_id = DefId(901_002);
+        let args = [TypeId::NUMBER];
+
+        evaluator.mark_unresolved_def_seen();
+        evaluator.app_body_limit_epoch = evaluator.limit_epoch;
+        evaluator.app_body_unresolved_def_epoch = evaluator.unresolved_def_epoch;
+        evaluator.insert_application_eval_cache_if_some(def_id, &args, false, TypeId::STRING);
+
+        assert_eq!(
+            query_cache.lookup_application_eval_cache(def_id, &args, false),
+            Some(TypeId::STRING),
+            "the unresolved-def epoch is per application body, not a sticky global \
+             application_eval_cache disable",
         );
     }
 }

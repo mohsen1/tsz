@@ -239,3 +239,23 @@ pub(super) fn topological_file_order(
 
     result
 }
+
+fn is_declaration_file_name(name: &str) -> bool {
+    tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
+}
+
+fn is_node_modules_declaration_file(name: &str) -> bool {
+    is_declaration_file_name(name)
+        && std::path::Path::new(name)
+            .components()
+            .any(|component| component.as_os_str() == "node_modules")
+}
+
+pub(super) fn order_fresh_check_work_items(
+    work_items: &mut Vec<usize>,
+    resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    program: &MergedProgram,
+) {
+    *work_items = topological_file_order(work_items, resolved_module_paths);
+    work_items.sort_by_key(|&idx| is_node_modules_declaration_file(&program.files[idx].file_name));
+}

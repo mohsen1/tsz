@@ -5,6 +5,14 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn written_keyof_any_constraint_display(
+        &self,
+        constraint: TypeId,
+    ) -> Option<String> {
+        let keyof_inner = query_common::keyof_inner_type(self.ctx.types, constraint)?;
+        (keyof_inner == TypeId::ANY).then(|| "string | number | symbol".to_string())
+    }
+
     /// Reference (display) form of a type argument for rendering a constraint
     /// in a diagnostic. A non-generic named type used as a type argument is
     /// interned as its inlined body, so substituting it into a `keyof T`
