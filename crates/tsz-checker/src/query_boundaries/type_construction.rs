@@ -5,10 +5,14 @@
 //! over direct `TypeInterner` access. Test code may use the re-exported
 //! `TypeInterner` type for scaffolding.
 
+use tsz_binder::SymbolId;
+use tsz_common::Atom;
 use tsz_solver::construction::TypeDatabase;
 #[cfg(test)]
 pub(crate) use tsz_solver::construction::TypeInterner;
-use tsz_solver::{IndexSignature, ObjectShape, StringIntrinsicKind, TypeId};
+use tsz_solver::{
+    IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind, TypeId,
+};
 
 /// Intern an object type carrying only a string index signature
 /// (`{ [key: string]: V }`).
@@ -24,6 +28,49 @@ pub(crate) fn object_with_string_index_value(
             readonly,
             param_name: None,
         }),
+        ..ObjectShape::default()
+    })
+}
+
+fn enum_namespace_flags(is_const_enum: bool) -> ObjectFlags {
+    let mut flags = ObjectFlags::ENUM_NAMESPACE;
+    if is_const_enum {
+        flags |= ObjectFlags::CONST_ENUM;
+    }
+    flags
+}
+
+/// Intern a `typeof Enum` namespace object without exposing raw solver flags to
+/// checker call sites.
+pub(crate) fn enum_namespace_object(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    symbol: Option<SymbolId>,
+    is_const_enum: bool,
+) -> TypeId {
+    db.object_with_flags_and_symbol(properties, enum_namespace_flags(is_const_enum), symbol)
+}
+
+/// Intern a numeric/mixed enum namespace object with the implicit reverse-map
+/// number index used by value-side element access.
+pub(crate) fn enum_namespace_object_with_number_reverse_map(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    symbol: Option<SymbolId>,
+    index_param_name: Option<Atom>,
+    index_readonly: bool,
+    is_const_enum: bool,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        flags: enum_namespace_flags(is_const_enum),
+        properties,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::STRING,
+            readonly: index_readonly,
+            param_name: index_param_name,
+        }),
+        symbol,
         ..ObjectShape::default()
     })
 }

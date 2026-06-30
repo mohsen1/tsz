@@ -28,7 +28,7 @@ impl CheckerState<'_> {
     // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo};
+        use tsz_solver::PropertyInfo;
 
         let factory = self.ctx.types.factory();
         let symbol = self
@@ -132,30 +132,32 @@ impl CheckerState<'_> {
         // of the member names only (`"A" | "B" | ...`), never `number`, even
         // though `E[someNumber]` reverse-mapping element access still resolves to
         // `string`. Without the flag the numeric index leaked into `keyof`.
-        let mut flags = tsz_solver::ObjectFlags::ENUM_NAMESPACE;
-        if is_const_enum {
-            flags |= tsz_solver::ObjectFlags::CONST_ENUM;
-        }
         if matches!(
             self.enum_kind(sym_id),
             Some(EnumKind::Numeric) | Some(EnumKind::Mixed)
         ) {
-            let number_index = Some(IndexSignature {
-                key_type: TypeId::NUMBER,
-                value_type: TypeId::STRING,
-                readonly: true,
-                param_name: None,
-            });
-            return Some(factory.object_with_index(ObjectShape {
-                flags,
-                properties,
-                number_index,
-                ..ObjectShape::default()
-            }));
+            return Some(
+                crate::query_boundaries::type_construction::enum_namespace_object_with_number_reverse_map(
+                    self.ctx.types,
+                    properties,
+                    None,
+                    None,
+                    true,
+                    is_const_enum,
+                ),
+            );
         }
 
-        Some(factory.object_with_flags_and_symbol(properties, flags, None))
+        Some(
+            crate::query_boundaries::type_construction::enum_namespace_object(
+                self.ctx.types,
+                properties,
+                None,
+                is_const_enum,
+            ),
+        )
     }
+
     /// Evaluate complex type constructs for assignability checking.
     ///
     /// This function pre-processes types before assignability checking to ensure

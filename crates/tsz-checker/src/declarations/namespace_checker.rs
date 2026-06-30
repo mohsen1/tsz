@@ -1,7 +1,7 @@
 //! Namespace type merging and re-export resolution for declaration merging.
 
 use crate::query_boundaries::class_type as query;
-use crate::query_boundaries::common::ObjectFlags;
+use crate::query_boundaries::type_construction;
 use crate::state::{CheckerState, EnumKind};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
@@ -9,7 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{IndexSignature, ObjectShape, TypeId, Visibility};
+use tsz_solver::{TypeId, Visibility};
 
 /// Maximum recursion depth for namespace export merging.
 ///
@@ -402,14 +402,13 @@ impl<'a> CheckerState<'a> {
         }
         self.ctx.symbol_resolution_depth.set(depth);
         Self::normalize_namespace_export_declaration_order(&mut props);
-        // Use object_with_flags_and_symbol to preserve the namespace's SymbolId.
-        // This enables the type formatter to detect the namespace and display
-        // it as `typeof M` instead of expanding to the structural object shape.
-        let namespace_type = self.ctx.types.factory().object_with_flags_and_symbol(
-            props,
-            ObjectFlags::empty(),
-            Some(sym_id),
-        );
+        // Preserve the namespace's SymbolId so the type formatter displays the
+        // value surface as `typeof M` instead of expanding its object shape.
+        let namespace_type = self
+            .ctx
+            .types
+            .factory()
+            .object_with_symbol(props, Some(sym_id));
         self.ctx
             .symbol_instance_types
             .insert(sym_id, namespace_type);
@@ -904,23 +903,20 @@ impl<'a> CheckerState<'a> {
 
         if needs_reverse_map {
             let index_name = self.ctx.types.intern_string("index");
-            self.ctx.types.factory().object_with_index(ObjectShape {
-                flags: ObjectFlags::ENUM_NAMESPACE,
+            type_construction::enum_namespace_object_with_number_reverse_map(
+                self.ctx.types,
                 properties,
-                number_index: Some(IndexSignature {
-                    key_type: TypeId::NUMBER,
-                    value_type: TypeId::STRING,
-                    readonly: false,
-                    param_name: Some(index_name),
-                }),
-                symbol: Some(sym_id),
-                ..ObjectShape::default()
-            })
-        } else {
-            self.ctx.types.object_with_flags_and_symbol(
-                properties,
-                ObjectFlags::ENUM_NAMESPACE,
                 Some(sym_id),
+                Some(index_name),
+                false,
+                false,
+            )
+        } else {
+            type_construction::enum_namespace_object(
+                self.ctx.types,
+                properties,
+                Some(sym_id),
+                false,
             )
         }
     }
