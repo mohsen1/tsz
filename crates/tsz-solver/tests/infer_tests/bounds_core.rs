@@ -506,6 +506,42 @@ fn test_resolve_mutual_circular_upper_bounds_with_concrete() {
 }
 
 #[test]
+fn test_resolve_mutual_circular_upper_bounds_renamed_binders_with_concrete() {
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+    let left_name = interner.intern_string("LeftParam");
+    let right_name = interner.intern_string("RightParam");
+
+    let var_left = ctx.fresh_type_param(left_name, false);
+    let var_right = ctx.fresh_type_param(right_name, false);
+
+    let left_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: left_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+    let right_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: right_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+
+    ctx.add_upper_bound(var_left, right_type);
+    ctx.add_upper_bound(var_right, left_type);
+    ctx.add_upper_bound(var_left, TypeId::STRING);
+
+    let result_left = ctx.resolve_with_constraints(var_left).unwrap();
+    let result_right = ctx.resolve_with_constraints(var_right).unwrap();
+
+    assert_eq!(result_left, TypeId::STRING);
+    assert_eq!(result_right, TypeId::STRING);
+}
+
+#[test]
 fn test_resolve_self_recursive_object_bounds_two_params_unknown() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
