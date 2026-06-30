@@ -4,6 +4,7 @@
 //! (exist only at the type level with no runtime value). Used by the checker
 //! to decide when to emit TS2708 and related diagnostics.
 
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -662,7 +663,7 @@ impl<'a> CheckerState<'a> {
 
             // TypeQuery (typeof M): resolve to the underlying symbol type and re-check
             NamespaceMemberKind::TypeQuery(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return false;
                 };
@@ -1091,7 +1092,7 @@ impl<'a> CheckerState<'a> {
                 is_pure_namespace_or_enum(symbol)
             }
             NamespaceMemberKind::ModuleNamespace(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
                     return false;
                 };
@@ -1100,7 +1101,7 @@ impl<'a> CheckerState<'a> {
             NamespaceMemberKind::Enum(_) => true,
             NamespaceMemberKind::TypeQuery(sym_ref) => {
                 // TypeQuery (typeof M): check if the underlying symbol is a namespace
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return false;
                 };
@@ -1126,7 +1127,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
         let sym_id = match classify_namespace_member(self.ctx.types, object_type) {
-            NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            NamespaceMemberKind::TypeQuery(sym_ref) => symbol_ref_to_symbol_id(sym_ref),
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
             _ => return None,
         };

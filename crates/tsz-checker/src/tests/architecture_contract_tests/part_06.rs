@@ -11,7 +11,7 @@ use super::*;
 /// bridge.
 #[test]
 fn test_symbol_ref_to_symbol_id_cast_budget() {
-    const RAW_SYMBOL_REF_CAST_BUDGET: usize = 35;
+    const RAW_SYMBOL_REF_CAST_BUDGET: usize = 21;
     const BRIDGE_PATH: &str = "src/query_boundaries/definition_identity.rs";
 
     fn is_raw_symbol_ref_cast(line: &str) -> bool {

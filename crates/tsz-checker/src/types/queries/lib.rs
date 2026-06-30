@@ -9,6 +9,7 @@ use super::lib_resolution::{
     resolve_lib_node_in_lib_contexts,
 };
 use crate::query_boundaries::common::TypeResolver;
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::{
@@ -799,7 +800,7 @@ impl<'a> CheckerState<'a> {
         // This fixes property access on variables typed as `typeof Namespace`:
         //   var m: typeof M; m.Point  → should resolve namespace export "Point"
         if let NamespaceMemberKind::TypeQuery(sym_ref) = classification {
-            let sym_id = SymbolId(sym_ref.0);
+            let sym_id = symbol_ref_to_symbol_id(sym_ref);
             if self
                 .get_cross_file_symbol(sym_id)
                 .is_some_and(|symbol| symbol.is_umd_export)
@@ -1006,7 +1007,7 @@ impl<'a> CheckerState<'a> {
 
             // Handle ModuleNamespace types (import * as ns / namespace value bindings)
             NamespaceMemberKind::ModuleNamespace(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 let (
                     symbol_flags_value,
                     module_name,

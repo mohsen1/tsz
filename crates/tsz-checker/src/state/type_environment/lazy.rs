@@ -3,6 +3,7 @@
 use crate::query_boundaries::common::{
     TypeResolver, contains_lazy_or_recursive, enum_def_id, get_type_query_symbol_ref, lazy_def_id,
 };
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::query_boundaries::state::type_environment as query;
 use crate::query_boundaries::type_defaults::fill_application_defaults;
 use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
@@ -605,7 +606,7 @@ impl CheckerState<'_> {
     fn resolve_type_queries_for_eval(&mut self, type_id: TypeId) {
         let type_queries = self.ctx.collect_type_queries_cached(type_id);
         for symbol_ref in type_queries.iter().copied() {
-            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let sym_id = symbol_ref_to_symbol_id(symbol_ref);
             let _ = self.get_type_of_symbol(sym_id);
             let value_type = self.ctx.symbol_types.get(&sym_id).unwrap_or(TypeId::ERROR);
             // When circular resolution causes ERROR (e.g. `let Anon = class<T> {}` and
@@ -944,7 +945,6 @@ impl CheckerState<'_> {
         type_id: TypeId,
         visited: &mut PropertyAccessVisited,
     ) -> TypeId {
-        use tsz_binder::SymbolId;
         let factory = self.ctx.types.factory();
 
         if !visited.insert(type_id) {
@@ -1105,7 +1105,7 @@ impl CheckerState<'_> {
                 }
             }
             query::PropertyAccessResolutionKind::TypeQuery(sym_ref) => {
-                let resolved = self.get_type_of_symbol(SymbolId(sym_ref.0));
+                let resolved = self.get_type_of_symbol(symbol_ref_to_symbol_id(sym_ref));
                 if resolved == type_id {
                     type_id
                 } else {
@@ -1749,7 +1749,7 @@ impl CheckerState<'_> {
                     continue;
                 }
 
-                let sym_id = SymbolId(symbol_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(symbol_ref);
                 let symbol = self.ctx.binder.get_symbol(sym_id);
                 if symbol.is_none() {
                     continue;

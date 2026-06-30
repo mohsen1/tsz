@@ -10,6 +10,7 @@ use crate::query_boundaries::assignability::{
     is_relation_cacheable, is_subtype_with_resolver, mutable_array_element_for_redeclaration,
     subtype_cache_key,
 };
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
@@ -56,7 +57,7 @@ impl<'a> CheckerState<'a> {
 
         // Helper to check if a symbol is a class (for nominal subtyping)
         let is_class_fn = |sym_ref: tsz_solver::SymbolRef| -> bool {
-            let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            let sym_id = symbol_ref_to_symbol_id(sym_ref);
             if let Some(sym) = binder.get_symbol(sym_id) {
                 sym.has_any_flags(symbol_flags::CLASS)
             } else {

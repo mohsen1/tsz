@@ -5,6 +5,7 @@ use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, classify_for_assignability_eval, get_keyof_type,
     get_string_literal_value, get_union_members, keyof_object_properties, map_compound_members,
 };
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -736,7 +737,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .copied()
             {
-                let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(symbol_ref);
                 let _ = self.get_type_of_symbol(sym_id);
                 // Populate type_env with the VALUE type (constructor for classes) so that
                 // TypeEvaluator::visit_type_query can resolve via TypeEnvironment::resolve_ref.
@@ -941,7 +942,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.as_type_database(),
                     type_id,
                 ) {
-                    let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+                    let sym_id = symbol_ref_to_symbol_id(symbol_ref);
                     // For merged TYPE_ALIAS + VARIABLE symbols (e.g.,
                     // `type Input = Static<typeof Input>` + `const Input = ...`),
                     // get_type_of_symbol may return the type alias's circular
