@@ -461,6 +461,33 @@ fn deep_reduce_handles_self_referential_union_via_visited_guard() {
     assert_eq!(reduced, outer_i);
 }
 
+#[test]
+fn deep_reduce_visit_state_names_intrinsic_skip() {
+    let mut visited = rustc_hash::FxHashSet::default();
+
+    assert_eq!(
+        DeepReduceVisitState::enter(TypeId::STRING, &mut visited),
+        DeepReduceVisitState::Intrinsic
+    );
+    assert!(visited.is_empty());
+}
+
+#[test]
+fn deep_reduce_visit_state_names_entered_and_revisit() {
+    let interner = TypeInterner::new();
+    let type_id = interner.object(vec![]);
+    let mut visited = rustc_hash::FxHashSet::default();
+
+    assert_eq!(
+        DeepReduceVisitState::enter(type_id, &mut visited),
+        DeepReduceVisitState::Entered
+    );
+    assert_eq!(
+        DeepReduceVisitState::enter(type_id, &mut visited),
+        DeepReduceVisitState::AlreadyVisited
+    );
+}
+
 // =============================================================================
 // Application with reducible inner — current contract: Application leaves
 // are NOT recursed into, only `evaluate(...)` is asked. Lock that.

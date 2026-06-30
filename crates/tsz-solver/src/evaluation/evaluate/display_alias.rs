@@ -8,6 +8,25 @@ use crate::relations::subtype::TypeResolver;
 use crate::types::{TypeData, TypeId};
 use rustc_hash::FxHashSet;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AliasDefReachVisitState {
+    Intrinsic,
+    Entered,
+    AlreadyVisited,
+}
+
+impl AliasDefReachVisitState {
+    fn enter(type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> Self {
+        if type_id.is_intrinsic() {
+            Self::Intrinsic
+        } else if visited.insert(type_id) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub(in crate::evaluation) fn should_record_application_alias(
         &self,
@@ -89,8 +108,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         target_def_id: DefId,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
-        if type_id.is_intrinsic() || !visited.insert(type_id) {
-            return false;
+        match AliasDefReachVisitState::enter(type_id, visited) {
+            AliasDefReachVisitState::Intrinsic | AliasDefReachVisitState::AlreadyVisited => {
+                return false;
+            }
+            AliasDefReachVisitState::Entered => {}
         }
         match self.interner.lookup(type_id) {
             Some(TypeData::Lazy(def_id))
@@ -231,3 +253,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../../tests/display_alias_visit_state_tests.rs"]
+mod display_alias_visit_state_tests;
