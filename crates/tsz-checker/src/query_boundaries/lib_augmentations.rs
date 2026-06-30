@@ -1,5 +1,5 @@
 use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{DefId, TypeId};
+use tsz_solver::{DefId, ObjectFlags, TypeId};
 
 /// True when `candidate`'s named-property set is a strict subset of
 /// `current`'s named-property set.
@@ -34,6 +34,17 @@ pub(crate) fn lib_body_strictly_loses_members(
             .properties
             .iter()
             .any(|cur| cur.name == cand.name)
+    })
+}
+
+pub(crate) fn suppresses_module_augmentation_lookup(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+) -> bool {
+    super::common::object_shape_for_type(db, object_type).is_some_and(|shape| {
+        shape
+            .flags
+            .contains(ObjectFlags::NO_MODULE_AUGMENTATION_LOOKUP)
     })
 }
 

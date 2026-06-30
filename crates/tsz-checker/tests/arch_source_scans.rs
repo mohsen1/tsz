@@ -26,5 +26,7 @@
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
+#[path = "arch_source_scans/object_flags_boundary_scans.rs"]
+mod object_flags_boundary_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
 mod relation_routing_residual_arch_tests;

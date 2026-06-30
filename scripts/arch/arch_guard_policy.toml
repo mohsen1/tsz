@@ -111,19 +111,13 @@ ignore_comment_lines = true
 # is verified in the PR.
 
 [[pattern_checks]]
-name = "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)"
+name = "Checker boundary: ObjectFlags stay behind query boundaries"
 base = "crates/tsz-checker/src"
 pattern = '\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::'
 exclude_dirs = ["tests"]
 exclude_files = [
-  # Pre-existing: type_environment uses ObjectFlags for const enum checks
-  "crates/tsz-checker/src/state/type_environment/core.rs",
-  # Pre-existing: namespace_checker creates enum namespace objects with ENUM_NAMESPACE flag
-  "crates/tsz-checker/src/declarations/namespace_checker.rs",
-  # Pre-existing baseline debt
-  "crates/tsz-checker/src/query_boundaries/common.rs",
-  "crates/tsz-checker/src/types/property_access_augmentation.rs",
-  "crates/tsz-checker/src/types/class_type/core.rs",
+  "crates/tsz-checker/src/query_boundaries/lib_augmentations.rs",
+  "crates/tsz-checker/src/query_boundaries/type_construction.rs",
 ]
 ignore_comment_lines = true
 

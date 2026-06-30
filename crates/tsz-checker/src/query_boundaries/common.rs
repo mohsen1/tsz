@@ -23,7 +23,7 @@ pub(crate) use tsz_solver::type_queries::{
     remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    FunctionShape, IntrinsicKind, MappedType, ObjectFlags, ParamInfo, PendingDiagnostic,
+    FunctionShape, IntrinsicKind, MappedType, ParamInfo, PendingDiagnostic,
     PendingDiagnosticBuilder, SourceLocation, SubtypeFailureReason, TypeFormatter,
     computation::{ContextualTypeContext, TypeSubstitution},
 };
