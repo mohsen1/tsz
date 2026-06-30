@@ -105,8 +105,18 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn register_boxed_types(&mut self) {
         use crate::query_boundaries::common::IntrinsicKind;
 
-        // Only register if lib files are loaded
-        if !self.ctx.has_lib_loaded() {
+        // Register the boxed-primitive / `Array<T>` base types so property access
+        // (e.g. `arr.every(...)`, `"s".match(...)`) resolves through the actual
+        // interface declarations rather than hardcoded fallbacks.
+        //
+        // With lib files loaded these come from lib.d.ts. Under `--noLib` the
+        // program supplies its own ambient global declarations (`interface
+        // Array<T>`, `interface String`, ...) and tsc uses *those* as the
+        // apparent/base types — so the registration must still run when the user
+        // declares them. Skip only when neither lib is loaded nor any of these
+        // globals is user-declared, since then there is nothing to register and
+        // the per-file arena scan below would be wasted work.
+        if !self.ctx.has_lib_loaded() && !self.has_user_declared_registerable_global() {
             return;
         }
 
@@ -489,6 +499,24 @@ impl<'a> CheckerState<'a> {
                 env.set_array_base_type(ty, array_type_params_for_flow);
             }
         }
+    }
+
+    /// Whether the program declares its own global `Array<T>` / boxed-primitive
+    /// interface (`String`, `Number`, ...) as an ambient global. Under `--noLib`
+    /// these are the user's responsibility, and tsc treats them as the
+    /// apparent/base types for arrays and primitives; tsz must register them so
+    /// member access resolves uniformly (including through every union member,
+    /// not just a bare receiver). Built-in name resolution here keys off the
+    /// fixed set of types `register_boxed_types` knows how to register, not on
+    /// any user-chosen identifier.
+    fn has_user_declared_registerable_global(&self) -> bool {
+        const REGISTERABLE_GLOBAL_TYPES: &[&str] = &[
+            "Array", "String", "Number", "Boolean", "Symbol", "BigInt", "Object", "Function",
+        ];
+        REGISTERABLE_GLOBAL_TYPES.iter().any(|&name| {
+            self.ctx.binder.get_global_type(name).is_some()
+                || self.ctx.binder.program_global_type(name).is_some()
+        })
     }
 
     /// Prime boxed and Array base types before checking files.
