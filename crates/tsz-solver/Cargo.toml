@@ -40,6 +40,10 @@ name = "architecture_guards"
 path = "tests/architecture_guards.rs"
 
 [[test]]
+name = "relation_cache_architecture_tests"
+path = "tests/relation_cache_architecture_tests.rs"
+
+[[test]]
 name = "public_api_tests"
 path = "tests/public_api_tests.rs"
 

@@ -209,6 +209,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
     let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
+    let infer_match_expansion_rs =
+        read_solver_source("evaluation/evaluate_rules/infer_match_expansion.rs");
     let instantiation_result_rs = read_solver_source("instantiation/result.rs");
     let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
     let subtype_core_rs = read_solver_source("relations/subtype/core.rs");
@@ -280,10 +282,13 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && result_rs.contains("cache_stability: EvaluationMemoStability")
             && !result_rs.contains("stable_for_depth_agnostic_cache: bool")
             && cross_eval_guard_rs.contains("EvaluationMemoResult::unstable_complete(TypeId(80))")
-            && infer_pattern_rs.contains("EvaluationMemoResult::unstable_complete(type_id)")
+            && infer_match_expansion_rs
+                .contains("EvaluationMemoResult::unstable_complete(type_id)")
             && !cross_eval_guard_rs
                 .contains("EvaluationMemoResult::new(EvaluationResult::complete")
-            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete"),
+            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete")
+            && !infer_match_expansion_rs
+                .contains("EvaluationMemoResult::new(EvaluationResult::complete"),
         "unstable complete memo results must use the named EvaluationMemoResult boundary instead of rebuilding the stability bit by hand"
     );
     assert!(
