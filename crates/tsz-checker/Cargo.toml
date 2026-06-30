@@ -563,6 +563,9 @@ path = "tests/ts1239_parameter_decorator_tests.rs"
 name = "ts2636_method_bivariance_tests"
 path = "tests/ts2636_method_bivariance_tests.rs"
 [[test]]
+name = "ts2636_variance_elaboration_tests"
+path = "tests/ts2636_variance_elaboration_tests.rs"
+[[test]]
 name = "function_bivariance"
 path = "tests/function_bivariance.rs"
 [[test]]

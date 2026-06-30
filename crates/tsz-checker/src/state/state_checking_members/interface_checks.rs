@@ -644,6 +644,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // DefId for the declaration under check, shared by the variance
+        // computation and the TS2636 elaboration body resolution below.
+        let variance_def_id = self
+            .ctx
+            .binder
+            .get_node_symbol(stmt_idx)
+            .and_then(|sid| self.ctx.get_existing_def_id(sid));
+
         // Compute all variances upfront (immutable borrow of self.ctx)
         // to avoid borrow conflicts with error_at_node (mutable borrow).
         let computed_variances: Vec<Option<tsz_solver::type_handles::Variance>> = {
@@ -652,9 +660,7 @@ impl<'a> CheckerState<'a> {
 
             // Try DefId-based resolution first (works for interfaces/classes and
             // type aliases whose bodies are already resolved)
-            let sym_id = self.ctx.binder.get_node_symbol(stmt_idx);
-            let def_id = sym_id.and_then(|sid| self.ctx.get_existing_def_id(sid));
-            let def_variances = def_id.and_then(|did| {
+            let def_variances = variance_def_id.and_then(|did| {
                 crate::query_boundaries::variance::compute_actual_type_param_variances_with_resolver(
                     db, resolver, did,
                 )
@@ -700,6 +706,17 @@ impl<'a> CheckerState<'a> {
                 Some(ident.escaped_text.clone())
             })
             .collect();
+
+        // Declaration body for the TS2636 nested elaboration, resolved lazily
+        // and at most once — only when a violation actually fires, so the
+        // common clean-annotation case pays nothing. Type aliases pass
+        // `body_type` directly (its DefId body may not be resolved yet);
+        // interfaces/classes resolve it from the DefId. A degenerate body
+        // (`unknown`/`error`/`any`, e.g. a circular alias) yields no usable
+        // relation reason, so the elaboration is left off there.
+        let body_is_usable =
+            |b: TypeId| b != TypeId::UNKNOWN && b != TypeId::ERROR && b != TypeId::ANY;
+        let mut elaboration_body: Option<Option<TypeId>> = None;
 
         for (idx, (i, info)) in annotated_params.iter().enumerate() {
             let Some(actual_variance) = computed_variances[idx] else {
@@ -761,12 +778,135 @@ impl<'a> CheckerState<'a> {
                 .replace("{0}", &sub_type)
                 .replace("{1}", &super_type);
 
-            self.error_at_node(
-                info.modifier_idx,
-                &message,
-                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_AS_IMPLIED_BY_VARIANCE_ANNOTATION,
-            );
+            // tsc's `checkTypeParameterDeferred` does not hand-build this
+            // message: it runs `checkTypeAssignableTo(source, target)` over the
+            // declaration body with marker substitutions for the annotated
+            // parameter, and the relation's failure reason supplies the nested
+            // elaboration tail (`The types returned by 'f()' are incompatible…`,
+            // `Types of property 'x' are incompatible…`). Reproduce that tail by
+            // running the same relation through the shared assignability gateway
+            // and grafting its reason chain under the TS2636 head. The decision
+            // is unchanged (still gated by the computed variance above); only the
+            // elaboration is added. Falls back to the flat message when the body
+            // is unavailable or the relation does not fail (e.g. the body's free
+            // parameter could not be substituted).
+            let code = crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_AS_IMPLIED_BY_VARIANCE_ANNOTATION;
+            let body = *elaboration_body.get_or_insert_with(|| {
+                body_type.filter(|b| body_is_usable(*b)).or_else(|| {
+                    variance_def_id.and_then(|did| {
+                        let db = self.ctx.types.as_type_database();
+                        let resolver = &self.ctx as &dyn tsz_solver::def::resolver::TypeResolver;
+                        resolver
+                            .resolve_lazy(did, db)
+                            .filter(|b| body_is_usable(*b))
+                    })
+                })
+            });
+            let related = body
+                .map(|body| {
+                    self.variance_annotation_elaboration(
+                        body,
+                        info.atom,
+                        &info.name,
+                        info.declared_out,
+                        info.modifier_idx,
+                    )
+                })
+                .unwrap_or_default();
+            if related.is_empty() {
+                self.error_at_node(info.modifier_idx, &message, code);
+            } else {
+                self.error_at_node_with_related(info.modifier_idx, &message, code, related);
+            }
         }
+    }
+
+    /// Build the nested relation-reason elaboration `tsc` attaches beneath a
+    /// TS2636 variance-annotation violation.
+    ///
+    /// Mirrors tsc's `checkTypeParameterDeferred`: it substitutes a pair of
+    /// marker type parameters (`sub-T` constrained `<: super-T`) for the
+    /// annotated parameter in the declaration `body` — `sub-T` for the source
+    /// and `super-T` for the target under `out` (covariant), swapped under `in`
+    /// (contravariant) — then runs the real assignability relation. The
+    /// relation's failure reason renders the same drill-down tail tsc emits
+    /// (return-type, property, and contravariant-parameter frames). The markers
+    /// print as `super-T`/`sub-T` because a `TypeParameter` renders as its name.
+    ///
+    /// Returns the related-information chain (without the relation's own top
+    /// line, which the TS2636 head already states), or an empty vector when the
+    /// relation does not fail — in which case the caller emits the flat message.
+    fn variance_annotation_elaboration(
+        &mut self,
+        body: TypeId,
+        target_atom: tsz_common::interner::Atom,
+        name: &str,
+        declared_out: bool,
+        anchor_idx: NodeIndex,
+    ) -> Vec<crate::diagnostics::DiagnosticRelatedInformation> {
+        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+
+        let super_atom = self.ctx.types.intern_string(&format!("super-{name}"));
+        let sub_atom = self.ctx.types.intern_string(&format!("sub-{name}"));
+        let (super_marker, sub_marker) = {
+            let factory = self.ctx.types.factory();
+            // Two distinct unconstrained marker type parameters. They are
+            // mutually unassignable, so whichever direction the annotation
+            // implies fails exactly where the parameter occurs. They are left
+            // unconstrained on purpose: a `sub-T extends super-T` constraint
+            // would make the relation append tsc's "'super-T' is assignable to
+            // the constraint of type 'sub-T', but 'sub-T' could be instantiated
+            // with a different subtype" tail, which tsc does not emit for the
+            // variance-marker check.
+            let super_marker = factory.type_param(TypeParamInfo::simple(super_atom));
+            let sub_marker = factory.type_param(TypeParamInfo::simple(sub_atom));
+            (super_marker, sub_marker)
+        };
+        // `out T` (covariant) checks `body<sub-T> <: body<super-T>`; `in T`
+        // (contravariant) checks `body<super-T> <: body<sub-T>`. Matches the
+        // sub/super orientation of the hand-built top line above.
+        let (source_marker, target_marker) = if declared_out {
+            (sub_marker, super_marker)
+        } else {
+            (super_marker, sub_marker)
+        };
+        let source = instantiate_type(
+            self.ctx.types,
+            body,
+            &TypeSubstitution::single(target_atom, source_marker),
+        );
+        let target = instantiate_type(
+            self.ctx.types,
+            body,
+            &TypeSubstitution::single(target_atom, target_marker),
+        );
+        // No substitution happened (atom mismatch) or the relation holds: leave
+        // the decision to the caller's flat message rather than inventing a tail.
+        if source == target {
+            return Vec::new();
+        }
+        let analysis = self.analyze_assignability_failure(source, target);
+        let Some(reason) = analysis.failure_reason else {
+            return Vec::new();
+        };
+        // `render_failure_reason` builds the relation's own top line as
+        // `message_text` and the drill-down as `related_information`; the TS2636
+        // head already states the top line, so keep only the drill-down.
+        let mut diag = self.render_failure_reason(&reason, source, target, anchor_idx, 0);
+        // Drop the bare-type-parameter-target notes (TS5082 "could be
+        // instantiated with an arbitrary type" / TS5075 "could be instantiated
+        // with a different subtype of constraint"). Those explain that a *user*
+        // type parameter could still be instantiated unfavorably; the markers
+        // here are synthetic and never instantiated, so tsc omits the note in
+        // the variance-annotation check. Filter by diagnostic code, not message
+        // text, to keep this a structural decision.
+        diag.related_information.retain(|info| {
+            info.code
+                != crate::diagnostics::diagnostic_codes::COULD_BE_INSTANTIATED_WITH_AN_ARBITRARY_TYPE_WHICH_COULD_BE_UNRELATED_TO
+                && info.code
+                    != crate::diagnostics::diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE
+        });
+        diag.related_information
     }
 
     /// Check for duplicate property names in interface members (TS2300).
