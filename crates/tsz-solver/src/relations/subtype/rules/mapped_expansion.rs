@@ -10,6 +10,24 @@ use crate::visitor::{
     object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
 
+const KEYOF_KEYS_MAX_DEPTH: u32 = 5;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyofKeysDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl KeyofKeysDepthState {
+    const fn for_depth(depth: u32) -> Self {
+        if depth > KEYOF_KEYS_MAX_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// If `target` is a deferred `Mapped` node that expands to a concrete object
     /// or pure-index shape (e.g. `Record<any, V>`'s `{ [P in any]: V }` reducing
@@ -307,8 +325,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         operand: TypeId,
         depth: u32,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
-        if depth > 5 {
-            return None;
+        match KeyofKeysDepthState::for_depth(depth) {
+            KeyofKeysDepthState::Continue => {}
+            KeyofKeysDepthState::LimitExceeded => return None,
         }
         let shape_id = object_shape_id(self.interner, operand)
             .or_else(|| object_with_index_shape_id(self.interner, operand));
@@ -417,3 +436,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/mapped_expansion_keyof_depth_state_tests.rs"]
+mod mapped_expansion_keyof_depth_state_tests;
