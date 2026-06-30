@@ -53,3 +53,17 @@ pub(crate) fn inst_resolver_rereduce_enabled() -> bool {
     *INST_RESOLVER_REREDUCE_ENV
         .get_or_init(|| std::env::var("TSZ_INST_RESOLVER_REREDUCE").is_ok_and(|v| v == "1"))
 }
+
+/// `TSZ_OPTIONB_STORE_RESOLVER=1` activates the option-B store-only resolver
+/// shim at the instantiation-time index-access re-reduce (issue #14344 /
+/// #14345). Default-OFF, byte-parity when OFF.
+///
+/// This is distinct from [`inst_resolver_rereduce_enabled`] so the gauge can
+/// isolate the shim's effect: the rereduce flag is part of both the composed
+/// baseline and the option-B configuration, while this flag toggles only the
+/// store-only resolver that materializes a cross-arena `Lazy(URItoKindN)` base
+/// to its empty-object snapshot.
+pub(crate) fn optionb_store_resolver_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_OPTIONB_STORE_RESOLVER").is_ok_and(|v| v == "1"))
+}

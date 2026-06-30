@@ -369,6 +369,15 @@ impl<'a> QueryCache<'a> {
         self.definition_store.is_some()
     }
 
+    /// The shared `DefinitionStore` attached to this cache, when present.
+    ///
+    /// Read-only access for the store-only re-reduce resolver shim
+    /// (`store_resolver_backed_evaluator`, issue #14344 / #14345). The store is
+    /// program-global and never mutated through the `QueryCache`.
+    pub(crate) const fn definition_store(&self) -> Option<&'a crate::def::DefinitionStore> {
+        self.definition_store
+    }
+
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
         self.closed_eval_cache.borrow_mut().clear();
@@ -1507,6 +1516,28 @@ impl QueryDatabase for QueryCache<'_> {
         index_type: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
+        // #14344 / #14345 OPTION B (default-OFF, byte-parity): when both
+        // `TSZ_INST_RESOLVER_REREDUCE=1` and `TSZ_OPTIONB_STORE_RESOLVER=1` are
+        // set and a shared `DefinitionStore` is attached, run the index access
+        // through the arena-invariant store-only resolver shim so a cross-arena
+        // `Lazy(URItoKindN)` base materializes to its empty-Object snapshot here
+        // (`visit_lazy` → `resolve_lazy` via the store) and the published
+        // home-symbol redirect can re-index the populated home body. The shim
+        // resolves NONE of the per-arena maps, and the evaluator adopts the
+        // limited-resolver discipline (never writes the resolver-independent
+        // `application_eval_cache`, never persists into the program-global eval
+        // memo), so the cross-call cache keys stay resolver-independent. With
+        // either flag OFF (or no store) this keeps the literal
+        // `NoopResolver`-backed `query_backed_evaluator` path.
+        if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
+            && crate::instantiation::instantiate::flags::optionb_store_resolver_enabled()
+            && let Some(store) = self.definition_store()
+        {
+            let shim = crate::caches::query_cache_evaluation::StoreOnlyResolver::new(store);
+            let mut evaluator = self.store_resolver_backed_evaluator(&shim);
+            evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+            return evaluator.evaluate_index_access(object_type, index_type);
+        }
         if let Some(mut evaluator) = self.store_backed_rereduce_evaluator() {
             evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
             return evaluator.evaluate_index_access(object_type, index_type);
