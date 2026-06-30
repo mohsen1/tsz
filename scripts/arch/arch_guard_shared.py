@@ -837,6 +837,17 @@ FILE_LINE_LIMIT_CHECKS = [
         458,
     ),
     (
+        "Solver boundary: diagnostics/format/mod.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "diagnostics"
+        / "format"
+        / "mod.rs",
+        2012,
+    ),
+    (
         "Checker boundary: assignability/assignability_diagnostics.rs size ratchet",
         ROOT
         / "crates"

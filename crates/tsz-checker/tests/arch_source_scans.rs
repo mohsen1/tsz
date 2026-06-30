@@ -28,6 +28,8 @@ mod common_boundary_export_ratchets;
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]
 mod object_flags_boundary_scans;
+#[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]
+mod object_literal_annotation_walker_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
 mod relation_routing_residual_arch_tests;
 #[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]
