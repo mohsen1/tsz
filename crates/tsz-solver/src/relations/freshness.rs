@@ -22,6 +22,24 @@ pub fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widen_freshness_deep(db, type_id, 0)
 }
 
+const MAX_FRESHNESS_WIDEN_DEPTH: u32 = 10;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FreshnessWidenDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl FreshnessWidenDepthState {
+    const fn from_depth(depth: u32) -> Self {
+        if depth > MAX_FRESHNESS_WIDEN_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 /// Deeply widen freshness on an object type and all its property types.
 /// This matches TSC's `getRegularTypeOfObjectLiteral` which recursively removes
 /// freshness from nested object literal types.
@@ -33,8 +51,9 @@ pub fn widen_freshness(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
 /// inferring through `Readonly<T>`).
 fn widen_freshness_deep(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> TypeId {
     // Guard against infinite recursion in cyclic types.
-    if depth > 10 {
-        return type_id;
+    match FreshnessWidenDepthState::from_depth(depth) {
+        FreshnessWidenDepthState::Continue => {}
+        FreshnessWidenDepthState::LimitExceeded => return type_id,
     }
 
     let (shape_id, has_index) = match classify_object_type(db, type_id) {
@@ -87,4 +106,77 @@ fn widen_freshness_deep(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> T
     }
 
     new_type
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use crate::types::PropertyInfo;
+
+    #[test]
+    fn freshness_widen_depth_state_continues_at_limit() {
+        assert_eq!(
+            FreshnessWidenDepthState::from_depth(MAX_FRESHNESS_WIDEN_DEPTH),
+            FreshnessWidenDepthState::Continue,
+        );
+    }
+
+    #[test]
+    fn freshness_widen_depth_state_limits_past_limit() {
+        assert_eq!(
+            FreshnessWidenDepthState::from_depth(MAX_FRESHNESS_WIDEN_DEPTH + 1),
+            FreshnessWidenDepthState::LimitExceeded,
+        );
+    }
+
+    #[test]
+    fn widen_freshness_widens_nested_leaf_at_exact_limit() {
+        let interner = TypeInterner::new();
+        let nested = nested_fresh_object(&interner, MAX_FRESHNESS_WIDEN_DEPTH);
+        let widened = widen_freshness(&interner, nested);
+        let leaf = nested_property_leaf(&interner, widened, MAX_FRESHNESS_WIDEN_DEPTH);
+
+        assert!(!is_fresh_object_type(&interner, leaf));
+    }
+
+    #[test]
+    fn widen_freshness_preserves_nested_leaf_past_limit() {
+        let interner = TypeInterner::new();
+        let nested = nested_fresh_object(&interner, MAX_FRESHNESS_WIDEN_DEPTH + 1);
+        let widened = widen_freshness(&interner, nested);
+        let leaf = nested_property_leaf(&interner, widened, MAX_FRESHNESS_WIDEN_DEPTH + 1);
+
+        assert!(is_fresh_object_type(&interner, leaf));
+    }
+
+    fn nested_fresh_object(interner: &TypeInterner, depth: u32) -> TypeId {
+        let prop_name = interner.intern_string("value");
+        let mut current = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+        for _ in 0..depth {
+            current = interner.object_with_flags(
+                vec![PropertyInfo::new(prop_name, current)],
+                ObjectFlags::FRESH_LITERAL,
+            );
+        }
+        current
+    }
+
+    fn nested_property_leaf(interner: &TypeInterner, root: TypeId, depth: u32) -> TypeId {
+        let mut current = root;
+        for _ in 0..depth {
+            current = first_property_type(interner, current);
+        }
+        current
+    }
+
+    fn first_property_type(interner: &TypeInterner, type_id: TypeId) -> TypeId {
+        let shape_id = match classify_object_type(interner, type_id) {
+            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
+                shape_id
+            }
+            ObjectTypeKind::NotObject => panic!("expected object type, got {type_id:?}"),
+        };
+        interner.object_shape(shape_id).properties[0].type_id
+    }
 }
