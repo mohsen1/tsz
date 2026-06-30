@@ -34,7 +34,9 @@ impl QueryCache<'_> {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.set_exact_optional_property_types(exact_optional_property_types);
         let result = evaluator.resolve_property_access_atom(object_type, prop_atom);
-        self.insert_property_cache(key, result);
+        if evaluator.property_result_cacheable() {
+            self.insert_property_cache(key, result);
+        }
         result
     }
 }

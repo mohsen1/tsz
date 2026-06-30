@@ -916,6 +916,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         };
 
         let Some(body_type) = body_type else {
+            self.mark_unresolved_lazy_property_seen();
             // Resolution failed - fall back to structural evaluation.
             let evaluated = self
                 .db
