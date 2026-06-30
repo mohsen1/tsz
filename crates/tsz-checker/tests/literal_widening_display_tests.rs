@@ -187,6 +187,67 @@ take(fn);
     );
 }
 
+/// TS2559 assignment site: a *fresh* object-literal source widens its property
+/// literals (`{ c: 1 }` → `{ c: number }`), matching tsc and the rest of the
+/// assignability diagnostics (TS2322/TS2739/TS2741). Regression for #14829.
+#[test]
+fn ts2559_assignment_fresh_object_literal_source_widens() {
+    let source = r#"
+interface Weak { a?: number; b?: number; }
+const src = { c: 1 };
+const w: Weak = src;
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '{ c: number; }' has no properties in common with type 'Weak'.".to_string()
+        )],
+    );
+}
+
+/// TS2559 with a multi-property fresh source widens every property literal.
+/// Binder names differ from the single-property case to prove the widening is
+/// structural, not keyed on identifier text.
+#[test]
+fn ts2559_assignment_multi_property_fresh_source_widens() {
+    let source = r#"
+interface Sink { p?: string; q?: string; }
+const payload = { first: 1, second: 2 };
+const target: Sink = payload;
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '{ first: number; second: number; }' has no properties in common with type \
+             'Sink'."
+                .to_string()
+        )],
+    );
+}
+
+/// TS2559 with the source coming from an inferred function return widens the
+/// returned object literal's property literals.
+#[test]
+fn ts2559_assignment_function_return_fresh_source_widens() {
+    let source = r#"
+interface Slot { lo?: boolean; hi?: boolean; }
+function build() { return { count: 1 }; }
+const slot: Slot = build();
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '{ count: number; }' has no properties in common with type 'Slot'.".to_string()
+        )],
+    );
+}
+
 /// TS2345 generic parameter display: string literal annotations inside the
 /// inferred generic application's object argument widen, while the literal
 /// key argument is preserved.

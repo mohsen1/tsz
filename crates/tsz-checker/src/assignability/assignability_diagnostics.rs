@@ -1422,7 +1422,14 @@ impl<'a> CheckerState<'a> {
         {
             return parent.escaped_name.to_string();
         }
-        self.format_type_diagnostic(source)
+        // tsc renders the source's *widened* apparent type in the weak-type
+        // ("no properties in common") slot: a fresh object literal `{ c: 1 }`
+        // displays as `{ c: number }`, matching TS2322/TS2739/TS2741. The
+        // shared helper rewrites only a top-level *fresh* object literal, so a
+        // non-fresh annotated source (or a declared intersection rendered via a
+        // display alias) is returned untouched and keeps its existing display.
+        let display_source = self.widen_fresh_object_literal_properties_for_display(source);
+        self.format_type_diagnostic(display_source)
     }
 
     pub(crate) fn error_no_common_properties(
