@@ -46,6 +46,36 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         )
     }
 
+    fn eval_augmented_empty_symbol_object(&mut self, shape: &ObjectShape) -> Option<TypeId> {
+        if !crate::def::module_augmentation_symbol_edge_enabled() || !shape.properties.is_empty() {
+            return None;
+        }
+        let def_id = self
+            .evaluator
+            .resolver()
+            .symbol_to_def_id(SymbolRef(shape.symbol?.0))?;
+        let body = self
+            .evaluator
+            .resolver()
+            .resolve_lazy(def_id, self.evaluator.interner())?;
+        let shape_id = match self.evaluator.interner().lookup(body)? {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => shape_id,
+            _ => return None,
+        };
+        let properties = &self.evaluator.interner().object_shape(shape_id).properties;
+        if properties.is_empty() {
+            return None;
+        }
+        let result = self
+            .evaluator
+            .evaluate_object_index_from_constraint(properties, self.index_type)
+            .unwrap_or_else(|| {
+                self.evaluator
+                    .evaluate_object_index(properties, self.index_type)
+            });
+        (result != TypeId::UNDEFINED).then_some(result)
+    }
+
     fn instantiate_mapped_template_with_constraint_param(
         &mut self,
         mapped: &crate::types::MappedType,
@@ -815,6 +845,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // (e.g. `JSX.IntrinsicElements`) independent of property count.
         if self.keyof_constraint_distribution_is_lossy(&shape.properties) {
             return None;
+        }
+
+        if let Some(result) = self.eval_augmented_empty_symbol_object(&shape) {
+            return Some(self.bind_property_this(result));
         }
 
         let result = self

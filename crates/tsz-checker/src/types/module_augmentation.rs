@@ -1210,8 +1210,8 @@ impl<'a> CheckerState<'a> {
         // Resolve Lazy(DefId) types to their structural representation before classifying.
         // Interface types from other files arrive as Lazy(DefId) — we need the concrete
         // Object/ObjectWithIndex/Callable shape to merge properties directly.
-        let resolved_base = if let Some(def_id) = query::get_lazy_def_id(self.ctx.types, base_type)
-        {
+        let base_def_id = query::get_lazy_def_id(self.ctx.types, base_type);
+        let resolved_base = if let Some(def_id) = base_def_id {
             // Look up DefId in the type environment
             if let Some(env_type) = self.ctx.type_env.borrow().get_def(def_id) {
                 env_type
@@ -1238,6 +1238,11 @@ impl<'a> CheckerState<'a> {
                     &base_shape.properties,
                     crate::interface_type::InterfaceMergeMode::Declaration,
                 );
+                if let (Some(symbol), Some(def_id)) = (base_shape.symbol, base_def_id) {
+                    self.ctx
+                        .definition_store
+                        .register_module_augmentation_symbol_def_if_enabled(symbol.0, def_id);
+                }
                 // Preserve the base interface's nominal identity (symbol) and
                 // object-level flags so the augmented type keeps its canonical
                 // declaration name (e.g. `Tool` rather than an expanded
@@ -1255,6 +1260,11 @@ impl<'a> CheckerState<'a> {
                     &base_shape.properties,
                     crate::interface_type::InterfaceMergeMode::Declaration,
                 );
+                if let (Some(symbol), Some(def_id)) = (base_shape.symbol, base_def_id) {
+                    self.ctx
+                        .definition_store
+                        .register_module_augmentation_symbol_def_if_enabled(symbol.0, def_id);
+                }
                 factory.object_with_index(ObjectShape {
                     flags: base_shape.flags,
                     properties: merged_properties,
