@@ -14,6 +14,7 @@ use crate::query_boundaries::{
         resolve_abstract_constructor_anchor,
     },
     common,
+    definition_identity::symbol_ref_to_symbol_id,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -938,8 +939,7 @@ impl<'a> CheckerState<'a> {
                 InstanceTypeKind::SymbolRef(sym_ref) => {
                     // Symbol reference (class name or typeof expression)
                     // Resolve to the class instance type
-                    use tsz_binder::SymbolId;
-                    let sym_id = SymbolId(sym_ref.0);
+                    let sym_id = symbol_ref_to_symbol_id(sym_ref);
                     if let Some(instance_type) = self.class_instance_type_from_symbol(sym_id) {
                         return Some(self.resolve_type_for_property_access(instance_type));
                     }
@@ -1107,7 +1107,7 @@ impl<'a> CheckerState<'a> {
             match resolve_abstract_constructor_anchor(self.ctx.types, type_id) {
                 AbstractConstructorAnchor::TypeQuery(sym_ref) => {
                     if let Some(symbol) =
-                        self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref.0))
+                        self.ctx.binder.get_symbol(symbol_ref_to_symbol_id(sym_ref))
                     {
                         symbol.has_any_flags(symbol_flags::ABSTRACT)
                     } else {
@@ -1176,7 +1176,7 @@ impl<'a> CheckerState<'a> {
 
         match classify_for_constructor_access(self.ctx.types, type_id) {
             ConstructorAccessKind::SymbolRef(symbol) => {
-                let sym_id = SymbolId(symbol.0);
+                let sym_id = symbol_ref_to_symbol_id(symbol);
                 if let Some(access) = self.class_constructor_access_level(sym_id) {
                     return Some(access);
                 }
