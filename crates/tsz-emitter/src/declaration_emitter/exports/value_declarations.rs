@@ -1,7 +1,7 @@
 //! Declaration emitter - exported enum and variable declarations.
 
 use super::super::DeclarationEmitter;
-use crate::enums::evaluator::{EnumEvaluator, EnumValue};
+use crate::enums::evaluator::EnumValue;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -32,50 +32,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("enum ");
         self.emit_node(enum_data.name);
 
-        self.write(" {");
-        self.write_line();
-        self.increase_indent();
-
-        // Evaluate enum member values to get correct auto-increment behavior.
-        // Seed with accumulated values for cross-enum reference resolution.
-        let prior = std::mem::take(&mut self.all_enum_values);
-        let mut evaluator = EnumEvaluator::with_prior_values(self.arena, prior);
-        let member_values = evaluator.evaluate_enum(enum_idx);
-        self.all_enum_values = evaluator.take_all_enum_values();
-
-        for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
-            self.write_indent();
-            if let Some(member_node) = self.arena.get(member_idx)
-                && let Some(member) = self.arena.get_enum_member(member_node)
-            {
-                self.emit_node(member.name);
-                let member_name = self.get_enum_member_name(member.name);
-                if let Some(value) = member_values.get(&member_name) {
-                    match value {
-                        crate::enums::evaluator::EnumValue::Computed => {
-                            // Computed values: no initializer in .d.ts
-                        }
-                        _ => {
-                            self.write(" = ");
-                            self.emit_enum_value(value);
-                        }
-                    }
-                } else {
-                    // Fallback to index if evaluation failed
-                    self.write(" = ");
-                    self.write(&i.to_string());
-                }
-            }
-            if i < enum_data.members.nodes.len() - 1 {
-                self.write(",");
-            }
-            self.write_line();
-        }
-
-        self.decrease_indent();
-        self.write_indent();
-        self.write("}");
-        self.write_line();
+        // Shared body keeps the ambient member-value rule in one place so an
+        // `export declare enum` (or a `declare namespace` member enum) preserves
+        // bare members instead of synthesizing auto-increment values.
+        self.emit_enum_body(enum_idx, is_const, false);
     }
 
     /// Get the name of an enum member from its name node.
