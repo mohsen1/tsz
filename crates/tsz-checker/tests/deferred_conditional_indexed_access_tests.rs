@@ -60,6 +60,18 @@ fn renamed_binders_index_into_deferred_conditional_is_valid() {
 }
 
 #[test]
+fn aliased_branch_index_into_deferred_conditional_is_valid() {
+    // The branch results are named aliases, so the conditional branch-union key
+    // space contains `Lazy(DefId)` members. `keyof` must resolve those aliases
+    // before validating the index key.
+    let src = "type LeftChoice = { shared: 1; leftOnly: 1 };\n\
+               type RightChoice = { shared: 2; rightOnly: 2 };\n\
+               type Choice<Input> = Input extends string ? LeftChoice : RightChoice;\n\
+               type Shared<Subject> = Choice<Subject>['shared'];";
+    assert_eq!(count(src, 2536), 0, "no TS2536 expected: {:?}", codes(src));
+}
+
+#[test]
 fn non_distributive_conditional_index_is_valid() {
     // `[T] extends [string]` is non-distributive; the branch-union rule still
     // applies.
@@ -122,6 +134,15 @@ fn key_in_only_one_branch_still_reports_ts2536() {
     // member keys) excludes it, matching tsc.
     let src = "type C<T> = T extends string ? { x: 1; y: 2 } : { x: 3 };\n\
                type Partial1<T> = C<T>['y'];";
+    assert_eq!(count(src, 2536), 1, "TS2536 expected: {:?}", codes(src));
+}
+
+#[test]
+fn aliased_branch_key_in_only_one_branch_still_reports_ts2536() {
+    let src = "type WithExtra = { shared: 1; extra: 1 };\n\
+               type WithoutExtra = { shared: 2 };\n\
+               type PickBranch<Source> = Source extends string ? WithExtra : WithoutExtra;\n\
+               type Bad<Other> = PickBranch<Other>['extra'];";
     assert_eq!(count(src, 2536), 1, "TS2536 expected: {:?}", codes(src));
 }
 
