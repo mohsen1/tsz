@@ -842,11 +842,19 @@ impl<'a> Printer<'a> {
                 && self.import_equals_declaration_is_external(clause_node)
             {
                 self.emit_import_equals_declaration_inner(clause_node, true);
+                self.write_semicolon();
             } else {
-                self.write("export ");
-                self.emit_import_equals_declaration_inner(clause_node, false);
+                // The `export` keyword sits on the outer EXPORT_DECLARATION, not
+                // on the inner import-equals clause, so the clause carries no
+                // export modifier. Route it through the shared exported handler
+                // (as `emit_export_declaration_commonjs` already does) so the
+                // assignment prefix emits the right form for the module kind
+                // (`export var X = ...` for ES-module output). Pre-writing a
+                // bare `export ` here would strand an `export ;` whenever the
+                // inner emit elides (namespace-alias gate) or expands to its own
+                // `export var`.
+                self.emit_exported_import_equals_declaration(clause_node);
             }
-            self.write_semicolon();
             return;
         }
 
