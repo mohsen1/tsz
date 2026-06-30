@@ -102,4 +102,34 @@ impl CheckerState<'_> {
         self.ctx
             .register_typeof_value_type_in_envs(symbol_ref, value_type);
     }
+
+    /// When a resolved type is a bare deferred `typeof X` whose symbol is a
+    /// merged value+type-alias, register `X`'s value-space type so a *consuming*
+    /// file's `resolve_type_query` can break the self-loop the declaring file's
+    /// (now reset) `type_env` would otherwise leave unresolved. Calling this as a
+    /// type *reference* resolves makes the value side available before any later
+    /// relation, in every context. No-ops for everything else, since
+    /// `merged_interface_value_typeof_type` returns `None` for non-merged symbols.
+    /// See #15078.
+    pub(crate) fn register_self_referential_merged_value_typeof(&mut self, type_id: TypeId) {
+        let Some(symbol_ref) =
+            crate::query_boundaries::common::get_type_query_symbol_ref(self.ctx.types, type_id)
+        else {
+            return;
+        };
+        // Already registered (a sibling reference resolved first, or this node is
+        // re-resolved under a type-parameter scope): skip the value recompute.
+        if self
+            .ctx
+            .type_env
+            .try_borrow()
+            .is_ok_and(|env| env.get_typeof_value_type(symbol_ref).is_some())
+        {
+            return;
+        }
+        let sym_id = SymbolId(symbol_ref.0);
+        if let Some(value_type) = self.merged_interface_value_typeof_type(sym_id) {
+            self.register_typeof_value_type_in_envs(sym_id, value_type);
+        }
+    }
 }

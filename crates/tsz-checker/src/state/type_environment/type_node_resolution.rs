@@ -292,6 +292,13 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let mut result = self.get_type_from_type_reference(idx);
+                // Break a cross-file `const X = ...; type X = typeof X` self-loop:
+                // register `X`'s value-space type when the reference resolves to a
+                // deferred `typeof X`, so every later relation (constraint /
+                // assignment / …) sees the value instead of the unresolvable query.
+                // No-ops unless `result` is a bare `typeof` of a merged value
+                // symbol (#15078).
+                self.register_self_referential_merged_value_typeof(result);
                 // Eagerly reduce a concrete `Awaited<…>` reference to its
                 // unwrapped form, the way tsc computes `getAwaitedType` at the
                 // reference site. The solver's lazy conditional/`infer`
