@@ -822,8 +822,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let factory = self.ctx.types.factory();
             factory.readonly_type(factory.array(TypeId::ANY))
         };
-        !type_utils::rest_element_array_like_relation_outcome(self.ctx.types, t, readonly_any_array)
-            .related
+        let env = self.ctx.type_environment.borrow();
+        !type_utils::rest_element_array_like_relation_outcome(
+            self.ctx.types,
+            &*env,
+            t,
+            readonly_any_array,
+        )
+        .related
     }
 
     /// Resolve a rest-element type to its inspectable shape for the TS2574

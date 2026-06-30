@@ -932,25 +932,19 @@ pub(crate) fn are_types_mutually_subtype(
         || tsz_solver::relations::subtype::is_subtype_of(db, right, left)
 }
 
-pub(crate) fn is_assignable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    let _span = tracing::trace_span!("flow_assignable", src = source.0, tgt = target.0,).entered();
-
-    tsz_solver::relations::relation_queries::query_relation(
-        db,
-        source,
-        target,
-        tsz_solver::relations::relation_queries::RelationKind::Assignable,
-        tsz_solver::relations::relation_queries::RelationPolicy::default(),
-        tsz_solver::relations::relation_queries::RelationContext::default(),
-    )
-    .is_related()
-}
-
-pub(crate) fn is_assignable_strict_null(
+fn flow_relation_related(
     db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     target: TypeId,
+    strict_null_checks: bool,
 ) -> bool {
+    let _span = tracing::trace_span!("flow_assignable", src = source.0, tgt = target.0,).entered();
+
+    if let Some(env) = env {
+        return is_assignable_with_env(db, env, source, target, strict_null_checks);
+    }
+
     tsz_solver::relations::relation_queries::query_relation(
         db,
         source,
@@ -969,13 +963,7 @@ fn flow_relation_outcome(
     target: TypeId,
     strict_null_checks: bool,
 ) -> RelationOutcome {
-    let related = if let Some(env) = env {
-        is_assignable_with_env(db, env, source, target, strict_null_checks)
-    } else if strict_null_checks {
-        is_assignable_strict_null(db, source, target)
-    } else {
-        is_assignable(db, source, target)
-    };
+    let related = flow_relation_related(db, env, source, target, strict_null_checks);
 
     RelationOutcome {
         related,
