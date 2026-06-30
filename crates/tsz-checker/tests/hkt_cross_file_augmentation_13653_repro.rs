@@ -231,6 +231,41 @@ export const wrong: Registry<number>["Widget"] = ["x"];
     );
 }
 
+/// Assignability alias probes can inspect a `Lazy(DefId)` body directly before
+/// relation fallback. With body publication enabled, that probe must see the
+/// augmented registry body so the missing augmented member is still required.
+#[test]
+#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
+fn alias_assignability_observes_augmented_registry_body() {
+    let diags = diagnostics(&[
+        (
+            "registry.ts",
+            r#"
+export interface Slots<T> {}
+export type Registry<T> = Slots<T>;
+"#,
+        ),
+        (
+            "widget.ts",
+            r#"
+import { Registry, Slots } from "./registry";
+declare module "./registry" {
+    interface Slots<T> {
+        readonly Widget: ReadonlyArray<T>;
+    }
+}
+export const r: Registry<number> = {};
+"#,
+        ),
+    ]);
+
+    assert_eq!(
+        count_code(&diags, 2741),
+        1,
+        "alias assignability should require the augmented member; got {diags:#?}"
+    );
+}
+
 /// Structural assignability: the cross-file augmented member is REQUIRED, so an
 /// empty object literal assigned to the interface is TS2741 (missing member).
 /// tsz previously accepted this (the augmented member was absent from the

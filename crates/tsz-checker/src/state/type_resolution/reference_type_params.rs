@@ -68,7 +68,7 @@ impl CheckerState<'_> {
             .try_borrow()
             .ok()
             .and_then(|env| env.get_def(def_id))
-            .or_else(|| self.ctx.definition_store.get_body(def_id))
+            .or_else(|| self.ctx.get_semantic_def_body(def_id))
         else {
             return false;
         };
