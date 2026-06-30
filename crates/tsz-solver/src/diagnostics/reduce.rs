@@ -32,6 +32,25 @@ thread_local! {
     static REDUCE_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeepReduceVisitState {
+    Intrinsic,
+    Entered,
+    AlreadyVisited,
+}
+
+impl DeepReduceVisitState {
+    fn enter(type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> Self {
+        if type_id.is_intrinsic() {
+            Self::Intrinsic
+        } else if visited.insert(type_id) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
+}
+
 #[inline]
 fn with_reduce_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     let mut visited = REDUCE_VISITED_POOL
@@ -78,11 +97,11 @@ fn reduce_inner<R: TypeResolver>(
     type_id: TypeId,
     visited: &mut FxHashSet<TypeId>,
 ) -> TypeId {
-    if type_id.is_intrinsic() {
-        return type_id;
-    }
-    if !visited.insert(type_id) {
-        return type_id;
+    match DeepReduceVisitState::enter(type_id, visited) {
+        DeepReduceVisitState::Intrinsic | DeepReduceVisitState::AlreadyVisited => {
+            return type_id;
+        }
+        DeepReduceVisitState::Entered => {}
     }
 
     let key = db.lookup(type_id);
