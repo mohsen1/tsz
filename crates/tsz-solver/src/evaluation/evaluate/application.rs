@@ -86,7 +86,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // recursive expansions are allowed before bailing to `TypeId::ERROR`,
         // matching tsc's TS2589 behavior.
         if !self.increment_def_depth(def_id) {
-            self.guard.mark_exceeded();
+            self.mark_depth_exceeded_for_request();
             return TypeId::ERROR;
         }
 
@@ -98,8 +98,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && self.detect_recursive_growth(def_id, &app.args)
         {
             self.decrement_def_depth(def_id);
-            self.guard.mark_exceeded();
-            self.note_limit_event();
+            self.mark_depth_exceeded_for_request();
             return TypeId::ERROR;
         }
 

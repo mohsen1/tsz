@@ -11,6 +11,8 @@ use super::*;
 use crate::construction::TypeInterner;
 use crate::def::{DefId, DefKind};
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::{Termination, TerminationKind};
 use crate::relations::subtype::TypeEnvironment;
 
 fn unconstrained_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
@@ -621,6 +623,40 @@ fn evaluate_application_divergent_alias_does_not_poison_cache() {
              caching it would poison every sibling use of the alias"
         );
     }
+}
+
+#[test]
+fn evaluate_application_divergent_alias_reports_incomplete_request_result() {
+    let interner = TypeInterner::new();
+    let def_id = DefId(1081);
+    let t_param = unconstrained_param(&interner, "Item");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let grown_arg = interner.array(t_type);
+    let body = interner.application(interner.lazy(def_id), vec![grown_arg]);
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        def_id,
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate_request_result(EvaluationRequest::new(app));
+
+    assert_eq!(result.into_type_id(), TypeId::ERROR);
+    assert_eq!(
+        result.termination(),
+        Termination::Incomplete {
+            kind: TerminationKind::DepthExceeded,
+            partial: TypeId::ERROR,
+        },
+        "application depth/divergence bails must surface through the typed request result"
+    );
 }
 
 /// Phase 5 — an earlier, unrelated recursion bail must not disable caching for a
