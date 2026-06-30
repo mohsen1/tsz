@@ -1193,7 +1193,7 @@ impl<'a> CheckerState<'a> {
             // body, then enum-parent.
             for &(member_ref, member_def_id, member_enum_type) in &member_env_entries {
                 self.ctx
-                    .register_symbol_type_in_envs(member_ref, member_enum_type);
+                    .register_symbol_type_in_envs(member_ref, member_enum_type, Vec::new());
                 if member_def_id != tsz_solver::DefId::INVALID {
                     self.ctx
                         .register_def_in_envs(member_def_id, member_enum_type);

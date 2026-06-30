@@ -81,6 +81,7 @@ pub enum DeferredFlowEnvWrite {
     InsertSymbolType {
         symbol: tsz_solver::SymbolRef,
         ty: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
     },
 }
 
@@ -160,7 +161,13 @@ impl DeferredFlowEnvWrite {
                 member_def_id,
                 parent_def_id,
             } => env.register_enum_parent(*member_def_id, *parent_def_id),
-            Self::InsertSymbolType { symbol, ty } => env.insert(*symbol, *ty),
+            Self::InsertSymbolType { symbol, ty, params } => {
+                if params.is_empty() {
+                    env.insert(*symbol, *ty);
+                } else {
+                    env.insert_with_params(*symbol, *ty, params.clone());
+                }
+            }
         }
     }
 }

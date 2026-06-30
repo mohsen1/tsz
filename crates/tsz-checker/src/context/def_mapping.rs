@@ -1505,10 +1505,11 @@ impl CheckerContext<'_> {
     /// This ensures that both the old `TypeData::Ref(SymbolRef)` and new `TypeData::Lazy(DefId)`
     /// paths can resolve the type during evaluation.
     ///
-    /// The `SymbolRef` mapping is written to `type_environment` only (legacy flow-analyzer
-    /// path). The DefId mapping is written to **both** environments via the dual-env
-    /// helpers so the evaluator (`type_env`) and flow analyzer (`type_environment`)
-    /// stay consistent.
+    /// The `SymbolRef` mapping is mirrored into `type_environment` through the
+    /// deferred-write path (legacy flow-analyzer path). The DefId mapping is
+    /// written to **both** environments via the dual-env helpers so the
+    /// evaluator (`type_env`) and flow analyzer (`type_environment`) stay
+    /// consistent.
     ///
     /// Should be called when a symbol's type is resolved via `get_type_of_symbol`.
     pub fn register_resolved_type(
@@ -1520,14 +1521,14 @@ impl CheckerContext<'_> {
         use tsz_solver::SymbolRef;
 
         // Insert SymbolRef key into type_environment only (legacy path —
-        // type_env never uses SymbolRef-keyed lookups).
-        if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-            if type_params.is_empty() {
-                env.insert(SymbolRef(sym_id.0), type_id);
-            } else {
-                env.insert_with_params(SymbolRef(sym_id.0), type_id, type_params.clone());
-            }
-        }
+        // type_env never uses this resolved-type mirror). Route through the
+        // deferred-write path so a live flow-analysis borrow queues the write
+        // instead of dropping it, and preserve generic params on replay.
+        self.mirror_symbol_type_in_type_environment(
+            SymbolRef(sym_id.0),
+            type_id,
+            type_params.clone(),
+        );
 
         // Insert DefId key into BOTH environments via dual-env helpers.
         // Previously this only wrote to type_environment, leaving type_env

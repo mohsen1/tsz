@@ -4,6 +4,7 @@ use crate::context::CheckerContext;
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
+use tsz_solver::relations::subtype::TypeEnvironment;
 
 impl CheckerContext<'_> {
     /// Mirror a definition body into the flow-analyzer env (`type_environment`)
@@ -33,5 +34,33 @@ impl CheckerContext<'_> {
             def_id,
             instance_type,
         });
+    }
+
+    /// Mirror a symbol's resolved value/constructor type into the flow-analyzer
+    /// env **only**, preserving generic params and deferring on a borrow race.
+    pub fn mirror_symbol_type_in_type_environment(
+        &self,
+        symbol: tsz_solver::SymbolRef,
+        ty: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.mirror_to_flow_env(DeferredFlowEnvWrite::InsertSymbolType { symbol, ty, params });
+    }
+
+    /// Insert a symbol value/constructor mapping into an already-borrowed
+    /// evaluator env, then mirror the same mapping into the flow-analyzer env.
+    pub(crate) fn insert_symbol_type_and_mirror(
+        &self,
+        env: &mut TypeEnvironment,
+        symbol: tsz_solver::SymbolRef,
+        ty: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if params.is_empty() {
+            env.insert(symbol, ty);
+        } else {
+            env.insert_with_params(symbol, ty, params.clone());
+        }
+        self.mirror_symbol_type_in_type_environment(symbol, ty, params);
     }
 }

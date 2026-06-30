@@ -43,6 +43,7 @@ mod cross_file_residue;
 mod cross_file_shared_cache;
 mod qualified_names;
 mod source_alias_attribution;
+mod symbol_env_registration;
 mod symbol_type_helpers;
 mod syntactic_defaults;
 mod type_param_defaults;
