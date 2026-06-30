@@ -194,7 +194,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             self.ctx.types,
                             object_type,
                         )
-                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .and_then(|def_id| self.ctx.get_semantic_def_body(def_id))
                         .is_some_and(|body| {
                             crate::query_boundaries::common::is_conditional_type(
                                 self.ctx.types,
@@ -345,7 +345,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 let alias_body_is_deferred =
                     crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)
-                        .and_then(|def_id| self.ctx.definition_store.get_body(def_id))
+                        .and_then(|def_id| self.ctx.get_semantic_def_body(def_id))
                         .is_some_and(|body| {
                             crate::query_boundaries::common::is_conditional_type(
                                 self.ctx.types,
@@ -622,7 +622,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     env.get_class_instance_type(def_id)
                         .or_else(|| env.get_def(def_id))
                 })
-                .or_else(|| self.ctx.definition_store.get_body(def_id))
+                .map(|body| {
+                    self.ctx
+                        .module_augmented_body_or_current(def_id, body, self.ctx.types)
+                })
+                .or_else(|| self.ctx.get_semantic_def_body(def_id))
                 .unwrap_or(unwrapped);
             crate::query_boundaries::common::unwrap_readonly(self.ctx.types, resolved)
         } else {

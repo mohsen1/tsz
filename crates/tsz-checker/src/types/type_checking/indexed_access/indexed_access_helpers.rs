@@ -1637,7 +1637,7 @@ impl<'a> CheckerState<'a> {
                     // returned by `get_type_from_type_node`), so comparing it against
                     // `current_object` detects this case without any structural comparison.
                     if let Some(def_id) = constraint_def
-                        && let Some(body_type) = self.ctx.definition_store.get_body(def_id)
+                        && let Some(body_type) = self.ctx.get_semantic_def_body(def_id)
                         && body_type == current_object
                     {
                         return false;

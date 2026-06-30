@@ -153,6 +153,84 @@ export type MyArr = Kind<"MyArray", number>;
     );
 }
 
+/// Direct literal indexed access bypasses the normal `resolve_lazy` call chain
+/// in a few syntax/diagnostic paths. With body publication enabled, those reads
+/// must still observe the augmented registry body instead of the empty base.
+#[test]
+#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
+fn direct_literal_indexed_access_observes_augmented_registry_body() {
+    let diags = diagnostics(&[
+        (
+            "HKT.ts",
+            r#"
+export interface URItoKind<A> {}
+"#,
+        ),
+        (
+            "Array.ts",
+            r#"
+import { URItoKind } from "./HKT";
+declare module "./HKT" {
+    interface URItoKind<A> {
+        readonly MyArray: ReadonlyArray<A>;
+    }
+}
+export const wrong: URItoKind<number>["MyArray"] = ["x"];
+"#,
+        ),
+    ]);
+
+    assert_eq!(
+        count_code(&diags, 2339) + count_code(&diags, 2536),
+        0,
+        "direct indexed access should see the augmented key; got {diags:#?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2322),
+        1,
+        "augmented body should preserve the ReadonlyArray<number> element type; got {diags:#?}"
+    );
+}
+
+/// Same direct-read path, but with the registry hidden behind an alias. This
+/// guards alias-body probes that inspect a `Lazy(DefId)` body directly.
+#[test]
+#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
+fn alias_wrapped_indexed_access_observes_augmented_registry_body() {
+    let diags = diagnostics(&[
+        (
+            "registry.ts",
+            r#"
+export interface Slots<T> {}
+export type Registry<T> = Slots<T>;
+"#,
+        ),
+        (
+            "widget.ts",
+            r#"
+import { Registry, Slots } from "./registry";
+declare module "./registry" {
+    interface Slots<T> {
+        readonly Widget: ReadonlyArray<T>;
+    }
+}
+export const wrong: Registry<number>["Widget"] = ["x"];
+"#,
+        ),
+    ]);
+
+    assert_eq!(
+        count_code(&diags, 2339) + count_code(&diags, 2536),
+        0,
+        "alias-wrapped indexed access should see the augmented key; got {diags:#?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2322),
+        1,
+        "alias-wrapped augmented body should preserve the element type; got {diags:#?}"
+    );
+}
+
 /// Structural assignability: the cross-file augmented member is REQUIRED, so an
 /// empty object literal assigned to the interface is TS2741 (missing member).
 /// tsz previously accepted this (the augmented member was absent from the
