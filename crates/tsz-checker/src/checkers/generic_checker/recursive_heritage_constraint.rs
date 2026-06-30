@@ -6,6 +6,7 @@
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
+use crate::types_domain::utilities::heritage_walk_state::HeritageSymbolWalkState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -77,23 +78,23 @@ impl<'a> CheckerState<'a> {
         interface_sym_id: tsz_binder::SymbolId,
         target_sym_id: tsz_binder::SymbolId,
     ) -> bool {
-        self.interface_extends_symbol_inner(interface_sym_id, target_sym_id, &mut Vec::new(), None)
+        let mut walk_state = HeritageSymbolWalkState::new();
+        self.interface_extends_symbol_inner(interface_sym_id, target_sym_id, &mut walk_state, None)
     }
 
     fn interface_extends_symbol_inner(
         &self,
         interface_sym_id: tsz_binder::SymbolId,
         target_sym_id: tsz_binder::SymbolId,
-        seen: &mut Vec<tsz_binder::SymbolId>,
+        walk_state: &mut HeritageSymbolWalkState,
         preferred_binder: Option<&tsz_binder::BinderState>,
     ) -> bool {
         if interface_sym_id == target_sym_id {
             return true;
         }
-        if seen.contains(&interface_sym_id) {
+        if !walk_state.mark_seen(interface_sym_id) {
             return false;
         }
-        seen.push(interface_sym_id);
 
         let Some((owner_binder, symbol)) = preferred_binder
             .and_then(|binder| {
@@ -151,7 +152,7 @@ impl<'a> CheckerState<'a> {
                             || self.interface_extends_symbol_inner(
                                 base_sym,
                                 target_sym_id,
-                                seen,
+                                walk_state,
                                 Some(owner_binder),
                             ))
                     {

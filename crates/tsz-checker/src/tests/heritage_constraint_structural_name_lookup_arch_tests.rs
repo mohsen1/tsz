@@ -64,3 +64,35 @@ fn recursive_heritage_property_conflicts_use_relation_outcome_boundary() {
         "recursive heritage property conflicts must not regress to raw checker assignability"
     );
 }
+
+#[test]
+fn heritage_symbol_walks_use_named_visit_state() {
+    let recursive_heritage =
+        include_str!("../checkers/generic_checker/recursive_heritage_constraint.rs");
+    let type_utilities = include_str!("../types/utilities/core.rs");
+    let walk_state = include_str!("../types/utilities/heritage_walk_state.rs");
+
+    assert!(
+        recursive_heritage.contains("HeritageSymbolWalkState::new()")
+            && recursive_heritage.contains("walk_state.mark_seen(interface_sym_id)")
+            && type_utilities.contains("HeritageSymbolWalkState::new()")
+            && type_utilities.contains("walk_state.enter_path(sym_id)")
+            && type_utilities.contains("walk_state.leave_path(sym_id)"),
+        "checker heritage symbol walks should route visit ownership through `HeritageSymbolWalkState`"
+    );
+    assert!(
+        !recursive_heritage.contains("&mut Vec<tsz_binder::SymbolId>")
+            && !recursive_heritage.contains("seen.contains(&interface_sym_id)")
+            && !type_utilities.contains("let mut visited = Vec::new()")
+            && !type_utilities.contains("visited: &mut Vec<SymbolId>")
+            && !type_utilities.contains("visited.contains(&sym_id)"),
+        "heritage walks should not thread raw symbol vectors through recursion"
+    );
+    assert!(
+        walk_state.contains("pub(crate) struct HeritageSymbolWalkState")
+            && walk_state.contains("pub(crate) fn mark_seen")
+            && walk_state.contains("pub(crate) fn enter_path")
+            && walk_state.contains("pub(crate) fn leave_path"),
+        "`HeritageSymbolWalkState` must own both seen-set and path-stack visit semantics"
+    );
+}

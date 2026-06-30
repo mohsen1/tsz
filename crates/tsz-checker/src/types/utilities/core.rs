@@ -1,6 +1,7 @@
 //! Parameter type utilities, type construction, and type resolution methods
 //! for `CheckerState`.
 
+use super::heritage_walk_state::HeritageSymbolWalkState;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -1284,28 +1285,27 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = sym_id else {
             return false;
         };
-        let mut visited = Vec::new();
-        self.symbol_has_array_like_heritage(sym_id, &mut visited)
+        let mut walk_state = HeritageSymbolWalkState::new();
+        self.symbol_has_array_like_heritage(sym_id, &mut walk_state)
     }
 
     fn symbol_has_array_like_heritage(
         &self,
         sym_id: SymbolId,
-        visited: &mut Vec<SymbolId>,
+        walk_state: &mut HeritageSymbolWalkState,
     ) -> bool {
-        if visited.contains(&sym_id) {
+        if !walk_state.enter_path(sym_id) {
             return false;
         }
-        visited.push(sym_id);
 
         let lib_binders = self.get_lib_binders();
         let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
-            visited.pop();
+            walk_state.leave_path(sym_id);
             return false;
         };
 
         if Self::is_builtin_array_like_name(symbol.escaped_name.as_str()) {
-            visited.pop();
+            walk_state.leave_path(sym_id);
             return true;
         }
 
@@ -1364,21 +1364,21 @@ impl<'a> CheckerState<'a> {
                     if let Some(base_name) = self.heritage_name_text(expr_idx)
                         && Self::is_builtin_array_like_name(base_name.as_str())
                     {
-                        visited.pop();
+                        walk_state.leave_path(sym_id);
                         return true;
                     }
 
                     if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
-                        && self.symbol_has_array_like_heritage(base_sym_id, visited)
+                        && self.symbol_has_array_like_heritage(base_sym_id, walk_state)
                     {
-                        visited.pop();
+                        walk_state.leave_path(sym_id);
                         return true;
                     }
                 }
             }
         }
 
-        visited.pop();
+        walk_state.leave_path(sym_id);
         false
     }
 
