@@ -350,6 +350,8 @@ fn narrowing_engine_keeps_request_stage_boundary() {
 #[test]
 fn relation_queries_keep_overflow_flags_on_relation_result() {
     let relation_queries_rs = read_solver_source("relations/relation_queries.rs");
+    let compat_rs = read_solver_source("relations/compat.rs");
+    let subtype_core_rs = read_solver_source("relations/subtype/core.rs");
 
     assert!(
         relation_queries_rs.contains("pub struct RelationResult")
@@ -364,6 +366,13 @@ fn relation_queries_keep_overflow_flags_on_relation_result() {
                 .contains("let (related, depth_exceeded, iteration_exceeded) = match kind"),
         "relation query dispatch must keep related/depth/iteration verdicts bundled \
          as RelationResult instead of passing around anonymous overflow tuples"
+    );
+    assert!(
+        compat_rs.contains("mark_relation_complexity_exceeded()")
+            && !compat_rs.contains("subtype.guard.mark_exceeded()")
+            && subtype_core_rs.contains("fn mark_relation_complexity_exceeded("),
+        "TS2859 relation complexity overflow must be recorded through the subtype-owned \
+         complexity verdict helper instead of CompatChecker mutating the raw recursion guard"
     );
 
     let conditional_phases_rs =

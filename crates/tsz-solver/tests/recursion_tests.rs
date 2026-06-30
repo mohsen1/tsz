@@ -1134,6 +1134,19 @@ fn iteration_exceeded_flag_not_set_after_depth_overflow() {
 }
 
 #[test]
+fn explicit_iteration_overflow_marks_iteration_exceeded() {
+    let mut guard = RecursionGuard::<u32>::new(100, 100);
+
+    guard.mark_iteration_exceeded();
+
+    assert!(guard.is_exceeded());
+    assert!(
+        guard.iteration_exceeded(),
+        "explicit relation-complexity overflow should preserve the TS2859 iteration verdict"
+    );
+}
+
+#[test]
 fn iteration_exceeded_flag_sticky_like_exceeded() {
     // Once set, stays set until reset().
     let mut guard = RecursionGuard::new(100, 1);

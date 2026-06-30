@@ -273,6 +273,17 @@ FILE_LINE_LIMIT_CHECKS = [
         + QUERY_BOUNDARY_COMMON_LINE_GREEN_HEADROOM,
     ),
     (
+        "Solver diagnostics formatter boundary: format/mod.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "diagnostics"
+        / "format"
+        / "mod.rs",
+        2012,
+    ),
+    (
         "Emitter transform boundary: class_es5_ir.rs must not grow",
         ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "class_es5_ir.rs",
         2101,

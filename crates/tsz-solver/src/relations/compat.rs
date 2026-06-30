@@ -1285,7 +1285,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     || target_union_contains_source
                     || source_union_contains_target;
                 if !trivially_related {
-                    self.subtype.guard.mark_exceeded();
+                    self.subtype.mark_relation_complexity_exceeded();
                     return false;
                 }
             }
