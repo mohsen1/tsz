@@ -52,8 +52,7 @@ impl<'a> CheckerState<'a> {
         let delegate_file_name = arena
             .source_files
             .first()
-            .map(|sf| sf.file_name.clone())
-            .unwrap_or_else(|| self.ctx.file_name.clone());
+            .map_or_else(|| self.ctx.file_name.clone(), |sf| sf.file_name.clone());
 
         tsz_common::perf_counters::record_delegate_cross_arena_miss();
         let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
@@ -106,7 +105,7 @@ impl<'a> CheckerState<'a> {
             .filter(|decl_node| decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION)
             .and_then(|decl_node| arena.get_variable_declaration(decl_node))
             .map(|decl| decl.type_annotation)
-            .filter(|type_annotation| type_annotation.is_some());
+            .filter(NodeIndex::is_some);
 
         if let Some(type_annotation) = annotation
             && let Some(type_id) = concrete(self.get_type_of_node(type_annotation))
