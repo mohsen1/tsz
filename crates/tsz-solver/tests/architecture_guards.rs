@@ -241,6 +241,7 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     // The public staged entry points live in the `evaluate/api.rs` submodule
     // after the engine split; the module boundary is still owned by `evaluate`.
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
+    let evaluate_application_rs = read_solver_source("evaluation/evaluate/application.rs");
     let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
     let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
     let infer_match_expansion_rs =
@@ -304,6 +305,14 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && iteration_incomplete_tests.contains("request_result_for_test(TypeId::ERROR)")
             && !iteration_incomplete_tests.contains("evaluator.request_termination_kind"),
         "typed request-verdict tests must consume EvaluationResult through the evaluator boundary instead of reading the raw request_termination_kind slot"
+    );
+    assert!(
+        !evaluate_application_rs.contains("guard.mark_exceeded()")
+            && evaluate_application_rs
+                .matches("mark_depth_exceeded_for_request()")
+                .count()
+                >= 2,
+        "application evaluation depth/divergence bails must route through the typed request termination producer"
     );
     assert!(
         result_rs.contains("fn unstable_complete(type_id: TypeId) -> Self")
