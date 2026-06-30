@@ -44,11 +44,13 @@ pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> Arr
 /// [`RelationOutcome`]: super::assignability::RelationOutcome
 pub(crate) fn rest_element_array_like_relation_outcome(
     db: &dyn QueryDatabase,
+    resolver: &impl tsz_solver::relations::subtype::TypeResolver,
     source: TypeId,
     target: TypeId,
 ) -> super::assignability::RelationOutcome {
-    let result = tsz_solver::relations::relation_queries::query_relation(
+    let result = tsz_solver::relations::relation_queries::query_relation_with_resolver(
         db.as_type_database(),
+        resolver,
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
