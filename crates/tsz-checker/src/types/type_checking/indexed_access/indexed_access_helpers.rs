@@ -176,13 +176,25 @@ impl<'a> CheckerState<'a> {
 
     /// Whether a `keyof` result is a concrete key space rather than a still-deferred
     /// `keyof`. Used to decide whether a deferred conditional's apparent constraint
-    /// has a usable key space for indexed-access validation. `evaluate_keyof` only
-    /// leaves a deferred operator (its `Conditional` arm re-wraps as `KeyOf`, never
-    /// a bare conditional/application), so guarding `ERROR`/`ANY`/`KeyOf` suffices.
+    /// has a usable key space for indexed-access validation. Key-space callers
+    /// should compute the result through [`Self::indexed_access_keyof_with_env`]
+    /// so `Lazy(DefId)` operands are resolved before `keyof` is classified.
     pub(super) fn indexed_access_key_space_is_resolved(&self, keyof_result: TypeId) -> bool {
         !(keyof_result == TypeId::ERROR
             || keyof_result == TypeId::ANY
             || crate::query_boundaries::common::is_keyof_type(self.ctx.types, keyof_result))
+    }
+
+    /// Compute `keyof operand` through the checker's resolver-backed evaluator.
+    ///
+    /// Raw `ctx.types.evaluate_keyof` uses a resolverless evaluator; for indexed
+    /// access validation that can make `Lazy(DefId)` object members inside
+    /// deferred/apparent constraints look empty. Routing through
+    /// `evaluate_type_with_env` keeps the solver-owned `keyof` semantics while
+    /// giving the evaluator the checker resolver environment.
+    pub(super) fn indexed_access_keyof_with_env(&mut self, operand: TypeId) -> TypeId {
+        let keyof = self.ctx.types.factory().keyof(operand);
+        self.evaluate_type_with_env(keyof)
     }
 
     /// TS4105: Emit "Private or protected member '{name}' cannot be accessed on
@@ -1206,7 +1218,7 @@ impl<'a> CheckerState<'a> {
         let Some(value_union) = self.generic_tuple_chain_value_type(object_type_node_idx) else {
             return false;
         };
-        let value_keyof = self.ctx.types.evaluate_keyof(value_union);
+        let value_keyof = self.indexed_access_keyof_with_env(value_union);
 
         let mut outer_index_constraint = crate::query_boundaries::common::type_parameter_constraint(
             self.ctx.types,
@@ -1427,7 +1439,7 @@ impl<'a> CheckerState<'a> {
             {
                 let extends_type = self.get_type_from_type_node(cond.extends_type);
                 let extends_type = self.evaluate_type_with_env(extends_type);
-                let keyof_extends = self.ctx.types.evaluate_keyof(extends_type);
+                let keyof_extends = self.indexed_access_keyof_with_env(extends_type);
                 if self
                     .indexed_access_key_space_relation_outcome(index_type_for_check, keyof_extends)
                     .related
@@ -1477,7 +1489,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, base_type)
         {
             let mapped = self.ctx.types.mapped_type(mapped_id);
-            let template_keyof = self.ctx.types.evaluate_keyof(mapped.template);
+            let template_keyof = self.indexed_access_keyof_with_env(mapped.template);
             return self
                 .indexed_access_key_space_relation_outcome(index_type, template_keyof)
                 .related;
@@ -1493,13 +1505,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let key_space = self.ctx.types.evaluate_keyof(constraint);
+        let key_space = self.indexed_access_keyof_with_env(constraint);
         let values = self
             .evaluate_type_with_env(self.ctx.types.factory().index_access(constraint, key_space));
         if matches!(values, TypeId::ERROR | TypeId::UNDEFINED) {
             return false;
         }
-        let values_keyof = self.ctx.types.evaluate_keyof(values);
+        let values_keyof = self.indexed_access_keyof_with_env(values);
         self.indexed_access_key_space_relation_outcome(index_type, values_keyof)
             .related
     }
@@ -1743,7 +1755,7 @@ impl<'a> CheckerState<'a> {
 
         let current_base = self.get_type_from_type_node(current_object.object_type);
         let current_index = self.get_type_from_type_node(current_object.index_type);
-        let current_base_keyof = self.ctx.types.evaluate_keyof(current_base);
+        let current_base_keyof = self.indexed_access_keyof_with_env(current_base);
         let current_index_for_check = self.evaluate_type_with_env(current_index);
         !self
             .indexed_access_key_space_relation_outcome(current_index_for_check, current_base_keyof)

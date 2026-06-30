@@ -60,7 +60,7 @@ impl CheckerState<'_> {
         if evaluated_constraint == TypeId::ERROR || evaluated_constraint == TypeId::ANY {
             return false;
         }
-        let keyof = self.ctx.types.evaluate_keyof(evaluated_constraint);
+        let keyof = self.indexed_access_keyof_with_env(evaluated_constraint);
         if !self.indexed_access_key_space_is_resolved(keyof) {
             return false;
         }
@@ -280,10 +280,11 @@ impl CheckerState<'_> {
             // Every branch is error-typed -> universal key space -> any key valid.
             return Some(true);
         }
-        // `evaluate_keyof` over the union of the concrete branches already computes
-        // their key-space intersection.
+        // `keyof` over the union of the concrete branches already computes their
+        // key-space intersection; use the checker resolver so named branches
+        // contribute their resolved members.
         let concrete_union = self.ctx.types.union(concrete);
-        let keyof_concrete = self.ctx.types.evaluate_keyof(concrete_union);
+        let keyof_concrete = self.indexed_access_keyof_with_env(concrete_union);
         if !self.indexed_access_key_space_is_resolved(keyof_concrete) {
             return None;
         }

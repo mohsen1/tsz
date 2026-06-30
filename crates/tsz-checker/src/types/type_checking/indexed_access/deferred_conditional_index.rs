@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        let keyof_constraint = self.ctx.types.evaluate_keyof(base_constraint);
+        let keyof_constraint = self.indexed_access_keyof_with_env(base_constraint);
         // The key space itself must be concrete (not a deferred `keyof T`) for a
         // concrete-literal index validation to be meaningful.
         if crate::query_boundaries::common::is_keyof_type(self.ctx.types, keyof_constraint) {
@@ -181,7 +181,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let keyof_apparent = self.ctx.types.evaluate_keyof(apparent);
+        let keyof_apparent = self.indexed_access_keyof_with_env(apparent);
         if crate::query_boundaries::common::is_keyof_type(self.ctx.types, keyof_apparent) {
             return false;
         }

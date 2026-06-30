@@ -51,6 +51,25 @@ type First<U extends ReadonlyArray<unknown>> = Cond<U>["head"][0];
     );
 }
 
+/// Named branch aliases still contribute their tuple members to the apparent
+/// key space; raw resolverless `keyof` used to see the `Lazy(DefId)` branches as
+/// unresolved and reject the outer `length` key.
+#[test]
+fn nested_aliased_branch_deferred_conditional_length_index_does_not_emit_ts2536() {
+    let codes = check_source_codes(
+        r#"
+type PresentPart = { bucket: [1, 2] };
+type FallbackPart = { bucket: [3] };
+type Branches<Item> = Item extends string ? PresentPart : FallbackPart;
+type Len<Item> = Branches<Item>["bucket"]["length"];
+"#,
+    );
+    assert!(
+        !codes.contains(&2536),
+        "TS2536 should not fire for aliased branch tuple `length`: {codes:?}"
+    );
+}
+
 /// Inline deferred conditional (no alias indirection) — same acceptance for an
 /// array method key.
 #[test]
