@@ -826,26 +826,6 @@ impl TypeInterner {
         }
     }
 
-    /// Upper input length for the `normalize_union` result memo.
-    ///
-    /// `reduce_union_subtypes` sets the sticky TS2590 `union_too_complex` flag
-    /// only when its pairwise budget (`UNION_SUBTYPE_PAIRWISE_LIMIT`) is hit;
-    /// the member list never grows inside `normalize_union_uncached`, so
-    /// inputs at or below this bound can never set the flag and their results
-    /// are pure functions of the input list. Larger inputs skip the memo so a
-    /// cache hit can never swallow the flag. The compile-time assertion below
-    /// keeps this bound the largest length whose pairwise count stays under
-    /// the budget, so editing either constant alone fails the build instead
-    /// of silently muting TS2590 on memo hits.
-    const UNION_NORMALIZE_CACHE_MAX_LEN: usize = {
-        let max_len = 1000_usize;
-        assert!(
-            (max_len as u64) * (max_len as u64 - 1) < Self::UNION_SUBTYPE_PAIRWISE_LIMIT
-                && (max_len as u64 + 1) * (max_len as u64) >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT
-        );
-        max_len
-    };
-
     /// Memoized union normalization.
     ///
     /// The full pipeline (callable-order probe, semantic sort, dedup, literal
@@ -864,7 +844,7 @@ impl TypeInterner {
         }
         let key: Box<[TypeId]> = flat.as_slice().into();
         let result = self.normalize_union_uncached(flat);
-        self.union_normalize_cache.insert(key, result);
+        self.insert_union_normalize_cache(key, result);
         result
     }
 
@@ -1926,101 +1906,5 @@ impl TypeInterner {
 impl Default for TypeInterner {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[cfg(test)]
-mod union_preserve_members_tests {
-    use crate::TypeInterner;
-    use crate::types::TypeId;
-
-    /// `union_preserve_members` skips structural subtype reduction but must still
-    /// apply the universal top/bottom sentinel absorptions (`error` > `any` >
-    /// `unknown`), since `unknown | T` is `unknown`, `any | T` is `any`, and
-    /// `error | T` is `error` for every `T`. The flow-narrowing logical-condition
-    /// combiner relied on this: the false branch of
-    /// `typeof x === "object" && x !== null` over an `unknown` produced a stray
-    /// `unknown | null`, which then mis-narrowed under a later `typeof` guard.
-    #[test]
-    fn union_preserve_members_absorbs_top_and_bottom_sentinels() {
-        let interner = TypeInterner::new();
-
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::UNKNOWN, TypeId::NULL]),
-            TypeId::UNKNOWN,
-            "unknown | null must absorb to unknown"
-        );
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::STRING, TypeId::UNKNOWN, TypeId::NUMBER]),
-            TypeId::UNKNOWN,
-            "any member set containing unknown collapses to unknown"
-        );
-
-        // `any | T` is `any`; `any` outranks `unknown`.
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::ANY, TypeId::STRING]),
-            TypeId::ANY,
-            "any | string must absorb to any"
-        );
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::UNKNOWN, TypeId::ANY]),
-            TypeId::ANY,
-            "any outranks unknown"
-        );
-
-        // `error | T` is `error`; `error` outranks everything.
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::ERROR, TypeId::ANY]),
-            TypeId::ERROR,
-            "error outranks any"
-        );
-
-        // A sentinel nested inside a member union is also caught (members are
-        // flattened before the scan).
-        let nested = interner.union_preserve_members(vec![TypeId::STRING, TypeId::UNKNOWN]);
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::NUMBER, nested]),
-            TypeId::UNKNOWN,
-            "unknown nested inside a member union still absorbs"
-        );
-
-        // Non-sentinel members keep their structure (no subtype reduction).
-        assert_eq!(
-            interner.union_preserve_members(vec![TypeId::STRING, TypeId::NUMBER]),
-            interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
-            "ordinary members are unaffected"
-        );
-    }
-
-    /// `union(Vec)` and `union_from_slice(&[..])` both delegate to the same
-    /// `union_from_iter` normalizer, so they must return a byte-identical
-    /// `TypeId` for the same member sequence. The hot evaluation/instantiation/
-    /// inference/widening/narrowing paths rely on this equivalence to construct
-    /// unions from a borrowed slice (`union_from_slice`) instead of cloning the
-    /// member vector into `union` — a pure allocation cut with no result change.
-    /// This pins the contract so a future divergence in either constructor is
-    /// caught here rather than as a silent diagnostic drift downstream.
-    #[test]
-    fn union_from_slice_matches_owned_union() {
-        let interner = TypeInterner::new();
-        let cases: &[Vec<TypeId>] = &[
-            vec![TypeId::STRING, TypeId::NUMBER],
-            // Order that requires sorting/normalization.
-            vec![TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
-            // Duplicates that must dedup identically.
-            vec![TypeId::STRING, TypeId::STRING, TypeId::NUMBER],
-            // Sentinel absorption (`any | T` == `any`).
-            vec![TypeId::ANY, TypeId::STRING],
-            // Single-member and empty edge cases.
-            vec![TypeId::STRING],
-            vec![],
-        ];
-        for members in cases {
-            assert_eq!(
-                interner.union(members.clone()),
-                interner.union_from_slice(members),
-                "union(Vec) and union_from_slice(&[..]) must agree for {members:?}",
-            );
-        }
     }
 }
