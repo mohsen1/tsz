@@ -25,7 +25,7 @@ use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
@@ -343,6 +343,8 @@ pub struct TypeInterner {
     /// `UNION_NORMALIZE_CACHE_MAX_LEN` bypass this memo so the sticky
     /// TS2590 `union_too_complex` flag is never swallowed by a hit.
     pub(crate) union_normalize_cache: DashMap<Box<[TypeId]>, TypeId, FxBuildHasher>,
+    /// Retained member slots across all `union_normalize_cache` keys.
+    pub(super) union_normalize_cache_member_slots: AtomicUsize,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -510,6 +512,8 @@ pub struct TypePredicateCacheStatistics {
     pub identity_comparable_cache_entries: usize,
     /// Number of memoized union-normalization results.
     pub union_normalize_cache_entries: usize,
+    /// Number of `TypeId` member slots retained by union-normalization keys.
+    pub union_normalize_cache_member_slots: usize,
     /// Number of memoized `ThisType` containment predicate results.
     pub contains_this_cache_entries: usize,
     /// Number of memoized `infer` containment predicate results.
@@ -549,12 +553,37 @@ impl std::fmt::Debug for TypeInterner {
 }
 
 impl TypeInterner {
+    /// Upper input length for the `normalize_union` result memo.
+    ///
+    /// `reduce_union_subtypes` sets the sticky TS2590 `union_too_complex` flag
+    /// only when its pairwise budget (`UNION_SUBTYPE_PAIRWISE_LIMIT`) is hit;
+    /// the member list never grows inside `normalize_union_uncached`, so
+    /// inputs at or below this bound can never set the flag and their results
+    /// are pure functions of the input list. Larger inputs skip the memo so a
+    /// cache hit can never swallow the flag. The compile-time assertion below
+    /// keeps this bound the largest length whose pairwise count stays under
+    /// the budget, so editing either constant alone fails the build instead
+    /// of silently muting TS2590 on memo hits.
+    pub(super) const UNION_NORMALIZE_CACHE_MAX_LEN: usize = {
+        let max_len = 1000_usize;
+        assert!(
+            (max_len as u64) * (max_len as u64 - 1) < Self::UNION_SUBTYPE_PAIRWISE_LIMIT
+                && (max_len as u64 + 1) * (max_len as u64) >= Self::UNION_SUBTYPE_PAIRWISE_LIMIT
+        );
+        max_len
+    };
+    /// Maximum exact-key entries retained by the union-normalization memo.
+    pub(super) const UNION_NORMALIZE_CACHE_MAX_ENTRIES: usize = 4096;
+    /// Maximum total `TypeId` slots retained by union-normalization memo keys.
+    pub(super) const UNION_NORMALIZE_CACHE_MAX_MEMBER_SLOTS: usize = 262_144;
+
     /// Capture retained predicate-cache entry counts for perf attribution.
     #[must_use]
     pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
         TypePredicateCacheStatistics {
             identity_comparable_cache_entries: self.identity_comparable_cache.len(),
             union_normalize_cache_entries: self.union_normalize_cache.len(),
+            union_normalize_cache_member_slots: self.union_normalize_cache_member_slots(),
             contains_this_cache_entries: self
                 .predicate_cache_entries_for(PredicateCacheKind::ContainsThis),
             contains_infer_cache_entries: self
@@ -619,6 +648,71 @@ impl TypeInterner {
             .count()
     }
 
+    pub(super) fn insert_union_normalize_cache(&self, key: Box<[TypeId]>, result: TypeId) {
+        self.insert_union_normalize_cache_with_limits(
+            key,
+            result,
+            Self::UNION_NORMALIZE_CACHE_MAX_ENTRIES,
+            Self::UNION_NORMALIZE_CACHE_MAX_MEMBER_SLOTS,
+        );
+    }
+
+    pub(super) fn insert_union_normalize_cache_with_limits(
+        &self,
+        key: Box<[TypeId]>,
+        result: TypeId,
+        max_entries: usize,
+        max_member_slots: usize,
+    ) {
+        let key_len = key.len();
+        if max_entries == 0 || key_len > max_member_slots {
+            return;
+        }
+
+        if let Some((removed_key, _)) = self.union_normalize_cache.remove(key.as_ref()) {
+            self.decrement_union_normalize_cache_member_slots(removed_key.len());
+        }
+        while self.union_normalize_cache.len() >= max_entries
+            || self
+                .union_normalize_cache_member_slots
+                .load(Ordering::Relaxed)
+                .saturating_add(key_len)
+                > max_member_slots
+        {
+            let Some(eviction_key) = self
+                .union_normalize_cache
+                .iter()
+                .next()
+                .map(|entry| entry.key().clone())
+            else {
+                break;
+            };
+            if let Some((removed_key, _)) = self.union_normalize_cache.remove(eviction_key.as_ref())
+            {
+                self.decrement_union_normalize_cache_member_slots(removed_key.len());
+            }
+        }
+
+        let inserted_new_key = self.union_normalize_cache.insert(key, result).is_none();
+        if inserted_new_key {
+            self.union_normalize_cache_member_slots
+                .fetch_add(key_len, Ordering::Relaxed);
+        }
+    }
+
+    fn union_normalize_cache_member_slots(&self) -> usize {
+        self.union_normalize_cache_member_slots
+            .load(Ordering::Relaxed)
+    }
+
+    fn decrement_union_normalize_cache_member_slots(&self, slots: usize) {
+        let _ = self.union_normalize_cache_member_slots.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |current| Some(current.saturating_sub(slots)),
+        );
+    }
+
     /// Create a new type interner with pre-registered intrinsics.
     ///
     /// Uses lazy initialization for all `DashMap` structures to minimize
@@ -649,6 +743,7 @@ impl TypeInterner {
             proto_instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
+            union_normalize_cache_member_slots: AtomicUsize::new(0),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
