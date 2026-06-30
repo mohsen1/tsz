@@ -719,6 +719,9 @@ path = "tests/module_augmentation_isolation_tests.rs"
 name = "ambient_module_renamed_export_ts2460_tests"
 path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 [[test]]
+name = "ambient_module_augmentation_new_export_tests"
+path = "tests/ambient_module_augmentation_new_export_tests.rs"
+[[test]]
 name = "ambient_module_value_export_tests"
 path = "tests/ambient_module_value_export_tests.rs"
 [[test]]

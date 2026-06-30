@@ -791,16 +791,14 @@ impl<'a> CheckerState<'a> {
             // e.g., declare module 'express' { interface Request { user?: User; } }
             if let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name) {
                 for aug in augmentations {
-                    // Get the type of the augmentation declaration
-                    let aug_type = if aug
-                        .arena
-                        .as_ref()
-                        .is_some_and(|arena| std::ptr::eq(arena.as_ref(), self.ctx.arena))
-                    {
-                        self.get_type_of_node(aug.node)
-                    } else {
-                        tsz_solver::TypeId::ANY
-                    };
+                    // Resolve the augmentation declaration's type against its own
+                    // arena/binder (#14853). A cross-file augmentation that adds a
+                    // new export otherwise collapsed to `any` here, dropping every
+                    // assignability error against the dynamically-imported member.
+                    let aug_arena = aug.arena.as_deref().unwrap_or(self.ctx.arena);
+                    let aug_type = self
+                        .augmentation_export_declaration_type(aug.node, aug_arena)
+                        .unwrap_or(tsz_solver::TypeId::ANY);
                     let name_atom = self.ctx.types.intern_string(&aug.name);
 
                     // Check if this augments an existing export
