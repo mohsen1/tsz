@@ -8,9 +8,8 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
-use crate::state::MAX_TREE_WALK_ITERATIONS;
-
 use super::FlowAnalyzer;
+use super::type_guard_walk::{TypeGuardWalk, TypeGuardWalkState};
 use crate::query_boundaries::flow_analysis::{self as flow_query, TypeResolver};
 use crate::types_domain::property_access_type::known_globals;
 
@@ -37,13 +36,12 @@ fn enclosing_class_property_initializer(
     reference: NodeIndex,
 ) -> Option<NodeIndex> {
     let mut current = reference;
-    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
-        let ext = arena.get_extended(current)?;
-        let parent = ext.parent;
-        if parent.is_none() {
-            return None;
-        }
-
+    let mut walk = TypeGuardWalk::new();
+    loop {
+        let parent = match walk.next_parent(arena, current) {
+            TypeGuardWalkState::Continue(parent) => parent,
+            TypeGuardWalkState::Finished | TypeGuardWalkState::Exhausted => return None,
+        };
         let parent_node = arena.get(parent)?;
         if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
             return arena
@@ -54,27 +52,20 @@ fn enclosing_class_property_initializer(
 
         current = parent;
     }
-
-    None
 }
 
 fn node_is_within(arena: &NodeArena, node: NodeIndex, ancestor: NodeIndex) -> bool {
     let mut current = node;
-    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
+    let mut walk = TypeGuardWalk::new();
+    loop {
         if current == ancestor {
             return true;
         }
-        let Some(ext) = arena.get_extended(current) else {
-            return false;
+        current = match walk.next_parent(arena, current) {
+            TypeGuardWalkState::Continue(parent) => parent,
+            TypeGuardWalkState::Finished | TypeGuardWalkState::Exhausted => return false,
         };
-        let parent = ext.parent;
-        if parent.is_none() {
-            return false;
-        }
-        current = parent;
     }
-
-    false
 }
 
 impl<'a> FlowAnalyzer<'a> {
@@ -172,11 +163,14 @@ impl<'a> FlowAnalyzer<'a> {
                 let decl_scope_id = self.binder.find_enclosing_scope(self.arena, decl_id);
                 let mut is_in_function_scope = false;
                 if let Some(mut scope_id) = decl_scope_id {
-                    for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
-                        let Some(scope) = self.binder.scopes.get(scope_id.0 as usize) else {
-                            break;
-                        };
-                        match scope.kind {
+                    let mut walk = TypeGuardWalk::new();
+                    while let TypeGuardWalkState::Continue((kind, parent)) = walk.next(|| {
+                        self.binder
+                            .scopes
+                            .get(scope_id.0 as usize)
+                            .map(|scope| (scope.kind, scope.parent))
+                    }) {
+                        match kind {
                             ContainerKind::Function => {
                                 is_in_function_scope = true;
                                 break;
@@ -189,7 +183,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 // Keep walking up
                             }
                         }
-                        let parent = scope.parent;
                         if parent.is_none() {
                             break;
                         }
@@ -439,14 +432,14 @@ impl<'a> FlowAnalyzer<'a> {
     /// Returns `NodeIndex::NONE` if the node is at module/global scope.
     fn find_enclosing_function_node(&self, node_idx: NodeIndex) -> NodeIndex {
         let mut current = node_idx;
-        for _ in 0..crate::state::MAX_TREE_WALK_ITERATIONS {
-            let Some(ext) = self.arena.get_extended(current) else {
-                return NodeIndex::NONE;
+        let mut walk = TypeGuardWalk::new();
+        loop {
+            let parent = match walk.next_parent(self.arena, current) {
+                TypeGuardWalkState::Continue(parent) => parent,
+                TypeGuardWalkState::Finished | TypeGuardWalkState::Exhausted => {
+                    return NodeIndex::NONE;
+                }
             };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return NodeIndex::NONE;
-            }
             let Some(parent_node) = self.arena.get(parent) else {
                 return NodeIndex::NONE;
             };
@@ -455,7 +448,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
             current = parent;
         }
-        NodeIndex::NONE
     }
 
     pub(crate) fn reference_is_in_class_property_initializer(&self, reference: NodeIndex) -> bool {
@@ -491,8 +483,6 @@ impl<'a> FlowAnalyzer<'a> {
     /// - Variables declared INSIDE the closure should narrow normally
     /// - Variables captured from OUTER scope reset narrowing (for let/var)
     pub(crate) fn is_captured_variable(&self, reference: NodeIndex) -> bool {
-        use tsz_binder::ScopeId;
-
         // Resolve the identifier reference to its symbol
         let Some(symbol_id) = self.binder.resolve_identifier(self.arena, reference) else {
             return false;
@@ -537,19 +527,21 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check if declaration scope is an ancestor of usage scope
         let mut scope_id = usage_scope_id;
-        let mut iterations = 0;
-        while scope_id.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
+        let mut walk = TypeGuardWalk::new();
+        while scope_id.is_some() {
             if scope_id == decl_scope_id {
                 return true;
             }
 
-            scope_id = self
-                .binder
-                .scopes
-                .get(scope_id.0 as usize)
-                .map_or(ScopeId::NONE, |scope| scope.parent);
-
-            iterations += 1;
+            scope_id = match walk.next(|| {
+                self.binder
+                    .scopes
+                    .get(scope_id.0 as usize)
+                    .map(|scope| scope.parent)
+            }) {
+                TypeGuardWalkState::Continue(parent) => parent,
+                TypeGuardWalkState::Finished | TypeGuardWalkState::Exhausted => break,
+            };
         }
 
         false
