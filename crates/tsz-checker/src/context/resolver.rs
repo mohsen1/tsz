@@ -68,7 +68,7 @@ impl<'a> CheckerContext<'a> {
             .unwrap_or(false)
     }
 
-    fn module_augmented_body_or_current(
+    pub(crate) fn module_augmented_body_or_current(
         &self,
         def_id: DefId,
         body: TypeId,
@@ -77,6 +77,18 @@ impl<'a> CheckerContext<'a> {
         self.definition_store
             .module_augmented_body_for(def_id, body, interner)
             .unwrap_or(body)
+    }
+
+    /// Read a `DefId` body for checker-side semantic decisions.
+    ///
+    /// Most `Lazy(DefId)` resolution flows through [`TypeResolver::resolve_lazy`],
+    /// but a few diagnostic and indexed-access paths need the stored body directly.
+    /// Keep those direct reads aligned with the module-augmentation body publication
+    /// channel instead of reintroducing raw `DefinitionStore::get_body` bypasses.
+    pub(crate) fn get_semantic_def_body(&self, def_id: DefId) -> Option<TypeId> {
+        self.definition_store
+            .get_body(def_id)
+            .map(|body| self.module_augmented_body_or_current(def_id, body, self.types))
     }
 
     /// On a `resolve_lazy` miss for a force-eligible simple lib interface,

@@ -276,6 +276,9 @@ impl<'a> CheckerState<'a> {
                     .ok()
                     .and_then(|env| env.get_def(def_id))
             })?;
+            let body = self
+                .ctx
+                .module_augmented_body_or_current(def_id, body, self.ctx.types);
             let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
             Some((def_id, body, params))
         });
