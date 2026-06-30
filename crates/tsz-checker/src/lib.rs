@@ -1510,6 +1510,9 @@ mod super_call_ts2376_ts17009_priority_tests;
 #[path = "tests/switch_distinct_literal_memo_narrowing_tests.rs"]
 mod switch_distinct_literal_memo_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/symbol_env_registration_arch_tests.rs"]
+mod symbol_env_registration_arch_tests;
+#[cfg(test)]
 #[path = "tests/symbol_for_identity_helper_tests.rs"]
 mod symbol_for_identity_helper_tests;
 #[cfg(test)]

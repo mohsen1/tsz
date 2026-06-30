@@ -71,6 +71,9 @@ pub enum DeferredFlowEnvWrite {
     /// `register_enum_namespace_type` — register an enum's namespace object type
     /// for `typeof Enum` / `keyof typeof Enum`.
     RegisterEnumNamespaceType { def_id: DefId, ns_type: TypeId },
+    /// `register_numeric_enum` — register an enum as numeric for enum/number
+    /// compatibility rules.
+    RegisterNumericEnum { def_id: DefId },
     /// `register_enum_parent` — register an enum member's parent enum for member
     /// widening and discriminant narrowing.
     RegisterEnumParent {
@@ -157,6 +160,7 @@ impl DeferredFlowEnvWrite {
             Self::RegisterEnumNamespaceType { def_id, ns_type } => {
                 env.register_enum_namespace_type(*def_id, *ns_type);
             }
+            Self::RegisterNumericEnum { def_id } => env.register_numeric_enum(*def_id),
             Self::RegisterEnumParent {
                 member_def_id,
                 parent_def_id,

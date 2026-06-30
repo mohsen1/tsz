@@ -460,6 +460,66 @@ fn both_envs_defer_then_replay_under_simultaneous_borrow() {
     );
 }
 
+/// Enum metadata published by symbol resolution uses the same dual-env
+/// deferred-write discipline as bodies and class instances. Holding both envs
+/// borrowed must queue, then replay, the numeric-enum marker and member-parent
+/// edge symmetrically.
+#[test]
+fn enum_metadata_defer_then_replay_under_simultaneous_borrow() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let enum_def = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let member_def = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+
+    {
+        let held_eval = ctx.type_env.borrow();
+        let held_flow = ctx.type_environment.borrow();
+        ctx.register_numeric_enum_in_envs(enum_def);
+        ctx.register_enum_parent_in_envs(member_def, enum_def);
+
+        assert!(!held_eval.is_numeric_enum(enum_def));
+        assert!(!held_flow.is_numeric_enum(enum_def));
+        assert_eq!(held_eval.get_enum_parent(member_def), None);
+        assert_eq!(held_flow.get_enum_parent(member_def), None);
+        assert_eq!(ctx.deferred_eval_env_write_count(), 2);
+        assert_eq!(ctx.deferred_flow_env_write_count(), 2);
+    }
+
+    ctx.flush_deferred_eval_env_writes();
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_eval_env_write_count(), 0);
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    assert!(ctx.type_env.borrow().is_numeric_enum(enum_def));
+    assert!(ctx.type_environment.borrow().is_numeric_enum(enum_def));
+    assert_eq!(
+        ctx.type_env.borrow().get_enum_parent(member_def),
+        Some(enum_def)
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_enum_parent(member_def),
+        Some(enum_def)
+    );
+}
+
 /// Pins the body-registration construction rule shared by
 /// `register_resolved_def_in_envs` and `mirror_def_in_type_environment`:
 /// empty params build the non-generic `InsertDef` variant, non-empty params
