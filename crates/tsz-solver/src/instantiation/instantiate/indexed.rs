@@ -2,6 +2,7 @@
 //! `TypeData::KeyOf`, `TypeData::TemplateLiteral`, and
 //! `TypeData::StringIntrinsic` arms of `instantiate_key`.
 
+use crate::construction::TypeDatabase;
 use crate::types::{
     IntrinsicKind, LiteralValue, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TypeData,
     TypeId,
@@ -76,35 +77,10 @@ impl<'a> TypeInstantiator<'a> {
         if self.preserve_meta_types {
             return self.interner.keyof(inst_operand);
         }
-        if matches!(
-            self.interner.lookup(inst_operand),
-            Some(
-                TypeData::TypeQuery(_)
-                    | TypeData::Lazy(_)
-                    | TypeData::Application(_)
-                    | TypeData::IndexAccess(_, _)
-            )
-        ) {
-            return self.interner.keyof(inst_operand);
-        }
-        // Union/intersection operands whose members are semantic refs
-        // (`Lazy(DefId)`), generic applications, or recursive aliases
-        // cannot be flattened to a finite key set by the resolver-less
-        // `evaluate_keyof` reached from this instantiation path: the
-        // member refs stay unresolved, so the keyof collapses to a
-        // deferred, structurally-detached form that loses the source's
-        // properties (and their optional/readonly modifiers) when the
-        // mapped type later expands. Keep the keyof deferred over the
-        // instantiated operand so the resolver-aware key extraction in
-        // `extract_mapped_keys`/`collect_properties` can resolve the
-        // member refs and recover the full key set. Fully concrete
-        // unions/intersections (e.g. `keyof ({ a: 1 } & { b: 2 })`)
-        // have no such refs and continue to evaluate eagerly below.
-        if matches!(
-            self.interner.lookup(inst_operand),
-            Some(TypeData::Union(_) | TypeData::Intersection(_))
-        ) && crate::type_queries::contains_lazy_or_recursive_db(self.interner, inst_operand)
-        {
+        if keyof_operand_needs_resolver(self.interner, inst_operand) {
+            if super::flags::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
+                return self.evaluate_keyof(inst_operand);
+            }
             return self.interner.keyof(inst_operand);
         }
         // Evaluate immediately to expand keyof { a: 1 } -> "a"
@@ -198,5 +174,21 @@ impl<'a> TypeInstantiator<'a> {
         } else {
             string_intrinsic
         }
+    }
+}
+
+/// Check whether an instantiated `keyof` operand needs the outer resolver.
+fn keyof_operand_needs_resolver(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match interner.lookup(type_id) {
+        Some(
+            TypeData::Application(_)
+            | TypeData::Lazy(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::IndexAccess(_, _),
+        ) => true,
+        Some(TypeData::Union(_) | TypeData::Intersection(_)) => {
+            crate::type_queries::contains_lazy_or_recursive_db(interner, type_id)
+        }
+        _ => false,
     }
 }
