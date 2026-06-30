@@ -827,6 +827,32 @@ impl CheckerContext<'_> {
         self.mirror_to_flow_env(op);
     }
 
+    /// Seed a definition body that is already authoritative in the shared
+    /// `DefinitionStore` into the local evaluator env and flow-analyzer env.
+    ///
+    /// Shared-store warm-up may hold a long-lived mutable borrow of `type_env`
+    /// while iterating symbols. When that borrow exists, apply the evaluator
+    /// write directly through the same queued-write drain order; when it does
+    /// not, route through the ordinary race-safe evaluator queue. In both cases
+    /// the flow-analyzer env receives the exact same op through
+    /// [`Self::mirror_to_flow_env`].
+    pub(crate) fn seed_shared_store_def_in_envs(
+        &self,
+        eval_env: Option<&mut TypeEnvironment>,
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        let op = DeferredFlowEnvWrite::insert_def_choosing_params(def_id, body, params, None);
+        if let Some(env) = eval_env {
+            drain_env_write_queue_into(&self.deferred_eval_env_writes, env);
+            op.apply(env);
+        } else {
+            self.apply_to_eval_env(op.clone());
+        }
+        self.mirror_to_flow_env(op);
+    }
+
     /// Apply (or defer) one registration to the authoritative evaluator env
     /// (`type_env`), through the shared race-safe write discipline.
     fn apply_to_eval_env(&self, op: DeferredFlowEnvWrite) {

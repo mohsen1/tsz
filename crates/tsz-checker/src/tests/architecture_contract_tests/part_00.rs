@@ -685,6 +685,34 @@ fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
 }
 
 #[test]
+fn test_shared_store_warmup_routes_env_seeds_through_context_helper() {
+    let source = fs::read_to_string("src/state/type_environment/core.rs")
+        .expect("failed to read src/state/type_environment/core.rs for architecture guard");
+    let warmup = source
+        .split("PERF: Seed symbol_types and type_env from DefinitionStore")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("// Resolve each symbol and add to the environment.")
+                .next()
+        })
+        .expect("failed to isolate shared-store warm-up block");
+
+    assert!(
+        warmup.contains("seed_shared_store_def_in_envs("),
+        "shared-store TypeEnvironment warm-up must route body seeding through CheckerContext::seed_shared_store_def_in_envs"
+    );
+    for forbidden in [
+        "mirror_def_in_type_environment(",
+        "env.insert_def_with_params(",
+    ] {
+        assert!(
+            !warmup.contains(forbidden),
+            "shared-store TypeEnvironment warm-up must not use raw env write path `{forbidden}`"
+        );
+    }
+}
+
+#[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
     let mut assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
         .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");

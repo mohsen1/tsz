@@ -381,6 +381,133 @@ fn eval_env_backlog_drains_on_next_successful_write() {
     );
 }
 
+#[test]
+fn shared_store_seed_uses_borrowed_eval_env_and_deferred_flow_mirror() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let params = vec![tsz_solver::TypeParamInfo::simple(types.intern_string("T"))];
+    ctx.definition_store
+        .set_body_with_params(def_id, TypeId::STRING, Some(params.clone()));
+
+    {
+        let held_flow = ctx.type_environment.borrow();
+        let mut eval_env = ctx.type_env.borrow_mut();
+        ctx.seed_shared_store_def_in_envs(
+            Some(&mut eval_env),
+            def_id,
+            TypeId::STRING,
+            params.clone(),
+        );
+
+        assert_eq!(
+            eval_env.get_def(def_id),
+            Some(TypeId::STRING),
+            "borrowed evaluator env must receive the warm-up body directly"
+        );
+        assert_eq!(
+            eval_env.get_def_params(def_id),
+            Some(params.as_slice()),
+            "borrowed evaluator env must receive warm-up type params"
+        );
+        assert_eq!(
+            ctx.deferred_eval_env_write_count(),
+            0,
+            "using the borrowed evaluator env must not queue an authoritative write"
+        );
+        assert_eq!(
+            held_flow.get_def(def_id),
+            None,
+            "held flow env must not receive the mirror until replay"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "flow mirror must be queued rather than dropped"
+        );
+    }
+
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(def_id),
+        Some(TypeId::STRING),
+        "flow env must receive the replayed warm-up body"
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_def_params(def_id),
+        Some(params.as_slice()),
+        "flow env must receive replayed warm-up type params"
+    );
+}
+
+#[test]
+fn shared_store_seed_defers_authoritative_write_when_eval_env_is_borrowed() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    ctx.definition_store.set_body(def_id, TypeId::BOOLEAN);
+
+    {
+        let held_eval = ctx.type_env.borrow();
+        ctx.seed_shared_store_def_in_envs(None, def_id, TypeId::BOOLEAN, Vec::new());
+
+        assert_eq!(
+            held_eval.get_def(def_id),
+            None,
+            "held evaluator env must not receive the queued warm-up body yet"
+        );
+        assert_eq!(
+            ctx.deferred_eval_env_write_count(),
+            1,
+            "lost authoritative warm-up write must be queued"
+        );
+        assert_eq!(
+            ctx.type_environment.borrow().get_def(def_id),
+            Some(TypeId::BOOLEAN),
+            "flow env mirror can still apply when it is borrowable"
+        );
+    }
+
+    ctx.flush_deferred_eval_env_writes();
+    assert_eq!(ctx.deferred_eval_env_write_count(), 0);
+    assert_eq!(
+        ctx.type_env.borrow().get_def(def_id),
+        Some(TypeId::BOOLEAN),
+        "evaluator env must receive the replayed warm-up body"
+    );
+}
+
 /// Both type environments share one race-safe write discipline
 /// (`apply_or_defer_env_write`). When a single dual-env registration races
 /// *both* cells at once — the exact recursive-resolution scenario where the flow
