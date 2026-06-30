@@ -75,6 +75,22 @@ fn run_from(cwd: &Path, entry: &str) -> Option<String> {
     ))
 }
 
+fn run_project_from(cwd: &Path) -> Option<String> {
+    let tsz_bin = find_tsz_binary()?;
+    let output = Command::new(tsz_bin)
+        .args(["--project", ".", "--noEmit", "--pretty", "false"])
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run tsz project");
+    Some(format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    ))
+}
+
 /// Sibling / parent / subdirectory reference paths each resolve relative to the
 /// current directory — never an absolute path.
 #[test]
@@ -113,6 +129,50 @@ fn unresolved_reference_paths_are_reported_relative_to_cwd() {
     );
 }
 
+/// Project/config mode stores root files as resolved paths. `tsc --project`
+/// therefore reports the normalized resolved reference path, not the
+/// cwd-relative spelling used by explicit `tsc entry.ts`.
+#[test]
+fn project_mode_reports_resolved_reference_path() {
+    let temp = TempDir::new("project").expect("temp dir");
+    write_file(
+        &temp.path.join("pkg/entry.ts"),
+        "/// <reference path=\"../escaped-parent.d.ts\" />\n\
+         export const z = 3;\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{ "compilerOptions": { "target": "es2022", "lib": ["es2022"] }, "include": ["**/*.ts"] }"#,
+    );
+
+    let Some(out) = run_project_from(&temp.path) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    let expected = temp
+        .path
+        .join("escaped-parent.d.ts")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let canonical_expected = temp
+        .path
+        .canonicalize()
+        .expect("canonicalize temp dir")
+        .join("escaped-parent.d.ts")
+        .to_string_lossy()
+        .replace('\\', "/");
+    assert!(
+        out.contains(&format!("File '{expected}' not found."))
+            || out.contains(&format!("File '{canonical_expected}' not found.")),
+        "project-mode reference must use resolved path; got:\n{out}"
+    );
+    assert!(
+        !out.contains("File 'escaped-parent.d.ts' not found."),
+        "project-mode reference must not use explicit-file cwd-relative display; got:\n{out}"
+    );
+}
+
 /// When the entry file sits in a subdirectory, a sibling reference resolves to a
 /// path prefixed with that subdirectory — matching tsc's cwd-relative output.
 #[test]
@@ -136,5 +196,26 @@ fn reference_from_nested_entry_keeps_subdir_prefix() {
     assert!(
         !out.contains(&format!("File '{}", temp.path.display())),
         "TS6053 must not contain an absolute path; got:\n{out}"
+    );
+}
+
+#[test]
+fn explicit_file_absolute_reference_literal_stays_absolute() {
+    let temp = TempDir::new("absolute_literal").expect("temp dir");
+    let missing = temp.path.join("absent-absolute.d.ts");
+    let missing_display = missing.to_string_lossy().replace('\\', "/");
+    write_file(
+        &temp.path.join("entry.ts"),
+        &format!("/// <reference path=\"{missing_display}\" />\nexport const q = 4;\n"),
+    );
+
+    let Some(out) = run_from(&temp.path, "entry.ts") else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        out.contains(&format!("File '{missing_display}' not found.")),
+        "absolute reference literals must remain absolute; got:\n{out}"
     );
 }

@@ -165,14 +165,12 @@ pub struct ProgramContext {
     /// per project run by the driver and shared via `Arc` across every
     /// checker.
     pub cross_file_type_params_cache: Option<CrossFileTypeParamsCache>,
-    /// The program's current directory (`tsc`'s `host.getCurrentDirectory()`).
+    /// Current directory for explicit-file reference-path diagnostics.
     ///
-    /// When set, diagnostics that embed a resolved file path in their message
-    /// (e.g. TS6053 for an unresolved `/// <reference path="..." />`) render
-    /// the path relative to this directory, matching `tsc`, which keeps source
-    /// file names relative to the current directory. `None` leaves the path in
-    /// its resolved (absolute) form. Drivers populate this from the same
-    /// canonicalized process cwd the diagnostic reporter relativizes against.
+    /// `tsc entry.ts` keeps source identities relative to
+    /// `host.getCurrentDirectory()`, so TS6053/TS6054 reference paths render
+    /// relative to this directory. Project/config mode stores resolved source
+    /// paths and leaves this unset, so diagnostics use resolved paths instead.
     pub current_directory: Option<Arc<str>>,
 }
 

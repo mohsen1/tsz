@@ -140,14 +140,17 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| Path::new(""))
                     .join(&forward_slash_path);
 
-                // Render the resolved path the way tsc does: relative to the
-                // program's current directory (tsc keeps source file names, and
-                // thus reference paths resolved from them, relative to
-                // `host.getCurrentDirectory()`). `.` and `..` components are
-                // collapsed so the path reads like "sub/file.ts", not
-                // "dir/../file.ts".
-                let display_path =
-                    display_reference_path(&resolved, self.ctx.current_directory.as_deref());
+                // Render the resolved path the way tsc does for this driver
+                // mode. Explicit-file checks supply `current_directory` and use
+                // cwd-relative display; project/config checks leave it unset
+                // and keep resolved paths. Absolute reference literals always
+                // stay absolute.
+                let current_directory = if reference_path_is_absolute(&forward_slash_path) {
+                    None
+                } else {
+                    self.ctx.current_directory.as_deref()
+                };
+                let display_path = display_reference_path(&resolved, current_directory);
                 let message = format_message("File '{0}' not found.", &[&display_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
@@ -204,12 +207,12 @@ impl<'a> CheckerState<'a> {
 
 /// Render a resolved triple-slash reference path for a TS6053/TS6054 message.
 ///
-/// `tsc` keeps source file names relative to `host.getCurrentDirectory()`, so a
-/// reference path resolved from one prints relative to the current directory
-/// too (e.g. `nested/missing.d.ts`, `../up.d.ts`). When the program's current
-/// directory is known, this relativizes the resolved path against it; otherwise
-/// it falls back to the normalized (absolute) path. `.` and `..` components are
-/// always collapsed.
+/// Explicit-file `tsc entry.ts` checks keep source names relative to
+/// `host.getCurrentDirectory()`, so a reference path resolved from one prints
+/// relative to that directory (e.g. `nested/missing.d.ts`, `../up.d.ts`).
+/// Project/config checks store resolved source names, so the driver leaves the
+/// current directory unset and this returns the normalized resolved path. `.`
+/// and `..` components are always collapsed.
 fn display_reference_path(resolved: &std::path::Path, current_dir: Option<&str>) -> String {
     let normalized = normalize_path(resolved);
     let Some(current_dir) = current_dir.filter(|dir| !dir.is_empty()) else {
@@ -223,6 +226,15 @@ fn display_reference_path(resolved: &std::path::Path, current_dir: Option<&str>)
         return normalized;
     }
     relative_to(normalized_path, std::path::Path::new(current_dir)).unwrap_or(normalized)
+}
+
+fn reference_path_is_absolute(reference_path: &str) -> bool {
+    let normalized = reference_path.replace('\\', "/");
+    if normalized.starts_with('/') {
+        return true;
+    }
+    let bytes = normalized.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/'
 }
 
 /// Compute `path` relative to `base`, mirroring `tsc`'s
@@ -363,5 +375,14 @@ mod tests {
             display_reference_path(resolved, Some("/proj/app")),
             "app/missing-a.d.ts"
         );
+    }
+
+    #[test]
+    fn absolute_reference_literal_is_detected_portably() {
+        assert!(super::reference_path_is_absolute("/tmp/missing.d.ts"));
+        assert!(super::reference_path_is_absolute("C:/tmp/missing.d.ts"));
+        assert!(super::reference_path_is_absolute("C:\\tmp\\missing.d.ts"));
+        assert!(!super::reference_path_is_absolute("../missing.d.ts"));
+        assert!(!super::reference_path_is_absolute("nested/missing.d.ts"));
     }
 }

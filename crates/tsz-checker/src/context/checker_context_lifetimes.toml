@@ -12,7 +12,7 @@ arena = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "c
 binder = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 types = { lifetime = "ProgramStable", capability = "CheckerInputs", reason = "shared immutable program data; valid until the compilation or project version changes" }
 file_name = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-current_directory = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "driver-provided current-directory display root for diagnostics; valid until the compilation or project cwd changes" }
+current_directory = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "driver-provided explicit-file display root for diagnostics; valid until the compilation cwd changes" }
 compiler_options = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 capabilities = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 no_implicit_override = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }

@@ -647,8 +647,8 @@ pub struct CheckerContext<'a> {
     /// Current file name.
     pub file_name: String,
 
-    /// Program cwd used to render TS6053 resolved paths relative to `tsc`'s
-    /// `host.getCurrentDirectory()`; `None` keeps resolved absolute paths.
+    /// Explicit-file cwd for TS6053/TS6054 reference paths; `None` keeps
+    /// resolved project/config paths.
     pub current_directory: Option<Arc<str>>,
 
     /// Compiler options for type checking.
