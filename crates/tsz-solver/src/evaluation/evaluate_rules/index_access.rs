@@ -19,9 +19,8 @@ use crate::visitor::{
 };
 
 use super::super::evaluate::TypeEvaluator;
+use super::index_access_union_distribution::UnionIndexSizeState;
 use crate::objects::apparent::literal_value_intrinsic_kind;
-
-const MAX_UNION_INDEX_SIZE: usize = 500;
 
 struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
     evaluator: &'b mut TypeEvaluator<'a, R>,
@@ -922,7 +921,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
-        if members.len() > MAX_UNION_INDEX_SIZE {
+        if UnionIndexSizeState::for_member_count(members.len()).is_limit_exceeded() {
             if let Some(result) = self.try_fast_index_large_union(&members) {
                 return Some(result);
             }
