@@ -965,11 +965,30 @@ fn test_bct_cache_resolver_present_distinct_from_absent() {
         &[a, b],
         Some(&resolver),
     );
-    let entries_with_res = db.statistics().subtype_reduction_cache_entries;
+    let stats_with_res = db.statistics();
+    let entries_with_res = stats_with_res.subtype_reduction_cache_entries;
 
     assert!(
         entries_with_res > entries_no_res,
         "resolver-present must be a distinct cache slot ({entries_no_res} -> {entries_with_res})"
+    );
+
+    let _ = crate::operations::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &[a, b],
+        Some(&resolver),
+    );
+    let stats_after_repeat = db.statistics();
+
+    assert_eq!(
+        stats_after_repeat.subtype_reduction_cache_entries, entries_with_res,
+        "repeating the resolver-present request should reuse its cache slot"
+    );
+    assert!(
+        stats_after_repeat.subtype_reduction_cache_hits
+            > stats_with_res.subtype_reduction_cache_hits,
+        "resolver-present repeat should hit the request-owned cache key"
     );
 }
 

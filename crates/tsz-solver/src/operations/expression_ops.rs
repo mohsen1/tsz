@@ -6,7 +6,7 @@
 //! These functions operate purely on `TypeIds` and maintain no AST dependencies.
 
 use crate::caches::db::QueryDatabase;
-use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
+use crate::caches::subtype_reduction_cache::SubtypeReductionRequest;
 use crate::construction::TypeDatabase;
 use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::TypeResolver;
@@ -1200,12 +1200,13 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
     }
 
     // Cross-call cache probe (mirrors tsc's `subtypeReductionCache`). The
-    // key is the sorted input list plus a single `mode_bits` byte that
-    // distinguishes "resolver provided" (nominal class hierarchy enabled)
-    // from "no resolver". Class hierarchies and registered base-types are
-    // stable for the lifetime of a per-file `QueryCache`, so a hit means
-    // the recomputed answer would be identical.
-    let cache_key = query_db.map(|_| SubtypeReductionKey::build(types, resolver.is_some()));
+    // typed request owns option-sensitive key construction, including the
+    // nominal hierarchy option enabled when a resolver is available.
+    let cache_key = query_db.map(|_| {
+        SubtypeReductionRequest::new(types)
+            .with_nominal_hierarchy_resolution(resolver.is_some())
+            .cache_key()
+    });
     if let (Some(db), Some(key)) = (query_db, cache_key.as_ref())
         && let Some(hit) = db.lookup_subtype_reduction_cache(key)
     {

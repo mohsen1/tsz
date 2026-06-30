@@ -154,9 +154,10 @@ impl QueryCache<'_> {
                 + std::mem::size_of::<InstantiationCacheKey>()
                 + std::mem::size_of::<TypeId>());
 
-        // subtype_reduction_cache: (SortedTypeIds, u8) -> Arc<[TypeId]>
-        // Inline buffer is part of `SubtypeReductionKey`; the cached value
-        // is `Arc<[TypeId]>` (16 bytes) plus the heap slice it points at.
+        // subtype_reduction_cache: request-owned (SortedTypeIds, u8) -> Arc<[TypeId]>
+        // Inline buffer is part of `SubtypeReductionKey`; request options
+        // own the mode byte. The cached value is `Arc<[TypeId]>` plus the
+        // heap slice it points at.
         size += self.subtype_reduction_cache.capacity()
             * (BUCKET_OVERHEAD
                 + std::mem::size_of::<SubtypeReductionKey>()
