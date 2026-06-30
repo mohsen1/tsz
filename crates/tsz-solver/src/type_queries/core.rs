@@ -1157,9 +1157,28 @@ pub fn substitute_reference_base_constraints(db: &dyn TypeDatabase, type_id: Typ
     }
 }
 
+const MAX_VALID_SPREAD_DEPTH: u32 = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValidSpreadDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl ValidSpreadDepthState {
+    const fn from_depth(depth: u32) -> Self {
+        if depth > MAX_VALID_SPREAD_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
-    if depth > 20 {
-        return true;
+    match ValidSpreadDepthState::from_depth(depth) {
+        ValidSpreadDepthState::Continue => {}
+        ValidSpreadDepthState::LimitExceeded => return true,
     }
 
     // Step 1: Resolve type parameter to its base constraint (like tsc's getBaseConstraintOrType)
@@ -1249,6 +1268,27 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
         // callables, mapped types, type parameters (unconstrained ones reach here
         // and are valid per tsc's InstantiableNonPrimitive), lazy refs, applications, etc.
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod valid_spread_depth_state_tests {
+    use super::*;
+
+    #[test]
+    fn valid_spread_depth_state_continues_at_limit() {
+        assert_eq!(
+            ValidSpreadDepthState::from_depth(MAX_VALID_SPREAD_DEPTH),
+            ValidSpreadDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn valid_spread_depth_state_limits_past_limit() {
+        assert_eq!(
+            ValidSpreadDepthState::from_depth(MAX_VALID_SPREAD_DEPTH + 1),
+            ValidSpreadDepthState::LimitExceeded
+        );
     }
 }
 

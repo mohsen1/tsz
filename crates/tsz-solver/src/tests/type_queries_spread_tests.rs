@@ -59,6 +59,30 @@ fn spread_object_type_is_valid() {
     assert!(is_valid_spread_type(&db, obj));
 }
 
+fn nested_readonly_type(db: &TypeInterner, depth: u32, leaf: TypeId) -> TypeId {
+    let mut current = leaf;
+    for _ in 0..depth {
+        current = db.intern(TypeData::ReadonlyType(current));
+    }
+    current
+}
+
+#[test]
+fn spread_depth_limit_evaluates_exact_limit() {
+    let db = TypeInterner::new();
+    let nested = nested_readonly_type(&db, 20, TypeId::STRING);
+
+    assert!(!is_valid_spread_type(&db, nested));
+}
+
+#[test]
+fn spread_depth_limit_uses_conservative_valid_fallback_past_limit() {
+    let db = TypeInterner::new();
+    let nested = nested_readonly_type(&db, 21, TypeId::STRING);
+
+    assert!(is_valid_spread_type(&db, nested));
+}
+
 // =============================================================================
 // Union with falsy members (the core fix)
 // =============================================================================
