@@ -1262,3 +1262,188 @@ function MiniLink<T extends React.ElementType = React.ElementType>(
             "skipLibCheck must still prepare skipped declaration heritage for JSX consumers: {leaked:?}; all: {diagnostics:?}"
         );
     }
+
+    fn collect_es2015_default_lib_diagnostics_multifile_with_options(
+        files: &[(&str, &str)],
+        configure: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let mut file_paths = Vec::with_capacity(files.len());
+        for (name, source) in files {
+            let path = dir.path().join(name);
+            std::fs::write(&path, source).expect("write source");
+            file_paths.push(path);
+        }
+
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        configure(&mut resolved);
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            module_resolutions: _,
+            type_reference_errors,
+            resolution_mode_errors,
+            ..
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        collect_diagnostics(
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
+            None,
+            &type_cache_output,
+        )
+        .diagnostics
+    }
+
+    #[test]
+    fn skip_lib_check_preserves_declared_global_console_receiver() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {
+    span: {};
+  }
+}
+"#,
+                ),
+                (
+                    "main.tsx",
+                    r#"
+/// <reference path="./react-lite.d.ts" />
+console.log("ok");
+const element = <span />;
+"#,
+                ),
+            ],
+            |resolved| {
+                resolved.skip_lib_check = true;
+                resolved.checker.jsx_mode = JsxMode::React;
+                resolved.checker.es_module_interop = true;
+                resolved.checker.allow_synthetic_default_imports = true;
+            },
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                    && diag.message_text.contains("Property 'log'")
+            })
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck copied declaration materialization must not replace console with a stale lazy lib receiver: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn generic_intrinsic_lma_display_uses_dynamic_representative_tag() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_multifile_with_options(
+            &[
+                (
+                    "react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+declare namespace React {
+  interface HTMLAttributes<T> {
+    owner?: T;
+  }
+  type DetailedHTMLProps<E, T> = E & { ref?: T };
+  type SFC<P = {}> = (props: P) => JSX.Element;
+}
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicAttributes {}
+  type LibraryManagedAttributes<C, P> =
+    C extends { propTypes: infer T; defaultProps: infer D; }
+      ? P
+      : C extends { propTypes: infer T; }
+        ? P
+        : C extends { defaultProps: infer D; }
+          ? P
+          : P;
+  interface IntrinsicElements {
+    div: React.DetailedHTMLProps<React.HTMLAttributes<HTMLDivElement>, HTMLDivElement>;
+    span: React.DetailedHTMLProps<React.HTMLAttributes<HTMLSpanElement>, HTMLSpanElement>;
+  }
+}
+"#,
+                ),
+                (
+                    "main.tsx",
+                    r#"
+/// <reference path="./react-lite.d.ts" />
+type ElementTags = "span" | "div";
+export const Hoc = <Tag extends ElementTags>(TagElement: Tag): React.SFC => {
+  const Component = () => <TagElement />;
+  return Component;
+};
+"#,
+                ),
+            ],
+            |resolved| {
+                resolved.checker.jsx_mode = JsxMode::React;
+                resolved.checker.es_module_interop = true;
+                resolved.checker.allow_synthetic_default_imports = true;
+            },
+        );
+
+        let diag = diagnostics
+            .iter()
+            .find(|diag| {
+                diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && diag
+                        .message_text
+                        .contains("LibraryManagedAttributes<Tag, DetailedHTMLProps")
+            })
+            .expect("expected TS2322 for generic intrinsic LibraryManagedAttributes target");
+        assert!(
+            diag.message_text.contains("HTMLDivElement")
+                && !diag.message_text.contains("HTMLSpanElement"),
+            "generic intrinsic display must use the tsc representative tag: {diag:?}; all: {diagnostics:?}"
+        );
+    }

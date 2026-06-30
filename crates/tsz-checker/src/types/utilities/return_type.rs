@@ -67,11 +67,11 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         return_context: TypeId,
     ) -> bool {
-        if !self
+        if self
             .ctx
             .arena
             .get(expr_idx)
-            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+            .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
         {
             return false;
         }

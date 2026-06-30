@@ -1,4 +1,16 @@
-use super::*;
+use super::super::CompilationCache;
+use super::super::check_module_graph::compute_module_dependency_stats;
+use super::super::check_utils::detect_missing_tslib_helper_diagnostics;
+use super::CollectDiagnosticsResult;
+use super::no_check_diagnostics::{
+    NoCheckDiagnosticsInput, collect_no_check_diagnostics_for_files,
+};
+use crate::config::ResolvedCompilerOptions;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::path::{Path, PathBuf};
+use tsz::checker::context::RequestCacheCounters;
+use tsz::parallel::MergedProgram;
+use tsz_common::diagnostics::Diagnostic;
 
 /// Inputs for parse-only short-circuit paths that bypass the full checker
 /// pipeline (either `--noCheck` without `--declaration`, or `--noEmit
