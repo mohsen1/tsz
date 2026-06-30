@@ -106,6 +106,15 @@ pub(crate) fn record_source_alias_rejection_kinds(
 ///   Unions/intersections that mix in objects stay deferred to the separate
 ///   elaboration path; directly-written aliases sharing a bare object shape are
 ///   protected by the def store's "direct wins" provenance.
+/// - A **template literal** (`` `${"a" | "b"}-x` ``) and a **string-mapping
+///   intrinsic** (`Capitalize<"a" | "b">`) drop the alias name when they reduce
+///   to a finite literal union: tsc's `getTemplateLiteralType` /
+///   `getStringMappingType` build the result via `getUnionType` /
+///   `getStringLiteralType` directly, with no `aliasSymbol`, so the expanded
+///   union is shown (`"a-x" | "b-x"`, `"A" | "B"`), never the alias name. A
+///   directly-written union alias (`type Plain = "a" | "b"`) keeps its name —
+///   its body node is a `UnionType`, not a template/intrinsic, so it never
+///   reaches these arms.
 pub(crate) fn alias_declaration_body_is_computed(
     arena: &NodeArena,
     db: &dyn TypeDatabase,
@@ -121,7 +130,25 @@ pub(crate) fn alias_declaration_body_is_computed(
     let Some(body_node) = arena.get(type_alias.type_node) else {
         return false;
     };
+    // A string-mapping intrinsic body (see the doc-comment rule above) is keyed
+    // on the raw (unevaluated) `StringIntrinsic` result shape, not a body syntax
+    // kind (its body parses as a `TypeReference` to `Capitalize`/…), so it is
+    // handled before the AST-kind dispatch. A still-deferred intrinsic over a
+    // non-literal arg (`Capitalize<string>`) already renders structurally, so
+    // the mark is a harmless no-op there.
+    if crate::query_boundaries::common::is_string_intrinsic_type(db, result) {
+        return true;
+    }
     match body_node.kind {
+        // A template-literal body that reduces to a union is freshly built by
+        // tsc's `getTemplateLiteralType` (`mapType` -> `getUnionType`) with no
+        // `aliasSymbol`, so the expanded union is printed, not the alias name.
+        // A single-literal or still-deferred pattern result is not a union and
+        // is rendered structurally elsewhere (not in the composite reverse
+        // lookup), so it needs no mark.
+        syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+            crate::query_boundaries::common::is_union_type(db, result)
+        }
         syntax_kind_ext::INTERSECTION_TYPE => result_is_primitive_literal_union(db, result),
         syntax_kind_ext::CONDITIONAL_TYPE => {
             !crate::query_boundaries::common::is_conditional_type(db, result)
