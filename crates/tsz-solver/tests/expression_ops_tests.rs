@@ -1050,6 +1050,48 @@ fn test_template_expression_contextual_error_still_propagates() {
     assert_eq!(result, TypeId::ERROR);
 }
 
+fn nested_no_infer(interner: &TypeInterner, mut type_id: TypeId, depth: u32) -> TypeId {
+    for _ in 0..depth {
+        type_id = interner.no_infer(type_id);
+    }
+    type_id
+}
+
+#[test]
+fn template_context_depth_state_continues_at_cap() {
+    assert_eq!(
+        template_context_depth_state(MAX_TEMPLATE_CONTEXT_DEPTH),
+        TemplateContextDepthState::Continue
+    );
+}
+
+#[test]
+fn template_context_depth_state_limits_past_cap() {
+    assert_eq!(
+        template_context_depth_state(MAX_TEMPLATE_CONTEXT_DEPTH + 1),
+        TemplateContextDepthState::LimitExceeded
+    );
+}
+
+#[test]
+fn template_substitution_depth_state_preserves_exact_cap() {
+    let interner = TypeInterner::new();
+    let capped = nested_no_infer(&interner, TypeId::STRING, MAX_TEMPLATE_CONTEXT_DEPTH);
+
+    assert_eq!(template_substitution_type(&interner, capped), capped);
+}
+
+#[test]
+fn template_substitution_depth_state_falls_back_past_cap() {
+    let interner = TypeInterner::new();
+    let over_cap = nested_no_infer(&interner, TypeId::STRING, MAX_TEMPLATE_CONTEXT_DEPTH + 1);
+
+    assert_eq!(
+        template_substitution_type(&interner, over_cap),
+        TypeId::STRING
+    );
+}
+
 #[test]
 fn test_is_template_literal_contextual_type_basic() {
     let interner = TypeInterner::new();
