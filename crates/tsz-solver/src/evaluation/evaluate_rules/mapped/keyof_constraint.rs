@@ -1,8 +1,77 @@
 //! `keyof` constraint reduction for mapped type iteration.
 
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
+use crate::recursion::RecursionResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
+
+/// Named step state for mapped `keyof`/constraint reduction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyofConstraintStepState {
+    /// The current constraint entered the recursion guard and can be reduced.
+    Entered,
+    /// The current constraint is already active in this reduction chain.
+    AlreadyVisited,
+    /// The local recursion-depth guard fired.
+    DepthExceeded,
+    /// The local iteration budget fired.
+    IterationExceeded,
+    /// The shared solver stack-frame budget fired.
+    SolverFrameExhausted,
+}
+
+impl KeyofConstraintStepState {
+    const fn from_guard_entry(result: RecursionResult) -> Self {
+        match result {
+            RecursionResult::Entered => Self::Entered,
+            RecursionResult::Cycle => Self::AlreadyVisited,
+            RecursionResult::DepthExceeded => Self::DepthExceeded,
+            RecursionResult::IterationExceeded => Self::IterationExceeded,
+        }
+    }
+
+    const fn fallback_type(self, current: TypeId) -> Option<TypeId> {
+        match self {
+            Self::Entered => None,
+            Self::AlreadyVisited
+            | Self::DepthExceeded
+            | Self::IterationExceeded
+            | Self::SolverFrameExhausted => Some(current),
+        }
+    }
+}
+
+/// Named continuation state after one mapped constraint reduction step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyofConstraintReductionState {
+    /// The step exposed another reducible constraint form.
+    Continue(TypeId),
+    /// The step reached a terminal or stable type for this chain.
+    Done(TypeId),
+}
+
+impl KeyofConstraintReductionState {
+    fn from_evaluated_step(types: &dyn TypeDatabase, current: TypeId, step: TypeId) -> Self {
+        if step != current
+            && matches!(
+                types.lookup(step),
+                Some(
+                    TypeData::Union(_)
+                        | TypeData::Intersection(_)
+                        | TypeData::KeyOf(_)
+                        | TypeData::Conditional(_)
+                        | TypeData::Lazy(_)
+                        | TypeData::Application(_)
+                )
+            )
+        {
+            Self::Continue(step)
+        } else {
+            Self::Done(step)
+        }
+    }
+}
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a keyof or constraint type for mapped type iteration.
@@ -20,11 +89,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut entered: Vec<TypeId> = Vec::new();
 
         let result = loop {
-            match self.keyof_constraint_guard.enter(current) {
-                crate::recursion::RecursionResult::Entered => {
-                    entered.push(current);
-                }
-                _ => break current,
+            match KeyofConstraintStepState::from_guard_entry(
+                self.keyof_constraint_guard.enter(current),
+            ) {
+                KeyofConstraintStepState::Entered => entered.push(current),
+                state => break state.fallback_type(current).unwrap_or(current),
             }
 
             // Shared cross-operation stack-frame breaker (issue #7574): bound
@@ -33,26 +102,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let Some(step) = crate::recursion::with_solver_frame(|| {
                 self.evaluate_keyof_or_constraint_inner(current)
             }) else {
-                break current;
+                break KeyofConstraintStepState::SolverFrameExhausted
+                    .fallback_type(current)
+                    .unwrap_or(current);
             };
 
-            if step != current
-                && matches!(
-                    self.interner().lookup(step),
-                    Some(
-                        TypeData::Union(_)
-                            | TypeData::Intersection(_)
-                            | TypeData::KeyOf(_)
-                            | TypeData::Conditional(_)
-                            | TypeData::Lazy(_)
-                            | TypeData::Application(_)
-                    )
-                )
+            match KeyofConstraintReductionState::from_evaluated_step(self.interner(), current, step)
             {
-                current = step;
-                continue;
+                KeyofConstraintReductionState::Continue(next) => {
+                    current = next;
+                }
+                KeyofConstraintReductionState::Done(done) => break done,
             }
-            break step;
         };
 
         for &id in entered.iter().rev() {
@@ -119,5 +180,62 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
         // constraint that must be evaluated to get the concrete union `"a" | "b"`.
         self.evaluate(constraint)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recursion::RecursionResult;
+
+    #[test]
+    fn step_state_names_every_guard_fallback() {
+        let current = TypeId::STRING;
+
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::Entered)
+                .fallback_type(current),
+            None
+        );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::Cycle)
+                .fallback_type(current),
+            Some(current)
+        );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::DepthExceeded)
+                .fallback_type(current),
+            Some(current)
+        );
+        assert_eq!(
+            KeyofConstraintStepState::from_guard_entry(RecursionResult::IterationExceeded)
+                .fallback_type(current),
+            Some(current)
+        );
+        assert_eq!(
+            KeyofConstraintStepState::SolverFrameExhausted.fallback_type(current),
+            Some(current)
+        );
+    }
+
+    #[test]
+    fn reduction_state_names_continuing_shapes() {
+        let interner = crate::construction::TypeInterner::new();
+        let current = TypeId::STRING;
+        let nested = interner.keyof(TypeId::NUMBER);
+        let literal = interner.literal_string("done");
+
+        assert_eq!(
+            KeyofConstraintReductionState::from_evaluated_step(&interner, current, nested),
+            KeyofConstraintReductionState::Continue(nested)
+        );
+        assert_eq!(
+            KeyofConstraintReductionState::from_evaluated_step(&interner, current, literal),
+            KeyofConstraintReductionState::Done(literal)
+        );
+        assert_eq!(
+            KeyofConstraintReductionState::from_evaluated_step(&interner, current, current),
+            KeyofConstraintReductionState::Done(current)
+        );
     }
 }
