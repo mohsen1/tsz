@@ -96,6 +96,41 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.emit_node(enum_data.name);
 
+        // The non-exported path carries leading JSDoc on each member.
+        self.emit_enum_body(enum_idx, is_const, true);
+    }
+
+    /// Emit the brace-delimited body of an enum for `.d.ts` output.
+    ///
+    /// Shared by the exported (`emit_exported_enum`) and non-exported
+    /// (`emit_enum_declaration`) paths so the ambient member-value rule lives in
+    /// a single place. In an ambient context — a `declare` enum, an enum inside a
+    /// `declare namespace`, or any enum in a `.d.ts` source — `tsc` preserves
+    /// each member's source initializer form: members written with `= ...` keep
+    /// it and bare members stay bare. Non-ambient enums always emit their
+    /// evaluated values, and `const` enums emit values regardless of ambient
+    /// context. `emit_member_jsdoc` mirrors each path's existing behavior for
+    /// leading member doc comments.
+    pub(in crate::declaration_emitter) fn emit_enum_body(
+        &mut self,
+        enum_idx: NodeIndex,
+        is_const: bool,
+        emit_member_jsdoc: bool,
+    ) {
+        let Some(enum_node) = self.arena.get(enum_idx) else {
+            return;
+        };
+        let Some(enum_data) = self.arena.get_enum(enum_node) else {
+            return;
+        };
+        // Ambient context: `declare` modifier, inside a `declare namespace`, or a
+        // `.d.ts` source. The `declare` modifier is detected for both bare
+        // (`declare enum`) and exported (`export declare enum`) forms because the
+        // parser keeps it on the enum node's own modifier list in both cases.
+        let is_ambient = self.inside_declare_namespace
+            || self.arena.is_declare(&enum_data.modifiers)
+            || self.source_is_declaration_file;
+
         self.write(" {");
         self.write_line();
         self.increase_indent();
@@ -108,8 +143,9 @@ impl<'a> DeclarationEmitter<'a> {
         let member_values = evaluator.evaluate_enum(enum_idx);
         self.all_enum_values = evaluator.take_all_enum_values();
 
+        let member_count = enum_data.members.nodes.len();
         for (i, &member_idx) in enum_data.members.nodes.iter().enumerate() {
-            if let Some(mn) = self.arena.get(member_idx) {
+            if emit_member_jsdoc && let Some(mn) = self.arena.get(member_idx) {
                 self.emit_leading_jsdoc_comments(mn.pos);
             }
             self.write_indent();
@@ -117,14 +153,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.emit_node(member.name);
-                // For ambient enums (inside declare context or with declare keyword), only
-                // emit values for members with explicit initializers.
-                // For implementation enums, always emit computed values.
-                let is_ambient = self.inside_declare_namespace
-                    || self
-                        .arena
-                        .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
-                    || self.source_is_declaration_file;
+                // Ambient members keep their source initializer form; non-ambient
+                // and const members always emit the evaluated value.
                 let has_explicit_init = member.initializer.is_some();
                 let should_emit_value = !is_ambient || has_explicit_init || is_const;
                 if should_emit_value {
@@ -146,7 +176,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
             }
-            if i < enum_data.members.nodes.len() - 1 {
+            if i < member_count - 1 {
                 self.write(",");
             }
             self.write_line();

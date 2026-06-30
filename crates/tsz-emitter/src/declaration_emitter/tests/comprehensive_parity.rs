@@ -641,6 +641,68 @@ export enum Mixed {
     assert_eq!(result, expected, "Mismatch with tsc");
 }
 
+// =====================================================================
+// Ambient enum member values (#14769)
+//
+// For an ambient (`declare`) non-const enum, `tsc` preserves each member's
+// source initializer form in the `.d.ts`: members with `= ...` keep it, bare
+// members stay bare. `tsz` previously synthesized auto-increment values on the
+// exported path (`export declare enum`, and enums inside a `declare namespace`),
+// which the non-exported path already handled. Const enums always emit values.
+// =====================================================================
+
+#[test]
+fn test_ambient_export_declare_enum_keeps_members_bare_vs_tsc() {
+    // `export declare enum` is the exported ambient path; bare members must stay
+    // bare (tsc 5.9.3), not get `= 0`/`= 1`.
+    let result = emit_dts("export declare enum NonConst { A, B }\n");
+    let expected = "export declare enum NonConst {\n    A,\n    B\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
+fn test_ambient_export_declare_const_enum_keeps_values_vs_tsc() {
+    // const enums always emit values, even when ambient.
+    let result = emit_dts("export declare const enum IsConst { X, Y }\n");
+    let expected = "export declare const enum IsConst {\n    X = 0,\n    Y = 1\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
+fn test_ambient_export_declare_enum_mixed_init_vs_tsc() {
+    // Only explicitly-initialized members keep `= ...`; the bare members between
+    // them stay bare even though their evaluated values would be 0 and 6.
+    let result = emit_dts("export declare enum E { A, B = 5, C, D = \"str\" }\n");
+    let expected = "export declare enum E {\n    A,\n    B = 5,\n    C,\n    D = \"str\"\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
+fn test_ambient_export_declare_string_enum_keeps_explicit_init_vs_tsc() {
+    // Explicit string initializers are always preserved.
+    let result = emit_dts("export declare enum D { A = \"x\", B = \"y\" }\n");
+    let expected = "export declare enum D {\n    A = \"x\",\n    B = \"y\"\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
+fn test_ambient_enum_inside_declare_namespace_keeps_members_bare_vs_tsc() {
+    // An enum inside a `declare namespace` is ambient via `inside_declare_namespace`
+    // even though the enum node carries no `declare` modifier of its own.
+    let result = emit_dts("export declare namespace NS { export enum D { P, Q, R } }\n");
+    let expected = "export declare namespace NS {\n    enum D {\n        P,\n        Q,\n        R\n    }\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
+fn test_non_ambient_export_enum_still_emits_values_vs_tsc() {
+    // Control: a non-ambient `export enum` must keep emitting evaluated values so
+    // the ambient guard does not over-apply.
+    let result = emit_dts("export enum Plain { A, B }\n");
+    let expected = "export declare enum Plain {\n    A = 0,\n    B = 1\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
 #[test]
 fn test_function_overloads_vs_tsc() {
     let result = emit_dts(
