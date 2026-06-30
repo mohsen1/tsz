@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::promise as query;
 use crate::query_boundaries::common::is_definitely_nullish;
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -150,7 +151,7 @@ impl<'a> CheckerState<'a> {
             query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
             query::PromiseTypeKind::TypeQuery(sym_ref) => self
                 .ctx
-                .sym_id_is_lib_promise_or_promise_like(SymbolId(sym_ref.0)),
+                .sym_id_is_lib_promise_or_promise_like(symbol_ref_to_symbol_id(sym_ref)),
             _ => false,
         };
         is_builtin.then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
@@ -167,7 +168,7 @@ impl<'a> CheckerState<'a> {
         };
         let sym_id = match query::classify_promise_type(self.ctx.types, base) {
             query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
-            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            query::PromiseTypeKind::TypeQuery(sym_ref) => symbol_ref_to_symbol_id(sym_ref),
             _ => return None,
         };
         let (symbol, decl_file_idx) = self.promise_symbol_and_decl_file(sym_id)?;
@@ -323,9 +324,9 @@ impl<'a> CheckerState<'a> {
                         }
                         false
                     }
-                    query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                        self.ctx.sym_id_is_lib_promise(SymbolId(sym_ref.0))
-                    }
+                    query::PromiseTypeKind::TypeQuery(sym_ref) => self
+                        .ctx
+                        .sym_id_is_lib_promise(symbol_ref_to_symbol_id(sym_ref)),
                     query::PromiseTypeKind::Application {
                         base: inner_base, ..
                     } => self.is_global_promise_type(inner_base),
@@ -333,9 +334,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
             query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                self.ctx.sym_id_is_lib_promise(SymbolId(sym_ref.0))
-            }
+            query::PromiseTypeKind::TypeQuery(sym_ref) => self
+                .ctx
+                .sym_id_is_lib_promise(symbol_ref_to_symbol_id(sym_ref)),
             query::PromiseTypeKind::Object(_)
             | query::PromiseTypeKind::Union(_)
             | query::PromiseTypeKind::NotPromise => false,
@@ -350,7 +351,7 @@ impl<'a> CheckerState<'a> {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             }
             query::PromiseTypeKind::Application { base, .. } => self.type_ref_is_promise_like(base),
@@ -377,7 +378,7 @@ impl<'a> CheckerState<'a> {
                         self.def_is_lib_promise_or_promise_like(def_id)
                     }
                     query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                        let sym_id = SymbolId(sym_ref.0);
+                        let sym_id = symbol_ref_to_symbol_id(sym_ref);
                         self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
                     }
                     query::PromiseTypeKind::Application {
@@ -388,7 +389,7 @@ impl<'a> CheckerState<'a> {
             }
             query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
             query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
             }
             query::PromiseTypeKind::Object(_)
@@ -517,7 +518,7 @@ impl<'a> CheckerState<'a> {
             if let query::PromiseTypeKind::TypeQuery(sym_ref) =
                 query::classify_promise_type(self.ctx.types, base)
             {
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id = symbol_ref_to_symbol_id(sym_ref);
                 if self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id) {
                     return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
@@ -766,7 +767,7 @@ impl<'a> CheckerState<'a> {
             query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
             query::PromiseTypeKind::TypeQuery(sym_ref) => self
                 .ctx
-                .sym_id_is_lib_promise_or_promise_like(SymbolId(sym_ref.0)),
+                .sym_id_is_lib_promise_or_promise_like(symbol_ref_to_symbol_id(sym_ref)),
             _ => false,
         };
         // Handle Lazy variant properly
@@ -775,7 +776,7 @@ impl<'a> CheckerState<'a> {
                 // Use DefId -> SymbolId bridge
                 self.ctx.def_to_symbol_id(def_id)?
             }
-            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            query::PromiseTypeKind::TypeQuery(sym_ref) => symbol_ref_to_symbol_id(sym_ref),
             _ => return None,
         };
 

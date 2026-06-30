@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::query_boundaries::common::TypeSubstitution;
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 
 struct ReturnContextSubstitutionRequest<'a> {
     source: TypeId,
@@ -101,7 +102,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
                 .or_else(|| {
                     crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
-                        .map(|symbol_ref| SymbolId(symbol_ref.0))
+                        .map(symbol_ref_to_symbol_id)
                 })
         };
 

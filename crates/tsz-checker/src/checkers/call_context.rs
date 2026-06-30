@@ -11,6 +11,7 @@ use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -1141,8 +1142,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
             })
             .or_else(|| {
-                common::type_query_symbol(self.ctx.types, base)
-                    .map(|symbol_ref| tsz_binder::SymbolId(symbol_ref.0))
+                common::type_query_symbol(self.ctx.types, base).map(symbol_ref_to_symbol_id)
             })
             .and_then(|symbol_id| {
                 self.ctx

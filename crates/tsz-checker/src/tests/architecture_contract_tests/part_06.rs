@@ -3,6 +3,60 @@
 
 use super::*;
 
+/// Guard: solver `SymbolRef` to binder `SymbolId` reinterpretation should stay
+/// behind `query_boundaries::definition_identity::symbol_ref_to_symbol_id`.
+///
+/// Existing legacy callsites are a migration budget, not a pattern for new
+/// code. Lower this budget whenever a PR moves another callsite behind the
+/// bridge.
+#[test]
+fn test_symbol_ref_to_symbol_id_cast_budget() {
+    const RAW_SYMBOL_REF_CAST_BUDGET: usize = 35;
+    const BRIDGE_PATH: &str = "src/query_boundaries/definition_identity.rs";
+
+    fn is_raw_symbol_ref_cast(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        !trimmed.starts_with("//")
+            && (line.contains("SymbolId(sym_ref.0)")
+                || line.contains("SymbolId(symbol_ref.0)")
+                || line.contains("SymbolId(symbol.0)"))
+    }
+
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
+
+    let mut hits = Vec::new();
+    for path in files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+        let rel_path = path.display().to_string();
+        if rel_path == BRIDGE_PATH {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_idx, line) in source.lines().enumerate() {
+            if is_raw_symbol_ref_cast(line) {
+                hits.push(format!("{}:{}: {}", rel_path, line_idx + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        hits.len() <= RAW_SYMBOL_REF_CAST_BUDGET,
+        "raw SymbolRef -> SymbolId casts must go through \
+         query_boundaries::definition_identity::symbol_ref_to_symbol_id; \
+         found {} casts, budget {}:\n{}",
+        hits.len(),
+        RAW_SYMBOL_REF_CAST_BUDGET,
+        hits.join("\n")
+    );
+}
+
 #[test]
 fn test_env_eval_cache_def_invalidation_is_targeted() {
     let arena = NodeArena::new();
