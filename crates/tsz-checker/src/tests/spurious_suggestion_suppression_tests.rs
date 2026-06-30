@@ -83,6 +83,25 @@ type C = Foobaz.X;
 }
 
 #[test]
+fn value_only_qualified_name_anchor_still_gets_namespace_suggestion() {
+    // `m` resolves as a value, not a namespace, but tsc still offers the nearby
+    // namespace `M` for the qualified type-name anchor.
+    let codes = check_strict(
+        r#"
+namespace M { export interface Point { x: number; y: number } }
+var m = M;
+var p: m.Point;
+"#,
+    );
+    assert_eq!(
+        count(&codes, TS2833),
+        1,
+        "wrong-meaning namespace anchors still get suggestions: {codes:?}"
+    );
+    assert_eq!(count(&codes, TS2503), 0, "{codes:?}");
+}
+
+#[test]
 fn namespace_suggestion_respects_spelling_cap() {
     // tsc's spelling-suggestion cap is shared by namespace "did you mean?"
     // diagnostics. Once distinct missing namespace sites consume the cap, a
