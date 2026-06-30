@@ -129,7 +129,7 @@ pub(crate) fn memoized_eval_with_stability(
         CrossEvalExpansionState::AlreadyActive => return None,
     };
     let memo_result = compute();
-    if memo_result.is_stable_for_depth_agnostic_cache() {
+    if memo_result.is_stable_for_per_query_memo() {
         query_memo_put(type_id, no_unchecked_indexed_access, memo_result.type_id());
     }
     Some(memo_result)
@@ -181,6 +181,7 @@ impl Drop for CrossEvalExpansionGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evaluation::result::{EvaluationRequestStability, EvaluationResult};
 
     #[test]
     fn memo_keys_on_no_unchecked_indexed_access() {
@@ -210,6 +211,34 @@ mod tests {
 
         assert_eq!(second, Some(TypeId(81)));
         assert_eq!(query_memo_get(t, false), Some(TypeId(81)));
+        reset_query_memo();
+    }
+
+    #[test]
+    fn unresolved_def_fresh_result_is_returned_and_memoized_within_query() {
+        reset_query_memo();
+        let t = TypeId(9);
+        let mut calls = 0;
+
+        let first = memoized_eval(t, false, || {
+            calls += 1;
+            EvaluationMemoResult::for_depth_agnostic_memo(
+                EvaluationResult::complete(TypeId(90)),
+                EvaluationRequestStability::UnresolvedDef,
+            )
+        });
+
+        assert_eq!(first, Some(TypeId(90)));
+        assert_eq!(query_memo_get(t, false), Some(TypeId(90)));
+
+        let second = memoized_eval(t, false, || {
+            calls += 1;
+            EvaluationMemoResult::cached(TypeId(91))
+        });
+
+        assert_eq!(second, Some(TypeId(90)));
+        assert_eq!(calls, 1);
+        assert_eq!(query_memo_get(t, false), Some(TypeId(90)));
         reset_query_memo();
     }
 

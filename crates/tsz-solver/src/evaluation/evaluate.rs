@@ -153,6 +153,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// every `evaluate_request_result` entry so the verdict is scoped to one
     /// request and never leaks across reused-evaluator requests.
     request_termination_kind: Option<TerminationKind>,
+    /// Request-local counterpart of [`Self::unresolved_def_seen`]. The sticky
+    /// flag blocks run-wide closed-eval writes, while this flag lets memo-result
+    /// verdicts name whether the specific request observed an unresolved body.
+    /// Cleared with `request_termination_kind` on every `evaluate_request_result`
+    /// entry.
+    request_unresolved_def_seen: bool,
     /// Monotonic counter of *limit events* (cycle / depth / iteration / divergence
     /// bails) seen so far in this run. Unlike the sticky `deep_recursion_seen` /
     /// `silent_depth_bailed` booleans — which, once set by the first bail anywhere,
@@ -308,6 +314,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             detection_growth_runs: FxHashMap::default(),
             deep_recursion_seen: false,
             request_termination_kind: None,
+            request_unresolved_def_seen: false,
             limit_epoch: 0,
             app_body_limit_epoch: 0,
             unresolved_def_seen: false,
@@ -575,6 +582,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.silent_depth_bailed = false;
         self.deep_recursion_seen = false;
         self.request_termination_kind = None;
+        self.request_unresolved_def_seen = false;
         self.limit_epoch = 0;
         self.app_body_limit_epoch = 0;
         self.unresolved_def_seen = false;
@@ -601,6 +609,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
         self.request_termination_kind = None;
+        self.request_unresolved_def_seen = false;
         let type_id = self.evaluate(request.type_id());
         request_result_verdict(type_id, self.request_termination_kind)
     }
@@ -628,12 +637,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// that the legacy sticky flags did not fully model (for example
     /// fuel/query-budget bails). The legacy [`Self::recursion_limit_hit`]
     /// backstop remains until every recursion-taint class is owned by the typed
-    /// termination channel.
+    /// termination channel. The unresolved-def bit is the registration-window
+    /// artifact gate: a result observed before a `DefId` body registers must
+    /// not be published into a key-only cache.
     #[inline]
     pub(crate) const fn request_state_cache_stability(&self) -> EvaluationRequestStability {
         EvaluationRequestStability::from_request_state(
             self.has_incomplete_request_verdict(),
             self.recursion_limit_hit(),
+            self.request_unresolved_def_seen,
+        )
+    }
+
+    /// Whether the current top-level evaluation run is stable enough for
+    /// run-wide cache publication.
+    #[inline]
+    pub(crate) const fn run_state_cache_stability(&self) -> EvaluationRequestStability {
+        EvaluationRequestStability::from_request_state(
+            self.has_incomplete_request_verdict(),
+            self.recursion_limit_hit(),
+            self.unresolved_def_seen(),
         )
     }
 
@@ -902,6 +925,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(super) const fn mark_unresolved_def_seen(&mut self) {
         self.unresolved_def_seen = true;
+        self.request_unresolved_def_seen = true;
         self.note_limit_event();
     }
 
