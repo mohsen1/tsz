@@ -103,16 +103,16 @@ impl<'a> CheckerState<'a> {
         // from the Array interface and ARE named properties even though the array also has
         // a numeric index signature.
         {
-            use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
-            let resolver = IndexSignatureResolver::new(self.ctx.types);
             let target_is_array_or_tuple =
                 crate::query_boundaries::common::array_element_type(self.ctx.types, target)
                     .is_some()
                     || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target)
                         .is_some();
             let target_has_index = !target_is_array_or_tuple
-                && (resolver.has_index_signature(target, IndexKind::String)
-                    || resolver.has_index_signature(target, IndexKind::Number));
+                && crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                    self.ctx.types,
+                    target,
+                );
             if target_has_index {
                 let prop_name_str = self.ctx.types.resolve_atom_ref(property_name);
                 let target_has_named_prop = crate::query_boundaries::common::find_property_by_str(
@@ -158,8 +158,6 @@ impl<'a> CheckerState<'a> {
         // is preferred over specific missing property errors.
         // Skip for array/tuple targets — their numeric index is implicit and missing named
         // properties (like `length`) should still produce TS2741.
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
-        let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
@@ -167,13 +165,17 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::array_element_type(self.ctx.types, target).is_some()
                 || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target).is_some();
         let source_has_index = [source, source_evaluated].iter().any(|t| {
-            resolver.has_index_signature(*t, IndexKind::String)
-                || resolver.has_index_signature(*t, IndexKind::Number)
+            crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                self.ctx.types,
+                *t,
+            )
         });
         let target_has_index = !target_is_array_or_tuple_for_idx
             && [target, target_evaluated].iter().any(|t| {
-                resolver.has_index_signature(*t, IndexKind::String)
-                    || resolver.has_index_signature(*t, IndexKind::Number)
+                crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                    self.ctx.types,
+                    *t,
+                )
             });
         if source_has_index && target_has_index {
             let src_str = self.format_type_diagnostic(source);
@@ -1039,23 +1041,37 @@ impl<'a> CheckerState<'a> {
         // target has no explicit named properties (i.e., it's purely an index-signature
         // type like `{ [x: number]: T }`). Named interfaces that happen to have number
         // index signatures (like String, Array) should still get TS2739/TS2740.
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
-        let resolver = IndexSignatureResolver::new(self.ctx.types);
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
-        let source_has_string_index = [source, source_evaluated]
-            .iter()
-            .any(|t| resolver.has_index_signature(*t, IndexKind::String));
-        let target_has_string_index = [target, target_evaluated]
-            .iter()
-            .any(|t| resolver.has_index_signature(*t, IndexKind::String));
-        let source_has_number_index = [source, source_evaluated]
-            .iter()
-            .any(|t| resolver.has_index_signature(*t, IndexKind::Number));
-        let target_has_number_index = [target, target_evaluated]
-            .iter()
-            .any(|t| resolver.has_index_signature(*t, IndexKind::Number));
+        let source_has_string_index = [source, source_evaluated].iter().any(|t| {
+            crate::query_boundaries::index_signature::has_index_signature(
+                self.ctx.types,
+                *t,
+                crate::query_boundaries::index_signature::IndexKind::String,
+            )
+        });
+        let target_has_string_index = [target, target_evaluated].iter().any(|t| {
+            crate::query_boundaries::index_signature::has_index_signature(
+                self.ctx.types,
+                *t,
+                crate::query_boundaries::index_signature::IndexKind::String,
+            )
+        });
+        let source_has_number_index = [source, source_evaluated].iter().any(|t| {
+            crate::query_boundaries::index_signature::has_index_signature(
+                self.ctx.types,
+                *t,
+                crate::query_boundaries::index_signature::IndexKind::Number,
+            )
+        });
+        let target_has_number_index = [target, target_evaluated].iter().any(|t| {
+            crate::query_boundaries::index_signature::has_index_signature(
+                self.ctx.types,
+                *t,
+                crate::query_boundaries::index_signature::IndexKind::Number,
+            )
+        });
         // For number index signatures, only suppress when the missing properties are
         // NOT explicitly declared on the target (they came from index value type expansion).
         // We detect this by checking if none of the missing property names match a real

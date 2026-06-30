@@ -583,15 +583,11 @@ impl<'a> CheckerState<'a> {
         }
         let resolved = self.resolve_type_for_property_access(display_type);
         let evaluated = self.judge_evaluate(resolved);
-        let resolver =
-            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
-        let has_index_signature = resolver.has_index_signature(
-            evaluated,
-            tsz_solver::objects::index_signatures::IndexKind::String,
-        ) || resolver.has_index_signature(
-            evaluated,
-            tsz_solver::objects::index_signatures::IndexKind::Number,
-        );
+        let has_index_signature =
+            crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                self.ctx.types,
+                evaluated,
+            );
         if !formatted.starts_with('{') && !has_index_signature {
             return false;
         }

@@ -443,10 +443,17 @@ impl<'a> CheckerState<'a> {
                 .is_some();
         // Check if the object has any index signature. If so, the more specific
         // TS7015/TS7053 diagnostics below should handle the error, not TS2339.
-        let idx_resolver =
-            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
-        let has_any_index_signature = idx_resolver.resolve_string_index(object_type).is_some()
-            || idx_resolver.resolve_number_index(object_type).is_some();
+        let has_any_index_signature =
+            crate::query_boundaries::index_signature::resolve_string_index(
+                self.ctx.types,
+                object_type,
+            )
+            .is_some()
+                || crate::query_boundaries::index_signature::resolve_number_index(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some();
 
         // Helper closure to emit TS2339 for a missing property
         let emit_ts2339_for_missing_prop =
@@ -614,16 +621,19 @@ impl<'a> CheckerState<'a> {
         let is_for_in_index = self.is_for_in_variable_identifier(arg_idx);
         // For union types, ALL members must have a number index (resolve_number_index uses
         // find_map which is too permissive — it returns Some if any member matches).
-        let resolver =
-            tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
         let has_number_index = if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, object_type)
         {
-            members
-                .iter()
-                .all(|&m| resolver.resolve_number_index(m).is_some())
+            members.iter().all(|&m| {
+                crate::query_boundaries::index_signature::resolve_number_index(self.ctx.types, m)
+                    .is_some()
+            })
         } else {
-            resolver.resolve_number_index(object_type).is_some()
+            crate::query_boundaries::index_signature::resolve_number_index(
+                self.ctx.types,
+                object_type,
+            )
+            .is_some()
         };
         if has_number_index
             && !is_for_in_index
@@ -661,7 +671,12 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .all(|&m| self.is_element_indexable(m, true, false))
             } else {
-                resolver.resolve_string_index(object_type).is_some() || has_number_index
+                crate::query_boundaries::index_signature::resolve_string_index(
+                    self.ctx.types,
+                    object_type,
+                )
+                .is_some()
+                    || has_number_index
             };
             if has_string_index {
                 return;

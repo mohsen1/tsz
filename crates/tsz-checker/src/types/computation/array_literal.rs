@@ -293,13 +293,14 @@ impl<'a> CheckerState<'a> {
             // Record<string, (arg: string) => void> | Array<(arg: number) => void>
             // is treated as ambiguous, emitting TS7006 for implicit-any parameters.
             // NOTE: Resolve through Lazy(DefId) first so Record<string,T> becomes an
-            // ObjectWithIndex shape that the IndexSignatureResolver can inspect.
+            // ObjectWithIndex shape that the index-signature boundary can inspect.
             {
-                use crate::query_boundaries::common::IndexSignatureResolver;
                 let resolved = self.resolve_lazy_type(member);
                 let resolved = self.evaluate_type_with_env(resolved);
-                let resolver = IndexSignatureResolver::new(self.ctx.types);
-                let si = resolver.resolve_string_index(resolved);
+                let si = crate::query_boundaries::index_signature::resolve_string_index(
+                    self.ctx.types,
+                    resolved,
+                );
                 if let Some(value_type) = si {
                     if !applicable_shapes.contains(&value_type) {
                         applicable_shapes.push(value_type);
@@ -1475,9 +1476,11 @@ impl<'a> CheckerState<'a> {
             let resolved = self.evaluate_type_with_env(resolved);
             let resolved = self.resolve_type_for_property_access(resolved);
 
-            // Check if the resolved type has a number index signature (array-like)
-            let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
-            if let Some(elem) = resolver.resolve_number_index(resolved) {
+            // Check if the resolved type has a number index signature (array-like).
+            if let Some(elem) = crate::query_boundaries::index_signature::resolve_number_index(
+                self.ctx.types,
+                resolved,
+            ) {
                 element_types.push(elem);
             }
         }
@@ -1508,8 +1511,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(contextual);
         let resolved = self.evaluate_type_with_env(resolved);
         let resolved = self.resolve_type_for_property_access(resolved);
-        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
-        resolver.resolve_number_index(resolved)
+        crate::query_boundaries::index_signature::resolve_number_index(self.ctx.types, resolved)
     }
 }
 

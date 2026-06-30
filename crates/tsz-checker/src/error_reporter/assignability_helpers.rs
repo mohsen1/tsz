@@ -763,8 +763,6 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> Option<Vec<tsz_common::interner::Atom>> {
-        use crate::query_boundaries::diagnostics::{IndexKind, IndexSignatureResolver};
-
         if crate::query_boundaries::diagnostics::is_type_parameter_like(self.ctx.types, source) {
             return None;
         }
@@ -788,10 +786,11 @@ impl<'a> CheckerState<'a> {
                 ],
             );
 
-        let resolver = IndexSignatureResolver::new(self.ctx.types);
         let source_has_index = source_candidates.iter().copied().any(|candidate| {
-            resolver.has_index_signature(candidate, IndexKind::String)
-                || resolver.has_index_signature(candidate, IndexKind::Number)
+            crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                self.ctx.types,
+                candidate,
+            )
         });
         if !source_has_index {
             return None;
@@ -835,8 +834,10 @@ impl<'a> CheckerState<'a> {
         let target_has_index = [target, target_env_evaluated, target_evaluated]
             .into_iter()
             .any(|candidate| {
-                resolver.has_index_signature(candidate, IndexKind::String)
-                    || resolver.has_index_signature(candidate, IndexKind::Number)
+                crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                    self.ctx.types,
+                    candidate,
+                )
             });
 
         if target_has_index

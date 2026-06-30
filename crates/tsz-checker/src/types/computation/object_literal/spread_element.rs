@@ -6,12 +6,13 @@ use super::computation_support::{
 };
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::index_signature::IndexSignature;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{IndexSignature, PropertyInfo, TypeId};
+use tsz_solver::{PropertyInfo, TypeId};
 
 pub(super) struct ObjectLiteralSpreadContext<'b> {
     pub(super) elem_idx: NodeIndex,
@@ -421,31 +422,44 @@ impl<'a> CheckerState<'a> {
                                 resolved_spread,
                             )
                         {
-                            use crate::query_boundaries::common::IndexSignatureResolver;
-                            let resolver = IndexSignatureResolver::new(self.ctx.types);
-                            let index_info = resolver.get_index_info(resolved_spread);
-                            if let Some(string_index) = index_info.string_index.or_else(|| {
-                                resolver.resolve_string_index(resolved_spread).map(|value_type| {
-                                    IndexSignature {
+                            let fallback_string_index =
+                                crate::query_boundaries::index_signature::resolve_string_index(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .map(|value_type| IndexSignature {
                                         key_type: TypeId::STRING,
                                         value_type,
                                         readonly: false,
                                         param_name: None,
-                                    }
-                                })
-                            }) {
+                                });
+                            if let Some(string_index) =
+                                crate::query_boundaries::index_signature::string_index_signature(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .or(fallback_string_index)
+                            {
                                 spread_string_index_signatures.push(string_index);
                             }
-                            if let Some(number_index) = index_info.number_index.or_else(|| {
-                                resolver.resolve_number_index(resolved_spread).map(|value_type| {
-                                    IndexSignature {
+                            let fallback_number_index =
+                                crate::query_boundaries::index_signature::resolve_number_index(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .map(|value_type| IndexSignature {
                                         key_type: TypeId::NUMBER,
                                         value_type,
                                         readonly: false,
                                         param_name: None,
-                                    }
-                                })
-                            }) {
+                                });
+                            if let Some(number_index) =
+                                crate::query_boundaries::index_signature::number_index_signature(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .or(fallback_number_index)
+                            {
                                 spread_number_index_signatures.push(number_index);
                             }
                         }

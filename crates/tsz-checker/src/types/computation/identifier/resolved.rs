@@ -1529,12 +1529,11 @@ impl CheckerState<'_> {
                 }
             } else {
                 // No narrowing or error - check if we should preserve declared_type
-                let has_index_sig = {
-                    use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
-                    let resolver = IndexSignatureResolver::new(self.ctx.types);
-                    resolver.has_index_signature(declared_type, IndexKind::String)
-                        || resolver.has_index_signature(declared_type, IndexKind::Number)
-                };
+                let has_index_sig =
+                    crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                        self.ctx.types,
+                        declared_type,
+                    );
                 if query::is_readonly_type(self.ctx.types, declared_type) || has_index_sig {
                     declared_type
                 } else {
@@ -1614,12 +1613,11 @@ impl CheckerState<'_> {
             // type with index signatures like from a type alias), always preserve it.
             // This prevents false-positive TS2339 errors when accessing properties via
             // index signatures.
-            let has_index_sig = {
-                use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
-                let resolver = IndexSignatureResolver::new(self.ctx.types);
-                resolver.has_index_signature(declared_type, IndexKind::String)
-                    || resolver.has_index_signature(declared_type, IndexKind::Number)
-            };
+            let has_index_sig =
+                crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                    self.ctx.types,
+                    declared_type,
+                );
             if has_index_sig && (flow_type == declared_type || flow_type == TypeId::ERROR) {
                 declared_type
             } else if declared_type == TypeId::ANY {
