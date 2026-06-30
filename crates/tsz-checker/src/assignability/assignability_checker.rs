@@ -701,6 +701,9 @@ impl<'a> CheckerState<'a> {
             global_resolution_fuel_exhausted, increment_global_resolution_fuel,
             increment_refs_resolution_fuel, refs_resolution_fuel_exhausted,
         };
+        use crate::state_domain::type_environment::lazy_guard_state::{
+            RefsResolutionWorkState, refs_resolution_work_state,
+        };
 
         if self.ctx.refs_resolved.contains(&type_id) {
             return;
@@ -717,8 +720,10 @@ impl<'a> CheckerState<'a> {
         let mut worklist = vec![type_id];
 
         while let Some(current) = worklist.pop() {
-            if refs_resolution_fuel_exhausted() {
-                break;
+            match refs_resolution_work_state(refs_resolution_fuel_exhausted(), false) {
+                RefsResolutionWorkState::Continue => {}
+                RefsResolutionWorkState::RefsFuelExhausted
+                | RefsResolutionWorkState::GlobalFuelExhausted => break,
             }
 
             if !visited_types.insert(current) {
@@ -745,8 +750,10 @@ impl<'a> CheckerState<'a> {
             }
 
             for &def_id in self.ctx.collect_lazy_def_ids_cached(current).iter() {
-                if refs_resolution_fuel_exhausted() {
-                    break;
+                match refs_resolution_work_state(refs_resolution_fuel_exhausted(), false) {
+                    RefsResolutionWorkState::Continue => {}
+                    RefsResolutionWorkState::RefsFuelExhausted
+                    | RefsResolutionWorkState::GlobalFuelExhausted => break,
                 }
                 if !visited_def_ids.insert(def_id) {
                     continue;
@@ -785,7 +792,11 @@ impl<'a> CheckerState<'a> {
                     worklist.push(result);
                 }
                 if at_fuel_limit {
-                    break;
+                    match refs_resolution_work_state(false, at_fuel_limit) {
+                        RefsResolutionWorkState::GlobalFuelExhausted
+                        | RefsResolutionWorkState::RefsFuelExhausted => break,
+                        RefsResolutionWorkState::Continue => {}
+                    }
                 }
             }
         }
