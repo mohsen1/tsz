@@ -33,6 +33,22 @@ const MAX_TUPLE_SPREAD_DEPTH: usize = 64;
 /// Upper bound on the fixed length we will count out of a tuple.
 const MAX_FIXED_LENGTH: usize = 1000;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TupleSpreadDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl TupleSpreadDepthState {
+    const fn from_depth(depth: usize) -> Self {
+        if depth > MAX_TUPLE_SPREAD_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 /// Widen an element type to include `undefined`, matching the reading of an
 /// optional tuple slot.
 pub(crate) fn element_type_with_undefined(db: &dyn TypeDatabase, element_type: TypeId) -> TypeId {
@@ -94,8 +110,9 @@ fn tuple_fixed_slot_inner(
     index: usize,
     depth: usize,
 ) -> Option<(TypeId, bool)> {
-    if depth > MAX_TUPLE_SPREAD_DEPTH {
-        return None;
+    match TupleSpreadDepthState::from_depth(depth) {
+        TupleSpreadDepthState::Continue => {}
+        TupleSpreadDepthState::LimitExceeded => return None,
     }
 
     let mut position = 0usize;
@@ -182,4 +199,25 @@ pub(crate) fn compute_tuple_fixed_length(db: &dyn TypeDatabase, type_id: TypeId)
     }
 
     Some(total)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tuple_spread_depth_state_continues_at_limit() {
+        assert_eq!(
+            TupleSpreadDepthState::from_depth(MAX_TUPLE_SPREAD_DEPTH),
+            TupleSpreadDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn tuple_spread_depth_state_limits_past_limit() {
+        assert_eq!(
+            TupleSpreadDepthState::from_depth(MAX_TUPLE_SPREAD_DEPTH + 1),
+            TupleSpreadDepthState::LimitExceeded
+        );
+    }
 }
