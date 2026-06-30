@@ -520,6 +520,96 @@ fn enum_metadata_defer_then_replay_under_simultaneous_borrow() {
     );
 }
 
+/// Child checker snapshots are parent-wins vacancy fills, not body rewrites.
+/// They still must use the same deferred dual-env write discipline as ordinary
+/// registrations: a borrow conflict queues the merge for replay, and replay
+/// inserts only when the parent env has not already published the entry.
+#[test]
+fn child_snapshot_merge_defer_then_replay_preserves_parent_entries() {
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefId;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = DefId(21);
+    let class_def = DefId(22);
+    let child_def = DefId(23);
+    let parent_def = DefId(24);
+
+    {
+        let held_eval = ctx.type_env.borrow();
+        let held_flow = ctx.type_environment.borrow();
+        ctx.merge_def_if_missing_in_envs(def_id, TypeId::NUMBER);
+        ctx.merge_class_instance_if_missing_in_envs(class_def, TypeId::STRING);
+        ctx.merge_class_extends_if_missing_in_envs(child_def, parent_def);
+
+        assert_eq!(held_eval.get_def(def_id), None);
+        assert_eq!(held_flow.get_def(def_id), None);
+        assert_eq!(held_eval.get_class_instance_type(class_def), None);
+        assert_eq!(held_flow.get_class_instance_type(class_def), None);
+        assert_eq!(held_eval.get_class_extends_def(child_def), None);
+        assert_eq!(held_flow.get_class_extends_def(child_def), None);
+        assert_eq!(ctx.deferred_eval_env_write_count(), 3);
+        assert_eq!(ctx.deferred_flow_env_write_count(), 3);
+    }
+
+    ctx.flush_deferred_eval_env_writes();
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.type_env.borrow().get_def(def_id), Some(TypeId::NUMBER));
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(def_id),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.type_env.borrow().get_class_instance_type(class_def),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(
+        ctx.type_environment
+            .borrow()
+            .get_class_instance_type(class_def),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(
+        ctx.type_env.borrow().get_class_extends_def(child_def),
+        Some(parent_def)
+    );
+    assert_eq!(
+        ctx.type_environment
+            .borrow()
+            .get_class_extends_def(child_def),
+        Some(parent_def)
+    );
+
+    let other_parent = DefId(25);
+    ctx.merge_def_if_missing_in_envs(def_id, TypeId::STRING);
+    ctx.merge_class_instance_if_missing_in_envs(class_def, TypeId::BOOLEAN);
+    ctx.merge_class_extends_if_missing_in_envs(child_def, other_parent);
+
+    assert_eq!(
+        ctx.type_env.borrow().get_def(def_id),
+        Some(TypeId::NUMBER),
+        "merge-if-missing must not overwrite an existing parent body"
+    );
+    assert_eq!(
+        ctx.type_env.borrow().get_class_instance_type(class_def),
+        Some(TypeId::STRING),
+        "merge-if-missing must not overwrite an existing parent instance"
+    );
+    assert_eq!(
+        ctx.type_env.borrow().get_class_extends_def(child_def),
+        Some(parent_def),
+        "merge-if-missing must not overwrite an existing parent extends edge"
+    );
+}
+
 /// Pins the body-registration construction rule shared by
 /// `register_resolved_def_in_envs` and `mirror_def_in_type_environment`:
 /// empty params build the non-generic `InsertDef` variant, non-empty params

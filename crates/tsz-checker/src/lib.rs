@@ -1600,6 +1600,9 @@ mod type_alias_computed_display_tests;
 #[path = "tests/type_alias_primitive_display_tests.rs"]
 mod type_alias_primitive_display_tests;
 #[cfg(test)]
+#[path = "tests/type_analysis_env_merge_arch_tests.rs"]
+mod type_analysis_env_merge_arch_tests;
+#[cfg(test)]
 #[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
 mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
