@@ -70,6 +70,25 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
+        self.error_argument_not_assignable_at_impl(arg_type, param_type, idx, false);
+    }
+
+    pub(crate) fn error_argument_not_assignable_structural_tuple_at(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+    ) {
+        self.error_argument_not_assignable_at_impl(arg_type, param_type, idx, true);
+    }
+
+    fn error_argument_not_assignable_at_impl(
+        &mut self,
+        arg_type: TypeId,
+        param_type: TypeId,
+        idx: NodeIndex,
+        structural_tuple_display: bool,
+    ) {
         if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
             return;
         }
@@ -241,6 +260,21 @@ impl<'a> CheckerState<'a> {
         {
             param_str = display;
             param_display_type = None;
+        }
+        if structural_tuple_display {
+            if crate::query_boundaries::common::tuple_elements(self.ctx.types, arg_type).is_some() {
+                arg_str = self
+                    .format_type_for_assignability_message_anonymous_composite_structural(arg_type);
+                arg_display_type = None;
+            }
+            if crate::query_boundaries::common::tuple_elements(self.ctx.types, param_type).is_some()
+            {
+                param_str = self
+                    .format_type_for_assignability_message_anonymous_composite_structural(
+                        param_type,
+                    );
+                param_display_type = None;
+            }
         }
         if arg_str.starts_with('{')
             && param_str.contains("<{")

@@ -1181,3 +1181,76 @@ fn test_spread_tuple_not_assignable_to_unrelated_spread() {
         "[...T] should NOT be assignable to [...U] when T and U are unrelated"
     );
 }
+
+/// `[string, ...T]` should not be assignable to `[string, ...U]` when `U`
+/// extends `T`; the reverse direction is valid because `U` is the narrower
+/// variadic tail.
+#[test]
+fn test_prefixed_spread_tuple_preserves_type_param_direction() {
+    let interner = TypeInterner::new();
+
+    let string_array = interner.array(TypeId::STRING);
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(string_array),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: Some(t_param),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+
+    let t_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+    let u_tuple = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: u_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(t_tuple, u_tuple),
+        "[string, ...T] should not be assignable to [string, ...U] when U extends T"
+    );
+    assert!(
+        checker.is_subtype_of(u_tuple, t_tuple),
+        "[string, ...U] should be assignable to [string, ...T] when U extends T"
+    );
+
+    let mut compat = CompatChecker::new(&interner);
+    assert!(
+        !compat.is_assignable(t_tuple, u_tuple),
+        "compat should also reject [string, ...T] to [string, ...U]"
+    );
+    assert!(
+        compat.is_assignable(u_tuple, t_tuple),
+        "compat should accept [string, ...U] to [string, ...T]"
+    );
+}

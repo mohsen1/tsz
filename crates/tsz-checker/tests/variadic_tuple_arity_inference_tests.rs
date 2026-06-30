@@ -8,7 +8,7 @@
 //! These tests verify that tsz infers the correct types and therefore accepts
 //! valid assignments and rejects only the deliberately wrong ones.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_code_messages, check_source_codes};
 
 fn assert_no_errors(source: &str, label: &str) {
     let codes = check_source_codes(source);
@@ -24,6 +24,60 @@ fn assert_only_one_2322(source: &str, label: &str) {
         codes,
         vec![2322],
         "{label}: expected exactly one TS2322, got {codes:?}"
+    );
+}
+
+// =============================================================================
+// Variadic tuple relation directionality
+// =============================================================================
+
+#[test]
+fn prefixed_variadic_tuple_respects_type_param_subtype_direction() {
+    let diags = check_source_code_messages(
+        r#"
+function compare<Left extends string[], Right extends Left>(
+    open: [string, ...unknown[]],
+    base: [string, ...Left],
+    narrowed: [string, ...Right],
+) {
+    base = open;
+    narrowed = open;
+    narrowed = base;
+    base = narrowed;
+}
+"#,
+    );
+
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        3,
+        "expected y=x, z=x, and z=y shapes to fail while base=narrowed passes; got {diags:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|message| message.contains("Type '[string, ...Left]' is not assignable")),
+        "expected the base-to-narrowed variadic direction to fail structurally; got {diags:?}"
+    );
+}
+
+#[test]
+fn doubled_variadic_fixed_tuple_constraint_expands_to_fixed_target() {
+    assert_no_errors(
+        r#"
+function duplicate<Part extends [unknown]>(
+    target: [unknown, unknown],
+    source: [...Part, ...Part],
+) {
+    target = source;
+}
+"#,
+        "T extends [unknown] makes [...T, ...T] exactly two fixed elements",
     );
 }
 

@@ -1363,11 +1363,17 @@ impl<'a> CheckerState<'a> {
                                 spread_expected,
                                 arg_idx,
                             );
-                        } else if prefer_argument_level_return_mismatch || aggregate_rest_mismatch {
-                            self.error_argument_not_assignable_at(
+                        } else if aggregate_rest_mismatch {
+                            self.error_argument_not_assignable_structural_tuple_at(
                                 reported_actual,
                                 reported_expected,
                                 aggregate_anchor_override.unwrap_or(arg_idx),
+                            );
+                        } else if prefer_argument_level_return_mismatch {
+                            self.error_argument_not_assignable_at(
+                                reported_actual,
+                                reported_expected,
+                                arg_idx,
                             );
                         } else if preserve_type_parameter_expected_display {
                             self.error_argument_not_assignable_preserving_param_display(
@@ -1413,7 +1419,7 @@ impl<'a> CheckerState<'a> {
                         && !elaborated
                     {
                         if aggregate_rest_mismatch {
-                            self.error_argument_not_assignable_at(
+                            self.error_argument_not_assignable_structural_tuple_at(
                                 reported_actual,
                                 reported_expected,
                                 aggregate_anchor_override.unwrap_or(call_idx),
@@ -1456,7 +1462,7 @@ impl<'a> CheckerState<'a> {
                         && !elaborated
                     {
                         if aggregate_rest_mismatch {
-                            self.error_argument_not_assignable_at(
+                            self.error_argument_not_assignable_structural_tuple_at(
                                 reported_actual,
                                 reported_expected,
                                 aggregate_anchor_override.unwrap_or(last_arg),
@@ -1480,7 +1486,7 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                     if aggregate_rest_mismatch {
-                        self.error_argument_not_assignable_at(
+                        self.error_argument_not_assignable_structural_tuple_at(
                             reported_actual,
                             reported_expected,
                             aggregate_anchor_override.unwrap_or(call_idx),

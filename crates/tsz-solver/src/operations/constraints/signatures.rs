@@ -1146,12 +1146,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         if s_elem.rest {
                             break;
                         }
-                        let assignable = self
-                            .checker
-                            .is_assignable_to(s_elem.type_id, tail_elem.type_id);
-                        if tail_elem.optional && !assignable {
-                            break;
-                        }
                         trailing_count += 1;
                         source_index -= 1;
                     }

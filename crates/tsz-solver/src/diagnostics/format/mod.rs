@@ -1208,10 +1208,9 @@ impl<'a> TypeFormatter<'a> {
         self
     }
 
-    /// Render a composite type (`Object` / `ObjectWithIndex` / `Union` /
-    /// `Intersection`) structurally instead of repainting it with a coincidental
-    /// non-generic type-alias name reached through the reverse `find_def_for_type`
-    /// / `find_def_by_shape` lookup. See [`Self::anonymous_composite_structural`].
+    /// Render composites structurally instead of repainting them with a
+    /// coincidental non-generic type-alias name reached through reverse def/shape
+    /// lookup. See [`Self::anonymous_composite_structural`].
     pub const fn with_anonymous_composite_structural(mut self) -> Self {
         self.anonymous_composite_structural = true;
         self
@@ -1608,6 +1607,7 @@ impl<'a> TypeFormatter<'a> {
                     &key,
                     TypeData::Object(_)
                         | TypeData::ObjectWithIndex(_)
+                        | TypeData::Tuple(_)
                         | TypeData::Union(_)
                         | TypeData::Intersection(_)
                 );

@@ -969,6 +969,78 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    pub(crate) fn rest_tuple_mismatch_for_too_few_args(
+        &mut self,
+        params: &[ParamInfo],
+        type_params: &[TypeParamInfo],
+        arg_types: &[TypeId],
+        fallback_return: TypeId,
+    ) -> Option<CallResult> {
+        let rest_start = params.len().checked_sub(1)?;
+        let rest_param = params.last().filter(|param| param.rest)?;
+        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let expected =
+            self.substitute_sig_type_params_to_defaults_or_constraints(rest_type, type_params);
+        let expected = self.evaluate_rest_param_type(expected);
+        let should_type_check = if expected == TypeId::NEVER {
+            true
+        } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(expected) {
+            let elements = self.interner.tuple_list(elements);
+            elements.first().is_some_and(|element| element.rest)
+        } else {
+            false
+        };
+        if !should_type_check {
+            return None;
+        }
+
+        let rest_args: Vec<TypeId> = arg_types
+            .get(rest_start..)
+            .unwrap_or(&[])
+            .iter()
+            .copied()
+            .filter(|&arg| {
+                !crate::type_queries::data::is_bare_current_infer_placeholder_db(
+                    self.interner.as_type_database(),
+                    arg,
+                )
+            })
+            .collect();
+        let actual = self.aggregate_rest_actual_type(&rest_args);
+        Some(CallResult::ArgumentTypeMismatch {
+            index: rest_start,
+            expected,
+            actual,
+            fallback_return,
+        })
+    }
+
+    fn substitute_sig_type_params_to_defaults_or_constraints(
+        &self,
+        type_id: TypeId,
+        type_params: &[TypeParamInfo],
+    ) -> TypeId {
+        if type_params.is_empty() {
+            return type_id;
+        }
+        let mut subst = TypeSubstitution::new();
+        for type_param in type_params {
+            subst.insert(
+                type_param.name,
+                type_param
+                    .default
+                    .or(type_param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN),
+            );
+        }
+        instantiate_type_cached(
+            self.interner.as_type_database(),
+            Some(self.interner),
+            type_id,
+            &subst,
+        )
+    }
+
     /// Look up the `ParamInfo` for a given argument index (non-rest only).
     /// Returns `None` if the index falls into a rest parameter or is out of bounds.
     fn param_info_for_arg_index<'b>(

@@ -844,6 +844,22 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && let Some(target_str) =
+                        self.variadic_tuple_alias_structural_display(target, source)
+                {
+                    let source_str = self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+                    );
+                    let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                        source, target, source_str, target_str,
+                    );
+                    diag.message_text = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&source_str, &target_str],
+                    );
+                }
                 let has_static_schema_display = self
                     .static_schema_array_structural_display(source, target)
                     .is_some()
