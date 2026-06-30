@@ -30,6 +30,7 @@
 mod compound;
 mod core;
 mod discriminants;
+mod generation_memo;
 mod instanceof;
 mod property;
 pub mod request;

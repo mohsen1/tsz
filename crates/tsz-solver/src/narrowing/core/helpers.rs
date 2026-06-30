@@ -827,19 +827,24 @@ impl<'a> NarrowingContext<'a> {
             return self.is_assignable_to_uncached(source, target);
         }
 
-        let key = NarrowExcludingKey {
+        let generation = self.resolver_generation();
+        let key = NarrowExcludingStableKey {
             source,
             excluded: target,
-            resolver_generation: self.resolver_generation(),
         };
-        if let Some(&cached) = self.cache.narrow_assignable_cache.borrow().get(&key) {
+        if let Some(cached) = self
+            .cache
+            .narrow_assignable_cache
+            .borrow()
+            .get(&key, generation)
+        {
             return cached;
         }
         let result = self.is_assignable_to_uncached(source, target);
         self.cache
             .narrow_assignable_cache
             .borrow_mut()
-            .insert(key, result);
+            .insert(key, generation, result);
         result
     }
 
@@ -969,12 +974,17 @@ impl<'a> NarrowingContext<'a> {
         if source == target {
             return true;
         }
-        let key = NarrowExcludingKey {
+        let generation = self.resolver_generation();
+        let key = NarrowExcludingStableKey {
             source,
             excluded: target,
-            resolver_generation: self.resolver_generation(),
         };
-        if let Some(&cached) = self.cache.narrow_subtype_cache.borrow().get(&key) {
+        if let Some(cached) = self
+            .cache
+            .narrow_subtype_cache
+            .borrow()
+            .get(&key, generation)
+        {
             return cached;
         }
         let result = if let Some(resolver) = self.resolver {
@@ -987,7 +997,7 @@ impl<'a> NarrowingContext<'a> {
         self.cache
             .narrow_subtype_cache
             .borrow_mut()
-            .insert(key, result);
+            .insert(key, generation, result);
         result
     }
 

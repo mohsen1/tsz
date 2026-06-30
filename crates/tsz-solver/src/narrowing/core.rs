@@ -1,7 +1,10 @@
 use crate::caches::db::TypeCompilerOptions;
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
-use crate::narrowing::request::{NarrowTypeCacheKey, NarrowingOptions, NarrowingRequest};
+use crate::narrowing::generation_memo::GenerationMemo;
+#[cfg(test)]
+use crate::narrowing::generation_memo::MAX_GENERATIONS_PER_NARROWING_KEY;
+use crate::narrowing::request::{NarrowTypeStableCacheKey, NarrowingOptions, NarrowingRequest};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
@@ -295,7 +298,7 @@ pub struct DiscriminantInfo {
 
 type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
 type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
-type PropertyCacheKey = (TypeId, u64, Atom);
+type PropertyCacheKey = (TypeId, Atom);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachedPropertyType {
     pub type_id: TypeId,
@@ -325,8 +328,8 @@ impl CachedPropertyType {
     }
 }
 
-type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<CachedPropertyType>>;
-type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
+type NarrowedPropertyCache = GenerationMemo<PropertyCacheKey, Option<CachedPropertyType>>;
+type RequiredPropertyCache = GenerationMemo<PropertyCacheKey, bool>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NarrowingCacheStatistics {
@@ -417,7 +420,7 @@ pub struct NarrowingCache {
     /// stale predicate results. Other guard kinds keep their existing dynamic
     /// paths because their results depend on structural lookups that are already
     /// cached at narrower query boundaries.
-    pub(crate) narrow_type_cache: RefCell<FxHashMap<NarrowTypeCacheKey, TypeId>>,
+    pub(crate) narrow_type_cache: RefCell<GenerationMemo<NarrowTypeStableCacheKey, TypeId>>,
     /// Memo for [`NarrowingContext::narrow_excluding_type`] keyed by
     /// `(source, excluded, resolver_generation)`.
     ///
@@ -429,7 +432,7 @@ pub struct NarrowingCache {
     /// Memoizing collapses that re-expansion to linear; combined with
     /// `narrow_excluding_visiting` it is the structural fix for the
     /// non-terminating typebox row (issue #13242 / #13250).
-    pub(crate) narrow_excluding_cache: RefCell<FxHashMap<NarrowExcludingKey, TypeId>>,
+    pub(crate) narrow_excluding_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, TypeId>>,
     /// In-progress `(source, excluded, resolver_generation)` set for
     /// `narrow_excluding_type`. A recursive-alias member whose resolution
     /// re-enters the same `(source, excluded)` pair is a cycle; returning the
@@ -448,7 +451,7 @@ pub struct NarrowingCache {
     /// pair recurs across the many `IsXxx(s)` guards a typebox/ts-morph file runs
     /// over one recursive `TSchema`, so memoizing the boolean collapses the
     /// repeated deep materialization (issue #13242 / #13250).
-    pub(crate) narrow_assignable_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+    pub(crate) narrow_assignable_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
     /// Memo for the narrowing-boundary subtype check
     /// ([`NarrowingContext::is_subtype_for_narrowing`]) keyed by
     /// `(source, target, resolver_generation)`.
@@ -458,7 +461,7 @@ pub struct NarrowingCache {
     /// `is_assignable_to` funnel here, so it is the deepest point at which the
     /// recursive-schema `collect_properties_cached` walk can be cached once per
     /// `(source, target)` pair (issue #13242 / #13250).
-    pub(crate) narrow_subtype_cache: RefCell<FxHashMap<NarrowExcludingKey, bool>>,
+    pub(crate) narrow_subtype_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
     /// Re-entrancy depth of the exclusion-narrowing families
     /// (`narrow_excluding_type` / `narrow_excluding_function` /
     /// `narrow_excluding_typeof_object`).
@@ -531,16 +534,19 @@ pub(crate) struct NarrowExcludingKey {
     resolver_generation: u64,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub(crate) struct NarrowExcludingStableKey {
+    source: TypeId,
+    excluded: TypeId,
+}
+
 impl NarrowingCache {
     pub fn new() -> Self {
         Self {
             resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(1024, FxBuildHasher)),
             resolve_visiting: RefCell::new(FxHashSet::default()),
-            property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(512, FxBuildHasher)),
-            required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                256,
-                FxBuildHasher,
-            )),
+            property_cache: RefCell::new(GenerationMemo::default()),
+            required_property_cache: RefCell::new(GenerationMemo::default()),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
                 FxBuildHasher,
@@ -562,23 +568,11 @@ impl NarrowingCache {
                 FxBuildHasher,
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
-            narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                1024,
-                FxBuildHasher,
-            )),
-            narrow_excluding_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                256,
-                FxBuildHasher,
-            )),
+            narrow_type_cache: RefCell::new(GenerationMemo::default()),
+            narrow_excluding_cache: RefCell::new(GenerationMemo::default()),
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
-            narrow_assignable_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
-            narrow_subtype_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
+            narrow_assignable_cache: RefCell::new(GenerationMemo::default()),
+            narrow_subtype_cache: RefCell::new(GenerationMemo::default()),
             narrow_excluding_depth: Cell::new(0),
             narrow_excluding_fuel: Cell::new(0),
             narrow_excluding_budget: Cell::new(0),
@@ -627,17 +621,11 @@ impl NarrowingCache {
         }
         {
             let map = self.property_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<PropertyCacheKey>()
-                    + std::mem::size_of::<Option<CachedPropertyType>>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let map = self.required_property_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<PropertyCacheKey>()
-                    + std::mem::size_of::<bool>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let map = self.split_nullish_cache.borrow();
@@ -691,17 +679,11 @@ impl NarrowingCache {
         }
         {
             let map = self.narrow_type_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<NarrowTypeCacheKey>()
-                    + std::mem::size_of::<TypeId>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let map = self.narrow_excluding_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<NarrowExcludingKey>()
-                    + std::mem::size_of::<TypeId>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let set = self.narrow_excluding_visiting.borrow();
@@ -709,17 +691,11 @@ impl NarrowingCache {
         }
         {
             let map = self.narrow_assignable_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<NarrowExcludingKey>()
-                    + std::mem::size_of::<bool>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let map = self.narrow_subtype_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<NarrowExcludingKey>()
-                    + std::mem::size_of::<bool>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
 
         size
@@ -1720,12 +1696,22 @@ impl<'a> NarrowingContext<'a> {
     /// Memoized, budget-charged body of [`Self::narrow_excluding_type`]. Always
     /// reached with the per-request fuel primed by the outermost frame.
     fn narrow_excluding_type_budgeted(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
+        let resolver_generation = self.resolver_generation();
+        let stable_key = NarrowExcludingStableKey {
+            source: source_type,
+            excluded: excluded_type,
+        };
         let key = NarrowExcludingKey {
             source: source_type,
             excluded: excluded_type,
-            resolver_generation: self.resolver_generation(),
+            resolver_generation,
         };
-        if let Some(&cached) = self.cache.narrow_excluding_cache.borrow().get(&key) {
+        if let Some(cached) = self
+            .cache
+            .narrow_excluding_cache
+            .borrow()
+            .get(&stable_key, resolver_generation)
+        {
             return cached;
         }
         // Charge one unit of the per-request budget for each fresh exclusion
@@ -1757,10 +1743,11 @@ impl<'a> NarrowingContext<'a> {
         // would poison a later, fully-budgeted request with the conservative
         // answer.
         if self.exclusion_within_budget() {
-            self.cache
-                .narrow_excluding_cache
-                .borrow_mut()
-                .insert(key, result);
+            self.cache.narrow_excluding_cache.borrow_mut().insert(
+                stable_key,
+                resolver_generation,
+                result,
+            );
         }
         result
     }
@@ -2089,8 +2076,9 @@ impl<'a> NarrowingContext<'a> {
     }
 
     fn narrow_predicate_cached(&self, request: &NarrowingRequest) -> TypeId {
-        let key = request.cache_key(self.narrowing_options(), self.resolver_generation());
-        if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key).copied() {
+        let generation = self.resolver_generation();
+        let key = request.stable_cache_key(self.narrowing_options());
+        if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key, generation) {
             return cached;
         }
         let narrowed =
@@ -2098,7 +2086,7 @@ impl<'a> NarrowingContext<'a> {
         self.cache
             .narrow_type_cache
             .borrow_mut()
-            .insert(key, narrowed);
+            .insert(key, generation, narrowed);
         narrowed
     }
 
@@ -2575,81 +2563,5 @@ impl<'a> NarrowingContext<'a> {
 }
 
 #[cfg(test)]
-mod cache_visibility_tests {
-    use super::*;
-    use crate::intern::TypeInterner;
-
-    #[test]
-    fn narrowing_cache_statistics_report_entries_and_size() {
-        let db = TypeInterner::new();
-        let prop = db.intern_string("prop");
-        let key = (TypeId::STRING, 7, prop);
-        let chain_key = OptionalPropertyChainKey {
-            root_type: TypeId::STRING,
-            properties: vec![prop],
-            optional_mask: 1,
-            no_unchecked_indexed_access: true,
-        };
-        let cache = NarrowingCache::new();
-        let empty = cache.cache_statistics();
-
-        assert_eq!(empty.total_entries(), 0);
-        assert!(empty.estimated_size_bytes > 0);
-
-        cache
-            .resolve_cache
-            .borrow_mut()
-            .insert(TypeId::STRING, TypeId::NUMBER);
-        cache
-            .property_cache
-            .borrow_mut()
-            .insert(key, Some(CachedPropertyType::explicit(TypeId::BOOLEAN)));
-        cache.required_property_cache.borrow_mut().insert(key, true);
-        cache
-            .split_nullish_cache
-            .borrow_mut()
-            .insert(TypeId::STRING, (Some(TypeId::STRING), Some(TypeId::NULL)));
-        cache
-            .contains_type_parameters_cache
-            .borrow_mut()
-            .insert(TypeId::STRING, false);
-        cache
-            .optional_chain_cache
-            .borrow_mut()
-            .insert((TypeId::STRING, prop), TypeId::BOOLEAN);
-        cache
-            .optional_property_chain_cache
-            .borrow_mut()
-            .insert(chain_key, TypeId::BOOLEAN);
-        cache
-            .contextual_resolve_cache
-            .borrow_mut()
-            .insert(TypeId::STRING, TypeId::BOOLEAN);
-        let mut discriminants = FxHashMap::default();
-        discriminants.insert(TypeId::STRING, vec![TypeId::BOOLEAN]);
-        cache
-            .discriminant_index
-            .borrow_mut()
-            .insert((TypeId::STRING, prop), Arc::new(discriminants));
-        cache.narrow_type_cache.borrow_mut().insert(
-            NarrowingRequest::new(TypeId::STRING, TypeGuard::Truthy, GuardSense::Positive)
-                .cache_key(NarrowingOptions::new(), 0),
-            TypeId::STRING,
-        );
-
-        let stats = cache.cache_statistics();
-        assert_eq!(stats.resolve_cache_entries, 1);
-        assert_eq!(stats.narrowed_property_cache_entries, 1);
-        assert_eq!(stats.required_property_cache_entries, 1);
-        assert_eq!(stats.split_nullish_cache_entries, 1);
-        assert_eq!(stats.contains_type_parameters_cache_entries, 1);
-        assert_eq!(stats.optional_chain_cache_entries, 1);
-        assert_eq!(stats.optional_property_chain_cache_entries, 1);
-        assert_eq!(stats.contextual_resolve_cache_entries, 1);
-        assert_eq!(stats.discriminant_index_entries, 1);
-        assert_eq!(stats.narrow_type_cache_entries, 1);
-        assert_eq!(stats.total_entries(), 10);
-        assert!(stats.estimated_size_bytes > empty.estimated_size_bytes);
-        assert!(cache.estimated_size_bytes() >= stats.estimated_size_bytes);
-    }
-}
+#[path = "core/cache_visibility_tests.rs"]
+mod cache_visibility_tests;

@@ -328,8 +328,9 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
-        let key = (type_id, self.resolver_generation(), property);
-        if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
+        let generation = self.resolver_generation();
+        let key = (type_id, property);
+        if let Some(cached) = self.cache.property_cache.borrow().get(&key, generation) {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
             if let Some(entry) = cached {
@@ -350,10 +351,11 @@ impl<'a> NarrowingContext<'a> {
                         type_id: re_resolved,
                         from_index_signature: entry.from_index_signature,
                     };
-                    self.cache
-                        .property_cache
-                        .borrow_mut()
-                        .insert(key, Some(re_resolved_entry));
+                    self.cache.property_cache.borrow_mut().insert(
+                        key,
+                        generation,
+                        Some(re_resolved_entry),
+                    );
                     return Some(re_resolved);
                 }
                 return Some(prop_type);
@@ -378,10 +380,11 @@ impl<'a> NarrowingContext<'a> {
             None => true,
         };
         if should_cache {
-            self.cache
-                .property_cache
-                .borrow_mut()
-                .insert(key, result.map(CachedPropertyType::explicit));
+            self.cache.property_cache.borrow_mut().insert(
+                key,
+                generation,
+                result.map(CachedPropertyType::explicit),
+            );
         }
         result
     }
