@@ -10,6 +10,7 @@
 //! - Best common type calculation
 //! - Efficient unification with path compression
 
+use super::infer_guard_state as guard_state;
 use crate::construction::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 use crate::types::*;
@@ -788,8 +789,9 @@ impl<'a> InferenceContext<'a> {
         if ty.is_intrinsic() {
             return;
         }
-        if !visited.insert(ty) {
-            return;
+        match guard_state::type_graph_visit_state(visited.insert(ty)) {
+            guard_state::TypeGraphVisitState::Entered => {}
+            guard_state::TypeGraphVisitState::AlreadyVisited => return,
         }
         let Some(key) = self.interner.lookup(ty) else {
             return;
@@ -942,11 +944,12 @@ impl<'a> InferenceContext<'a> {
         targets: &[Atom],
         visited: &mut FxHashSet<Atom>,
     ) -> bool {
-        if targets.contains(&name) {
-            return true;
-        }
-        if !visited.insert(name) {
-            return false;
+        let is_target = targets.contains(&name);
+        let inserted_visit = !is_target && visited.insert(name);
+        match guard_state::param_dependency_state(is_target, inserted_visit) {
+            guard_state::ParamDependencyState::TargetReached => return true,
+            guard_state::ParamDependencyState::Entered => {}
+            guard_state::ParamDependencyState::AlreadyVisited => return false,
         }
         let Some(var) = self.find_type_param(name) else {
             return false;
@@ -981,8 +984,9 @@ impl<'a> InferenceContext<'a> {
         if ty.is_intrinsic() {
             return false;
         }
-        if !visited.insert(ty) {
-            return false;
+        match guard_state::type_graph_visit_state(visited.insert(ty)) {
+            guard_state::TypeGraphVisitState::Entered => {}
+            guard_state::TypeGraphVisitState::AlreadyVisited => return false,
         }
 
         let key = match self.interner.lookup(ty) {
