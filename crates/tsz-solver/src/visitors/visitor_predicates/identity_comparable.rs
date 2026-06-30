@@ -11,10 +11,27 @@ pub fn is_identity_comparable_type(types: &dyn TypeDatabase, type_id: TypeId) ->
 
 const MAX_IDENTITY_COMPARABLE_DEPTH: u32 = 10;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentityComparableDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+impl IdentityComparableDepthState {
+    const fn for_depth(depth: u32) -> Self {
+        if depth > MAX_IDENTITY_COMPARABLE_DEPTH {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
     // Prevent stack overflow on pathological types
-    if depth > MAX_IDENTITY_COMPARABLE_DEPTH {
-        return false;
+    match IdentityComparableDepthState::for_depth(depth) {
+        IdentityComparableDepthState::Continue => {}
+        IdentityComparableDepthState::LimitExceeded => return false,
     }
 
     // Check well-known singleton types first.
@@ -42,5 +59,35 @@ fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, d
 
         // Everything else is not identity-comparable.
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::intern::TypeInterner;
+
+    #[test]
+    fn identity_comparable_depth_state_names_exact_cap_and_limit() {
+        assert_eq!(
+            IdentityComparableDepthState::for_depth(MAX_IDENTITY_COMPARABLE_DEPTH),
+            IdentityComparableDepthState::Continue
+        );
+        assert_eq!(
+            IdentityComparableDepthState::for_depth(MAX_IDENTITY_COMPARABLE_DEPTH + 1),
+            IdentityComparableDepthState::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn identity_comparable_depth_limit_preserves_false_fallback() {
+        let interner = TypeInterner::new();
+
+        assert!(is_identity_comparable_type(&interner, TypeId::BOOLEAN_TRUE));
+        assert!(!is_identity_comparable_type_impl(
+            &interner,
+            TypeId::BOOLEAN_TRUE,
+            MAX_IDENTITY_COMPARABLE_DEPTH + 1
+        ));
     }
 }
