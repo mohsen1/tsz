@@ -58,6 +58,43 @@ fn test_symbol_ref_to_symbol_id_cast_budget() {
 }
 
 #[test]
+fn test_module_augmentation_publishes_merged_defs_through_context_authority() {
+    let source = fs::read_to_string("src/types/module_augmentation.rs")
+        .expect("failed to read module_augmentation.rs");
+    let non_comment_source = source
+        .lines()
+        .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let compact_source = non_comment_source
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>();
+
+    assert!(
+        compact_source.contains("register_augmented_def_in_envs(def_id,result,false)"),
+        "global augmentation merged bodies must publish through CheckerContext"
+    );
+    assert!(
+        compact_source.contains("register_augmented_def_in_envs(aug_def_id,merged_type,false)"),
+        "augmentation-local self-reference bodies must publish through CheckerContext"
+    );
+    let raw_type_env_mut_borrows = non_comment_source.lines().filter(|line| {
+        line.contains("type_env")
+            && (line.contains("try_borrow_mut()") || line.contains("borrow_mut()"))
+    });
+    assert!(
+        raw_type_env_mut_borrows.count() == 0,
+        "module augmentation must not write type_env directly; route DefId bodies \
+         through the deferred dual-env authority"
+    );
+    assert!(
+        !non_comment_source.contains("env.insert_def("),
+        "module augmentation must not publish DefId bodies with raw env.insert_def"
+    );
+}
+
+#[test]
 fn test_env_eval_cache_def_invalidation_is_targeted() {
     let arena = NodeArena::new();
     let binder = BinderState::new();

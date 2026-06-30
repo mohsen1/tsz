@@ -740,6 +740,144 @@ fn symbol_type_registration_deferred_mirror_preserves_params() {
     );
 }
 
+/// Augmentation merges re-publish an existing `DefId` body. The replay path
+/// must preserve the def's type params; otherwise a generic interface merged by
+/// module/global augmentation becomes non-generic in whichever env lost the
+/// borrow race.
+#[test]
+fn augmented_def_registration_deferred_mirror_preserves_params() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let params = vec![tsz_solver::TypeParamInfo::simple(Atom::default())];
+    ctx.register_def_with_params_in_envs(def_id, TypeId::STRING, params.clone());
+
+    {
+        let held_flow = ctx.type_environment.borrow();
+        ctx.register_augmented_def_in_envs(def_id, TypeId::NUMBER, false);
+
+        let eval = ctx.type_env.borrow();
+        assert_eq!(eval.get_def(def_id), Some(TypeId::NUMBER));
+        assert_eq!(
+            eval.get_def_params(def_id),
+            Some(params.as_slice()),
+            "evaluator env must preserve params while publishing the augmented body"
+        );
+        assert_eq!(
+            held_flow.get_def(def_id),
+            Some(TypeId::STRING),
+            "flow env write must wait while the env is borrowed"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "augmented def mirror must be queued rather than dropped"
+        );
+    }
+
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(ctx.deferred_flow_env_write_count(), 0);
+    let flow = ctx.type_environment.borrow();
+    assert_eq!(flow.get_def(def_id), Some(TypeId::NUMBER));
+    assert_eq!(
+        flow.get_def_params(def_id),
+        Some(params.as_slice()),
+        "flow env replay must preserve generic params from the original def"
+    );
+}
+
+/// Companion for the shared-store path: a cross-file checker can observe a
+/// generic def whose params live only in `DefinitionStore`, not in its local
+/// `TypeEnvironment`. Replaying an augmentation merge must still re-insert the
+/// augmented body as generic by using `get_def_params_owned`.
+#[test]
+fn augmented_def_registration_uses_store_only_params_on_replay() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+    use tsz_solver::def::DefinitionInfo;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let params = vec![tsz_solver::TypeParamInfo::simple(Atom::default())];
+    ctx.definition_store.set_type_params(def_id, params.clone());
+
+    // Attach the shared store to both envs, but leave their local param maps
+    // empty. `get_def_params_owned` can see the params; `get_def_params` cannot.
+    ctx.ensure_both_envs_have_definition_store();
+    {
+        let eval_snapshot = ctx.type_env.borrow();
+        ctx.type_environment
+            .borrow_mut()
+            .overlay_missing_from(&eval_snapshot);
+    }
+    assert_eq!(ctx.type_env.borrow().get_def_params(def_id), None);
+    assert_eq!(ctx.type_environment.borrow().get_def_params(def_id), None);
+    assert_eq!(
+        ctx.type_env.borrow().get_def_params_owned(def_id),
+        Some(params.clone())
+    );
+
+    {
+        let held_eval = ctx.type_env.borrow();
+        ctx.register_augmented_def_in_envs(def_id, TypeId::NUMBER, false);
+
+        assert_eq!(
+            held_eval.get_def_params(def_id),
+            None,
+            "evaluator env local params must not be updated while type_env is borrowed"
+        );
+        assert_eq!(
+            ctx.deferred_eval_env_write_count(),
+            1,
+            "authoritative augmented def write must be queued"
+        );
+        let flow = ctx.type_environment.borrow();
+        assert_eq!(flow.get_def(def_id), Some(TypeId::NUMBER));
+        assert_eq!(
+            flow.get_def_params(def_id),
+            Some(params.as_slice()),
+            "flow env direct write must preserve params from the store"
+        );
+    }
+
+    ctx.flush_deferred_eval_env_writes();
+    assert_eq!(ctx.deferred_eval_env_write_count(), 0);
+    let eval = ctx.type_env.borrow();
+    assert_eq!(eval.get_def(def_id), Some(TypeId::NUMBER));
+    assert_eq!(
+        eval.get_def_params(def_id),
+        Some(params.as_slice()),
+        "evaluator env replay must preserve store-only params"
+    );
+}
+
 /// Regression for #13944 / #13086: a `DefId -> TypeId` body re-published by the
 /// lazy-resolution path (`register_resolved_def_in_envs`, the gateway
 /// `try_insert_def_in_type_env` now uses) must travel the race-safe deferred
