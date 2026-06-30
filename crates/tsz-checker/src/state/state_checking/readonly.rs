@@ -802,7 +802,7 @@ impl<'a> CheckerState<'a> {
     /// Evaluates the constraint through `TypeEnvironment` first to resolve
     /// Application/Lazy wrappers (e.g., `Record<string, any>` → `{ [key: string]: any }`).
     fn constraint_has_index_signature(&mut self, type_param: TypeId, index_type: TypeId) -> bool {
-        use crate::query_boundaries::common::{IndexKind, IndexSignatureResolver};
+        use crate::query_boundaries::index_signature::{IndexKind, has_index_signature};
 
         let Some(info) =
             crate::query_boundaries::common::type_param_info(self.ctx.types, type_param)
@@ -824,18 +824,16 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let resolver = IndexSignatureResolver::new(self.ctx.types);
-
         // Check if the constraint has an index signature matching the broad index type
         if index_type == TypeId::STRING {
-            return resolver.has_index_signature(resolved, IndexKind::String);
+            return has_index_signature(self.ctx.types, resolved, IndexKind::String);
         }
         if index_type == TypeId::NUMBER {
-            return resolver.has_index_signature(resolved, IndexKind::Number);
+            return has_index_signature(self.ctx.types, resolved, IndexKind::Number);
         }
         // For symbol or unions, check for string index signature (most permissive)
-        resolver.has_index_signature(resolved, IndexKind::String)
-            || resolver.has_index_signature(resolved, IndexKind::Number)
+        has_index_signature(self.ctx.types, resolved, IndexKind::String)
+            || has_index_signature(self.ctx.types, resolved, IndexKind::Number)
     }
 
     /// Check if a type is a "broad" index type that would access through an index

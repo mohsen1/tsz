@@ -10,6 +10,54 @@ use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::objects::index_signatures::IndexSignatureResolver;
+
+pub(crate) use tsz_solver::IndexSignature;
+pub(crate) use tsz_solver::objects::index_signatures::IndexKind;
+
+/// Resolve the string index signature value type from `type_id`.
+///
+/// Checker callers ask this boundary rather than constructing the raw solver
+/// resolver directly, so resolver ownership stays in one place.
+pub(crate) fn resolve_string_index(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    IndexSignatureResolver::new(db).resolve_string_index(type_id)
+}
+
+/// Resolve the numeric index signature value type from `type_id`.
+pub(crate) fn resolve_number_index(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    IndexSignatureResolver::new(db).resolve_number_index(type_id)
+}
+
+/// Return the declared string index signature for `type_id`, if present.
+pub(crate) fn string_index_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<IndexSignature> {
+    IndexSignatureResolver::new(db)
+        .get_index_info(type_id)
+        .string_index
+}
+
+/// Return the declared numeric index signature for `type_id`, if present.
+pub(crate) fn number_index_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<IndexSignature> {
+    IndexSignatureResolver::new(db)
+        .get_index_info(type_id)
+        .number_index
+}
+
+/// Return whether `type_id` exposes the requested index signature kind.
+pub(crate) fn has_index_signature(db: &dyn TypeDatabase, type_id: TypeId, kind: IndexKind) -> bool {
+    IndexSignatureResolver::new(db).has_index_signature(type_id, kind)
+}
+
+/// Return whether `type_id` exposes either broad object index signature.
+pub(crate) fn has_string_or_number_index_signature(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    has_index_signature(db, type_id, IndexKind::String)
+        || has_index_signature(db, type_id, IndexKind::Number)
+}
 
 pub(crate) fn index_key_type_satisfies_index_signature(
     db: &dyn TypeDatabase,

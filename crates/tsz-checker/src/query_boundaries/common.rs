@@ -12,7 +12,7 @@ pub(crate) use tsz_solver::narrowing::{
     CachedPropertyType, NarrowingCache, NarrowingContext, OptionalPropertyChainKey, TypeGuard,
     TypeofKind,
 };
-pub(crate) use tsz_solver::objects::{IndexKind, IndexSignatureResolver};
+pub(crate) use tsz_solver::objects::IndexSignatureResolver;
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
 pub(crate) use tsz_solver::relations::judge::{DefaultJudge, JudgeConfig};

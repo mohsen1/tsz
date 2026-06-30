@@ -23,6 +23,9 @@
 //!   literals or direct interning calls.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
 //!   named checker-owned walk state instead of paired raw visited sets.
+//! - `index_signature_boundary_scans`: production checker index-signature
+//!   queries go through `query_boundaries::index_signature` rather than
+//!   constructing the raw solver resolver at call sites.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -30,6 +33,8 @@ mod class_instance_walk_state_scans;
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
+#[path = "arch_source_scans/index_signature_boundary_scans.rs"]
+mod index_signature_boundary_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]

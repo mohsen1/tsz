@@ -25,9 +25,8 @@ pub(crate) use super::common::{
 // (issue #12947). These remain defined in `common` for non-display callers; the
 // re-export keeps a single import surface for diagnostic render policy.
 pub(crate) use super::common::{
-    IndexKind, IndexSignatureResolver, is_conditional_type, is_generic_application,
-    is_literal_type, is_mapped_type, is_type_parameter, is_type_parameter_like, is_type_query_type,
-    is_union_type, widen_type,
+    is_conditional_type, is_generic_application, is_literal_type, is_mapped_type,
+    is_type_parameter, is_type_parameter_like, is_type_query_type, is_union_type, widen_type,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 

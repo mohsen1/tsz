@@ -99,19 +99,40 @@ impl<'a> CheckerState<'a> {
 
         let argument = self.ctx.arena.skip_parenthesized_and_assertions(argument);
         let argument_node = self.ctx.arena.get(argument)?;
-        let resolver = crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types);
         let prefers_number_index =
             self.element_access_argument_prefers_number_index(argument, argument_node.kind);
         let (raw_index_value_type, selected_number_index) = if prefers_number_index {
-            if let Some(index_value_type) = resolver.resolve_number_index(declared_type) {
+            if let Some(index_value_type) =
+                crate::query_boundaries::index_signature::resolve_number_index(
+                    self.ctx.types,
+                    declared_type,
+                )
+            {
                 (index_value_type, true)
             } else {
-                (resolver.resolve_string_index(declared_type)?, false)
+                (
+                    crate::query_boundaries::index_signature::resolve_string_index(
+                        self.ctx.types,
+                        declared_type,
+                    )?,
+                    false,
+                )
             }
-        } else if let Some(index_value_type) = resolver.resolve_string_index(declared_type) {
+        } else if let Some(index_value_type) =
+            crate::query_boundaries::index_signature::resolve_string_index(
+                self.ctx.types,
+                declared_type,
+            )
+        {
             (index_value_type, false)
         } else {
-            (resolver.resolve_number_index(declared_type)?, true)
+            (
+                crate::query_boundaries::index_signature::resolve_number_index(
+                    self.ctx.types,
+                    declared_type,
+                )?,
+                true,
+            )
         };
         if raw_index_value_type == TypeId::ANY {
             return None;

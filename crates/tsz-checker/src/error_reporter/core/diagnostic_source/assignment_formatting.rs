@@ -738,8 +738,6 @@ impl<'a> CheckerState<'a> {
             let formatted = self.format_type_for_assignability_message(display_type);
             let resolved_for_access = self.resolve_type_for_property_access(display_type);
             let resolved = self.judge_evaluate(resolved_for_access);
-            let resolver =
-                tsz_solver::objects::index_signatures::IndexSignatureResolver::new(self.ctx.types);
             if !formatted.contains('{')
                 && !formatted.contains('[')
                 && !formatted.contains('|')
@@ -749,13 +747,10 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     display_type,
                 )
-                && (resolver.has_index_signature(
+                && crate::query_boundaries::index_signature::has_string_or_number_index_signature(
+                    self.ctx.types,
                     resolved,
-                    tsz_solver::objects::index_signatures::IndexKind::String,
-                ) || resolver.has_index_signature(
-                    resolved,
-                    tsz_solver::objects::index_signatures::IndexKind::Number,
-                ))
+                )
             {
                 if let Some(structural) = self.format_structural_indexed_object_type(resolved) {
                     return structural;
