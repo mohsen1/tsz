@@ -673,6 +673,11 @@ FILE_LINE_LIMIT_CHECKS = [
         2018,
     ),
     (
+        "Solver boundary: diagnostics/format/mod.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/diagnostics/format/mod.rs",
+        2012,
+    ),
+    (
         "Emitter boundary: declaration_emitter/helpers/type_inference_return_normalization.rs size ratchet",
         ROOT
         / "crates"

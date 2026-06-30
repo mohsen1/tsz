@@ -373,17 +373,20 @@ fn relation_queries_keep_overflow_flags_on_relation_result() {
 
     let conditional_phases_rs =
         read_solver_source("evaluation/evaluate_rules/conditional/phases.rs");
+    let evaluation_session_rs = read_solver_source("evaluation/session.rs");
     assert!(
-        conditional_phases_rs.contains("struct ConditionalSubtypeDepthEntry")
-            && conditional_phases_rs.contains("fn enter() -> ConditionalSubtypeDepthEntry")
-            && conditional_phases_rs
-                .contains("let depth_entry = ConditionalSubtypeDepthGuard::enter()")
+        evaluation_session_rs.contains("pub(crate) struct ConditionalSubtypeDepthEntry")
+            && evaluation_session_rs.contains(
+                "pub(crate) fn enter_conditional_subtype_depth(&self) -> ConditionalSubtypeDepthEntry<'_>"
+            )
+            && evaluation_session_rs.contains("MAX_CONDITIONAL_SUBTYPE_DEPTH")
+            && conditional_phases_rs.contains("session.enter_conditional_subtype_depth()")
             && conditional_phases_rs.contains("depth_entry.prior_depth()")
-            && conditional_phases_rs.contains("depth_entry.exit()")
-            && !conditional_phases_rs
-                .contains("let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter()"),
-        "conditional subtype depth probes must carry prior-depth plus RAII guard \
-         as a named entry object instead of an anonymous tuple"
+            && !conditional_phases_rs.contains("CONDITIONAL_SUBTYPE_DEPTH")
+            && !conditional_phases_rs.contains("ConditionalSubtypeDepthGuard"),
+        "conditional subtype depth probes must be owned by EvaluationSession and \
+         entered through its named RAII entry, not a private conditional-phase \
+         thread-local guard"
     );
 }
 
