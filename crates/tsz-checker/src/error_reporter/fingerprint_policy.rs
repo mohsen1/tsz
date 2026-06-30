@@ -162,6 +162,29 @@ impl DiagnosticRenderRequest {
         }
     }
 
+    /// Create a render request from an *optional* failure reason.
+    ///
+    /// Routes through [`Self::with_failure_reason`] when a reason is present so
+    /// the rendered diagnostic carries the relation elaboration, and falls back
+    /// to [`Self::simple`] (head line only) when the relation produced no
+    /// structured reason. This is the shared idiom for assignability error
+    /// paths that have already run `analyze_assignability_failure`.
+    pub(crate) fn with_optional_failure_reason(
+        anchor_kind: DiagnosticAnchorKind,
+        code: u32,
+        message: String,
+        reason: Option<tsz_solver::SubtypeFailureReason>,
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        match reason {
+            Some(reason) => {
+                Self::with_failure_reason(anchor_kind, code, message, reason, source, target)
+            }
+            None => Self::simple(anchor_kind, code, message),
+        }
+    }
+
     /// Create a render request with pre-built related information.
     pub(crate) const fn with_related(
         anchor_kind: DiagnosticAnchorKind,

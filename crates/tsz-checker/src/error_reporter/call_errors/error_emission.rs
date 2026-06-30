@@ -339,18 +339,14 @@ impl<'a> CheckerState<'a> {
             self.argument_not_assignable_code_and_template(arg_type, param_type);
         let message = format_message(msg_template, &[&arg_str, &param_str]);
 
-        let request = if let Some(reason) = analysis.failure_reason {
-            DiagnosticRenderRequest::with_failure_reason(
-                DiagnosticAnchorKind::Exact,
-                code,
-                message,
-                reason,
-                arg_type,
-                param_type,
-            )
-        } else {
-            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message)
-        };
+        let request = DiagnosticRenderRequest::with_optional_failure_reason(
+            DiagnosticAnchorKind::Exact,
+            code,
+            message,
+            analysis.failure_reason,
+            arg_type,
+            param_type,
+        );
 
         self.emit_render_request(idx, request);
     }

@@ -655,14 +655,25 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                 &[&src_str, &tgt_str],
             );
-            if !self.emit_render_request(
-                anchor_idx,
-                DiagnosticRenderRequest::simple(
-                    DiagnosticAnchorKind::Exact,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
-                    message,
-                ),
-            ) {
+            // tsc attaches the per-property relation elaboration beneath the
+            // TS2375 head (`Types of property 'X' are incompatible. / Type
+            // 'undefined' is not assignable to type '<base>'.`), exactly as the
+            // sibling call-argument TS2379 path does. Compute the same failure
+            // reason and route through the elaboration-carrying render request
+            // when one is available so the assignment and array-element paths
+            // match the argument path (and tsc).
+            let reason = self
+                .analyze_assignability_failure(source, target)
+                .failure_reason;
+            let request = DiagnosticRenderRequest::with_optional_failure_reason(
+                DiagnosticAnchorKind::Exact,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                message,
+                reason,
+                source,
+                target,
+            );
+            if !self.emit_render_request(anchor_idx, request) {
                 return;
             }
             return;

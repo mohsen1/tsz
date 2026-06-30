@@ -210,6 +210,105 @@ const b: B = a;
     );
 }
 
+// ── TS2375 nested relation-reason elaboration (#14830) ──────────────────────
+//
+// Structural rule: when an assignment-context `exactOptionalPropertyTypes`
+// mismatch emits TS2375, tsc appends the same per-property relation
+// elaboration the call-argument TS2379 path already shows — `Types of
+// property 'X' are incompatible.` (TS2326) followed by `Type 'undefined' is
+// not assignable to type '<base>'.` (TS2322). tsz previously dropped this tail
+// on the variable-assignment and array-element paths. The assertions below
+// vary the property spelling and the path (variable, nested object, array
+// element) so a hardcoded-spelling fix would not pass.
+
+fn ts2375_diag(source: &str) -> tsz_common::diagnostics::Diagnostic {
+    crate::test_utils::check_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            exact_optional_property_types: true,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .find(|d| d.code == 2375)
+    .expect("expected a TS2375 diagnostic")
+}
+
+/// True when `diag` carries the two-line per-property elaboration tail for
+/// `prop`: `Types of property '<prop>' are incompatible.` (TS2326) and a
+/// nested `Type 'undefined' is not assignable to type '<base>'.` (TS2322).
+fn has_property_incompatible_elaboration(
+    diag: &tsz_common::diagnostics::Diagnostic,
+    prop: &str,
+    base: &str,
+) -> bool {
+    let head = format!("Types of property '{prop}' are incompatible.");
+    let leaf = format!("Type 'undefined' is not assignable to type '{base}'.");
+    let has_head = diag
+        .related_information
+        .iter()
+        .any(|info| info.code == 2326 && info.message_text == head);
+    let has_leaf = diag
+        .related_information
+        .iter()
+        .any(|info| info.code == 2322 && info.message_text == leaf);
+    has_head && has_leaf
+}
+
+#[test]
+fn ts2375_variable_assignment_carries_property_incompatible_elaboration() {
+    let diag = ts2375_diag("interface Opt { a?: number; }\nconst o1: Opt = { a: undefined };\n");
+    assert!(
+        has_property_incompatible_elaboration(&diag, "a", "number"),
+        "TS2375 on a variable assignment must carry the 'Types of property a are \
+         incompatible / Type undefined is not assignable to number' tail; got {:?}",
+        diag.related_information
+    );
+}
+
+#[test]
+fn ts2375_elaboration_is_property_name_independent() {
+    // Rename the property to prove the elaboration is structural, not keyed on
+    // the spelling 'a'.
+    let diag = ts2375_diag(
+        "interface Opt { greeting?: string; }\nconst o: Opt = { greeting: undefined };\n",
+    );
+    assert!(
+        has_property_incompatible_elaboration(&diag, "greeting", "string"),
+        "TS2375 elaboration must follow a renamed property; got {:?}",
+        diag.related_information
+    );
+}
+
+#[test]
+fn ts2375_nested_object_property_elaboration_names_base_object_type() {
+    // The nested optional object property: the leaf names the property's base
+    // object type, matching tsc.
+    let diag = ts2375_diag(
+        "interface Nested { inner?: { x: number } }\nconst n: Nested = { inner: undefined };\n",
+    );
+    assert!(
+        has_property_incompatible_elaboration(&diag, "inner", "{ x: number; }"),
+        "nested-object TS2375 must elaborate to the base object type; got {:?}",
+        diag.related_information
+    );
+}
+
+#[test]
+fn ts2375_array_element_carries_property_incompatible_elaboration() {
+    // tsc drills array-literal assignments to the offending element, reporting
+    // the element-level mismatch with the same property elaboration.
+    let diag = ts2375_diag("interface O { a?: number; }\nconst arr: O[] = [{ a: undefined }];\n");
+    assert!(
+        has_property_incompatible_elaboration(&diag, "a", "number"),
+        "array-element TS2375 must carry the property-incompatible tail; got {:?}",
+        diag.related_information
+    );
+}
+
 #[test]
 fn element_access_names_optional_property_receiver_in_ts18048() {
     let source = r#"
