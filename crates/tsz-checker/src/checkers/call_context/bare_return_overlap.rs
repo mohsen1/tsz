@@ -7,8 +7,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
 impl CheckerState<'_> {
-    /// Detects the `#14792` shape: a generic call whose return type is a bare
-    /// type parameter `U`, where a context-sensitive callback argument (whose
+    /// Detects the `#14792` shape: a generic call whose return type mentions a
+    /// type parameter `U` — either bare (`(...): U`) or under a covariant wrapper
+    /// (`(...): U[]`) — where a context-sensitive callback argument (whose
     /// declared signature mentions `U` in its return position) returns an object
     /// literal built ENTIRELY from the callback's own parameters that are already
     /// pinned by a concrete (non context-sensitive) sibling argument.
@@ -25,7 +26,7 @@ impl CheckerState<'_> {
     /// fresh leaf the contextual type could refine (a free literal such as
     /// `() => 1` or `(v) => [1, 2]`) are excluded, because there the contextual
     /// return legitimately seeds inference and must not be dropped.
-    pub(super) fn bare_return_callback_return_pinned_by_concrete_arg(
+    pub(super) fn callback_object_return_pinned_by_concrete_arg(
         &mut self,
         shape: &FunctionShape,
         args: &[NodeIndex],
