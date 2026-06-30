@@ -389,6 +389,22 @@ thread_local! {
     static WALK_POOL: RefCell<Option<WalkPool>> = const { RefCell::new(None) };
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferencedTypeWalkState {
+    Entered,
+    AlreadyVisited,
+}
+
+impl ReferencedTypeWalkState {
+    fn enter(visited: &mut FxHashSet<TypeId>, current: TypeId) -> Self {
+        if visited.insert(current) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
+}
+
 /// The callback is invoked once per unique reachable type (including `root`).
 pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
 where
@@ -403,8 +419,9 @@ where
     stack.push(root);
 
     while let Some(current) = stack.pop() {
-        if !visited.insert(current) {
-            continue;
+        match ReferencedTypeWalkState::enter(visited, current) {
+            ReferencedTypeWalkState::Entered => {}
+            ReferencedTypeWalkState::AlreadyVisited => continue,
         }
         f(current);
 
@@ -1304,6 +1321,46 @@ impl<'a> ConstAssertionVisitor<'a> {
             return self.db.union_from_sorted_vec(const_members);
         }
         self.apply_const_assertion(type_id)
+    }
+}
+
+#[cfg(test)]
+mod referenced_type_walk_state_tests {
+    use super::{ReferencedTypeWalkState, walk_referenced_types};
+    use crate::construction::TypeInterner;
+    use crate::types::TupleElement;
+    use rustc_hash::FxHashSet;
+
+    #[test]
+    fn referenced_type_walk_state_names_entered_and_revisit() {
+        let db = TypeInterner::new();
+        let type_id = db.object(vec![]);
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            ReferencedTypeWalkState::enter(&mut visited, type_id),
+            ReferencedTypeWalkState::Entered
+        );
+        assert_eq!(
+            ReferencedTypeWalkState::enter(&mut visited, type_id),
+            ReferencedTypeWalkState::AlreadyVisited
+        );
+    }
+
+    #[test]
+    fn walk_referenced_types_visits_shared_child_once() {
+        let db = TypeInterner::new();
+        let child = db.object(vec![]);
+        let root = db.tuple(vec![TupleElement::fixed(child), TupleElement::fixed(child)]);
+        let mut visits = Vec::new();
+
+        walk_referenced_types(&db, root, |type_id| visits.push(type_id));
+
+        assert_eq!(
+            visits.iter().filter(|&&type_id| type_id == child).count(),
+            1
+        );
+        assert!(visits.contains(&root));
     }
 }
 

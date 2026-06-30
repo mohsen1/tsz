@@ -303,11 +303,10 @@ where
 {
     let mut stack = vec![(type_id, in_conditional_branch)];
     while let Some((current, in_branch)) = stack.pop() {
-        if current == TypeId::ERROR || current == TypeId::ANY {
-            continue;
-        }
-        if !visited.insert((current, in_branch)) {
-            continue;
+        match ConditionalBranchAliasVisitState::enter(current, in_branch, visited) {
+            ConditionalBranchAliasVisitState::Entered => {}
+            ConditionalBranchAliasVisitState::IgnoredSentinel
+            | ConditionalBranchAliasVisitState::AlreadyVisited => continue,
         }
 
         let Some(key) = db.lookup(current) else {
@@ -334,6 +333,25 @@ where
         }
     }
     false
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConditionalBranchAliasVisitState {
+    Entered,
+    AlreadyVisited,
+    IgnoredSentinel,
+}
+
+impl ConditionalBranchAliasVisitState {
+    fn enter(current: TypeId, in_branch: bool, visited: &mut FxHashSet<(TypeId, bool)>) -> Self {
+        if current == TypeId::ERROR || current == TypeId::ANY {
+            Self::IgnoredSentinel
+        } else if visited.insert((current, in_branch)) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
 }
 
 /// Check whether a declaration type contains a cyclic structure that cannot be
@@ -653,6 +671,7 @@ mod tests {
     use super::*;
     use crate::construction::TypeInterner;
     use crate::types::SymbolRef;
+    use rustc_hash::FxHashSet;
 
     struct ExemptApplicationHost {
         exempt_def_id: DefId,
@@ -679,6 +698,41 @@ mod tests {
         fn is_application_alias_serialization_exempt(&self, base_def_id: DefId) -> bool {
             base_def_id == self.exempt_def_id
         }
+    }
+
+    #[test]
+    fn conditional_branch_alias_visit_state_names_ignored_sentinels() {
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            ConditionalBranchAliasVisitState::enter(TypeId::ERROR, false, &mut visited),
+            ConditionalBranchAliasVisitState::IgnoredSentinel
+        );
+        assert_eq!(
+            ConditionalBranchAliasVisitState::enter(TypeId::ANY, true, &mut visited),
+            ConditionalBranchAliasVisitState::IgnoredSentinel
+        );
+        assert!(visited.is_empty());
+    }
+
+    #[test]
+    fn conditional_branch_alias_visit_state_keys_on_branch_context() {
+        let interner = TypeInterner::new();
+        let type_id = interner.object(vec![]);
+        let mut visited = FxHashSet::default();
+
+        assert_eq!(
+            ConditionalBranchAliasVisitState::enter(type_id, false, &mut visited),
+            ConditionalBranchAliasVisitState::Entered
+        );
+        assert_eq!(
+            ConditionalBranchAliasVisitState::enter(type_id, false, &mut visited),
+            ConditionalBranchAliasVisitState::AlreadyVisited
+        );
+        assert_eq!(
+            ConditionalBranchAliasVisitState::enter(type_id, true, &mut visited),
+            ConditionalBranchAliasVisitState::Entered
+        );
     }
 
     #[test]
