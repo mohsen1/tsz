@@ -2,6 +2,7 @@ use super::super::super::Printer;
 use crate::context::transform::TransformDirective;
 use crate::transforms::emit_utils::{
     METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity,
+    metadata_global_constructor_with_fallback,
 };
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -508,8 +509,10 @@ impl<'a> Printer<'a> {
             k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
             k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
             k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
-            k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
-            k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+            k if k == sk(SyntaxKind::SymbolKeyword) => self.metadata_symbol_constructor(),
+            k if k == sk(SyntaxKind::BigIntKeyword) => {
+                metadata_global_constructor_with_fallback("BigInt")
+            }
             k if k == sk(SyntaxKind::VoidKeyword) => "void 0".to_string(),
             k if k == sk(SyntaxKind::UndefinedKeyword) => "void 0".to_string(),
             k if k == sk(SyntaxKind::NullKeyword) => "void 0".to_string(),
@@ -632,7 +635,9 @@ impl<'a> Printer<'a> {
                     return match lit_node.kind {
                         lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
                         lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
-                        lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                        lk if lk == sk(SyntaxKind::BigIntLiteral) => {
+                            metadata_global_constructor_with_fallback("BigInt")
+                        }
                         lk if lk == sk(SyntaxKind::TrueKeyword)
                             || lk == sk(SyntaxKind::FalseKeyword) =>
                         {
@@ -745,8 +750,8 @@ impl<'a> Printer<'a> {
             "string" => return "String".to_string(),
             "number" => return "Number".to_string(),
             "boolean" => return "Boolean".to_string(),
-            "symbol" => return "Symbol".to_string(),
-            "bigint" => return "BigInt".to_string(),
+            "symbol" => return self.metadata_symbol_constructor(),
+            "bigint" => return metadata_global_constructor_with_fallback("BigInt"),
             "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
             "any" | "unknown" | "object" => return "Object".to_string(),
             _ => {}
@@ -988,6 +993,17 @@ impl<'a> Printer<'a> {
                     value: format!("{temp}.{}", parts.last()?),
                 })
             }
+        }
+    }
+
+    /// Serialize the `symbol` metadata constructor. `tsc` guards `Symbol` only for
+    /// pre-ES2015 targets, where the global is not implied by the target; at
+    /// ES2015+ it emits a bare `Symbol`.
+    fn metadata_symbol_constructor(&self) -> String {
+        if self.ctx.options.target.supports_es2015() {
+            "Symbol".to_string()
+        } else {
+            metadata_global_constructor_with_fallback("Symbol")
         }
     }
 

@@ -2,6 +2,7 @@
 
 use crate::transforms::emit_utils::{
     METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity, identifier_text,
+    metadata_global_constructor_with_fallback,
 };
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
@@ -34,8 +35,15 @@ fn serialize_type_for_metadata_impl(
         k if k == sk(SyntaxKind::StringKeyword) => "String".to_string(),
         k if k == sk(SyntaxKind::NumberKeyword) => "Number".to_string(),
         k if k == sk(SyntaxKind::BooleanKeyword) => "Boolean".to_string(),
-        k if k == sk(SyntaxKind::SymbolKeyword) => "Symbol".to_string(),
-        k if k == sk(SyntaxKind::BigIntKeyword) => "BigInt".to_string(),
+        // This serializer runs only for the ES5/ES3 class downlevel, where the
+        // target is always below ES2015. `tsc` guards `BigInt` for every target
+        // and `Symbol` for pre-ES2015 targets, so both are guarded here.
+        k if k == sk(SyntaxKind::SymbolKeyword) => {
+            metadata_global_constructor_with_fallback("Symbol")
+        }
+        k if k == sk(SyntaxKind::BigIntKeyword) => {
+            metadata_global_constructor_with_fallback("BigInt")
+        }
         k if k == sk(SyntaxKind::VoidKeyword)
             || k == sk(SyntaxKind::UndefinedKeyword)
             || k == sk(SyntaxKind::NullKeyword)
@@ -58,8 +66,8 @@ fn serialize_type_for_metadata_impl(
                 "string" => return "String".to_string(),
                 "number" => return "Number".to_string(),
                 "boolean" => return "Boolean".to_string(),
-                "symbol" => return "Symbol".to_string(),
-                "bigint" => return "BigInt".to_string(),
+                "symbol" => return metadata_global_constructor_with_fallback("Symbol"),
+                "bigint" => return metadata_global_constructor_with_fallback("BigInt"),
                 "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
                 "any" | "unknown" | "object" => return "Object".to_string(),
                 _ => {}
@@ -174,7 +182,9 @@ fn serialize_type_for_metadata_impl(
                 return match lit_node.kind {
                     lk if lk == sk(SyntaxKind::StringLiteral) => "String".to_string(),
                     lk if lk == sk(SyntaxKind::NumericLiteral) => "Number".to_string(),
-                    lk if lk == sk(SyntaxKind::BigIntLiteral) => "BigInt".to_string(),
+                    lk if lk == sk(SyntaxKind::BigIntLiteral) => {
+                        metadata_global_constructor_with_fallback("BigInt")
+                    }
                     lk if lk == sk(SyntaxKind::TrueKeyword)
                         || lk == sk(SyntaxKind::FalseKeyword) =>
                     {
