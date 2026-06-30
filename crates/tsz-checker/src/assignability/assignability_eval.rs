@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-        let body = self.ctx.definition_store.get_body(def_id)?;
+        let body = self.ctx.get_semantic_def_body(def_id)?;
         if body == TypeId::ERROR || body == TypeId::ANY || body == type_id {
             return None;
         }

@@ -1480,6 +1480,9 @@ mod self_referential_arrow_property_soundness_tests;
 #[path = "tests/self_referential_conditional_infer_soundness_tests.rs"]
 mod self_referential_conditional_infer_soundness_tests;
 #[cfg(test)]
+#[path = "tests/semantic_def_body_read_arch_tests.rs"]
+mod semantic_def_body_read_arch_tests;
+#[cfg(test)]
 #[path = "tests/shadowed_type_param_identity_tests.rs"]
 mod shadowed_type_param_identity_tests;
 #[cfg(test)]
