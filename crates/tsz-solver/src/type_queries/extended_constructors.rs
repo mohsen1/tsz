@@ -37,6 +37,23 @@ fn with_extended_constructors_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) 
     r
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbstractConstructorAnchorVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+fn abstract_constructor_anchor_visit_state(
+    visited: &mut FxHashSet<TypeId>,
+    type_id: TypeId,
+) -> AbstractConstructorAnchorVisitState {
+    if visited.insert(type_id) {
+        AbstractConstructorAnchorVisitState::Entered
+    } else {
+        AbstractConstructorAnchorVisitState::AlreadyVisited
+    }
+}
+
 // =============================================================================
 // Abstract Class Type Classification
 // =============================================================================
@@ -352,7 +369,9 @@ pub fn resolve_abstract_constructor_anchor(
 ) -> AbstractConstructorAnchor {
     with_extended_constructors_visited(|visited| {
         let mut current = type_id;
-        while visited.insert(current) {
+        while let AbstractConstructorAnchorVisitState::Entered =
+            abstract_constructor_anchor_visit_state(visited, current)
+        {
             match classify_for_abstract_constructor(db, current) {
                 AbstractConstructorKind::TypeQuery(sym_ref) => {
                     return AbstractConstructorAnchor::TypeQuery(sym_ref);
