@@ -36,3 +36,5 @@ mod object_flags_boundary_scans;
 mod relation_routing_residual_arch_tests;
 #[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]
 mod spelling_suggestion_gateway_scans;
+#[path = "arch_source_scans/type_guard_walk_state.rs"]
+mod type_guard_walk_state;

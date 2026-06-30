@@ -294,6 +294,17 @@ FILE_LINE_LIMIT_CHECKS = [
         2098,
     ),
     (
+        "Solver diagnostics boundary: format/mod.rs must not grow",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "diagnostics"
+        / "format"
+        / "mod.rs",
+        2012,
+    ),
+    (
         "Solver evaluation boundary: conditional.rs must not grow",
         ROOT
         / "crates"
