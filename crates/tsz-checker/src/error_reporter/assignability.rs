@@ -811,7 +811,6 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
-                // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
                 if let tsz_solver::SubtypeFailureReason::MissingProperty {
                     property_name,
                     source_type,
@@ -819,7 +818,24 @@ impl<'a> CheckerState<'a> {
                 } = &failure_reason
                 {
                     let pn = self.ctx.types.resolve_atom_ref(*property_name);
-                    if pn.starts_with("[Symbol.") || pn.starts_with("__js_ctor_brand_") {
+                    if pn.starts_with("__js_ctor_brand_") {
+                        // Synthetic brand from JS constructor functions — not a real
+                        // property; tsc never reports it as missing.
+                        return;
+                    }
+                    if pn.starts_with("[Symbol.") {
+                        // A symbol-keyed missing member is not surfaced as a top-level
+                        // TS2741 on this ordinary-assignment path: tsc reports a
+                        // computed-symbol member *access* through a separate TS2339, and
+                        // for a plain object/interface assignment it keeps the generic
+                        // TS2322 here. The solver still produces the symbol-keyed
+                        // `MissingProperty` reason so callers that wrap it under their
+                        // own head line (e.g. the `using` disposability check, TS2850)
+                        // can elaborate it; preserve the prior generic TS2322 instead of
+                        // dropping the diagnostic entirely.
+                        self.error_type_not_assignable_generic_with_anchor(
+                            source, target, anchor_idx,
+                        );
                         return;
                     }
                     if self.missing_property_is_satisfied_by_source(

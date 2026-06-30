@@ -676,6 +676,9 @@ mod typeof_unknown_logical_narrowing_tests;
 #[path = "../tests/using_binding_pattern_diagnostics_tests.rs"]
 mod using_binding_pattern_diagnostics_tests;
 #[cfg(test)]
+#[path = "../tests/using_initializer_disposable_elaboration_tests.rs"]
+mod using_initializer_disposable_elaboration_tests;
+#[cfg(test)]
 #[path = "../tests/value_usage_tests.rs"]
 mod value_usage_tests;
 #[cfg(test)]

@@ -1808,8 +1808,77 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::THE_INITIALIZER_OF_A_USING_DECLARATION_MUST_BE_EITHER_AN_OBJECT_WITH_A_SYMBOL_DI,
                 )
             };
-            self.error_at_node(var_decl.initializer, message, code);
+            self.report_using_initializer_not_disposable(
+                init_type,
+                var_decl.initializer,
+                is_await_using,
+                message,
+                code,
+            );
         }
+    }
+
+    /// Emit the TS2850 / TS2854 "initializer of a `using` declaration must be a
+    /// disposable object" diagnostic with tsc's nested relation-reason tail.
+    ///
+    /// tsc reports the disposability failure through the assignability relation
+    /// against the global `Disposable` (`using`) / `AsyncDisposable`
+    /// (`await using`) interface, so the failure reason supplies the indented
+    /// elaboration (e.g. `Property '[Symbol.dispose]' is missing in type
+    /// '{ foo: number; }' but required in type 'Disposable'.`) beneath the
+    /// grammar-level top line. Routing through the same `relation -> reason ->
+    /// diagnostic` gateway the assignment paths use keeps that tail byte-for-byte
+    /// identical to TS2322/TS2741 instead of emitting a flat single-line message.
+    ///
+    /// The disposability *decision* still belongs to `type_has_disposable_method`
+    /// (which already matches tsc, including `await using` accepting a sync
+    /// `[Symbol.dispose]`); this only enriches the failure *display*. When the
+    /// global interface is unavailable or the relation surfaces no actionable
+    /// reason, it falls back to the original flat message unchanged.
+    fn report_using_initializer_not_disposable(
+        &mut self,
+        init_type: TypeId,
+        initializer_idx: NodeIndex,
+        is_await_using: bool,
+        message: &str,
+        code: u32,
+    ) {
+        use crate::error_reporter::{DiagnosticAnchorKind, DiagnosticRenderRequest};
+
+        let target_name = if is_await_using {
+            "AsyncDisposable"
+        } else {
+            "Disposable"
+        };
+
+        // Relate the initializer to the global `Disposable`/`AsyncDisposable`
+        // interface so its failure reason becomes the nested elaboration. Falls
+        // back to the flat top line when the global is absent or the relation
+        // surfaces no actionable reason. `resolve_lib_type_by_name` returns an
+        // owned `Option`, releasing the borrow before `analyze_assignability_failure`.
+        let target = self.resolve_lib_type_by_name(target_name);
+        let reason = target.and_then(|target| {
+            self.analyze_assignability_failure(init_type, target)
+                .failure_reason
+        });
+
+        let request = match (target, reason) {
+            (Some(target), Some(reason)) => DiagnosticRenderRequest::with_failure_reason(
+                DiagnosticAnchorKind::Exact,
+                code,
+                message.to_string(),
+                reason,
+                init_type,
+                target,
+            ),
+            _ => DiagnosticRenderRequest::simple(
+                DiagnosticAnchorKind::Exact,
+                code,
+                message.to_string(),
+            ),
+        };
+
+        self.emit_render_request(initializer_idx, request);
     }
 
     /// Check if a type has the appropriate dispose method.
