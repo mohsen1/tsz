@@ -192,6 +192,17 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
 /// metadata type reference yields `Object`.
 pub(crate) const METADATA_ALIAS_MAX_DEPTH: u32 = 32;
 
+/// Serialize a global constructor reference for decorator metadata wrapped in the
+/// runtime-presence guard `tsc` emits for globals that may be absent under the
+/// chosen lib/target: `typeof X === "function" ? X : Object`. Mirrors `tsc`'s
+/// `getGlobalConstructorWithFallback`, which avoids a `ReferenceError` when the
+/// metadata is read on a runtime lacking the global. The operand is a single
+/// global identifier, so — unlike the entity-name fallback — no temp is hoisted;
+/// the guard is a bare conditional, exactly as `tsc` prints it.
+pub(crate) fn metadata_global_constructor_with_fallback(name: &str) -> String {
+    format!("typeof {name} === \"function\" ? {name} : Object")
+}
+
 /// How an entity-name reference in a `design:type`/`design:paramtypes`/
 /// `design:returntype` annotation resolves, for runtime metadata serialization.
 ///
