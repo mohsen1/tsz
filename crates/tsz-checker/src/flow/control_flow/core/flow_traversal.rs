@@ -1,4 +1,5 @@
 use super::super::flow_dp::FlowConditionDpMemos;
+use super::flow_cache_policy::{FlowCachePolicy, FlowCacheRead, FlowCacheWrite};
 use super::{
     FlowAnalyzer, FlowDeferMemos, defer_to_antecedent, flow_boundary, flow_step_budget, query,
 };
@@ -108,13 +109,17 @@ impl<'a> FlowAnalyzer<'a> {
         let cache_symbol = symbol_id
             .or_else(|| self.flow_reference_path_symbol(reference))
             .unwrap_or_else(|| super::per_node_flow_cache_symbol(reference));
+        let mut cache_policy = FlowCachePolicy::new(
+            initial_type,
+            initial_has_type_params,
+            skip_cache_for_control_flow_typed_any,
+        );
 
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));
         in_worklist.insert(flow_id);
         let step_budget = flow_step_budget(self.binder.flow_nodes.len());
         let mut steps = 0usize;
-        let mut cacheable_walk = true;
         let mut pending_cache_writes: Vec<((FlowNodeId, SymbolId, TypeId), TypeId)> = Vec::new();
         let mut condition_dp_memos = FlowConditionDpMemos::default();
         // Per-walk defer / CALL narrow-divert classification memos, shared by the
@@ -228,12 +233,12 @@ impl<'a> FlowAnalyzer<'a> {
             // Loop labels MUST always check cache because analyze_loop_fixed_point
             // injects entries as a recursion guard — skipping the check causes
             // stack overflow when types contain type parameters.
-            if !is_switch_clause
-                && (!skip_cache_for_control_flow_typed_any || is_loop_label_node)
-                && !skip_cache_for_explicit_unknown_switch
-                && !skip_cache_for_exhaustive_unknown_typeof
-                && (!initial_has_type_params || is_loop_label_node)
-                && let Some(cache) = self.flow_cache()
+            if cache_policy.allows_read(FlowCacheRead {
+                is_switch_clause,
+                is_loop_label_node,
+                skip_cache_for_explicit_unknown_switch,
+                skip_cache_for_exhaustive_unknown_typeof,
+            }) && let Some(cache) = self.flow_cache()
             {
                 let key = (current_flow, cache_symbol, initial_type);
                 if let Some(&cached_type) = cache.borrow().get(&key) {
@@ -540,7 +545,7 @@ impl<'a> FlowAnalyzer<'a> {
                             if let Some(assigned_type) =
                                 raw_assigned.filter(|&t| t != TypeId::ERROR)
                             {
-                                cacheable_walk = false;
+                                cache_policy.mark_provisional();
                                 assigned_type
                             } else if let Some(&ant) = flow.antecedent.first() {
                                 if let Some(&ant_type) = results.get(&ant) {
@@ -730,7 +735,7 @@ impl<'a> FlowAnalyzer<'a> {
                                 // This walk is provisional: assignment typing has not been computed
                                 // for the RHS yet. Do not publish the declared-type result into the
                                 // shared flow cache or later reads will reuse a stale answer.
-                                cacheable_walk = false;
+                                cache_policy.mark_provisional();
                                 // If we can't resolve the RHS type, conservatively return declared type
                                 // The value HAS changed, so we can't continue to antecedent
                                 if self.is_await_assignment_for_reference(flow.node, reference) {
@@ -965,7 +970,7 @@ impl<'a> FlowAnalyzer<'a> {
                         let (evolved_type, complete) =
                             self.array_mutation_evolved_type(antecedent_type, call, reference);
                         if !complete {
-                            cacheable_walk = false;
+                            cache_policy.mark_provisional();
                         }
                         evolved_type
                     } else {
@@ -1238,33 +1243,32 @@ impl<'a> FlowAnalyzer<'a> {
             // CRITICAL: Only cache if BOTH initial and final types are concrete (no type parameters).
             // This prevents the "Generic Result" bug where narrowing introduces type parameters.
             // Also skip caching UNREACHABLE_NEVER as it's an internal sentinel.
-            if final_type != Self::UNREACHABLE_NEVER
-                && cacheable_walk
-                && (!skip_cache_for_control_flow_typed_any
-                    || flow.has_any_flags(flow_flags::LOOP_LABEL))
-                && !(initial_type == TypeId::UNKNOWN
+            let final_has_type_params = self.contains_type_parameters_cached(final_type);
+            if cache_policy.allows_write(FlowCacheWrite {
+                is_loop_label_node: flow.has_any_flags(flow_flags::LOOP_LABEL),
+                skip_cache_for_explicit_unknown_switch: initial_type == TypeId::UNKNOWN
                     && self.flow_chain_contains_switch_clause_with_memo(
                         current_flow,
                         &mut condition_dp_memos.switch_chains,
-                    ))
-                && !(initial_type == TypeId::UNKNOWN
+                    ),
+                skip_cache_for_exhaustive_unknown_typeof: initial_type == TypeId::UNKNOWN
                     && self.flow_has_exhaustive_typeof_exclusions_with_memo(
                         current_flow,
                         reference,
                         &mut condition_dp_memos.typeof_exclusions,
-                    ))
-            {
-                let final_has_type_params = self.contains_type_parameters_cached(final_type);
-
-                // Only cache if neither initial nor final types contain type parameters
-                if !initial_has_type_params && !final_has_type_params {
-                    let key = (current_flow, cache_symbol, initial_type);
-                    pending_cache_writes.push((key, final_type));
-                }
+                    ),
+                final_type,
+                final_has_type_params,
+                unreachable_never: Self::UNREACHABLE_NEVER,
+            }) {
+                let key = (current_flow, cache_symbol, initial_type);
+                pending_cache_writes.push((key, final_type));
             }
         }
 
-        if cacheable_walk && let Some(cache) = self.flow_cache() {
+        if cache_policy.allows_pending_writes()
+            && let Some(cache) = self.flow_cache()
+        {
             let mut cache = cache.borrow_mut();
             for (key, value) in pending_cache_writes {
                 cache.insert(key, value);
@@ -1346,12 +1350,12 @@ impl<'a> FlowAnalyzer<'a> {
         // collapsing them would drop switch/typeof narrowing (e.g. `unknownType2`).
         // UNKNOWN references are catch-clause / explicit-`unknown` shaped, not the
         // concrete member-typed `const` hotspot, so this costs no perf.
-        if initial_has_type_params
-            || skip_cache_for_control_flow_typed_any
-            || initial_type == TypeId::ANY
-            || initial_type == TypeId::ERROR
-            || initial_type == TypeId::UNKNOWN
-        {
+        let cache_policy = FlowCachePolicy::new(
+            initial_type,
+            initial_has_type_params,
+            skip_cache_for_control_flow_typed_any,
+        );
+        if !cache_policy.allows_passthrough_chase() {
             return entry;
         }
         let flow_cache = self.flow_cache();

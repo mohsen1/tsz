@@ -81,6 +81,7 @@ pub(crate) const fn is_session_stable_flow_cache_symbol(symbol: SymbolId) -> boo
 }
 
 mod defer_classification;
+mod flow_cache_policy;
 mod flow_query;
 mod flow_traversal;
 
