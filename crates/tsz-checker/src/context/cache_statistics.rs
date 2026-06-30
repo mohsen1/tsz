@@ -303,7 +303,11 @@ impl<'a> CheckerContext<'a> {
                 &class_chain_summary_cache,
             ),
             env_eval_cache_entries: env_eval_cache.len(),
-            env_eval_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(&env_eval_cache),
+            env_eval_cache_estimated_size_bytes: env_eval_cache.entry_capacity().saturating_mul(
+                mem::size_of::<TypeId>()
+                    .saturating_add(mem::size_of::<super::EnvEvalCacheEntry>())
+                    .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
+            ),
             class_symbol_to_decl_cache_entries: class_symbol_to_decl_cache.len(),
             class_symbol_to_decl_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &class_symbol_to_decl_cache,

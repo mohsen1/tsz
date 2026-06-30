@@ -1035,7 +1035,7 @@ pub struct CheckerContext<'a> {
     ///
     /// The cache also preserves whether evaluation exceeded the solver recursion
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    pub(crate) env_eval_cache: RefCell<env_eval_cache::EnvEvalCache>,
 
     /// Memoizes the set of lazy `DefId`s reachable from a type (the structural
     /// `collect_lazy_def_ids` walk). The walk is pure over the immutable interned

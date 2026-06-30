@@ -166,3 +166,5 @@ mod part_03;
 mod part_04;
 #[path = "architecture_contract_tests/part_05.rs"]
 mod part_05;
+#[path = "architecture_contract_tests/part_06.rs"]
+mod part_06;
