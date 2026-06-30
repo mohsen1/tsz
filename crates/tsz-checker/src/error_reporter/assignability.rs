@@ -508,6 +508,42 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Emit a TS2375 exact-optional-property assignment diagnostic, attaching
+    /// the property-incompatibility elaboration that `tsc` renders beneath it.
+    ///
+    /// The top line is already formatted by the caller; this runs the shared
+    /// assignability failure analysis on the same `source`/`target` pair so the
+    /// relation reason (`PropertyTypeMismatch`) populates the nested
+    /// `Types of property 'X' are incompatible. / Type 'S' is not assignable to
+    /// type 'T'.` related-information chain — identical to the TS2379 argument
+    /// path. When no structural reason is captured the diagnostic degrades to a
+    /// flat line, matching the prior behavior.
+    fn emit_exact_optional_assignment_diagnostic(
+        &mut self,
+        anchor_idx: NodeIndex,
+        code: u32,
+        message: String,
+        source: TypeId,
+        target: TypeId,
+    ) {
+        let reason = self
+            .analyze_assignability_failure(source, target)
+            .failure_reason;
+        let request = if let Some(reason) = reason {
+            DiagnosticRenderRequest::with_failure_reason(
+                DiagnosticAnchorKind::Exact,
+                code,
+                message,
+                reason,
+                source,
+                target,
+            )
+        } else {
+            DiagnosticRenderRequest::simple(DiagnosticAnchorKind::Exact, code, message)
+        };
+        self.emit_render_request(anchor_idx, request);
+    }
+
     /// Internal helper that reports a detailed assignability failure using an
     /// already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
@@ -655,16 +691,20 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
                 &[&src_str, &tgt_str],
             );
-            if !self.emit_render_request(
+            // tsc routes this assignment through `checkTypeAssignableTo`, whose
+            // failure reason supplies the nested `Types of property 'X' are
+            // incompatible. / Type 'S' is not assignable to type 'T'.` chain
+            // beneath the TS2375 top line. The sibling TS2379 argument path
+            // already attaches this via `with_failure_reason`; mirror it here so
+            // the assignment-context diagnostic carries the same elaboration
+            // instead of a flat single line.
+            self.emit_exact_optional_assignment_diagnostic(
                 anchor_idx,
-                DiagnosticRenderRequest::simple(
-                    DiagnosticAnchorKind::Exact,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
-                    message,
-                ),
-            ) {
-                return;
-            }
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_WITH_EXACTOPTIONALPROPERTYTYPES_TRUE_CONSIDER_ADD,
+                message,
+                source,
+                target,
+            );
             return;
         }
 

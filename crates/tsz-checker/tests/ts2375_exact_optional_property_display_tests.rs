@@ -11,6 +11,7 @@
 //! `with_exact_optional_property_types(bool)` on `TypeFormatter`.
 
 use crate::context::CheckerOptions;
+use crate::diagnostics::Diagnostic;
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
     crate::test_utils::check_with_options(source, options)
@@ -19,8 +20,11 @@ fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String
         .collect()
 }
 
-fn check_strict_exact_optional(source: &str) -> Vec<(u32, String)> {
-    check_with_options(
+/// Full diagnostics (including `related_information`) under strict +
+/// `exactOptionalPropertyTypes`. The `(code, message_text)` projection used by
+/// most tests is derived from this so the option set lives in one place.
+fn full_strict_exact_optional(source: &str) -> Vec<Diagnostic> {
+    crate::test_utils::check_with_options(
         source,
         CheckerOptions {
             strict: true,
@@ -30,6 +34,13 @@ fn check_strict_exact_optional(source: &str) -> Vec<(u32, String)> {
             ..Default::default()
         },
     )
+}
+
+fn check_strict_exact_optional(source: &str) -> Vec<(u32, String)> {
+    full_strict_exact_optional(source)
+        .into_iter()
+        .map(|d| (d.code, d.message_text))
+        .collect()
 }
 
 fn check_strict_no_exact(source: &str) -> Vec<(u32, String)> {
@@ -228,5 +239,94 @@ matchResult.groups["someVariable"].length;
             *code == 2532 && message.contains("Object is possibly 'undefined'")
         }),
         "expected TS2532 for noUncheckedIndexedAccess result before `.length`, got: {diags:#?}"
+    );
+}
+
+// ── TS2375 nested elaboration on the assignment / array-element paths ─────────
+//
+// tsc attaches the `Types of property 'X' are incompatible. / Type 'S' is not
+// assignable to type 'T'.` relation-reason chain beneath the TS2375 top line,
+// exactly as it does for the sibling TS2379 argument path. The assignment and
+// array-element contexts previously dropped that elaboration (flat single line).
+//
+// These assert the chain structurally (depth, code, leaf relation) and vary the
+// binder spellings / property positions so a fix keyed to a specific name would
+// not pass.
+
+/// Collect the nested elaboration of the first TS2375 as `(depth, code, text)`.
+fn ts2375_chain(diags: &[Diagnostic]) -> Vec<(u8, u32, String)> {
+    diags
+        .iter()
+        .find(|d| d.code == 2375)
+        .map(|d| {
+            d.related_information
+                .iter()
+                .map(|r| (r.depth, r.code, r.message_text.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn ts2375_variable_assignment_carries_property_incompatible_elaboration() {
+    // Vary the optional property's name and primitive type to prove the chain is
+    // structural, not keyed on a spelling.
+    for (prop, ty) in [("a", "number"), ("value", "string"), ("flag", "boolean")] {
+        let source = format!(
+            "interface Opt {{ {prop}?: {ty}; }}\nconst o: Opt = {{ {prop}: undefined }};\n"
+        );
+        let diags = full_strict_exact_optional(&source);
+        let chain = ts2375_chain(&diags);
+        assert!(
+            chain.iter().any(|(depth, code, msg)| *depth == 0
+                && *code == 2326
+                && msg.contains(&format!("Types of property '{prop}' are incompatible"))),
+            "expected `Types of property '{prop}' are incompatible.` header at depth 0; got {chain:?}"
+        );
+        assert!(
+            chain.iter().any(|(depth, _, msg)| *depth == 1
+                && msg.contains("Type 'undefined' is not assignable to type")
+                && msg.contains(&format!("'{ty}'"))),
+            "expected the `undefined`→`{ty}` leaf relation at depth 1; got {chain:?}"
+        );
+    }
+}
+
+#[test]
+fn ts2375_array_element_assignment_carries_elaboration() {
+    let source = r#"
+interface O { a?: number; }
+const arr: O[] = [{ a: undefined }];
+"#;
+    let chain = ts2375_chain(&full_strict_exact_optional(source));
+    assert!(
+        chain.iter().any(|(depth, code, msg)| *depth == 0
+            && *code == 2326
+            && msg.contains("Types of property 'a' are incompatible")),
+        "array-element TS2375 must carry the property-incompatibility header; got {chain:?}"
+    );
+    assert!(
+        chain.iter().any(|(depth, _, msg)| *depth == 1
+            && msg.contains("Type 'undefined' is not assignable to type 'number'")),
+        "array-element TS2375 must carry the leaf relation; got {chain:?}"
+    );
+}
+
+#[test]
+fn ts2375_nested_optional_object_property_carries_elaboration() {
+    let source = r#"
+interface Nested { inner?: { x: number } }
+const n: Nested = { inner: undefined };
+"#;
+    let chain = ts2375_chain(&full_strict_exact_optional(source));
+    assert!(
+        chain.iter().any(|(depth, _, msg)| *depth == 0
+            && msg.contains("Types of property 'inner' are incompatible")),
+        "nested-object TS2375 must name the offending property; got {chain:?}"
+    );
+    assert!(
+        chain.iter().any(|(depth, _, msg)| *depth == 1
+            && msg.contains("Type 'undefined' is not assignable to type '{ x: number; }'")),
+        "nested-object TS2375 must drill to the object leaf type; got {chain:?}"
     );
 }
