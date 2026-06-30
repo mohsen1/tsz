@@ -1796,6 +1796,7 @@ impl<'a> CheckerState<'a> {
             "check_using_declaration_disposable: initializer type"
         );
         // Check for the required dispose method
+        let initializer = var_decl.initializer;
         if !self.type_has_disposable_method(init_type, is_await_using) {
             let (message, code) = if is_await_using {
                 (
@@ -1808,8 +1809,66 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::THE_INITIALIZER_OF_A_USING_DECLARATION_MUST_BE_EITHER_AN_OBJECT_WITH_A_SYMBOL_DI,
                 )
             };
-            self.error_at_node(var_decl.initializer, message, code);
+            // `tsc` runs `checkTypeAssignableTo(initType, Disposable)` and attaches
+            // the relation's failure reason as the nested elaboration (e.g.
+            // `Property '[Symbol.dispose]' is missing in type '{ foo: number; }' but
+            // required in type 'Disposable'.`). For sync `using` we mirror that by
+            // routing through the shared assignability gateway so the tail is the
+            // real relation reason rather than a hand-built string. `await using`
+            // (TS2851) carries no tail in `tsc`, so it keeps the flat top line.
+            if !is_await_using
+                && let Some(related) = self.disposable_relation_tail(init_type, initializer)
+            {
+                self.error_at_node_with_related(initializer, message, code, related);
+            } else {
+                self.error_at_node(initializer, message, code);
+            }
         }
+    }
+
+    /// Build the relation-derived elaboration tail for a failed sync `using`
+    /// initializer, mirroring `tsc`'s `checkTypeAssignableTo(initType, Disposable)`
+    /// nested reason. Returns `None` when the global `Disposable` interface is
+    /// unavailable or the relation reports no structured failure reason, in which
+    /// case the caller emits the flat top-line message alone (matching `tsc`,
+    /// which also drops the tail when it has no relation reason to show).
+    fn disposable_relation_tail(
+        &mut self,
+        init_type: TypeId,
+        anchor: NodeIndex,
+    ) -> Option<Vec<crate::diagnostics::DiagnosticRelatedInformation>> {
+        let lib_binders = self.get_lib_binders();
+        let disposable_sym = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("Disposable", &lib_binders)?;
+        // Build the `Disposable` target exactly as a `: Disposable` annotation
+        // would: prime the `DefId` (registering the lib interface body in the type
+        // environment) and intern it as `Lazy(DefId)`. A bare `get_type_of_symbol`
+        // here yields an unresolved/member-less shell when nothing else in the file
+        // referenced `Disposable` (the `using` initializer is the only consumer),
+        // so the relation would see no `[Symbol.dispose]` member.
+        let def_id = self.ensure_def_ready_for_lowering(disposable_sym, "Disposable");
+        let disposable_type = self.ctx.types.lazy(def_id);
+        let analysis = self.analyze_assignability_failure(init_type, disposable_type);
+        let reason = analysis.failure_reason?;
+        let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
+        // The rendered reason's top message is the first elaboration line; its own
+        // nested chain re-seats one level deeper beneath it.
+        let mut related = vec![crate::diagnostics::Diagnostic::related_message(
+            rendered.code,
+            rendered.file,
+            rendered.start,
+            rendered.length,
+            rendered.message_text,
+        )];
+        related.extend(
+            rendered
+                .related_information
+                .into_iter()
+                .map(|info| info.with_depth_shift(1)),
+        );
+        Some(related)
     }
 
     /// Check if a type has the appropriate dispose method.

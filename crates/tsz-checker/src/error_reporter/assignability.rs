@@ -811,7 +811,13 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
-                // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
+                // Skip MissingProperty for synthetic internal keys that have no
+                // user-facing spelling (e.g. the `__js_ctor_brand_*` constructor
+                // brand). User-facing well-known symbol members (`[Symbol.dispose]`,
+                // `[Symbol.iterator]`, …) are NOT skipped: tsc lists them in
+                // TS2741/TS2739 on non-array targets, and the explain layer already
+                // omits them for array-like targets where tsc treats them as
+                // implicitly satisfied.
                 if let tsz_solver::SubtypeFailureReason::MissingProperty {
                     property_name,
                     source_type,
@@ -819,7 +825,7 @@ impl<'a> CheckerState<'a> {
                 } = &failure_reason
                 {
                     let pn = self.ctx.types.resolve_atom_ref(*property_name);
-                    if pn.starts_with("[Symbol.") || pn.starts_with("__js_ctor_brand_") {
+                    if pn.starts_with("__js_ctor_brand_") {
                         return;
                     }
                     if self.missing_property_is_satisfied_by_source(

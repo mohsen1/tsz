@@ -1581,15 +1581,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
             },
         );
-        let has_non_symbol_missing = missing_with_order
-            .iter()
-            .any(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
-        if !has_non_symbol_missing {
-            // All missing properties are late-bound symbols (e.g. [Symbol.iterator]).
-            // tsc does not list symbol-only missing properties in TS2739/TS2741 messages;
-            // clear so we fall through to property type checking or TypeMismatch.
-            missing_with_order.clear();
-        } else if matches!(
+        if matches!(
             crate::type_queries::extended::classify_array_like(self.interner, target),
             crate::type_queries::extended::ArrayLikeKind::Array(_)
                 | crate::type_queries::extended::ArrayLikeKind::Tuple
@@ -1601,12 +1593,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // from the TS2739/TS2740 missing list. Keep this behavior so that
             // e.g. `Type 'I1' is missing the following properties from type
             // 'any[]': length, pop, push, concat, and 25 more` — not 27.
+            //
+            // When every missing property is a late-bound symbol, this empties
+            // the list and the relation falls through to property-type checking
+            // or `TypeMismatch`, matching tsc.
             missing_with_order
                 .retain(|(name, _, _)| !self.is_late_bound_symbol_property_name(*name));
         }
-        // For non-array targets (e.g. `ArrayConstructor`), tsc lists both named
-        // and symbol-keyed properties in TS2739/TS2741 (e.g. `isArray, from,
-        // of, [Symbol.species]`). Keep the full list in that case.
+        // For non-array targets (e.g. `ArrayConstructor`, `Disposable`,
+        // `Iterable<T>`), tsc lists both named and symbol-keyed properties in
+        // TS2739/TS2741 (e.g. `isArray, from, of, [Symbol.species]`, or a lone
+        // `[Symbol.dispose]`). Keep the full list — including symbol-only missing
+        // — so the missing-property elaboration is produced rather than collapsing
+        // to a flat `TypeMismatch`.
 
         // tsc treats `prototype` as implicit on callable sources (any function
         // or class value has a `.prototype` in JS), so it never lists it as a
