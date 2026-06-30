@@ -9,5 +9,6 @@ mod instance;
 mod instance_merge;
 mod js_class_properties;
 mod prescan;
+mod walk_state;
 
 pub(super) use helpers::can_skip_base_instantiation;

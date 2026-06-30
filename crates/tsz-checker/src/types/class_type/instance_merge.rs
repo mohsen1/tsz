@@ -10,11 +10,10 @@
 
 use super::helpers::{can_skip_base_instantiation, declaration_is_module_augmentation};
 use super::instance::ClassInstanceBuilder;
+use super::walk_state::ClassInstanceWalkState;
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
-use tsz_binder::SymbolId;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
@@ -31,8 +30,7 @@ impl CheckerState<'_> {
         &mut self,
         class: &'b tsz_parser::parser::node::ClassData,
         class_idx: NodeIndex,
-        visited: &mut FxHashSet<SymbolId>,
-        visited_nodes: &mut FxHashSet<NodeIndex>,
+        walk_state: &mut ClassInstanceWalkState,
         b: &mut ClassInstanceBuilder<'b>,
     ) -> Option<TypeId> {
         let current_sym = b.current_sym;
@@ -111,8 +109,7 @@ impl CheckerState<'_> {
                     .contains(&base_sym_id)
                     || canonical_base_sym
                         .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym));
-                let base_visited = visited.contains(&base_sym_id)
-                    || canonical_base_sym.is_some_and(|sym| visited.contains(&sym));
+                let base_visited = walk_state.contains_base_symbol(base_sym_id, canonical_base_sym);
 
                 // CRITICAL: Check for self-referential class BEFORE processing
                 // This catches class C extends C, class D<T> extends D<T>, etc.
@@ -220,7 +217,7 @@ impl CheckerState<'_> {
 
                 // Check for circular inheritance using node index tracking (for cross-file cycles)
                 // CRITICAL: Return immediately to prevent infinite recursion, not just break
-                if visited_nodes.contains(&base_class_idx) {
+                if walk_state.contains_node(base_class_idx) {
                     if did_insert_into_global_set && let Some(sym_id) = current_sym {
                         self.ctx.class_instance_resolution_set.remove(&sym_id);
                     }
@@ -253,7 +250,7 @@ impl CheckerState<'_> {
                     // If we've seen this node before in the current resolution path, it's a cycle
                     // This handles cases like: class C extends E {} where E doesn't exist yet
                     // but will be declared later with extends D, and D extends C
-                    if visited_nodes.contains(&base_class_idx) {
+                    if walk_state.contains_node(base_class_idx) {
                         if did_insert_into_global_set && let Some(sym_id) = current_sym {
                             self.ctx.class_instance_resolution_set.remove(&sym_id);
                         }
@@ -654,8 +651,7 @@ impl CheckerState<'_> {
         &mut self,
         class_idx: NodeIndex,
         apply_module_augmentations: bool,
-        visited: &mut FxHashSet<SymbolId>,
-        visited_nodes: &mut FxHashSet<NodeIndex>,
+        walk_state: &mut ClassInstanceWalkState,
         b: ClassInstanceBuilder<'_>,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
@@ -720,8 +716,7 @@ impl CheckerState<'_> {
                 }
             }
 
-            visited.remove(&sym_id);
-            visited_nodes.remove(&class_idx);
+            walk_state.leave_class(sym_id, class_idx);
             // Only remove from global set if we inserted it ourselves
             if did_insert_into_global_set {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);

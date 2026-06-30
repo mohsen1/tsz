@@ -1,8 +1,8 @@
 //! Public entrypoints for class instance type construction.
 
 use super::helpers::in_progress_class_instance_result;
+use super::walk_state::ClassInstanceWalkState;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -120,13 +120,11 @@ impl<'a> CheckerState<'a> {
             return self.ctx.create_lazy_type_ref(sym_id);
         }
 
-        let mut visited = FxHashSet::default();
-        let mut visited_nodes = FxHashSet::default();
+        let mut walk_state = ClassInstanceWalkState::default();
         let result = self.get_class_instance_type_inner(
             class_idx,
             class,
-            &mut visited,
-            &mut visited_nodes,
+            &mut walk_state,
             apply_module_augmentations,
         );
 
