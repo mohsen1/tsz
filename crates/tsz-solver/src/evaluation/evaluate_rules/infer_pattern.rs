@@ -11,12 +11,9 @@
 //! - `substitute_infer`: Replace infer types with their bindings
 //! - `bind_infer`: Bind a type to an infer parameter
 
-use crate::def::DefId;
-use crate::evaluation::result::EvaluationMemoResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeApplication, TypeData, TypeId,
-    TypeParamInfo,
+    LiteralValue, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -24,7 +21,6 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 use super::infer_substitutor::InferSubstitutor;
-use std::cell::Cell;
 
 /// Selects how co-located `infer T` candidates are merged when the same name
 /// gets distinct bindings from multiple structurally adjacent positions.
@@ -35,31 +31,6 @@ enum CoLocatedMerge {
     /// Function/callable parameters — contravariant.
     Intersection,
 }
-
-thread_local! {
-    /// Cross-evaluator nesting depth for infer-pattern matching that expands an
-    /// `Application`/`Mapped` source or pattern in a *fresh* sub-evaluator.
-    ///
-    /// Infer matching cannot call `evaluate` on the current `&self` evaluator
-    /// (those methods take `&self`), so it spins up a brand-new `TypeEvaluator`
-    /// whose per-instance recursion guard, depth counter, and fuel all start at
-    /// zero. A recursive generic-wrapper application — Zod's
-    /// `ZodObject`/`ZodOptional`/`ZodArray` chains, `DeepPartial`-style helpers,
-    /// etc. — makes that expansion re-enter conditional/infer evaluation at a
-    /// deeper nesting through a *new* evaluator each level, so no per-evaluator
-    /// guard ever fires and the compile hangs. This thread-global counter bounds
-    /// that cross-evaluator nesting. See [`TypeEvaluator::evaluate_for_infer_match`].
-    static INFER_MATCH_EXPANSION_DEPTH: Cell<u32> = const { Cell::new(0) };
-}
-
-/// Maximum cross-evaluator nesting for infer-match sub-evaluator expansions.
-///
-/// Mirrors tsc's `instantiationDepth` cutoff (100): beyond this nesting, tsc
-/// abandons the instantiation, so tsz stops expanding too rather than recurse
-/// forever. Legitimate structural expansion of an application source during
-/// infer matching never nests anywhere near this deep; only unbounded recursive
-/// wrappers do.
-const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
 
 /// Per-walk state for [`TypeEvaluator::type_contains_infer`].
 ///
@@ -98,16 +69,16 @@ impl InferPatternVisited {
     }
 
     #[inline]
-    fn contains(&self, pair: &(TypeId, TypeId)) -> bool {
+    pub(super) fn contains(&self, pair: &(TypeId, TypeId)) -> bool {
         self.entries.contains(pair)
     }
 
     #[inline]
-    const fn checkpoint(&self) -> usize {
+    pub(super) const fn checkpoint(&self) -> usize {
         self.insert_log.len()
     }
 
-    fn rollback_to(&mut self, checkpoint: usize) {
+    pub(super) fn rollback_to(&mut self, checkpoint: usize) {
         while self.insert_log.len() > checkpoint {
             if let Some(pair) = self.insert_log.pop() {
                 self.entries.remove(&pair);
@@ -119,33 +90,6 @@ impl InferPatternVisited {
     pub(crate) fn clear(&mut self) {
         self.entries.clear();
         self.insert_log.clear();
-    }
-}
-
-/// RAII guard for [`INFER_MATCH_EXPANSION_DEPTH`].
-///
-/// `enter` returns `None` when the budget is exhausted (the caller must then
-/// skip the expansion); otherwise it increments the counter and decrements it
-/// on drop, so the bound is restored even if evaluation unwinds via panic.
-struct InferMatchExpansionGuard;
-
-impl InferMatchExpansionGuard {
-    fn enter() -> Option<Self> {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| {
-            let current = depth.get();
-            if current >= MAX_INFER_MATCH_EXPANSION_DEPTH {
-                None
-            } else {
-                depth.set(current + 1);
-                Some(Self)
-            }
-        })
-    }
-}
-
-impl Drop for InferMatchExpansionGuard {
-    fn drop(&mut self) {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
     }
 }
 
@@ -1571,185 +1515,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
-    /// Maximum iterations for alias-application reduction loops.
-    /// Bounds peel/reduce walks against pathological alias chains.
-    pub(crate) const MAX_ALIAS_REDUCTION_STEPS: u32 = 8;
-
-    /// Resolve an application/reference base (`Lazy(DefId)` or
-    /// `TypeQuery(SymbolRef)`) to its defining [`DefId`]. Returns `None` for any
-    /// other base shape, or a `TypeQuery` whose symbol has no `DefId` yet.
-    pub(crate) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
-        match self.interner().lookup(base)? {
-            TypeData::Lazy(def_id) => Some(def_id),
-            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
-            _ => None,
-        }
-    }
-
-    /// Decode `Application(Lazy(DefId)/TypeQuery, args)` and substitute the
-    /// alias's type-parameter args into its resolved body. Returns `None`
-    /// when the base isn't a resolvable `DefId`, arities disagree, or the
-    /// substitution is a no-op.
-    pub(crate) fn alias_application_substituted_body(&self, ty: TypeId) -> Option<TypeId> {
-        let Some(TypeData::Application(app_id)) = self.interner().lookup(ty) else {
-            return None;
-        };
-        let app = self.interner().type_application(app_id);
-        let def_id = self.application_base_def_id(app.base)?;
-        let type_params = self.resolver().get_lazy_type_params(def_id)?;
-        if type_params.len() != app.args.len() {
-            return None;
-        }
-        let body = self.resolver().resolve_lazy(def_id, self.interner())?;
-        let substituted = crate::instantiation::instantiate::instantiate_generic_cached(
-            self.interner(),
-            self.query_db(),
-            body,
-            &type_params,
-            &app.args,
-        );
-        (substituted != ty).then_some(substituted)
-    }
-
-    /// Peel one alias layer off an `Application` whose body is itself an
-    /// `Application(...)`. We do not gate on `get_def_kind`: zombie `DefId`s
-    /// from `interner.reference` are not tagged with `DefKind` in the
-    /// definition store, but the body shape (`Application` vs structural
-    /// `Object`/`Callable`) is the reliable structural signal.
-    pub(crate) fn peel_alias_application(&self, ty: TypeId) -> Option<TypeId> {
-        let substituted = self.alias_application_substituted_body(ty)?;
-        matches!(
-            self.interner().lookup(substituted),
-            Some(TypeData::Application(_))
-        )
-        .then_some(substituted)
-    }
-
-    /// Whether `base` names a generic *wrapper alias* — a `Lazy`/`TypeQuery`
-    /// reference whose resolved body is itself an `Application` (e.g.
-    /// `AB<T> = Promise<T[]>` or `Nest<T> = Promise<Promise<T[]>>`).
-    ///
-    /// Such a base does not participate in the covariant positional
-    /// type-argument correspondence that a genuine interface/class hierarchy
-    /// does (`Promise<T> <: PromiseLike<T>`): its single alias parameter maps
-    /// through the alias body, not onto the wrapped interface's positional
-    /// arguments. An infer-pattern whose base is a wrapper alias must therefore
-    /// be *reduced* to its application form before structural matching, never
-    /// matched positionally against a structurally-different concrete source
-    /// base — doing the latter binds the `infer` one wrapper level early.
-    pub(crate) fn is_wrapper_alias_base(&self, base: TypeId) -> bool {
-        let Some(def_id) = self.application_base_def_id(base) else {
-            return false;
-        };
-        self.resolver()
-            .resolve_lazy(def_id, self.interner())
-            .is_some_and(|body| {
-                matches!(self.interner().lookup(body), Some(TypeData::Application(_)))
-            })
-    }
-
-    /// Recover an `Application` form from a non-`Application` type via the
-    /// global display-alias map. Used by infer-match reduction when the
-    /// source has already been evaluated to its structural shape (e.g. an
-    /// interface body substituted with concrete args) and
-    /// `evaluate_application` recorded a back-reference to the original
-    /// `Application` for this instantiation.
-    pub(crate) fn try_recover_application_from_display_alias(&self, ty: TypeId) -> Option<TypeId> {
-        if matches!(self.interner().lookup(ty), Some(TypeData::Application(_))) {
-            return None;
-        }
-        let alias = self.interner().get_display_alias(ty)?;
-        (alias != ty
-            && matches!(
-                self.interner().lookup(alias),
-                Some(TypeData::Application(_))
-            ))
-        .then_some(alias)
-    }
-
-    /// Try to match a source Application's type args against a pattern Application's args.
-    ///
-    /// Returns `Some(true)` if all args matched, `Some(false)` if bases matched but an arg
-    /// failed, `None` if the bases are incompatible (caller should try another candidate).
-    ///
-    /// One-directional subtyping (`source.base <: pattern.base`) is accepted because
-    /// covariant interface hierarchies (e.g. `Promise<T> <: PromiseLike<T>`) preserve
-    /// positional type-argument correspondence.
-    fn try_match_application_args_to_pattern(
-        &self,
-        source: &TypeApplication,
-        pattern: &TypeApplication,
-        pattern_base_is_wrapper_alias: bool,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        visited: &mut InferPatternVisited,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> Option<bool> {
-        if source.args.len() != pattern.args.len() {
-            return None;
-        }
-        if source.base != pattern.base {
-            // A wrapper-alias pattern base (`Nest<T> = Promise<Promise<T[]>>`)
-            // shares neither the identity nor the covariant positional
-            // correspondence the base-subtype shortcut assumes for interface
-            // hierarchies: matching its lone alias argument against a
-            // structurally-different concrete source base binds the `infer` one
-            // wrapper level early (e.g. `U = Promise<number[]>` instead of
-            // `number`). Refuse the shortcut so the pattern is instead reduced to
-            // its application form (caller's pattern-side alias-reduction step)
-            // before the structural arguments are matched.
-            if pattern_base_is_wrapper_alias {
-                return None;
-            }
-            if !checker.is_subtype_of(source.base, pattern.base) {
-                return None;
-            }
-        }
-        for (source_arg, pattern_arg) in source.args.iter().zip(pattern.args.iter()) {
-            if !self.match_infer_pattern(*source_arg, *pattern_arg, bindings, visited, checker) {
-                return Some(false);
-            }
-        }
-        Some(true)
-    }
-
-    /// Evaluate `type_id` in a fresh sub-evaluator during infer-pattern
-    /// matching, bounded by a thread-global cross-evaluator recursion budget.
-    ///
-    /// Infer matching expands `Application`/`Mapped` sources and patterns by
-    /// spinning up a new [`TypeEvaluator`] (the matching helpers only hold
-    /// `&self`, so they cannot reuse the current evaluator's `&mut` evaluate
-    /// path). Each fresh evaluator resets its own recursion guard, so a
-    /// recursive generic wrapper can re-enter this expansion at ever-deeper
-    /// nesting without any per-evaluator guard firing — an unbounded hang.
-    ///
-    /// This routes every such expansion through one place that participates in
-    /// [`INFER_MATCH_EXPANSION_DEPTH`]. Once the budget is exhausted the input
-    /// is returned **unchanged**: every caller already treats an unchanged
-    /// result as "could not expand" (the infer match fails / the property is
-    /// not found), which terminates the chain instead of looping. Mirrors tsc's
-    /// global `instantiationDepth` cutoff.
-    pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
-        let nuia = self.no_unchecked_indexed_access();
-        // Per-query memo + cross-instance cycle break (#11586): a recursive
-        // conditional/`infer` application fans out into the same root types across
-        // fresh evaluators; serve a repeat within one query from the memo, and
-        // return `type_id` unchanged on a cross-instance cycle (`None`) so the
-        // in-flight ancestor expansion converges.
-        crate::evaluation::cross_eval_guard::memoized_eval(type_id, nuia, || {
-            let Some(_guard) = InferMatchExpansionGuard::enter() else {
-                return EvaluationMemoResult::unstable_complete(type_id);
-            };
-            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-            if let Some(query_db) = self.query_db() {
-                evaluator = evaluator.with_query_db(query_db);
-            }
-            let request = crate::evaluation::request::EvaluationRequest::new(type_id)
-                .with_no_unchecked_indexed_access(nuia);
-            evaluator.evaluate_request_memo_result(request)
-        })
-        .unwrap_or(type_id)
-    }
-
     /// Match each member of a union source against `pattern`, merging the
     /// per-member infer bindings via [`Self::merge_infer_candidates`].
     ///
@@ -2026,219 +1791,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     visited,
                     checker,
                 ),
-            TypeData::Application(pattern_app_id) => {
-                // Declaration-level match: walk `source` through one-step
-                // alias-application peeling until its base aligns with the
-                // pattern's base. Handles `Cond<RHS>` where `RHS = ToPromise<X>`
-                // and `ToPromise<X> = Promise<X>` by reducing the source
-                // `Application(ToPromise, [X])` to `Application(Promise, [X])`
-                // before matching `Application(Promise, [infer Y])`.
-                let pattern_app = self.interner().type_application(pattern_app_id);
-                if pattern_app.args.len() == 1
-                    && let Some(TypeData::Lazy(def_id)) = self.interner().lookup(pattern_app.base)
-                    && self.resolver().is_builtin_readonly_array_def(def_id)
-                    && let Some(source_elem) =
-                        crate::type_queries::get_array_element_type(self.interner(), source)
-                {
-                    return self.match_infer_pattern(
-                        source_elem,
-                        pattern_app.args[0],
-                        bindings,
-                        visited,
-                        checker,
-                    );
-                }
-                // `pattern_app.base` is invariant across both the source-peeling
-                // loop and the display-alias recovery below, so classify it once.
-                // A wrapper-alias base (its resolved body is itself an
-                // `Application`, e.g. `Nest<T> = Promise<Promise<T[]>>`) must be
-                // reduced to its application form before matching: the positional
-                // base-subtype shortcuts below would otherwise bind the `infer`
-                // one wrapper level early.
-                let pattern_base_is_wrapper_alias = self.is_wrapper_alias_base(pattern_app.base);
-
-                // Normalize a *generic wrapper-alias* pattern to its structural
-                // application form before the positional matching below. When the
-                // pattern base is a generic type alias whose parameter threads
-                // through a *nested* body position (`type AB<T> = Promise<T[]>`,
-                // pattern `AB<infer U>`), the alias base does NOT positionally
-                // correspond to the source's structural base (`Promise`), so the
-                // positional source-peeling / base-subtype paths would bind the
-                // `infer` one structural level too shallow (`U = Promise<number[]>`
-                // instead of `number`) — the "stops one Promise level early"
-                // divergence (#14489). Peeling the pattern head-only (infer-
-                // preserving: `AB<infer U>` -> `Promise<(infer U)[]>`) gives the
-                // real structural base, so re-matching binds at the correct depth
-                // and recurses through each nested wrapper level. The gate keeps
-                // `peel_alias_application`'s `instantiate` off the `Promise<infer>`
-                // hot path; the `(source, pattern)` visited guard bounds alias
-                // cycles. `tsc` likewise reduces an alias-pattern to its
-                // application form before infer matching.
-                if pattern_base_is_wrapper_alias
-                    && let Some(reduced_pattern) = self.peel_alias_application(pattern)
-                {
-                    let mut reduced_bindings = bindings.clone();
-                    let reduced_checkpoint = visited.checkpoint();
-                    if self.match_infer_pattern(
-                        source,
-                        reduced_pattern,
-                        &mut reduced_bindings,
-                        visited,
-                        checker,
-                    ) {
-                        *bindings = reduced_bindings;
-                        return true;
-                    }
-                    visited.rollback_to(reduced_checkpoint);
-                }
-
-                let mut current_source = source;
-                for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
-                    if let Some(TypeData::Application(source_app_id)) =
-                        self.interner().lookup(current_source)
-                    {
-                        let source_app = self.interner().type_application(source_app_id);
-                        if let Some(result) = self.try_match_application_args_to_pattern(
-                            &source_app,
-                            &pattern_app,
-                            pattern_base_is_wrapper_alias,
-                            bindings,
-                            visited,
-                            checker,
-                        ) {
-                            return result;
-                        }
-                        // Rebuilding the wrapper alias over the *source's*
-                        // arguments and accepting it by subtyping has the same
-                        // early-binding hazard described above (the
-                        // recursive-Promise relation accepts the rebuilt alias
-                        // leniently), so skip this positional shortcut for wrapper
-                        // bases and let the pattern-side reduction below peel them.
-                        if source_app.args.len() == pattern_app.args.len()
-                            && !pattern_base_is_wrapper_alias
-                        {
-                            let candidate_pattern = self
-                                .interner()
-                                .application(pattern_app.base, source_app.args.clone());
-                            if checker.is_subtype_of(current_source, candidate_pattern) {
-                                for (source_arg, pattern_arg) in
-                                    source_app.args.iter().zip(pattern_app.args.iter())
-                                {
-                                    if !self.match_infer_pattern(
-                                        *source_arg,
-                                        *pattern_arg,
-                                        bindings,
-                                        visited,
-                                        checker,
-                                    ) {
-                                        return false;
-                                    }
-                                }
-                                return true;
-                            }
-                        }
-                    }
-                    let Some(peeled) = self.peel_alias_application(current_source) else {
-                        break;
-                    };
-                    current_source = peeled;
-                }
-
-                // Source may have been evaluated from Application(Promise,[T]) to Object before
-                // reaching this point; display_alias records the original Application for recovery.
-                if let Some(recovered) = self.try_recover_application_from_display_alias(source)
-                    && let Some(TypeData::Application(recovered_app_id)) =
-                        self.interner().lookup(recovered)
-                {
-                    let recovered_app = self.interner().type_application(recovered_app_id);
-                    if let Some(result) = self.try_match_application_args_to_pattern(
-                        &recovered_app,
-                        &pattern_app,
-                        pattern_base_is_wrapper_alias,
-                        bindings,
-                        visited,
-                        checker,
-                    ) {
-                        return result;
-                    }
-                }
-
-                // Wrapper-alias pattern reduction: when the pattern is a
-                // generic *wrapper* alias carrying the `infer`
-                // (`AB<infer U>` with `AB<T> = Promise<T[]>`) and the source is
-                // the expanded structural form (`Promise<number[]>`, not
-                // written via the alias), reduce the pattern head-only to its
-                // body application form (`Promise<(infer U)[]>`), preserving the
-                // `infer`, and match the source against that. The structural
-                // `evaluate_for_infer_match` fallback below does not reduce an
-                // infer-bearing application, so without this the alias pattern
-                // never aligns with the expanded source and the conditional
-                // wrongly collapses to its false branch (#14489). Gated to
-                // aliases whose substituted body is itself an `Application`
-                // (true wrappers) so conditional-/structural-body aliases stay
-                // on the structural-expansion path.
-                if let Some(reduced_pattern) = self.alias_application_substituted_body(pattern)
-                    && reduced_pattern != pattern
-                    && matches!(
-                        self.interner().lookup(reduced_pattern),
-                        Some(TypeData::Application(_))
-                    )
-                {
-                    let mut reduced_bindings = bindings.clone();
-                    let reduced_checkpoint = visited.checkpoint();
-                    if self.match_infer_pattern(
-                        source,
-                        reduced_pattern,
-                        &mut reduced_bindings,
-                        visited,
-                        checker,
-                    ) && reduced_bindings.len() >= bindings.len()
-                    {
-                        *bindings = reduced_bindings;
-                        return true;
-                    }
-                    visited.rollback_to(reduced_checkpoint);
-                }
-
-                // Fallback: Structural expansion
-                // Expand the pattern Application to its structural form and recurse
-                // This handles cases like: Reducer<infer S> matching a structural function type
-                let expanded_pattern = self.evaluate_for_infer_match(pattern);
-
-                // Only recurse if expansion actually changed the type
-                if expanded_pattern != pattern {
-                    if let Some(alias) = self.interner().get_display_alias(source)
-                        && alias != source
-                    {
-                        if visited.contains(&(alias, expanded_pattern)) {
-                            return true;
-                        }
-                        let mut alias_bindings = bindings.clone();
-                        let alias_checkpoint = visited.checkpoint();
-                        if self.match_infer_pattern(
-                            alias,
-                            expanded_pattern,
-                            &mut alias_bindings,
-                            visited,
-                            checker,
-                        ) {
-                            visited.rollback_to(alias_checkpoint);
-                            *bindings = alias_bindings;
-                            return true;
-                        }
-                        visited.rollback_to(alias_checkpoint);
-                    }
-                    return self.match_infer_pattern(
-                        source,
-                        expanded_pattern,
-                        bindings,
-                        visited,
-                        checker,
-                    );
-                }
-
-                false
-            }
+            TypeData::Application(pattern_app_id) => self.match_application_infer_pattern(
+                source,
+                pattern,
+                pattern_app_id,
+                bindings,
+                visited,
+                checker,
+            ),
             TypeData::TemplateLiteral(pattern_spans_id) => {
                 let pattern_spans = self.interner().template_list(pattern_spans_id);
                 match self.interner().lookup(source) {
@@ -2296,48 +1856,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => checker.is_subtype_of(source, pattern),
         }
-    }
-}
-
-#[cfg(test)]
-mod infer_match_expansion_guard_tests {
-    use super::{
-        INFER_MATCH_EXPANSION_DEPTH, InferMatchExpansionGuard, MAX_INFER_MATCH_EXPANSION_DEPTH,
-    };
-
-    /// The cross-evaluator infer-match expansion guard must (1) allow expansion
-    /// up to the budget, (2) deny it beyond the budget so the caller skips the
-    /// expansion (returns the source unchanged) instead of recursing through a
-    /// fresh evaluator forever, and (3) restore capacity as guards unwind, so
-    /// sequential (non-nested) expansions are never throttled. This is the
-    /// primitive that turns the Zod non-termination (#10662) into a terminating
-    /// compile.
-    #[test]
-    fn guard_bounds_cross_evaluator_expansion_depth() {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
-
-        let mut held = Vec::new();
-        for expected_prev in 0..MAX_INFER_MATCH_EXPANSION_DEPTH {
-            let guard =
-                InferMatchExpansionGuard::enter().expect("enter within budget must succeed");
-            held.push(guard);
-            assert_eq!(
-                INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get),
-                expected_prev + 1
-            );
-        }
-
-        assert!(
-            InferMatchExpansionGuard::enter().is_none(),
-            "enter at the budget must be denied so the caller stops expanding"
-        );
-
-        held.clear();
-        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get), 0);
-        assert!(
-            InferMatchExpansionGuard::enter().is_some(),
-            "after unwinding, a fresh expansion must be allowed again"
-        );
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
     }
 }
