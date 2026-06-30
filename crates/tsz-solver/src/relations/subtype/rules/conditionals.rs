@@ -70,8 +70,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(db) = self.query_db {
             fallback = fallback.with_query_db(db);
         }
-        fallback.check_subtype(left_eval, right_eval).is_true()
-            && fallback.check_subtype(right_eval, left_eval).is_true()
+        let fallback_events_at_entry = fallback.unresolved_lazy_relation_event_count();
+        let equivalent = fallback.check_subtype(left_eval, right_eval).is_true()
+            && fallback.check_subtype(right_eval, left_eval).is_true();
+        self.absorb_unresolved_lazy_relation_events_from(&fallback, fallback_events_at_entry);
+        equivalent
     }
 
     fn identity_fallback_property_modifiers_match(&self, left: TypeId, right: TypeId) -> bool {

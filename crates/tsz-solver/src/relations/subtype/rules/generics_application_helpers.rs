@@ -416,7 +416,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
         let Some(body) = self.resolver.resolve_lazy(alias_def, self.interner) else {
-            crate::relations::subtype::cache::note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
             return false;
         };
         let Some(body_app_id) = application_id(self.interner, body) else {

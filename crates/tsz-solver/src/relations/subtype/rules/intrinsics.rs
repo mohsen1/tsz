@@ -262,6 +262,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if let Some(resolved) = resolved {
                 return self.check_subtype(resolved, TypeId::OBJECT).is_true();
             }
+            self.note_unresolved_lazy_relation_event();
         }
 
         false
@@ -685,6 +686,7 @@ pub(crate) const fn boxable_intrinsic_kind(kind: IntrinsicKind) -> Option<Intrin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::def::DefId;
     use crate::intern::TypeInterner;
 
     #[test]
@@ -713,5 +715,22 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn unresolved_lazy_object_keyword_probe_records_relation_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let mut checker = SubtypeChecker::new(&interner);
+        let unresolved = interner.lazy(DefId(9001));
+        let before = checker.unresolved_lazy_relation_event_count();
+
+        assert!(!checker.is_object_keyword_type(unresolved));
+        assert_ne!(
+            checker.unresolved_lazy_relation_event_count(),
+            before,
+            "Lazy <: object miss must keep the relation result non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
     }
 }

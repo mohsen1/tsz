@@ -27,8 +27,7 @@ use crate::visitor::{
 // module (issue #13091). The re-exports below keep this module the stable
 // import path for relation-side callers.
 pub(crate) use crate::limits::{
-    MAX_GLOBAL_SUBTYPE_FUEL, note_lazy_resolve_failure, note_weak_type_sensitivity,
-    remaining_global_subtype_fuel,
+    MAX_GLOBAL_SUBTYPE_FUEL, note_weak_type_sensitivity, remaining_global_subtype_fuel,
 };
 pub use crate::limits::{lazy_resolve_failure_count, reset_subtype_thread_local_state};
 
@@ -72,7 +71,7 @@ struct RelationFrameSnapshot {
     maybe_start: usize,
     frame_promotable: bool,
     pristine_budget_chain: bool,
-    lazy_failures_at_entry: u64,
+    unresolved_lazy_events_at_entry: u64,
     weak_sensitivity_at_entry: u64,
 }
 
@@ -477,12 +476,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Track nesting depth and consume fuel for every non-trivial check.
         // Fuel is monotonically consumed; depth tracks when we're back at root.
         // PERF: A single consolidated TLS access (`crate::limits`) reads and
-        // updates the packed depth/fuel state AND snapshots the two
-        // cache-poisoning sentinel counters and the shared solver-frame depth:
+        // updates the packed depth/fuel state AND snapshots the weak-type
+        // cache-poisoning sentinel counter and the shared solver-frame depth:
         //
-        // - The unresolved-`Lazy` snapshot: if it changes while computing this
-        //   pair's result, the result depended on a `Lazy` whose body was not
-        //   yet registered, so a `False` is undetermined and must not be cached.
+        // - The unresolved-`Lazy` snapshot is checker-local: if it changes while
+        //   computing this pair's result, this relation depended on a `Lazy`
+        //   whose body was not yet registered, so a `False` is undetermined and
+        //   must not be cached. Unrelated fresh/nested relation checkers cannot
+        //   poison this snapshot, while subcheckers whose verdict contributes to
+        //   this result explicitly propagate their event.
         // - The weak-type-sensitivity snapshot: if it changes, the result
         //   depended on weak-type enforcement state (TS2559), which the
         //   flag-agnostic `RelationCacheKey` does not encode. Caching it would
@@ -491,7 +493,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let frame_entry = crate::limits::enter_subtype_frame();
         let global_depth = frame_entry.global_depth;
         let fuel = frame_entry.fuel;
-        let lazy_failures_at_entry = frame_entry.lazy_failures;
+        let unresolved_lazy_events_at_entry = self.unresolved_lazy_relation_event_count();
         let weak_sensitivity_at_entry = frame_entry.weak_sensitivity;
 
         // ── Limit-hit maybe-stack (tsc `maybeKeys` parity, issue #13241) ────
@@ -530,7 +532,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             maybe_start,
             frame_promotable,
             pristine_budget_chain,
-            lazy_failures_at_entry,
+            unresolved_lazy_events_at_entry,
             weak_sensitivity_at_entry,
         };
 
@@ -1067,7 +1069,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     target,
                     result,
                     can_use_shared_relation_cache,
-                    lazy_failures_at_entry,
+                    unresolved_lazy_events_at_entry,
                     weak_sensitivity_at_entry,
                 );
                 finish_frame!(result);
@@ -1131,7 +1133,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target,
                 result,
                 can_use_shared_relation_cache,
-                lazy_failures_at_entry,
+                unresolved_lazy_events_at_entry,
                 weak_sensitivity_at_entry,
             );
             finish_frame!(result);
@@ -1157,7 +1159,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target,
                 result,
                 can_use_shared_relation_cache,
-                lazy_failures_at_entry,
+                unresolved_lazy_events_at_entry,
                 weak_sensitivity_at_entry,
             );
             finish_frame!(result);
@@ -1252,7 +1254,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target,
             result,
             can_use_shared_relation_cache,
-            lazy_failures_at_entry,
+            unresolved_lazy_events_at_entry,
             weak_sensitivity_at_entry,
         );
 
@@ -1284,12 +1286,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// `DepthExceeded` are budget-conditional and handled by the maybe-keys
     /// promotion path.
     ///
-    /// This mirrors the discipline of the former `cache_definitive!` macro and
-    /// is intentionally conservative: the poison-sentinel snapshots are
-    /// process-wide (thread-local), so *any* unresolved-`Lazy` event or
-    /// weak-type-sensitivity event anywhere in this top-level call's subtree —
-    /// even in a branch whose result did not feed the final answer —
-    /// suppresses the write. That only ever skips a write
+    /// This mirrors the discipline of the former `cache_definitive!` macro. The
+    /// unresolved-`Lazy` snapshot is checker-local, so only misses observed by
+    /// this relation checker suppress this frame's write; fresh/nested checker
+    /// probes only propagate when their verdict contributes to the outer
+    /// relation. The weak-type
+    /// sentinel remains thread-local because weak enforcement state is still
+    /// operation-local and absent from the cache key. Suppression only skips a write
     /// (correctness-preserving: the result is recomputed later), never
     /// produces a wrong answer. Results computed under `bypass_evaluation` are
     /// likewise never written: that mode compares raw alias/meta forms without
@@ -1302,7 +1305,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         result: SubtypeResult,
         can_use_shared_relation_cache: bool,
-        lazy_failures_at_entry: u64,
+        unresolved_lazy_events_at_entry: u64,
         weak_sensitivity_at_entry: u64,
     ) {
         let related = match result {
@@ -1311,8 +1314,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => return,
         };
         if self.bypass_evaluation
-            || crate::limits::poison_sentinel_counts()
-                != (lazy_failures_at_entry, weak_sensitivity_at_entry)
+            || self.unresolved_lazy_relation_event_count() != unresolved_lazy_events_at_entry
+            || crate::limits::weak_type_sensitivity_count() != weak_sensitivity_at_entry
         {
             return;
         }
@@ -1353,9 +1356,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   success — cycle entries to definitive `true` (the coinductive
     ///   assumption set is self-consistent), fuel entries to band-conditional
     ///   `LimitTrue` — or discarded on failure. Promotion is additionally
-    ///   gated on the unresolved-`Lazy` / weak-type-sensitivity counters
-    ///   having been stable across the whole outermost window, the same
-    ///   discipline `record_definitive_verdict` applies to definitive writes.
+    ///   gated on the checker-local unresolved-`Lazy` counter and thread-local
+    ///   weak-type-sensitivity counter having been stable across the whole
+    ///   outermost window, the same discipline `record_definitive_verdict`
+    ///   applies to definitive writes.
     fn finish_relation_frame(
         &mut self,
         result: SubtypeResult,
@@ -1390,11 +1394,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
             let entries = std::mem::take(&mut self.maybe_keys);
             if result.is_true()
-                && crate::limits::poison_sentinel_counts()
-                    == (
-                        frame.lazy_failures_at_entry,
-                        frame.weak_sensitivity_at_entry,
-                    )
+                && self.unresolved_lazy_relation_event_count()
+                    == frame.unresolved_lazy_events_at_entry
+                && crate::limits::weak_type_sensitivity_count() == frame.weak_sensitivity_at_entry
                 && let Some(db) = self.query_db
             {
                 for entry in entries {
@@ -1518,7 +1520,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 def_id = def_id.0,
                 "is_conditional_alias_base_inline: no body found"
             );
-            note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
             return false;
         };
         let body_kind = self.interner.lookup(body);
@@ -1576,7 +1578,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
         let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
-            note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
             return false;
         };
         matches!(
@@ -1589,6 +1591,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::caches::db::QueryDatabase;
+    use crate::caches::query_cache::QueryCache;
+    use crate::intern::TypeInterner;
     use tsz_binder::SymbolId;
 
     #[test]
@@ -1641,5 +1646,102 @@ mod tests {
             (SymbolId(10), SymbolId(20)),
         );
         assert_eq!(different_symbol, SymbolDefCycleState::NoCycle);
+    }
+
+    #[test]
+    fn relation_cache_write_ignores_sibling_checker_lazy_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+        let sibling = SubtypeChecker::new(&interner);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let lazy_entry = checker.unresolved_lazy_relation_event_count();
+        let weak_entry = crate::limits::weak_type_sensitivity_count();
+
+        sibling.note_unresolved_lazy_relation_event();
+        checker.record_definitive_verdict(
+            source,
+            target,
+            SubtypeResult::False,
+            true,
+            lazy_entry,
+            weak_entry,
+        );
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            Some(false),
+            "sibling checker lazy misses must not poison this relation frame"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_skips_same_checker_lazy_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let lazy_entry = checker.unresolved_lazy_relation_event_count();
+        let weak_entry = crate::limits::weak_type_sensitivity_count();
+
+        checker.note_unresolved_lazy_relation_event();
+        checker.record_definitive_verdict(
+            source,
+            target,
+            SubtypeResult::False,
+            true,
+            lazy_entry,
+            weak_entry,
+        );
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            None,
+            "this checker's unresolved Lazy event must keep the frame non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_skips_contributing_subchecker_lazy_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+        let subchecker = SubtypeChecker::new(&interner);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let lazy_entry = checker.unresolved_lazy_relation_event_count();
+        let weak_entry = crate::limits::weak_type_sensitivity_count();
+        let subchecker_entry = subchecker.unresolved_lazy_relation_event_count();
+
+        subchecker.note_unresolved_lazy_relation_event();
+        checker.absorb_unresolved_lazy_relation_events_from(&subchecker, subchecker_entry);
+        checker.record_definitive_verdict(
+            source,
+            target,
+            SubtypeResult::False,
+            true,
+            lazy_entry,
+            weak_entry,
+        );
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            None,
+            "a contributing subchecker Lazy miss must keep the outer frame non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
     }
 }

@@ -9,6 +9,7 @@
 //! - Set-theoretic operations for unions and intersections
 //! - `TypeResolver` trait for lazy symbol resolution
 
+use std::cell::Cell;
 use std::sync::Arc;
 
 use crate::caches::db::QueryDatabase;
@@ -448,6 +449,17 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// parity, issue #13241). See `cache::MaybeRelationEntry` and
     /// `finish_relation_frame` in the `cache` module.
     pub(crate) maybe_keys: Vec<super::cache::MaybeRelationEntry>,
+    /// Monotonic count of unresolved `Lazy(DefId)` events seen while computing
+    /// relation answers for this checker.
+    ///
+    /// This is deliberately scoped to one [`SubtypeChecker`] instance. The
+    /// legacy thread-local lazy counter still feeds checker-side proof caches
+    /// and conditional branch selection, but relation cache writes should be
+    /// gated only by unresolved bodies observed through this relation checker
+    /// or by a subchecker whose verdict contributes to it. Fresh unrelated
+    /// checkers keep their own scoped counters without poisoning this relation
+    /// verdict.
+    pub(crate) unresolved_lazy_relation_events: Cell<u64>,
     /// Instance-local fallback memo for definitive relation verdicts that the
     /// cross-checker shared cache must skip (issue #13828).
     ///
@@ -559,6 +571,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
+            unresolved_lazy_relation_events: Cell::new(0),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -613,6 +626,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
+            unresolved_lazy_relation_events: Cell::new(0),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -645,6 +659,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
         self
+    }
+
+    /// Record that this relation checker observed an unresolved `Lazy(DefId)`.
+    ///
+    /// The checker-local counter gates relation cache writes. The legacy
+    /// thread-local counter remains updated for checker-side proof caches and
+    /// conditional branch-selection probes that still snapshot it outside the
+    /// relation frame owner.
+    #[inline]
+    pub(crate) fn note_unresolved_lazy_relation_event(&self) {
+        self.unresolved_lazy_relation_events
+            .set(self.unresolved_lazy_relation_events.get().wrapping_add(1));
+        crate::limits::note_lazy_resolve_failure();
+    }
+
+    /// Current checker-local unresolved-lazy relation event count.
+    #[inline]
+    pub(crate) const fn unresolved_lazy_relation_event_count(&self) -> u64 {
+        self.unresolved_lazy_relation_events.get()
+    }
+
+    /// Propagate unresolved-lazy events from a subchecker whose verdict was
+    /// consumed by this checker.
+    #[inline]
+    pub(crate) fn absorb_unresolved_lazy_relation_events_from<S: TypeResolver>(
+        &self,
+        subchecker: &SubtypeChecker<'_, S>,
+        subchecker_events_at_entry: u64,
+    ) {
+        if subchecker.unresolved_lazy_relation_event_count() != subchecker_events_at_entry {
+            self.note_unresolved_lazy_relation_event();
+        }
     }
 
     /// Set whether strict null checks are enabled.
@@ -757,6 +803,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.sym_visiting.clear();
         self.eval_cache.clear();
         self.maybe_keys.clear();
+        self.unresolved_lazy_relation_events.set(0);
         self.local_relation_cache.clear();
         self.explain_eval_fuel = None;
     }
@@ -832,7 +879,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         def_id = def_id.0,
                         "resolve_lazy_type: body unregistered, recording undetermined-result event"
                     );
-                    super::cache::note_lazy_resolve_failure();
+                    self.note_unresolved_lazy_relation_event();
                     type_id
                 }
             }
