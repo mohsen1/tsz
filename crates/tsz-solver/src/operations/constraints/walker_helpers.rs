@@ -279,9 +279,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
             let mut probe_map = FxHashMap::default();
             probe_map.insert(candidate, var);
-            let contains_placeholder = super::walker::with_placeholder_visited(|visited| {
-                self.type_contains_placeholder(target, &probe_map, visited)
-            });
+            let contains_placeholder =
+                super::walker_guard_state::with_placeholder_visited(|visited| {
+                    self.type_contains_placeholder(target, &probe_map, visited)
+                });
             if contains_placeholder {
                 var_map.remove(&candidate);
             }
