@@ -712,9 +712,26 @@ fn template_substitution_type(db: &dyn TypeDatabase, part: TypeId) -> TypeId {
     }
 }
 
+const MAX_TEMPLATE_CONTEXT_DEPTH: u32 = 10;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TemplateContextDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn template_context_depth_state(depth: u32) -> TemplateContextDepthState {
+    if depth > MAX_TEMPLATE_CONTEXT_DEPTH {
+        TemplateContextDepthState::LimitExceeded
+    } else {
+        TemplateContextDepthState::Continue
+    }
+}
+
 fn template_substitution_type_is_valid(db: &dyn TypeDatabase, part: TypeId, depth: u32) -> bool {
-    if depth > 10 {
-        return false;
+    match template_context_depth_state(depth) {
+        TemplateContextDepthState::Continue => {}
+        TemplateContextDepthState::LimitExceeded => return false,
     }
     if matches!(
         part,
@@ -770,7 +787,11 @@ fn template_substitution_constraint_is_dependent(
     type_id: TypeId,
     depth: u32,
 ) -> bool {
-    if depth > 10 || type_id.is_intrinsic() {
+    match template_context_depth_state(depth) {
+        TemplateContextDepthState::Continue => {}
+        TemplateContextDepthState::LimitExceeded => return false,
+    }
+    if type_id.is_intrinsic() {
         return false;
     }
 
@@ -807,8 +828,9 @@ fn is_template_literal_contextual_type_inner(
     type_id: TypeId,
     depth: u32,
 ) -> bool {
-    if depth > 10 {
-        return false;
+    match template_context_depth_state(depth) {
+        TemplateContextDepthState::Continue => {}
+        TemplateContextDepthState::LimitExceeded => return false,
     }
     if type_id.is_intrinsic() {
         return false;
