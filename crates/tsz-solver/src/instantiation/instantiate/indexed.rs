@@ -37,7 +37,7 @@ impl<'a> TypeInstantiator<'a> {
             // route the re-reduce through it (resolving the cross-arena `Lazy`
             // base) instead of returning the deferred `IndexAccess`. The OFF
             // path below is the literal pre-existing deferred return.
-            if super::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
+            if super::flags::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
                 return self.evaluate_index_access(inst_obj, inst_idx);
             }
             return self.interner.index_access(inst_obj, inst_idx);

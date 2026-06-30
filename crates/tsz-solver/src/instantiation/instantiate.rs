@@ -115,7 +115,7 @@ impl<'a> TypeInstantiator<'a> {
         // `instantiate_index_access`/`instantiate_conditional` can resolve the
         // cross-arena `Lazy` base instead of re-deferring resolver-less. The OFF
         // path is byte-identical to the prior unconditional `None`.
-        if inst_resolver_rereduce_enabled() {
+        if flags::inst_resolver_rereduce_enabled() {
             self.query_db = query_db;
         } else {
             self.query_db = None;
@@ -1087,6 +1087,7 @@ mod api;
 mod cache_stability;
 mod conditional;
 mod display_properties;
+mod flags;
 mod homomorphic;
 mod indexed;
 mod mapped;

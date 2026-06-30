@@ -9,3 +9,4 @@ use crate::types::TypeData;
 
 include!("instantiate_tests_parts/part_00.rs");
 include!("instantiate_tests_parts/part_01.rs");
+include!("instantiate_tests_parts/part_02.rs");

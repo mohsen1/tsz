@@ -141,7 +141,7 @@ impl<'a> TypeInstantiator<'a> {
         // re-reduce through the resolver so a cross-arena `Lazy` ref in the
         // condition resolves and the branch is picked. OFF returns the deferred
         // form (the literal pre-existing behavior).
-        if super::inst_resolver_rereduce_enabled()
+        if super::flags::inst_resolver_rereduce_enabled()
             && self.query_db.is_some()
             && !crate::visitor::contains_type_parameters(self.interner, instantiated.check_type)
             && !crate::visitor::contains_type_parameters(self.interner, instantiated.extends_type)
