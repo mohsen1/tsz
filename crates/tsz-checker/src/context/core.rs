@@ -610,7 +610,7 @@ impl<'a> CheckerContext<'a> {
         self.all_binders = parent.all_binders.clone();
         self.report_unresolved_imports = parent.report_unresolved_imports;
         self.allow_source_file_test_pragmas = parent.allow_source_file_test_pragmas;
-        self.current_directory = parent.current_directory.clone();
+        self.current_directory.clone_from(&parent.current_directory);
         self.resolved_modules = parent.resolved_modules.clone();
         self.global_file_locals_index = parent.global_file_locals_index.clone();
         self.global_module_exports_index = parent.global_module_exports_index.clone();

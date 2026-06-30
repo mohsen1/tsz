@@ -647,11 +647,8 @@ pub struct CheckerContext<'a> {
     /// Current file name.
     pub file_name: String,
 
-    /// The program's current directory (`tsc`'s `host.getCurrentDirectory()`),
-    /// when the driver provides it. Used to render resolved file paths embedded
-    /// in diagnostic messages (e.g. TS6053 for an unresolved triple-slash
-    /// reference) relative to the current directory, matching `tsc`. `None`
-    /// leaves such paths in their resolved (absolute) form.
+    /// Program cwd used to render TS6053 resolved paths relative to `tsc`'s
+    /// `host.getCurrentDirectory()`; `None` keeps resolved absolute paths.
     pub current_directory: Option<Arc<str>>,
 
     /// Compiler options for type checking.

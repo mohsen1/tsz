@@ -240,7 +240,7 @@ impl ProgramContext {
             self.typescript_dom_replacement_globals.2,
         );
         ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
-        ctx.current_directory = self.current_directory.clone();
+        ctx.current_directory.clone_from(&self.current_directory);
         // Pre-install global indices before set_all_arenas/set_all_binders so
         // those methods can skip re-computing indices already provided here.
         if let Some(ref idx) = self.global_file_name_index {
