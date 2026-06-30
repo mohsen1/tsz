@@ -373,6 +373,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             )
     }
 
+    fn evaluate_return_context_match_type(&mut self, type_id: TypeId) -> TypeId {
+        if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled() {
+            let evaluated = self
+                .checker
+                .evaluate_type_for_return_context_substitution(type_id);
+            if evaluated != type_id {
+                return evaluated;
+            }
+        }
+        self.interner.evaluate_type(type_id)
+    }
+
     fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -560,8 +572,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        let source_eval = self.interner.evaluate_type(source);
-        let target_eval = self.interner.evaluate_type(target);
+        let source_eval = self.evaluate_return_context_match_type(source);
+        let target_eval = self.evaluate_return_context_match_type(target);
         let function_info = match (
             Self::get_contextual_signature_cached(self.interner, source),
             Self::get_contextual_signature_cached(self.interner, target),
@@ -814,8 +826,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        let source_eval = self.interner.evaluate_type(source);
-        let target_eval = self.interner.evaluate_type(target);
+        let source_eval = self.evaluate_return_context_match_type(source);
+        let target_eval = self.evaluate_return_context_match_type(target);
         let app_info = match (
             crate::type_queries::get_application_info(self.interner.as_type_database(), source),
             crate::type_queries::get_application_info(self.interner.as_type_database(), target),
@@ -913,6 +925,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
+            && (source_eval != source || target_eval != target)
+        {
+            self.collect_return_context_substitution(
+                source_eval,
+                target_eval,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+            if !substitution.is_empty() {
+                return;
+            }
+        }
+
         // Fallback: when source is an Application wrapping a single tracked type
         // parameter (e.g., Awaited<T>) and no structural match was found above,
         // try inferring the type parameter directly. This handles return context
@@ -939,7 +966,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Verify: Application(Base, [target]) should evaluate to target
             // for the substitution to be correct.
             let test_app = self.interner.application(source_base, vec![target]);
-            let evaluated = self.interner.evaluate_type(test_app);
+            let evaluated = self.evaluate_return_context_match_type(test_app);
             if evaluated == target {
                 substitution.insert(tp.name, target);
             }
@@ -1109,13 +1136,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut substitution = TypeSubstitution::new();
         if func.is_constructor {
-            let return_type_eval = self.interner.evaluate_type(func.return_type);
+            let return_type_eval = self.evaluate_return_context_match_type(func.return_type);
             let contextual_app = crate::type_queries::get_application_info(
                 self.interner.as_type_database(),
                 contextual_type,
             )
             .or_else(|| {
-                let contextual_eval = self.interner.evaluate_type(contextual_type);
+                let contextual_eval = self.evaluate_return_context_match_type(contextual_type);
                 crate::type_queries::get_application_info(
                     self.interner.as_type_database(),
                     contextual_eval,
@@ -1174,9 +1201,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 mod tests {
     use super::sort_type_params_by_name;
     use crate::TypeInterner;
+    use crate::caches::query_cache::QueryCache;
+    use crate::def::{DefId, DefinitionStore};
+    use crate::instantiation::instantiate::flags::InstResolverRereduceFlagGuard;
     use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult, GenericCallRequest};
     use crate::types::{
-        FunctionShape, ParamInfo, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget,
+        FunctionShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo, TypePredicate,
+        TypePredicateTarget,
     };
     use tsz_common::interner::Atom;
 
@@ -1190,6 +1221,198 @@ mod tests {
         }
     }
 
+    fn object_with_value(interner: &TypeInterner, value_name: Atom, value_type: TypeId) -> TypeId {
+        interner.object(vec![PropertyInfo::new(value_name, value_type)])
+    }
+
+    struct StoreBackedReturnChecker<'eval, 'cache> {
+        db: &'eval QueryCache<'cache>,
+    }
+
+    impl AssignabilityChecker for StoreBackedReturnChecker<'_, '_> {
+        fn is_assignable_to(&mut self, _source: TypeId, _target: TypeId) -> bool {
+            true
+        }
+
+        fn evaluate_type_for_return_context_substitution(&mut self, type_id: TypeId) -> TypeId {
+            self.db
+                .store_backed_rereduce_evaluator()
+                .map_or(type_id, |mut evaluator| evaluator.evaluate(type_id))
+        }
+    }
+
+    fn return_context_substitution_for_lazy_pair(
+        interner: &TypeInterner,
+        db: &QueryCache<'_>,
+        source_def: DefId,
+        contextual_def: DefId,
+        call_param: TypeParamInfo,
+    ) -> crate::instantiation::instantiate::TypeSubstitution {
+        let func = FunctionShape {
+            type_params: vec![call_param],
+            params: Vec::new(),
+            this_type: None,
+            return_type: interner.lazy(source_def),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+        let mut checker = StoreBackedReturnChecker { db };
+        let mut evaluator = CallEvaluator::new(interner, &mut checker);
+        evaluator.compute_return_context_substitution(&func, Some(interner.lazy(contextual_def)))
+    }
+
+    #[derive(Clone, Copy)]
+    struct LazyWrapPair {
+        wrap_def: DefId,
+        source_def: DefId,
+        contextual_def: DefId,
+        wrap_param: TypeParamInfo,
+        call_param: TypeParamInfo,
+        property_name: Atom,
+        contextual_value: TypeId,
+    }
+
+    fn publish_lazy_wrap_pair(
+        interner: &TypeInterner,
+        store: &DefinitionStore,
+        case: LazyWrapPair,
+    ) {
+        let wrap_param_id = interner.type_param(case.wrap_param);
+        store.set_body_with_params(
+            case.wrap_def,
+            object_with_value(interner, case.property_name, wrap_param_id),
+            Some(vec![case.wrap_param]),
+        );
+        let wrap_base = interner.lazy(case.wrap_def);
+        let call_param_id = interner.type_param(case.call_param);
+        store.set_body(
+            case.source_def,
+            interner.application(wrap_base, vec![call_param_id]),
+        );
+        store.set_body(
+            case.contextual_def,
+            interner.application(wrap_base, vec![case.contextual_value]),
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct NestedLazyWrapPair {
+        inner_def: DefId,
+        outer_def: DefId,
+        source_def: DefId,
+        contextual_def: DefId,
+        inner_param: TypeParamInfo,
+        outer_param: TypeParamInfo,
+        call_param: TypeParamInfo,
+        inner_property_name: Atom,
+        outer_property_name: Atom,
+        contextual_value: TypeId,
+    }
+
+    fn publish_nested_lazy_wrap_pair(
+        interner: &TypeInterner,
+        store: &DefinitionStore,
+        case: NestedLazyWrapPair,
+    ) {
+        let inner_param_id = interner.type_param(case.inner_param);
+        store.set_body_with_params(
+            case.inner_def,
+            object_with_value(interner, case.inner_property_name, inner_param_id),
+            Some(vec![case.inner_param]),
+        );
+        let outer_param_id = interner.type_param(case.outer_param);
+        store.set_body_with_params(
+            case.outer_def,
+            object_with_value(interner, case.outer_property_name, outer_param_id),
+            Some(vec![case.outer_param]),
+        );
+        let inner_base = interner.lazy(case.inner_def);
+        let outer_base = interner.lazy(case.outer_def);
+        let call_param_id = interner.type_param(case.call_param);
+        store.set_body(
+            case.source_def,
+            interner.application(
+                outer_base,
+                vec![interner.application(inner_base, vec![call_param_id])],
+            ),
+        );
+        store.set_body(
+            case.contextual_def,
+            interner.application(
+                outer_base,
+                vec![interner.application(inner_base, vec![case.contextual_value])],
+            ),
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct LazyPairApplication {
+        pair_def: DefId,
+        source_def: DefId,
+        contextual_def: DefId,
+        fixed_param: TypeParamInfo,
+        value_param: TypeParamInfo,
+        call_param: TypeParamInfo,
+        fixed_property_name: Atom,
+        value_property_name: Atom,
+        fixed_value: TypeId,
+        contextual_value: TypeId,
+    }
+
+    fn publish_lazy_pair_application(
+        interner: &TypeInterner,
+        store: &DefinitionStore,
+        case: LazyPairApplication,
+    ) {
+        let fixed_param_id = interner.type_param(case.fixed_param);
+        let value_param_id = interner.type_param(case.value_param);
+        store.set_body_with_params(
+            case.pair_def,
+            interner.object(vec![
+                PropertyInfo::new(case.fixed_property_name, fixed_param_id),
+                PropertyInfo::new(case.value_property_name, value_param_id),
+            ]),
+            Some(vec![case.fixed_param, case.value_param]),
+        );
+        let pair_base = interner.lazy(case.pair_def);
+        let call_param_id = interner.type_param(case.call_param);
+        store.set_body(
+            case.source_def,
+            interner.application(pair_base, vec![case.fixed_value, call_param_id]),
+        );
+        store.set_body(
+            case.contextual_def,
+            interner.application(pair_base, vec![case.fixed_value, case.contextual_value]),
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct TransparentLazyAlias {
+        alias_def: DefId,
+        source_def: DefId,
+        contextual_def: DefId,
+        alias_param: TypeParamInfo,
+        call_param: TypeParamInfo,
+        contextual_value: TypeId,
+    }
+
+    fn publish_transparent_lazy_alias(
+        interner: &TypeInterner,
+        store: &DefinitionStore,
+        case: TransparentLazyAlias,
+    ) {
+        let alias_param_id = interner.type_param(case.alias_param);
+        store.set_body_with_params(case.alias_def, alias_param_id, Some(vec![case.alias_param]));
+        let alias_base = interner.lazy(case.alias_def);
+        let call_param_id = interner.type_param(case.call_param);
+        store.set_body(
+            case.source_def,
+            interner.application(alias_base, vec![call_param_id]),
+        );
+        store.set_body(case.contextual_def, case.contextual_value);
+    }
+
     #[test]
     fn sort_type_params_by_name_orders_ascending_atom_ids() {
         let mut type_params = vec![tp(7), tp(1), tp(3)];
@@ -1200,6 +1423,229 @@ mod tests {
             .map(|type_param| type_param.name)
             .collect();
         assert_eq!(names, vec![Atom(1), Atom(3), Atom(7)]);
+    }
+
+    #[test]
+    fn return_context_substitution_resolves_store_backed_lazy_application_bodies() {
+        let interner = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let wrap_def = DefId(143_510);
+        let source_def = DefId(143_511);
+        let contextual_def = DefId(143_512);
+        let call_param = tp(303);
+        publish_lazy_wrap_pair(
+            &interner,
+            &store,
+            LazyWrapPair {
+                wrap_def,
+                source_def,
+                contextual_def,
+                wrap_param: tp(101),
+                call_param,
+                property_name: Atom(202),
+                contextual_value: TypeId::STRING,
+            },
+        );
+        let db = QueryCache::new(&interner).with_definition_store(&store);
+
+        let _flag = InstResolverRereduceFlagGuard::new(true);
+        let substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert_eq!(substitution.get(call_param.name), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn return_context_substitution_resolves_nested_store_backed_lazy_application_bodies() {
+        let interner = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let inner_def = DefId(143_540);
+        let outer_def = DefId(143_541);
+        let source_def = DefId(143_542);
+        let contextual_def = DefId(143_543);
+        let call_param = tp(1_103);
+        publish_nested_lazy_wrap_pair(
+            &interner,
+            &store,
+            NestedLazyWrapPair {
+                inner_def,
+                outer_def,
+                source_def,
+                contextual_def,
+                inner_param: tp(901),
+                outer_param: tp(902),
+                call_param,
+                inner_property_name: Atom(1_001),
+                outer_property_name: Atom(1_002),
+                contextual_value: TypeId::STRING,
+            },
+        );
+        let db = QueryCache::new(&interner).with_definition_store(&store);
+
+        let _flag = InstResolverRereduceFlagGuard::new(true);
+        let substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert_eq!(substitution.get(call_param.name), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn return_context_substitution_matches_store_backed_lazy_pair_fixed_argument() {
+        let interner = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let pair_def = DefId(143_550);
+        let source_def = DefId(143_551);
+        let contextual_def = DefId(143_552);
+        let call_param = tp(1_403);
+        publish_lazy_pair_application(
+            &interner,
+            &store,
+            LazyPairApplication {
+                pair_def,
+                source_def,
+                contextual_def,
+                fixed_param: tp(1_201),
+                value_param: tp(1_202),
+                call_param,
+                fixed_property_name: Atom(1_301),
+                value_property_name: Atom(1_302),
+                fixed_value: TypeId::NUMBER,
+                contextual_value: TypeId::STRING,
+            },
+        );
+        let db = QueryCache::new(&interner).with_definition_store(&store);
+
+        let _flag = InstResolverRereduceFlagGuard::new(true);
+        let substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert_eq!(substitution.get(call_param.name), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn return_context_substitution_resolves_transparent_store_backed_lazy_alias_body() {
+        let interner = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let alias_def = DefId(143_560);
+        let source_def = DefId(143_561);
+        let contextual_def = DefId(143_562);
+        let call_param = tp(1_703);
+        publish_transparent_lazy_alias(
+            &interner,
+            &store,
+            TransparentLazyAlias {
+                alias_def,
+                source_def,
+                contextual_def,
+                alias_param: tp(1_501),
+                call_param,
+                contextual_value: TypeId::STRING,
+            },
+        );
+        let db = QueryCache::new(&interner).with_definition_store(&store);
+
+        {
+            let _flag = InstResolverRereduceFlagGuard::new(false);
+            let substitution = return_context_substitution_for_lazy_pair(
+                &interner,
+                &db,
+                source_def,
+                contextual_def,
+                call_param,
+            );
+            assert!(substitution.get(call_param.name).is_none());
+        }
+
+        let _flag = InstResolverRereduceFlagGuard::new(true);
+        let substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert_eq!(substitution.get(call_param.name), Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn return_context_substitution_keeps_lazy_bodies_deferred_without_rereduce_flag() {
+        let interner = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let wrap_def = DefId(143_520);
+        let source_def = DefId(143_521);
+        let contextual_def = DefId(143_522);
+        let call_param = tp(603);
+        publish_lazy_wrap_pair(
+            &interner,
+            &store,
+            LazyWrapPair {
+                wrap_def,
+                source_def,
+                contextual_def,
+                wrap_param: tp(401),
+                call_param,
+                property_name: Atom(502),
+                contextual_value: TypeId::STRING,
+            },
+        );
+        let db = QueryCache::new(&interner).with_definition_store(&store);
+
+        let _flag = InstResolverRereduceFlagGuard::new(false);
+        let substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert!(substitution.get(call_param.name).is_none());
+    }
+
+    #[test]
+    fn return_context_substitution_requires_store_and_published_lazy_bodies() {
+        let interner = TypeInterner::new();
+        let source_def = DefId(143_531);
+        let contextual_def = DefId(143_532);
+        let call_param = tp(803);
+        let no_store_db = QueryCache::new(&interner);
+        let empty_store = DefinitionStore::new();
+        let missing_body_db = QueryCache::new(&interner).with_definition_store(&empty_store);
+
+        let _flag = InstResolverRereduceFlagGuard::new(true);
+        let no_store_substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &no_store_db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+        let missing_body_substitution = return_context_substitution_for_lazy_pair(
+            &interner,
+            &missing_body_db,
+            source_def,
+            contextual_def,
+            call_param,
+        );
+
+        assert!(no_store_substitution.get(call_param.name).is_none());
+        assert!(missing_body_substitution.get(call_param.name).is_none());
     }
 
     #[derive(Default)]

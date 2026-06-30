@@ -53,6 +53,16 @@ pub trait AssignabilityChecker {
         type_id
     }
 
+    /// Evaluate just enough type structure for generic-call return-context
+    /// substitution.
+    ///
+    /// This hook is narrower than [`Self::evaluate_type`]: return-context
+    /// matching uses it only behind the staged resolver re-reduce flag, so
+    /// default callers keep the historical resolver-less shape.
+    fn evaluate_type_for_return_context_substitution(&mut self, type_id: TypeId) -> TypeId {
+        type_id
+    }
+
     /// Expand a type alias Application to its body type with the given type arguments.
     ///
     /// For `Application(Lazy(DefId), [args...])`, resolves the DefId to its body type

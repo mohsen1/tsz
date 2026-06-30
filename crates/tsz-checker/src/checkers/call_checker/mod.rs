@@ -171,6 +171,23 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.evaluate_type_for_assignability(type_id)
     }
 
+    fn evaluate_type_for_return_context_substitution(&mut self, type_id: TypeId) -> TypeId {
+        if crate::query_boundaries::state::type_environment::application_info(
+            self.state.ctx.types,
+            type_id,
+        )
+        .is_some()
+        {
+            crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                self.state.ctx.types,
+                &self.state.ctx,
+                type_id,
+            )
+        } else {
+            self.state.evaluate_type_with_env(type_id)
+        }
+    }
+
     fn expand_type_alias_application(&mut self, type_id: TypeId) -> Option<TypeId> {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type_preserving_meta};
         use crate::query_boundaries::state::type_environment::application_info;
