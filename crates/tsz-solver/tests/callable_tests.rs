@@ -194,6 +194,69 @@ fn test_callable_with_construct() {
     assert!(is_subtype_of(&interner, source, target));
 }
 
+// A `new (...) => T` construct-signature *type literal* (no nominal class
+// symbol) compares its parameters strictly (contravariantly), exactly like a
+// call-signature literal — not with constructor bivariance. `tsc` reserves
+// constructor-parameter bivariance for class-derived constructor functions
+// (`typeof Class`). See issue #14859.
+#[test]
+fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
+    let interner = TypeInterner::new();
+    let obj = interner.object(vec![]);
+    let one = interner.literal_number(1.0);
+
+    // source: new (x: 1) => {}
+    let narrow = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: one,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: obj,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // target: new (x: number) => {}
+    let wide = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: obj,
+            type_predicate: None,
+            is_method: false,
+        }],
+        properties: vec![],
+        ..Default::default()
+    });
+
+    // `new (x: 1) => {}` is NOT assignable to `new (x: number) => {}` under
+    // strict (contravariant) parameter comparison: the wider target supplies a
+    // `number` argument the narrow `1` parameter cannot accept.
+    assert!(!is_subtype_of(&interner, narrow, wide));
+    // The contravariant-OK direction stays assignable.
+    assert!(is_subtype_of(&interner, wide, narrow));
+}
+
 #[test]
 fn test_callable_covariant_return() {
     let interner = TypeInterner::new();

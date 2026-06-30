@@ -1695,8 +1695,11 @@ fn test_variance_triple_nested_contravariance() {
 }
 
 #[test]
-fn test_variance_constructor_param_bivariant() {
-    // Construct signatures use bivariant parameter checking (like methods).
+fn test_variance_construct_signature_literal_param_contravariant() {
+    // A `new (...) => T` construct-signature *type literal* (no nominal class
+    // symbol) compares its parameters strictly (contravariantly), exactly like a
+    // call-signature literal. Only class-derived constructor functions
+    // (`typeof Class`) get constructor-parameter bivariance — see issue #14859.
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1752,9 +1755,11 @@ fn test_variance_constructor_param_bivariant() {
         number_index: None,
     });
 
-    // Both directions work (bivariant for construct signatures)
+    // Contravariant parameters: a wider parameter is assignable to a narrower
+    // one (the target's `string` argument is accepted by the source's
+    // `string | number` parameter), but not the reverse.
     assert!(checker.is_subtype_of(ctor_wide, ctor_narrow));
-    assert!(checker.is_subtype_of(ctor_narrow, ctor_wide));
+    assert!(!checker.is_subtype_of(ctor_narrow, ctor_wide));
 }
 
 #[test]
