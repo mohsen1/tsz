@@ -1071,6 +1071,15 @@ pub fn instantiate_type_cached(
         if new_obj == obj && new_idx == idx {
             return type_id;
         }
+        if let Some(db) = query_db
+            && super::flags::inst_resolver_rereduce_enabled()
+            && !crate::visitor::contains_type_parameters(interner, new_obj)
+            && !crate::visitor::contains_type_parameters(interner, new_idx)
+            && (index_access_operand_needs_resolver(interner, new_obj)
+                || index_access_operand_needs_resolver(interner, new_idx))
+        {
+            return db.evaluate_index_access(new_obj, new_idx);
+        }
         return interner.index_access(new_obj, new_idx);
     }
     // Concrete identity short-circuit — no cache key construction needed. This
@@ -1759,33 +1768,6 @@ fn defer_lazy_default_conditional_enabled() -> bool {
     *ON.get_or_init(|| {
         !std::env::var("TSZ_DISABLE_DEFER_LAZY_DEFAULT_CONDITIONAL").is_ok_and(|v| v == "1")
     })
-}
-
-/// #14345 dormant resolver-aware re-reduce of instantiation-time deferred
-/// index-access / conditional leaks (default OFF; byte-parity when OFF).
-///
-/// When `TSZ_INST_RESOLVER_REREDUCE=1`, the instantiator keeps the
-/// resolver-aware `QueryDatabase` it was handed (instead of nulling it in
-/// `with_query_db`) and, at the two deferred-leak sites
-/// (`instantiate_index_access` and `instantiate_conditional`), re-runs the
-/// reduction through that resolver once the base/check became concrete (no
-/// type parameters remain). This resolves the cross-arena `Lazy(DefId)` base
-/// of an `URItoKind[URI]` index — e.g. fp-ts `Kind<TypeLambda, ...>` — to its
-/// alias instead of returning a structurally-detached deferred form.
-///
-/// The flag is OFF by default and the OFF path is the literal pre-existing
-/// code, so default-pipeline behavior is byte-identical. It is dormant
-/// infrastructure: with the flag ON it correctly clears the `TypeLambda` leak
-/// family but also exposes the #14344 unknown-drop family (the resolver
-/// returns alias bodies whose type-arg positions still carry the default
-/// `unknown` because the alias body was not materialized with the call's
-/// inferred arguments). Turning the flag into a default-on win requires the
-/// materialize-once stage (#14345 XL) to supply fully-substituted alias
-/// bodies before this re-reduce runs.
-pub(super) fn inst_resolver_rereduce_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TSZ_INST_RESOLVER_REREDUCE").is_ok_and(|v| v == "1"))
 }
 
 pub(super) fn maybe_evaluate_concrete_conditional(
