@@ -409,6 +409,29 @@ fn subtype_function_fresh_evaluators_use_explicit_session() {
 }
 
 #[test]
+fn subtype_reduction_cache_keeps_bct_request_boundary() {
+    let cache_rs = read_solver_source("caches/subtype_reduction_cache.rs");
+    let expression_ops_rs = read_solver_source("operations/expression_ops.rs");
+
+    assert!(
+        cache_rs.contains("pub(crate) struct SubtypeReductionOptions")
+            && cache_rs.contains("pub(crate) struct SubtypeReductionRequest")
+            && cache_rs.contains("fn from_request(request: SubtypeReductionRequest<'_>)")
+            && cache_rs.contains("request.options.mode_bits()")
+            && cache_rs.contains("MODE_NOMINAL_HIERARCHY_RESOLUTION")
+            && !cache_rs.contains("pub fn build("),
+        "subtype-reduction cache identity must be derived from a typed request/options boundary"
+    );
+    assert!(
+        expression_ops_rs.contains("SubtypeReductionRequest::new")
+            && expression_ops_rs.contains(".with_nominal_hierarchy_resolution(resolver.is_some())")
+            && expression_ops_rs.contains(".cache_key()")
+            && !expression_ops_rs.contains("SubtypeReductionKey::build("),
+        "BCT subtype reduction must consume the request-owned cache key instead of packing caller-local mode bits"
+    );
+}
+
+#[test]
 fn narrowing_engine_keeps_request_stage_boundary() {
     let mod_rs = read_solver_source("narrowing/mod.rs");
     let request_rs = read_solver_source("narrowing/request.rs");
