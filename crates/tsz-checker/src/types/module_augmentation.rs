@@ -483,28 +483,25 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         for augmentation in self.get_module_augmentation_declarations(module_spec, name) {
-            let arena = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
-            let Some(node) = arena.get(augmentation.node) else {
+            let arena_ref = augmentation.arena.as_deref().unwrap_or(self.ctx.arena);
+            let Some(node) = arena_ref.get(augmentation.node) else {
                 continue;
             };
 
             match node.kind {
-                syntax_kind_ext::VARIABLE_DECLARATION => {
-                    let Some(decl) = arena.get_variable_declaration(node) else {
-                        continue;
-                    };
-                    if decl.type_annotation.is_some() && std::ptr::eq(arena, self.ctx.arena) {
-                        let type_id = self.get_type_of_node(decl.type_annotation);
-                        if type_id != TypeId::ERROR && type_id != TypeId::UNKNOWN {
-                            return Some(type_id);
-                        }
-                    }
-                    return Some(TypeId::ANY);
-                }
-                syntax_kind_ext::FUNCTION_DECLARATION
+                syntax_kind_ext::VARIABLE_DECLARATION
+                | syntax_kind_ext::FUNCTION_DECLARATION
                 | syntax_kind_ext::CLASS_DECLARATION
                 | syntax_kind_ext::ENUM_DECLARATION => {
-                    return Some(TypeId::ANY);
+                    // Resolve the declared type against the augmentation's own
+                    // arena/binder (#14853). The declaration may live in a
+                    // foreign arena (the augmenting file) while we are checking
+                    // the consumer, so a plain `get_type_of_node` against the
+                    // current arena would misread the node — delegate instead.
+                    return Some(
+                        self.augmentation_export_declaration_type(augmentation.node, arena_ref)
+                            .unwrap_or(TypeId::ANY),
+                    );
                 }
                 _ => {}
             }

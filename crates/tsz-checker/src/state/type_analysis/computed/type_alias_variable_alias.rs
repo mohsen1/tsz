@@ -1784,7 +1784,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Module augmentations can introduce named exports that don't appear
-                // in the base module export table. Treat those names as resolvable.
+                // in the base module export table. Resolve the augmentation export's
+                // declared value type against its own arena/binder (#14853). A new
+                // `const`/`function`/`class`/`enum` export added by an augmentation
+                // (including a cross-file one) otherwise collapsed to `any`, dropping
+                // every assignability error against it. Type-only augmentation exports
+                // (interface/type alias) keep the `any` + member-merge fallback below.
+                if let Some(aug_value_type) =
+                    self.module_augmentation_value_type(module_name, export_name)
+                {
+                    return (aug_value_type, Vec::new());
+                }
                 if self
                     .ctx
                     .binder
