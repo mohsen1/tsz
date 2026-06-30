@@ -6,6 +6,22 @@ use crate::types::{
 };
 use tsz_common::Atom;
 
+const MAX_MAPPED_SURFACE_OPTIONAL_DEPTH: u8 = 8;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MappedSurfaceOptionalDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn mapped_surface_optional_depth_state(depth: u8) -> MappedSurfaceOptionalDepthState {
+    if depth >= MAX_MAPPED_SURFACE_OPTIONAL_DEPTH {
+        MappedSurfaceOptionalDepthState::LimitExceeded
+    } else {
+        MappedSurfaceOptionalDepthState::Continue
+    }
+}
+
 /// Return the public declaration surface for an inferred mapped type whose
 /// source is a constrained type parameter.
 ///
@@ -86,9 +102,10 @@ fn mapped_surface_with_optional_undefined_inner(
     surface: TypeId,
     depth: u8,
 ) -> TypeId {
-    if depth >= 8 {
-        return surface;
-    };
+    match mapped_surface_optional_depth_state(depth) {
+        MappedSurfaceOptionalDepthState::Continue => {}
+        MappedSurfaceOptionalDepthState::LimitExceeded => return surface,
+    }
 
     let Some(type_data) = db.lookup(surface) else {
         return surface;
@@ -352,4 +369,69 @@ fn number_wrapper_rank(db: &dyn TypeDatabase, name: Atom) -> Option<usize> {
     ])
     .iter()
     .position(|candidate| db.resolve_atom_ref(name).as_ref() == *candidate)
+}
+
+#[cfg(test)]
+mod mapped_surface_optional_depth_state_tests {
+    use super::{
+        MAX_MAPPED_SURFACE_OPTIONAL_DEPTH, MappedSurfaceOptionalDepthState,
+        mapped_surface_optional_depth_state, mapped_surface_with_optional_undefined_inner,
+    };
+    use crate::construction::TypeInterner;
+    use crate::types::{PropertyInfo, TypeData, TypeId};
+
+    #[test]
+    fn optional_surface_depth_allows_below_cap() {
+        assert_eq!(
+            mapped_surface_optional_depth_state(MAX_MAPPED_SURFACE_OPTIONAL_DEPTH - 1),
+            MappedSurfaceOptionalDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn optional_surface_depth_limits_at_cap() {
+        assert_eq!(
+            mapped_surface_optional_depth_state(MAX_MAPPED_SURFACE_OPTIONAL_DEPTH),
+            MappedSurfaceOptionalDepthState::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn optional_surface_depth_cap_preserves_surface() {
+        let db = TypeInterner::new();
+        let prop = db.intern_string("value");
+        let surface = db.object(vec![PropertyInfo::opt(prop, TypeId::NUMBER)]);
+
+        let limited = mapped_surface_with_optional_undefined_inner(
+            &db,
+            surface,
+            MAX_MAPPED_SURFACE_OPTIONAL_DEPTH,
+        );
+
+        assert_eq!(limited, surface);
+    }
+
+    #[test]
+    fn optional_surface_below_depth_cap_adds_undefined() {
+        let db = TypeInterner::new();
+        let prop = db.intern_string("value");
+        let surface = db.object(vec![PropertyInfo::opt(prop, TypeId::NUMBER)]);
+
+        let mapped = mapped_surface_with_optional_undefined_inner(
+            &db,
+            surface,
+            MAX_MAPPED_SURFACE_OPTIONAL_DEPTH - 1,
+        );
+
+        let Some(TypeData::Object(shape_id)) = db.lookup(mapped) else {
+            panic!("expected mapped object surface");
+        };
+        let shape = db.object_shape(shape_id);
+        let value = shape
+            .properties
+            .iter()
+            .find(|property| property.name == prop)
+            .expect("optional property must survive");
+        assert!(super::super::type_includes_undefined(&db, value.type_id));
+    }
 }

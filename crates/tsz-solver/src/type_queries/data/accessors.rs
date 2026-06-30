@@ -15,6 +15,22 @@ use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tsz_common::Atom;
 
+const MAX_READONLY_UNWRAP_DEPTH: usize = 100;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadonlyUnwrapDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn readonly_unwrap_depth_state(next_depth: usize) -> ReadonlyUnwrapDepthState {
+    if next_depth > MAX_READONLY_UNWRAP_DEPTH {
+        ReadonlyUnwrapDepthState::LimitExceeded
+    } else {
+        ReadonlyUnwrapDepthState::Continue
+    }
+}
+
 /// Decompose a substitution type into its `(base_type, constraint)` pair.
 ///
 /// Returns `None` when `type_id` is not a `TypeData::Substitution`.
@@ -1591,14 +1607,73 @@ pub fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     }
     let mut current = type_id;
     let mut depth = 0;
-    const MAX_DEPTH: usize = 100;
 
     while let Some(TypeData::ReadonlyType(inner)) = db.lookup(current) {
-        depth += 1;
-        if depth > MAX_DEPTH {
-            break;
+        let next_depth = depth + 1;
+        match readonly_unwrap_depth_state(next_depth) {
+            ReadonlyUnwrapDepthState::Continue => {
+                depth = next_depth;
+                current = inner;
+            }
+            ReadonlyUnwrapDepthState::LimitExceeded => break,
         }
-        current = inner;
     }
     current
+}
+
+#[cfg(test)]
+mod readonly_unwrap_depth_state_tests {
+    use super::{
+        MAX_READONLY_UNWRAP_DEPTH, ReadonlyUnwrapDepthState, readonly_unwrap_depth_state,
+        unwrap_readonly_deep,
+    };
+    use crate::construction::TypeInterner;
+    use crate::types::{TypeData, TypeId};
+
+    #[test]
+    fn readonly_unwrap_depth_allows_exact_cap() {
+        assert_eq!(
+            readonly_unwrap_depth_state(MAX_READONLY_UNWRAP_DEPTH),
+            ReadonlyUnwrapDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn readonly_unwrap_depth_limits_past_cap() {
+        assert_eq!(
+            readonly_unwrap_depth_state(MAX_READONLY_UNWRAP_DEPTH + 1),
+            ReadonlyUnwrapDepthState::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn unwrap_readonly_deep_unwraps_exact_cap() {
+        let interner = TypeInterner::new();
+        let nested = raw_readonly_chain(&interner, TypeId::STRING, MAX_READONLY_UNWRAP_DEPTH);
+
+        assert_eq!(unwrap_readonly_deep(&interner, nested), TypeId::STRING);
+    }
+
+    #[test]
+    fn unwrap_readonly_deep_preserves_wrapper_past_cap() {
+        let interner = TypeInterner::new();
+        let nested = raw_readonly_chain(&interner, TypeId::STRING, MAX_READONLY_UNWRAP_DEPTH + 1);
+        let unwrapped = unwrap_readonly_deep(&interner, nested);
+
+        assert!(
+            matches!(
+                interner.lookup(unwrapped),
+                Some(TypeData::ReadonlyType(inner)) if inner == TypeId::STRING
+            ),
+            "past the cap, the previous opaque wrapper is preserved"
+        );
+    }
+
+    fn raw_readonly_chain(interner: &TypeInterner, inner: TypeId, depth: usize) -> TypeId {
+        let mut current = inner;
+        for _ in 0..depth {
+            current = interner.readonly_type_fresh_for_test(current);
+        }
+        current
+    }
 }

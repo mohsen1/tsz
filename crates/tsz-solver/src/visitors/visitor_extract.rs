@@ -26,6 +26,22 @@ thread_local! {
     static EXTRACT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> = const { RefCell::new(None) };
 }
 
+const MAX_ERROR_APPLICATION_BASE_DEPTH: u8 = 16;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ApplicationBaseErrorWalkState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn application_base_error_walk_state(depth: u8) -> ApplicationBaseErrorWalkState {
+    if depth >= MAX_ERROR_APPLICATION_BASE_DEPTH {
+        ApplicationBaseErrorWalkState::LimitExceeded
+    } else {
+        ApplicationBaseErrorWalkState::Continue
+    }
+}
+
 #[inline]
 fn with_extract_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
     let mut visited = EXTRACT_VISITED_POOL
@@ -895,8 +911,13 @@ fn error_type_through_application_bases(
     treat_unresolved_as_error: bool,
 ) -> bool {
     let mut current = type_id;
+    let mut depth = 0;
 
-    for _ in 0..16 {
+    loop {
+        match application_base_error_walk_state(depth) {
+            ApplicationBaseErrorWalkState::Continue => {}
+            ApplicationBaseErrorWalkState::LimitExceeded => return false,
+        }
         if current == TypeId::ERROR {
             return true;
         }
@@ -906,12 +927,11 @@ fn error_type_through_application_bases(
             Some(TypeData::UnresolvedTypeName(_)) => return treat_unresolved_as_error,
             Some(TypeData::Application(app_id)) => {
                 current = types.type_application(app_id).base;
+                depth += 1;
             }
             _ => return false,
         }
     }
-
-    false
 }
 
 /// Extract the function shape id if this is a function type.
@@ -923,6 +943,64 @@ pub fn function_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Fu
         TypeData::Function(shape_id) => Some(*shape_id),
         _ => None,
     })
+}
+
+#[cfg(test)]
+mod application_base_error_walk_state_tests {
+    use super::{
+        ApplicationBaseErrorWalkState, MAX_ERROR_APPLICATION_BASE_DEPTH,
+        application_base_error_walk_state, is_error_type,
+    };
+    use crate::construction::TypeInterner;
+    use crate::types::TypeId;
+
+    #[test]
+    fn application_base_error_walk_allows_below_cap() {
+        assert_eq!(
+            application_base_error_walk_state(MAX_ERROR_APPLICATION_BASE_DEPTH - 1),
+            ApplicationBaseErrorWalkState::Continue
+        );
+    }
+
+    #[test]
+    fn application_base_error_walk_limits_at_cap() {
+        assert_eq!(
+            application_base_error_walk_state(MAX_ERROR_APPLICATION_BASE_DEPTH),
+            ApplicationBaseErrorWalkState::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn error_base_before_cap_is_detected() {
+        let interner = TypeInterner::new();
+        let ty = application_base_chain(
+            &interner,
+            TypeId::ERROR,
+            usize::from(MAX_ERROR_APPLICATION_BASE_DEPTH - 1),
+        );
+
+        assert!(is_error_type(&interner, ty));
+    }
+
+    #[test]
+    fn error_base_at_cap_preserves_false_fallback() {
+        let interner = TypeInterner::new();
+        let ty = application_base_chain(
+            &interner,
+            TypeId::ERROR,
+            usize::from(MAX_ERROR_APPLICATION_BASE_DEPTH),
+        );
+
+        assert!(!is_error_type(&interner, ty));
+    }
+
+    fn application_base_chain(interner: &TypeInterner, base: TypeId, depth: usize) -> TypeId {
+        let mut current = base;
+        for _ in 0..depth {
+            current = interner.application(current, Vec::new());
+        }
+        current
+    }
 }
 
 /// Extract the callable shape id if this is a callable type.
