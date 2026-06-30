@@ -58,23 +58,19 @@ impl<'a> CheckerState<'a> {
         tsz_common::perf_counters::record_delegate_cross_arena_miss();
         let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
 
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+        let mut checker = Box::new(CheckerState::with_parent_cache(
             arena,
             delegate_binder,
             self.ctx.types,
             delegate_file_name,
             self.ctx.compiler_options.clone(),
             self,
-            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
         ));
         // Transient delegation child: diagnostics are discarded at teardown.
         checker.ctx.diagnostics_discarded = true;
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
-        );
+        self.ctx.copy_symbol_file_targets_to(&mut checker.ctx);
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
 
         let result = checker.augmentation_node_value_type_local(node);
