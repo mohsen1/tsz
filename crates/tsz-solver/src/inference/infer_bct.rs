@@ -21,6 +21,7 @@ use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 use super::InferenceContext;
+use super::infer_bct_guard_state as guard_state;
 
 impl<'a> InferenceContext<'a> {
     // =========================================================================
@@ -498,8 +499,9 @@ impl<'a> InferenceContext<'a> {
         // Walk up the extends chain from source
         let mut current = source;
         let mut depth = 0;
-        while depth < 20 {
-            // guard against infinite loops
+        while let guard_state::ExtendsWalkState::Continue =
+            guard_state::extends_walk_state(depth, 20)
+        {
             if let Some(base) = self.get_extends_clause(current) {
                 if base == target {
                     return true;
@@ -531,9 +533,9 @@ impl<'a> InferenceContext<'a> {
 
     /// Recursively collect the class hierarchy for a type.
     fn collect_class_hierarchy(&self, ty: TypeId, hierarchy: &mut Vec<TypeId>) {
-        // Prevent infinite recursion
-        if hierarchy.contains(&ty) {
-            return;
+        match guard_state::class_hierarchy_visit_state(!hierarchy.contains(&ty)) {
+            guard_state::ClassHierarchyVisitState::Entered => {}
+            guard_state::ClassHierarchyVisitState::AlreadyVisited => return,
         }
 
         // Add current type to hierarchy
@@ -612,11 +614,15 @@ impl<'a> InferenceContext<'a> {
         // cached result exists. Treat those in-progress cycles as tentatively
         // true, matching the solver's recursive-type handling and avoiding
         // stack overflows on deeply nested signature comparisons.
-        {
+        let active_pair_state = {
             let active = self.active_subtype_checks.borrow();
-            if active.contains(&key) || active.contains(&(target, source)) {
-                return true;
-            }
+            guard_state::active_subtype_pair_state(
+                active.contains(&key) || active.contains(&(target, source)),
+            )
+        };
+        match active_pair_state {
+            guard_state::ActiveSubtypePairState::Entered => {}
+            guard_state::ActiveSubtypePairState::AlreadyActive { fallback } => return fallback,
         }
 
         self.active_subtype_checks.borrow_mut().insert(key);
