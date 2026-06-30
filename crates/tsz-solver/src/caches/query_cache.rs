@@ -42,6 +42,8 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+mod resolver;
+
 // Element access (indexed access) of an optional property includes `undefined`
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
@@ -361,6 +363,10 @@ impl<'a> QueryCache<'a> {
     pub const fn with_definition_store(mut self, store: &'a crate::def::DefinitionStore) -> Self {
         self.definition_store = Some(store);
         self
+    }
+
+    pub(crate) const fn has_definition_store(&self) -> bool {
+        self.definition_store.is_some()
     }
 
     pub fn clear(&self) {
@@ -1286,100 +1292,6 @@ impl TypeDatabase for QueryCache<'_> {
     }
 }
 
-/// Implement `TypeResolver` for `QueryCache` with noop resolution.
-///
-/// `QueryCache` doesn't have access to the Binder or type environment,
-/// so it cannot resolve symbol references or `DefIds`. Only `resolve_ref`
-/// (required) is explicitly implemented; all other resolution methods
-/// inherit the trait's default `None`/`false` behavior. The three boxed/array
-/// methods delegate to the underlying interner.
-impl TypeResolver for QueryCache<'_> {
-    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        None
-    }
-
-    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
-        self.interner.get_boxed_type(kind)
-    }
-
-    fn get_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_array_base_type()
-    }
-
-    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        self.interner.get_array_base_type_params()
-    }
-
-    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_readonly_array_base_type()
-    }
-
-    /// Resolve `DefId` identity/metadata through the attached `DefinitionStore`.
-    ///
-    /// The `QueryCache` is the `&dyn QueryDatabase` resolver used by generic-call
-    /// inference. Historically it had NO `DefinitionStore`, so these `DefId`-keyed
-    /// resolver methods silently returned trait defaults in inference: the
-    /// `shared_application_base_def_id` cross-arena base unification (via
-    /// `defs_are_equivalent` declaration-site/`SymbolId` equality) and the
-    /// variance-computation paths that depend on them were dead, leaving
-    /// cross-arena generic-call inference unable to pair type-args (issue #14344;
-    /// the fp-ts `unknown`-widening FP family). Wiring the store re-enables them.
-    ///
-    /// Gated behind `TSZ_XARENA_BASE_DECL` (default-OFF) so flag-OFF stays
-    /// byte-parity with the historical store-less behavior until the change is
-    /// proven on full conformance.
-    fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
-        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
-            return None;
-        }
-        self.definition_store?.get_symbol_id(def_id).map(SymbolId)
-    }
-
-    fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
-        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
-            return None;
-        }
-        self.definition_store?.get_kind(def_id)
-    }
-
-    fn get_def_name(&self, def_id: DefId) -> Option<tsz_common::interner::Atom> {
-        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
-            return None;
-        }
-        self.definition_store?.get(def_id).map(|info| info.name)
-    }
-
-    fn canonical_def_id(&self, def_id: DefId) -> DefId {
-        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
-            return def_id;
-        }
-        self.definition_store
-            .map_or(def_id, |store| store.canonical_def_id(def_id))
-    }
-
-    fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
-        if a == b {
-            return true;
-        }
-        if !crate::inference::xarena_base::xarena_base_decl_enabled() {
-            return false;
-        }
-        let Some(store) = self.definition_store else {
-            return false;
-        };
-        store.defs_have_same_decl_site(a, b)
-            || store
-                .get_symbol_id(a)
-                .zip(store.get_symbol_id(b))
-                .is_some_and(|(sa, sb)| sa == sb)
-    }
-
-    fn canonical_decl_site_def_for_symbol(&self, symbol: SymbolRef) -> Option<DefId> {
-        self.definition_store?
-            .canonical_decl_site_def_for_symbol(symbol.0)
-    }
-}
-
 impl CollectPropertiesResultCache for QueryCache<'_> {
     fn collect_properties_result_cached(
         &self,
@@ -1583,6 +1495,9 @@ impl QueryDatabase for QueryCache<'_> {
     /// Cache-aware override of the `QueryDatabase` default, which would build a
     /// `query_db = None` evaluator and bypass the cross-call instantiation cache.
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
+        if let Some(mut evaluator) = self.store_backed_rereduce_evaluator() {
+            return evaluator.evaluate_conditional(cond);
+        }
         self.query_backed_evaluator().evaluate_conditional(cond)
     }
 
@@ -1592,16 +1507,26 @@ impl QueryDatabase for QueryCache<'_> {
         index_type: TypeId,
         no_unchecked_indexed_access: bool,
     ) -> TypeId {
+        if let Some(mut evaluator) = self.store_backed_rereduce_evaluator() {
+            evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
+            return evaluator.evaluate_index_access(object_type, index_type);
+        }
         let mut evaluator = self.query_backed_evaluator();
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.evaluate_index_access(object_type, index_type)
     }
 
     fn evaluate_keyof(&self, operand: TypeId) -> TypeId {
+        if let Some(mut evaluator) = self.store_backed_rereduce_evaluator() {
+            return evaluator.evaluate_keyof(operand);
+        }
         self.query_backed_evaluator().evaluate_keyof(operand)
     }
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
+        if let Some(mut evaluator) = self.store_backed_rereduce_evaluator() {
+            return evaluator.evaluate_mapped(mapped);
+        }
         self.query_backed_evaluator().evaluate_mapped(mapped)
     }
 

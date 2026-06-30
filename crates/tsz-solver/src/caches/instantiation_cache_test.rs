@@ -21,6 +21,8 @@
 //! / subtype-checker paths thread `self.query_db`.
 
 use crate::caches::query_cache::QueryCache;
+use crate::def::{DefId, DefinitionStore};
+use crate::instantiation::instantiate::flags::InstResolverRereduceFlagGuard;
 use crate::instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, ProjectInstCacheDisabledGuard, TypeSubstitution,
     instantiate_generic_cached, instantiate_type, instantiate_type_cached,
@@ -1221,5 +1223,48 @@ fn query_database_evaluate_entry_points_preserve_results() {
         QueryDatabase::evaluate_mapped(&qc, &mapped),
         crate::evaluation::evaluate::evaluate_mapped(&interner, &mapped),
         "evaluate_mapped override must match the uncached result",
+    );
+}
+
+#[test]
+fn query_database_store_backed_rereduce_resolves_published_lazy_body() {
+    use crate::caches::db::QueryDatabase;
+
+    let interner = TypeInterner::new();
+    let store = DefinitionStore::new();
+    let def_id = DefId(43_451);
+    let body = object_with(&interner, TypeId::STRING);
+    let lazy = interner.lazy(def_id);
+    let key_a = interner.literal_string("a");
+    store.set_body(def_id, body);
+
+    let qc = QueryCache::new(&interner).with_definition_store(&store);
+    let deferred_index = interner.index_access(lazy, key_a);
+    let deferred_keyof = interner.keyof(lazy);
+
+    {
+        let _flag = InstResolverRereduceFlagGuard::new(false);
+        assert_eq!(
+            QueryDatabase::evaluate_index_access(&qc, lazy, key_a),
+            deferred_index,
+            "flag-off QueryCache evaluation must keep the historical resolver-less deferred index",
+        );
+        assert_eq!(
+            QueryDatabase::evaluate_keyof(&qc, lazy),
+            deferred_keyof,
+            "flag-off QueryCache evaluation must keep the historical resolver-less deferred keyof",
+        );
+    }
+
+    let _flag = InstResolverRereduceFlagGuard::new(true);
+    assert_eq!(
+        QueryDatabase::evaluate_index_access(&qc, lazy, key_a),
+        TypeId::STRING,
+        "flag-on store-backed QueryCache evaluation must resolve the published Lazy body",
+    );
+    assert_eq!(
+        QueryDatabase::evaluate_keyof(&qc, lazy),
+        key_a,
+        "flag-on store-backed QueryCache evaluation must compute keys from the published body",
     );
 }
