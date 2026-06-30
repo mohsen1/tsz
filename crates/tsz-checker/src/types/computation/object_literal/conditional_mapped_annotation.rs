@@ -1,13 +1,33 @@
 //! Object-literal annotation predicates for conditional mapped types.
 
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-type TypeNodeVisitSet = rustc_hash::FxHashSet<(usize, NodeIndex)>;
+type AnnotationTypeNodeSet = rustc_hash::FxHashSet<(usize, NodeIndex)>;
+
+#[derive(Default)]
+struct ObjectLiteralAnnotationWalkState {
+    type_nodes: AnnotationTypeNodeSet,
+    aliases: rustc_hash::FxHashSet<SymbolId>,
+}
+
+impl ObjectLiteralAnnotationWalkState {
+    fn enter_type_node(&mut self, arena: &NodeArena, type_node_idx: NodeIndex) -> bool {
+        !type_node_idx.is_none()
+            && self
+                .type_nodes
+                .insert((arena as *const NodeArena as usize, type_node_idx))
+    }
+
+    fn enter_alias(&mut self, sym_id: SymbolId) -> bool {
+        self.aliases.insert(sym_id)
+    }
+}
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn object_literal_property_has_conditional_mapped_annotation(
@@ -17,13 +37,11 @@ impl<'a> CheckerState<'a> {
         self.object_literal_property_annotation_satisfies(
             property_elem_idx,
             |checker, type_node| {
-                let mut visited_type_nodes = rustc_hash::FxHashSet::default();
-                let mut visited_symbols = rustc_hash::FxHashSet::default();
+                let mut walk_state = ObjectLiteralAnnotationWalkState::default();
                 checker.type_node_contains_conditional_mapped_value_template(
                     checker.ctx.arena,
                     type_node,
-                    &mut visited_type_nodes,
-                    &mut visited_symbols,
+                    &mut walk_state,
                 )
             },
         )
@@ -36,13 +54,11 @@ impl<'a> CheckerState<'a> {
         self.object_literal_property_annotation_satisfies(
             property_elem_idx,
             |checker, type_node| {
-                let mut visited_type_nodes = rustc_hash::FxHashSet::default();
-                let mut visited_symbols = rustc_hash::FxHashSet::default();
+                let mut walk_state = ObjectLiteralAnnotationWalkState::default();
                 checker.type_node_contains_conditional(
                     checker.ctx.arena,
                     type_node,
-                    &mut visited_type_nodes,
-                    &mut visited_symbols,
+                    &mut walk_state,
                 )
             },
         )
@@ -55,13 +71,11 @@ impl<'a> CheckerState<'a> {
         self.object_literal_property_annotation_satisfies(
             property_elem_idx,
             |checker, type_node| {
-                let mut visited_type_nodes = rustc_hash::FxHashSet::default();
-                let mut visited_symbols = rustc_hash::FxHashSet::default();
+                let mut walk_state = ObjectLiteralAnnotationWalkState::default();
                 checker.type_node_contains_mapped_value_template(
                     checker.ctx.arena,
                     type_node,
-                    &mut visited_type_nodes,
-                    &mut visited_symbols,
+                    &mut walk_state,
                 )
             },
         )
@@ -98,12 +112,9 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node_idx: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
-        if type_node_idx.is_none()
-            || !visited_type_nodes.insert((arena as *const NodeArena as usize, type_node_idx))
-        {
+        if !walk_state.enter_type_node(arena, type_node_idx) {
             return false;
         }
         let Some(type_node) = arena.get(type_node_idx) else {
@@ -112,12 +123,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(mapped) = arena.get_mapped_type(type_node)
             && mapped.type_node.is_some()
-            && self.type_node_contains_conditional(
-                arena,
-                mapped.type_node,
-                visited_type_nodes,
-                visited_symbols,
-            )
+            && self.type_node_contains_conditional(arena, mapped.type_node, walk_state)
         {
             return true;
         }
@@ -126,18 +132,14 @@ impl<'a> CheckerState<'a> {
             if self.type_reference_alias_body_contains_conditional_mapped_value_template(
                 arena,
                 type_ref.type_name,
-                visited_type_nodes,
-                visited_symbols,
+                walk_state,
             ) {
                 return true;
             }
             if let Some(args) = &type_ref.type_arguments
                 && args.nodes.iter().copied().any(|arg| {
                     self.type_node_contains_conditional_mapped_value_template(
-                        arena,
-                        arg,
-                        visited_type_nodes,
-                        visited_symbols,
+                        arena, arg, walk_state,
                     )
                 })
             {
@@ -147,10 +149,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.type_node_children_contain_conditional_mapped_value_template(
-            arena,
-            type_node,
-            visited_type_nodes,
-            visited_symbols,
+            arena, type_node, walk_state,
         )
     }
 
@@ -158,12 +157,9 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node_idx: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
-        if type_node_idx.is_none()
-            || !visited_type_nodes.insert((arena as *const NodeArena as usize, type_node_idx))
-        {
+        if !walk_state.enter_type_node(arena, type_node_idx) {
             return false;
         }
         let Some(type_node) = arena.get(type_node_idx) else {
@@ -178,32 +174,25 @@ impl<'a> CheckerState<'a> {
             && self.type_reference_alias_body_contains_conditional(
                 arena,
                 type_ref.type_name,
-                visited_type_nodes,
-                visited_symbols,
+                walk_state,
             )
         {
             return true;
         }
 
-        self.type_node_children_contain_conditional(
-            arena,
-            type_node,
-            visited_type_nodes,
-            visited_symbols,
-        )
+        self.type_node_children_contain_conditional(arena, type_node, walk_state)
     }
 
     fn type_reference_alias_body_contains_conditional_mapped_value_template(
         &self,
         arena: &NodeArena,
         type_name: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
         let Some(sym_id) = self.type_reference_alias_symbol(arena, type_name) else {
             return false;
         };
-        if !visited_symbols.insert(sym_id) {
+        if !walk_state.enter_alias(sym_id) {
             return false;
         }
 
@@ -211,8 +200,7 @@ impl<'a> CheckerState<'a> {
             self.type_node_contains_conditional_mapped_value_template(
                 decl_arena,
                 alias_type_node,
-                visited_type_nodes,
-                visited_symbols,
+                walk_state,
             )
         })
     }
@@ -221,16 +209,10 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node: &Node,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
         let mut visit = |child| {
-            self.type_node_contains_conditional_mapped_value_template(
-                arena,
-                child,
-                visited_type_nodes,
-                visited_symbols,
-            )
+            self.type_node_contains_conditional_mapped_value_template(arena, child, walk_state)
         };
 
         if let Some(composite) = arena.get_composite_type(type_node) {
@@ -262,12 +244,9 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node_idx: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
-        if type_node_idx.is_none()
-            || !visited_type_nodes.insert((arena as *const NodeArena as usize, type_node_idx))
-        {
+        if !walk_state.enter_type_node(arena, type_node_idx) {
             return false;
         }
         let Some(type_node) = arena.get(type_node_idx) else {
@@ -285,19 +264,13 @@ impl<'a> CheckerState<'a> {
             if self.type_reference_alias_body_contains_mapped_value_template(
                 arena,
                 type_ref.type_name,
-                visited_type_nodes,
-                visited_symbols,
+                walk_state,
             ) {
                 return true;
             }
             if let Some(args) = &type_ref.type_arguments
                 && args.nodes.iter().copied().any(|arg| {
-                    self.type_node_contains_mapped_value_template(
-                        arena,
-                        arg,
-                        visited_type_nodes,
-                        visited_symbols,
-                    )
+                    self.type_node_contains_mapped_value_template(arena, arg, walk_state)
                 })
             {
                 return true;
@@ -305,35 +278,24 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.type_node_children_contain_mapped_value_template(
-            arena,
-            type_node,
-            visited_type_nodes,
-            visited_symbols,
-        )
+        self.type_node_children_contain_mapped_value_template(arena, type_node, walk_state)
     }
 
     fn type_reference_alias_body_contains_mapped_value_template(
         &self,
         arena: &NodeArena,
         type_name: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
         let Some(sym_id) = self.type_reference_alias_symbol(arena, type_name) else {
             return false;
         };
-        if !visited_symbols.insert(sym_id) {
+        if !walk_state.enter_alias(sym_id) {
             return false;
         }
 
         self.any_type_alias_declaration_body(sym_id, |decl_arena, alias_type_node| {
-            self.type_node_contains_mapped_value_template(
-                decl_arena,
-                alias_type_node,
-                visited_type_nodes,
-                visited_symbols,
-            )
+            self.type_node_contains_mapped_value_template(decl_arena, alias_type_node, walk_state)
         })
     }
 
@@ -341,17 +303,10 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node: &Node,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
-        let mut visit = |child| {
-            self.type_node_contains_mapped_value_template(
-                arena,
-                child,
-                visited_type_nodes,
-                visited_symbols,
-            )
-        };
+        let mut visit =
+            |child| self.type_node_contains_mapped_value_template(arena, child, walk_state);
 
         if let Some(composite) = arena.get_composite_type(type_node) {
             return composite.types.nodes.iter().copied().any(visit);
@@ -382,23 +337,17 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_name: NodeIndex,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
         let Some(sym_id) = self.type_reference_alias_symbol(arena, type_name) else {
             return false;
         };
-        if !visited_symbols.insert(sym_id) {
+        if !walk_state.enter_alias(sym_id) {
             return false;
         }
 
         self.any_type_alias_declaration_body(sym_id, |decl_arena, alias_type_node| {
-            self.type_node_contains_conditional(
-                decl_arena,
-                alias_type_node,
-                visited_type_nodes,
-                visited_symbols,
-            )
+            self.type_node_contains_conditional(decl_arena, alias_type_node, walk_state)
         })
     }
 
@@ -406,12 +355,9 @@ impl<'a> CheckerState<'a> {
         &self,
         arena: &NodeArena,
         type_node: &Node,
-        visited_type_nodes: &mut TypeNodeVisitSet,
-        visited_symbols: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+        walk_state: &mut ObjectLiteralAnnotationWalkState,
     ) -> bool {
-        let mut visit = |child| {
-            self.type_node_contains_conditional(arena, child, visited_type_nodes, visited_symbols)
-        };
+        let mut visit = |child| self.type_node_contains_conditional(arena, child, walk_state);
 
         if let Some(type_ref) = arena.get_type_ref(type_node)
             && let Some(args) = &type_ref.type_arguments
