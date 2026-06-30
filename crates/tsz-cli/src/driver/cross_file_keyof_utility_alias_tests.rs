@@ -29,7 +29,6 @@ use tsz_common::diagnostics::Diagnostic;
 /// Write `files` plus a strict `noEmit` tsconfig into a fresh temp dir and run
 /// the project-mode compile. Returns every emitted diagnostic.
 fn compile_project(files: &[(&str, &str)]) -> Vec<Diagnostic> {
-    let dir = tempfile::tempdir().expect("temp dir");
     let names: Vec<String> = files
         .iter()
         .map(|(name, _)| format!("\"{name}\""))
@@ -38,9 +37,19 @@ fn compile_project(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         r#"{{ "compilerOptions": {{ "strict": true, "target": "es2022", "lib": ["es2022"], "module": "node16", "moduleResolution": "node16", "skipLibCheck": true, "noEmit": true }}, "files": [{}] }}"#,
         names.join(", ")
     );
+
+    compile_project_with_tsconfig(files, &tsconfig)
+}
+
+fn compile_project_with_tsconfig(files: &[(&str, &str)], tsconfig: &str) -> Vec<Diagnostic> {
+    let dir = tempfile::tempdir().expect("temp dir");
     fs::write(dir.path().join("tsconfig.json"), tsconfig).expect("write tsconfig");
     for (name, source) in files {
-        fs::write(dir.path().join(name), source).expect("write source");
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent dirs");
+        }
+        fs::write(path, source).expect("write source");
     }
 
     let project = dir.path().to_string_lossy().to_string();
@@ -58,12 +67,13 @@ fn compile_project(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         .diagnostics
 }
 
-/// TS2345 (argument not assignable) / TS2344 (does not satisfy constraint) —
-/// the family a collapsed `keyof Omit<…>` key set produces.
+/// TS2322/TS2345 (not assignable) / TS2344 (does not satisfy constraint) —
+/// the family a collapsed `keyof Omit<…>` or `Extract<keyof T, string>` key set
+/// produces.
 fn constraint_errors(diags: &[Diagnostic]) -> Vec<(u32, String)> {
     diags
         .iter()
-        .filter(|d| d.code == 2345 || d.code == 2344)
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2344)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
 }
@@ -156,6 +166,242 @@ export const f: Fields = 'name';
         constraint_errors(&diags),
         Vec::<(u32, String)>::new(),
         "Exclude<keyof Entity, 'tag'> must include 'name'"
+    );
+}
+
+// A declaration-file alias `Path<T> = Extract<keyof T, string>` is the reduced
+// form used by `react-hook-form` in the Next project row. It must accept concrete
+// string-literal keys when consumed from a source file under `skipLibCheck`.
+#[test]
+fn value_position_extract_keyof_imported_declaration_alias() {
+    let diags = compile_project(&[
+        (
+            "forms.d.ts",
+            r#"
+export type Path<T> = Extract<keyof T, string>;
+export function useForm<T>(options: { defaultValues: T }): {
+    register(field: Path<T>): Record<string, unknown>;
+    watch(): T;
+};
+"#,
+        ),
+        (
+            "domain.ts",
+            r#"
+export interface IssueInput {
+    title: string;
+    priority: "low" | "medium" | "high";
+    area?: string;
+    estimate?: number;
+}
+"#,
+        ),
+        (
+            "consumer.ts",
+            r#"
+import type { Path } from "./forms";
+import { useForm } from "./forms";
+import type { IssueInput } from "./domain";
+
+export const fields: Path<IssueInput>[] = ["title", "priority", "area", "estimate"];
+const form = useForm<IssueInput>({
+    defaultValues: { title: "a", priority: "low", area: "parser", estimate: 1 },
+});
+form.register(fields[0]);
+"#,
+        ),
+    ]);
+    assert_eq!(
+        constraint_errors(&diags),
+        Vec::<(u32, String)>::new(),
+        "Path<IssueInput> from a declaration-file Extract<keyof T, string> alias must include the interface keys"
+    );
+}
+
+#[test]
+fn value_position_extract_keyof_node_package_declaration_alias() {
+    let tsconfig = r#"{
+        "compilerOptions": {
+            "strict": true,
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "skipLibCheck": true,
+            "noEmit": true,
+            "jsx": "preserve",
+            "types": []
+        },
+        "include": ["consumer.tsx", "domain.ts"],
+        "exclude": ["node_modules"]
+    }"#;
+    let diags = compile_project_with_tsconfig(
+        &[
+            (
+                "node_modules/react-hook-form/package.json",
+                r#"{
+                    "name": "react-hook-form",
+                    "types": "./tsz-benchmark.d.ts",
+                    "exports": {
+                        ".": {
+                            "types": "./tsz-benchmark.d.ts",
+                            "default": "./tsz-benchmark.js"
+                        }
+                    }
+                }"#,
+            ),
+            (
+                "node_modules/react-hook-form/tsz-benchmark.d.ts",
+                r#"
+export type Path<T> = Extract<keyof T, string>;
+export function useForm<T>(options: { defaultValues: T }): {
+    register(field: Path<T>): Record<string, unknown>;
+    watch(): T;
+};
+"#,
+            ),
+            (
+                "node_modules/react-hook-form/tsz-benchmark.js",
+                "export {};",
+            ),
+            (
+                "domain.ts",
+                r#"
+export type IssueInput = {
+    title: string;
+    priority: "low" | "medium" | "high";
+    area: "parser" | "binder" | "type-checker" | "emitter";
+    estimate: number;
+};
+"#,
+            ),
+            (
+                "consumer.tsx",
+                r#"
+import { useForm, type Path } from "react-hook-form";
+import type { IssueInput } from "./domain";
+
+export function IssueForm() {
+    const fields: Path<IssueInput>[] = ["title", "priority", "area", "estimate"];
+    const { register } = useForm<IssueInput>({
+        defaultValues: { title: "a", priority: "low", area: "parser", estimate: 1 },
+    });
+    fields.map((field) => register(field));
+    return fields;
+}
+"#,
+            ),
+        ],
+        tsconfig,
+    );
+    assert_eq!(
+        constraint_errors(&diags),
+        Vec::<(u32, String)>::new(),
+        "Path<IssueInput> from a package declaration alias must include the interface keys"
+    );
+}
+
+#[test]
+fn imported_tsx_component_does_not_leak_delegated_path_diagnostic() {
+    let tsconfig = r#"{
+        "compilerOptions": {
+            "strict": true,
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "skipLibCheck": true,
+            "noEmit": true,
+            "jsx": "preserve",
+            "types": []
+        },
+        "include": ["types/**/*.d.ts", "app/page.tsx", "components/dashboard.tsx", "lib/domain.ts"],
+        "exclude": ["node_modules"]
+    }"#;
+    let diags = compile_project_with_tsconfig(
+        &[
+            (
+                "node_modules/react-hook-form/package.json",
+                r#"{
+                    "name": "react-hook-form",
+                    "types": "./tsz-benchmark.d.ts",
+                    "exports": {
+                        ".": {
+                            "types": "./tsz-benchmark.d.ts",
+                            "default": "./tsz-benchmark.js"
+                        }
+                    }
+                }"#,
+            ),
+            (
+                "node_modules/react-hook-form/tsz-benchmark.d.ts",
+                r#"
+export type Path<T> = Extract<keyof T, string>;
+export function useForm<T>(options: { defaultValues: T }): {
+    register(field: Path<T>): Record<string, unknown>;
+    watch(): T;
+};
+"#,
+            ),
+            (
+                "node_modules/react-hook-form/tsz-benchmark.js",
+                "export {};",
+            ),
+            (
+                "types/jsx.d.ts",
+                r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        form: unknown;
+        input: unknown;
+    }
+}
+"#,
+            ),
+            (
+                "lib/domain.ts",
+                r#"
+export type IssueInput = {
+    title: string;
+    priority: "low" | "medium" | "high";
+    area: "parser" | "binder" | "type-checker" | "emitter";
+    estimate: number;
+};
+export type IssueDraft = IssueInput & { id: string };
+export function issueDefaults(draft: IssueDraft): IssueInput {
+    return draft;
+}
+"#,
+            ),
+            (
+                "components/dashboard.tsx",
+                r#"
+import { useForm, type Path } from "react-hook-form";
+import type { IssueDraft, IssueInput } from "../lib/domain";
+import { issueDefaults } from "../lib/domain";
+
+export function IssueForm({ draft }: { draft: IssueDraft }) {
+    const fields: Path<IssueInput>[] = ["title", "priority", "area", "estimate"];
+    const { register } = useForm<IssueInput>({ defaultValues: issueDefaults(draft) });
+    return <form>{fields.map((field) => <input {...register(field)} />)}</form>;
+}
+"#,
+            ),
+            (
+                "app/page.tsx",
+                r#"
+import { IssueForm } from "../components/dashboard";
+export const value = IssueForm;
+"#,
+            ),
+        ],
+        tsconfig,
+    );
+    assert_eq!(
+        constraint_errors(&diags),
+        Vec::<(u32, String)>::new(),
+        "cross-file TSX export materialization must not leak a delegated Path<IssueInput> diagnostic"
     );
 }
 

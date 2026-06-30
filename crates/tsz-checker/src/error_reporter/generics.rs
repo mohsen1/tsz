@@ -535,6 +535,17 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn is_primitive_key_union_type(&self, type_id: TypeId) -> bool {
+        let Some(list_id) = common::union_list_id(self.ctx.types, type_id) else {
+            return false;
+        };
+        let members = self.ctx.types.type_list(list_id);
+        members.len() == 3
+            && members.contains(&TypeId::STRING)
+            && members.contains(&TypeId::NUMBER)
+            && members.contains(&TypeId::SYMBOL)
+    }
+
     /// Report TS2344: Type does not satisfy constraint.
     pub fn error_type_constraint_not_satisfied(
         &mut self,
@@ -653,8 +664,17 @@ impl<'a> CheckerState<'a> {
                 type_str = format!("typeof {type_str}");
             }
         }
-        let constraint_str = constraint_display
-            .unwrap_or_else(|| self.format_type_diagnostic_constraint(display_constraint));
+        let constraint_str = constraint_display.unwrap_or_else(|| {
+            let should_expand_keyof_any_constraint =
+                common::lazy_def_id(self.ctx.types, display_constraint).is_none()
+                    && self.is_primitive_key_union_type(ready_constraint);
+            let constraint_for_display = if should_expand_keyof_any_constraint {
+                ready_constraint
+            } else {
+                display_constraint
+            };
+            self.format_type_diagnostic_constraint(constraint_for_display)
+        });
         // Structural check: `IndexedAccess(M, K)` where K is a bounded
         // type parameter satisfies any constraint that ALL of M's property
         // value types are assignable to. tsc's `getApparentType` reduces

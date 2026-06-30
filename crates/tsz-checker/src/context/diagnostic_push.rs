@@ -245,6 +245,9 @@ impl<'a> CheckerContext<'a> {
     ///   exported anonymous class expression emits its own diagnostic at the owning
     ///   variable/function name span.
     pub fn push_diagnostic(&mut self, diag: Diagnostic) {
+        if self.diagnostics_discarded {
+            return;
+        }
         if self.reconcile_name_resolution_precedence(diag.start, diag.code) {
             return;
         }

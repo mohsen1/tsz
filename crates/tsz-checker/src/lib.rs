@@ -883,6 +883,9 @@ mod cross_file_unresolved_alias_union_simplification_tests;
 #[path = "tests/cross_module_generic_interface_heritage_tests.rs"]
 mod cross_module_generic_interface_heritage_tests;
 #[cfg(test)]
+#[path = "tests/declaration_extract_key_path_tests.rs"]
+mod declaration_extract_key_path_tests;
+#[cfg(test)]
 #[path = "tests/destructured_binding_narrowed_property_tests.rs"]
 mod destructured_binding_narrowed_property_tests;
 #[cfg(test)]

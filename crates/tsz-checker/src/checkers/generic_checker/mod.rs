@@ -1225,7 +1225,7 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[
                     &self.format_type_diagnostic(type_arg),
-                    &self.format_type_diagnostic(constraint),
+                    &self.format_type_diagnostic_constraint(constraint),
                 ],
             );
             return false;
