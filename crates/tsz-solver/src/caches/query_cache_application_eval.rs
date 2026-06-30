@@ -60,6 +60,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
 
     fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
         application_eval_index::invalidate_for_def(
+            self.interner,
             &self.application_eval_dependency_index,
             &self.application_eval_cache,
             def_id,
@@ -67,7 +68,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
         {
-            shared.invalidate_application_eval_cache_for_def(def_id);
+            shared.invalidate_application_eval_cache_for_def(self.interner, def_id);
         }
     }
 

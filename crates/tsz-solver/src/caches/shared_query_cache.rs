@@ -101,7 +101,10 @@ impl SharedQueryCache {
         key: ApplicationEvalCacheKey,
         result: TypeId,
     ) {
-        self.application_eval_cache.insert(key.clone(), result);
+        let old_result = self.application_eval_cache.insert(key.clone(), result);
+        if let Some(old_result) = old_result {
+            self.remove_application_eval_dependencies(interner, &key, old_result);
+        }
         for def_id in collect_application_eval_entry_def_dependencies(interner, &key, result) {
             self.application_eval_dependency_index
                 .entry(def_id)
@@ -110,12 +113,37 @@ impl SharedQueryCache {
         }
     }
 
-    pub(super) fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
+    pub(super) fn invalidate_application_eval_cache_for_def(
+        &self,
+        interner: &TypeInterner,
+        def_id: DefId,
+    ) {
         let Some((_, keys)) = self.application_eval_dependency_index.remove(&def_id) else {
             return;
         };
         for key in keys {
-            self.application_eval_cache.remove(&key);
+            if let Some((_, old_result)) = self.application_eval_cache.remove(&key) {
+                self.remove_application_eval_dependencies(interner, &key, old_result);
+            }
+        }
+    }
+
+    fn remove_application_eval_dependencies(
+        &self,
+        interner: &TypeInterner,
+        key: &ApplicationEvalCacheKey,
+        result: TypeId,
+    ) {
+        for def_id in collect_application_eval_entry_def_dependencies(interner, key, result) {
+            let Some(mut keys) = self.application_eval_dependency_index.get_mut(&def_id) else {
+                continue;
+            };
+            keys.remove(key);
+            let empty = keys.is_empty();
+            drop(keys);
+            if empty {
+                self.application_eval_dependency_index.remove(&def_id);
+            }
         }
     }
 
