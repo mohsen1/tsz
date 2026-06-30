@@ -27,10 +27,12 @@
 //! - **Checker**: Extracts `TypeGuard` from AST nodes (WHERE)
 //! - **Solver**: Applies `TypeGuard` to types (WHAT)
 
+mod cache;
 mod compound;
 mod core;
 mod discriminants;
 mod generation_memo;
+mod guard;
 mod instanceof;
 mod property;
 pub mod request;
@@ -46,11 +48,12 @@ pub use utils::{
 // Re-export public items from compound narrowing
 pub use self::compound::NullishFilter;
 
+pub use self::cache::{CachedPropertyType, NarrowingCache, OptionalPropertyChainKey};
+
+pub use self::guard::{GuardSense, TypeGuard, TypeofKind};
+
 // Re-export all public items from core implementation
-pub use self::core::{
-    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
-    NarrowingResult, OptionalPropertyChainKey, TypeGuard, TypeofKind,
-};
+pub use self::core::{DiscriminantInfo, NarrowingContext, NarrowingResult};
 pub(crate) use self::core::{union_excluding_one, union_or_single_preserve};
 pub use self::request::{NarrowingOptions, NarrowingRequest};
 

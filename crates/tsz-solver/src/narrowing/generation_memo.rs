@@ -60,6 +60,14 @@ where
         self.entries.values().map(SmallVec::len).sum()
     }
 
+    pub fn key_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn max_slots_per_key(&self) -> usize {
+        self.entries.values().map(SmallVec::len).max().unwrap_or(0)
+    }
+
     pub fn estimated_size_bytes(&self, bucket_overhead: usize) -> usize {
         let mut size = self.entries.capacity()
             * (bucket_overhead

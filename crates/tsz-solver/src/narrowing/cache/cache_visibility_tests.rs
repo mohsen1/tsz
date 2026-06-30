@@ -1,5 +1,11 @@
 use super::*;
 use crate::intern::TypeInterner;
+use crate::narrowing::generation_memo::MAX_GENERATIONS_PER_NARROWING_KEY;
+use crate::narrowing::guard::{GuardSense, TypeGuard};
+use crate::narrowing::request::{NarrowingOptions, NarrowingRequest};
+use crate::types::TypeId;
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 #[test]
 fn narrowing_cache_statistics_report_entries_and_size() {
@@ -124,6 +130,11 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     }
 
     let stats = cache.cache_statistics();
+    assert_eq!(stats.generation_stamped_cache_keys, 6);
+    assert_eq!(
+        stats.max_generation_slots_per_cache_key,
+        MAX_GENERATIONS_PER_NARROWING_KEY
+    );
     assert_eq!(
         stats.narrowed_property_cache_entries,
         MAX_GENERATIONS_PER_NARROWING_KEY
@@ -159,4 +170,86 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
         cache.narrow_type_cache.borrow().get(&request_key, 7),
         Some(TypeId::STRING)
     );
+}
+
+#[test]
+fn exclusion_frame_clears_request_fuel_on_outer_drop() {
+    let cache = NarrowingCache::new();
+    cache.set_narrow_excluding_budget(3);
+
+    {
+        let _frame = cache.enter_exclusion_frame();
+        assert_eq!(cache.narrow_excluding_depth.get(), 1);
+        assert_eq!(cache.narrow_excluding_fuel.get(), 3);
+        assert!(cache.charge_exclusion_work());
+        assert_eq!(cache.narrow_excluding_fuel.get(), 2);
+    }
+
+    assert_eq!(cache.narrow_excluding_depth.get(), 0);
+    assert_eq!(cache.narrow_excluding_fuel.get(), 0);
+}
+
+#[test]
+fn nested_exclusion_frames_share_fuel_until_outer_drop() {
+    let cache = NarrowingCache::new();
+    cache.set_narrow_excluding_budget(5);
+
+    {
+        let _outer = cache.enter_exclusion_frame();
+        assert!(cache.charge_exclusion_work());
+        assert_eq!(cache.narrow_excluding_fuel.get(), 4);
+
+        {
+            let _inner = cache.enter_exclusion_frame();
+            assert_eq!(cache.narrow_excluding_depth.get(), 2);
+            assert_eq!(cache.narrow_excluding_fuel.get(), 4);
+            assert!(cache.charge_exclusion_work());
+            assert_eq!(cache.narrow_excluding_fuel.get(), 3);
+        }
+
+        assert_eq!(cache.narrow_excluding_depth.get(), 1);
+        assert_eq!(cache.narrow_excluding_fuel.get(), 3);
+    }
+
+    assert_eq!(cache.narrow_excluding_depth.get(), 0);
+    assert_eq!(cache.narrow_excluding_fuel.get(), 0);
+}
+
+#[test]
+fn resolve_visit_guard_releases_key_on_drop() {
+    let cache = NarrowingCache::new();
+
+    {
+        let guard = cache
+            .resolve_visit_guard(TypeId::STRING)
+            .expect("first visit should enter");
+        assert!(cache.resolve_visiting.borrow().contains(&TypeId::STRING));
+        assert!(cache.resolve_visit_guard(TypeId::STRING).is_none());
+        drop(guard);
+    }
+
+    assert!(!cache.resolve_visiting.borrow().contains(&TypeId::STRING));
+    assert!(cache.resolve_visit_guard(TypeId::STRING).is_some());
+}
+
+#[test]
+fn narrow_excluding_visit_guard_releases_key_on_drop() {
+    let cache = NarrowingCache::new();
+    let key = NarrowExcludingKey {
+        source: TypeId::STRING,
+        excluded: TypeId::NUMBER,
+        resolver_generation: 7,
+    };
+
+    {
+        let guard = cache
+            .narrow_excluding_visit_guard(key)
+            .expect("first visit should enter");
+        assert!(cache.narrow_excluding_visiting.borrow().contains(&key));
+        assert!(cache.narrow_excluding_visit_guard(key).is_none());
+        drop(guard);
+    }
+
+    assert!(!cache.narrow_excluding_visiting.borrow().contains(&key));
+    assert!(cache.narrow_excluding_visit_guard(key).is_some());
 }
