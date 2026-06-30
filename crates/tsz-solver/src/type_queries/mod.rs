@@ -32,6 +32,7 @@ pub mod classifiers;
 pub mod conditional_infer_alias;
 mod core;
 pub mod data;
+mod declaration_walk_guard_state;
 pub mod declaration_walks;
 pub mod extended;
 pub mod extended_constructors;
