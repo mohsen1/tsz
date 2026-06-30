@@ -326,11 +326,12 @@ impl<'a> CheckerState<'a> {
                                 qn.left,
                             );
                             match self.resolve_name_structured(&req) {
-                                Err(_failure) => {
+                                Err(failure) => {
                                     // Emit TS2503 (cannot find namespace) with suggestions
-                                    self.error_cannot_find_namespace_with_suggestion(
+                                    self.error_cannot_find_namespace_with_precomputed_eligibility(
                                         left_name.as_str(),
                                         qn.left,
+                                        failure.suggestions_eligible,
                                     );
                                 }
                                 Ok(_) => {

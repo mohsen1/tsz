@@ -1621,6 +1621,30 @@ impl<'a> CheckerState<'a> {
         name: &str,
         idx: NodeIndex,
     ) {
+        self.error_cannot_find_namespace_with_suggestion_and_eligibility(name, idx, None);
+    }
+
+    /// Report TS2503/TS2833 after the name-resolution boundary has already
+    /// charged the spelling-suggestion cap for this namespace lookup.
+    pub(crate) fn error_cannot_find_namespace_with_precomputed_eligibility(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        suggestions_eligible: bool,
+    ) {
+        self.error_cannot_find_namespace_with_suggestion_and_eligibility(
+            name,
+            idx,
+            Some(suggestions_eligible),
+        );
+    }
+
+    fn error_cannot_find_namespace_with_suggestion_and_eligibility(
+        &mut self,
+        name: &str,
+        idx: NodeIndex,
+        suggestions_eligible: Option<bool>,
+    ) {
         use crate::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
 
@@ -1637,14 +1661,40 @@ impl<'a> CheckerState<'a> {
         // Route through the shared memoized scan gateway (keyed by node +
         // `NAMESPACE` meaning) so a missing namespace re-resolved during
         // demand-driven evaluation does not re-run the full-symbol-universe
-        // walk on every revisit (issue #14349). An empty result means no
-        // close-enough namespace candidate, so we fall through to plain TS2503 —
-        // identical to the previous `Option`-returning direct call.
-        if !self.has_syntax_parse_errors()
-            && let Some(suggestion) = self
-                .scan_similar_identifiers_for_meaning(name, idx, symbol_flags::NAMESPACE)
-                .first()
-        {
+        // walk on every revisit (issue #14349). Namespace diagnostics also
+        // share the same spelling-suggestion cap as ordinary missing names; a
+        // capped site records an empty scan result so revisits stay capped.
+        let suggestion_meaning = symbol_flags::NAMESPACE;
+        let cache_key = (idx, suggestion_meaning);
+        let cached_suggestions = self
+            .ctx
+            .name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow()
+            .get(&cache_key)
+            .cloned();
+        let suggestions = if let Some(suggestions) = cached_suggestions {
+            suggestions
+        } else {
+            let eligible =
+                suggestions_eligible.unwrap_or_else(|| self.suggestion_scan_eligible(name, idx));
+            if eligible {
+                self.scan_similar_identifiers_for_meaning(name, idx, suggestion_meaning)
+            } else {
+                self.ctx
+                    .name_resolution_diagnostics
+                    .suggestion_scan_cache
+                    .borrow_mut()
+                    .insert(cache_key, Vec::new());
+                Vec::new()
+            }
+        };
+        self.ctx
+            .name_resolution_diagnostics
+            .reported_nodes
+            .insert(idx);
+
+        if let Some(suggestion) = suggestions.first() {
             self.error_at_node_msg(
                 idx,
                 diagnostic_codes::CANNOT_FIND_NAMESPACE_DID_YOU_MEAN,
