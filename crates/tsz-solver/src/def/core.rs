@@ -15,6 +15,7 @@
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 mod content_addressed;
 mod cross_file_cache;
+mod decl_identity;
 mod definition_info;
 mod observability;
 mod semantic_construction;
@@ -23,6 +24,7 @@ mod symbol_registration;
 
 pub use content_addressed::ContentAddressedDefIds;
 use cross_file_cache::CrossFileQueryCache;
+use decl_identity::DeclSiteKey;
 pub use observability::StoreStatistics;
 use state_flags::DefStateFlags;
 
@@ -381,6 +383,8 @@ pub struct DefinitionStore {
     /// Replaces the O(N) linear scan in the previous `find_def_by_symbol`.
     symbol_only_index: DefDashMap<u32, DefId>,
 
+    decl_site_to_def: DefDashMap<DeclSiteKey, DefId>,
+
     /// Generation-keyed immutable snapshot of `symbol_only_index`.
     ///
     /// Project checking warms many per-file checker contexts from the same shared
@@ -566,6 +570,7 @@ impl DefinitionStore {
                 id_capacity,
                 Default::default(),
             ),
+            decl_site_to_def: DefDashMap::with_capacity_and_hasher(id_capacity, FxBuildHasher),
             symbol_mappings_snapshot: Mutex::new(None),
             symbol_mappings_log: Mutex::new(Vec::new()),
             symbol_mappings_log_snapshot: Mutex::new(None),
@@ -678,6 +683,7 @@ impl DefinitionStore {
         // Populate name_to_defs index for name-based lookups.
         self.name_to_defs.entry(info.name).or_default().push(id);
 
+        self.register_decl_site_identity(id, &info);
         self.definitions.insert(id, info);
         self.bump_generation();
         id
@@ -770,37 +776,6 @@ impl DefinitionStore {
     /// in the `DefinitionInfo` (which is shared via `DefinitionStore`).
     pub fn get_symbol_id(&self, id: DefId) -> Option<u32> {
         self.definitions.get(&id).and_then(|info| info.symbol_id)
-    }
-
-    fn decl_site_key(&self, id: DefId) -> Option<(DefKind, Atom, usize, u32, u32)> {
-        let info = self.definitions.get(&id)?;
-        let file_id = info.file_id?;
-        if file_id == Self::NON_PROGRAM_FILE_SENTINEL {
-            return None;
-        }
-        let (span_start, _) = info.span?;
-        Some((
-            info.kind,
-            info.name,
-            info.type_params.len(),
-            file_id,
-            span_start,
-        ))
-    }
-
-    /// Whether two `DefId`s came from the same binder declaration site.
-    ///
-    /// This is deliberately narrower than [`Self::canonical_def_id`]: it does
-    /// not chase aliases or pick a representative. It only recognizes the same
-    /// `(file, declaration-node)` entry re-created in different arenas, with
-    /// kind/name/arity guards to avoid treating unrelated declarations as one.
-    pub fn defs_have_same_decl_site(&self, a: DefId, b: DefId) -> bool {
-        if a == b {
-            return true;
-        }
-        self.decl_site_key(a)
-            .zip(self.decl_site_key(b))
-            .is_some_and(|(a_key, b_key)| a_key == b_key)
     }
 
     /// Check if a `DefId` exists.
@@ -1002,6 +977,9 @@ impl DefinitionStore {
             {
                 return;
             }
+            let old_decl_site_key = params
+                .as_ref()
+                .and_then(|_| Self::decl_site_key_for_info(&entry));
             if let Some(params) = params {
                 if entry.kind == DefKind::TypeAlias
                     && entry.type_params.is_empty()
@@ -1013,6 +991,9 @@ impl DefinitionStore {
                 entry.type_params = params;
             }
             entry.body = Some(body);
+            if old_decl_site_key.is_some() {
+                self.refresh_decl_site_identity(id, old_decl_site_key, &entry);
+            }
 
             // Maintain body_to_alias index for non-generic type aliases.
             if entry.kind == DefKind::TypeAlias && entry.type_params.is_empty() {
@@ -1238,6 +1219,7 @@ impl DefinitionStore {
     /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
     pub fn set_type_params(&self, id: DefId, params: Vec<TypeParamInfo>) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
+            let old_decl_site_key = Self::decl_site_key_for_info(&entry);
             // If this is a TypeAlias that previously had empty type_params,
             // set_body may have created a body_to_alias entry. Now that we
             // know it's generic, remove that entry to avoid incorrect alias
@@ -1250,6 +1232,7 @@ impl DefinitionStore {
                 self.body_to_alias.remove(&body);
             }
             entry.type_params = params;
+            self.refresh_decl_site_identity(id, old_decl_site_key, &entry);
             self.bump_generation();
         }
     }
@@ -1306,6 +1289,7 @@ impl DefinitionStore {
         self.type_param_for_decl_node.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
+        self.decl_site_to_def.clear();
         self.invalidate_symbol_mappings_log();
         self.body_to_alias.clear();
         self.state_flags.clear_alias_bodies();
@@ -1894,6 +1878,7 @@ impl DefinitionStore {
         for def_id in &def_ids {
             // Remove from the main store and capture the info for index cleanup.
             if let Some((_, info)) = self.definitions.remove(def_id) {
+                self.remove_decl_site_identity_if_points_to(*def_id, &info);
                 // Clean up symbol indices.
                 if let Some(sym_id) = info.symbol_id {
                     if let Some(fid) = info.file_id {

@@ -1373,6 +1373,11 @@ impl TypeResolver for QueryCache<'_> {
                 .zip(store.get_symbol_id(b))
                 .is_some_and(|(sa, sb)| sa == sb)
     }
+
+    fn canonical_decl_site_def_for_symbol(&self, symbol: SymbolRef) -> Option<DefId> {
+        self.definition_store?
+            .canonical_decl_site_def_for_symbol(symbol.0)
+    }
 }
 
 impl CollectPropertiesResultCache for QueryCache<'_> {

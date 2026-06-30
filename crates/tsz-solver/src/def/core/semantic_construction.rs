@@ -275,6 +275,7 @@ impl DefinitionStore {
         }
 
         for (def_id, info) in def_infos {
+            store.register_decl_site_identity(def_id, &info);
             store.definitions.insert(def_id, info);
         }
         for (symbol_id, def_id) in symbol_only_index {
