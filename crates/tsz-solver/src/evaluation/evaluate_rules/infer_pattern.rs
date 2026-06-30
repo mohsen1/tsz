@@ -20,7 +20,10 @@ use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use super::infer_pattern_guard_state::InferPatternVisitDecision;
 use super::infer_substitutor::InferSubstitutor;
+
+pub(crate) use super::infer_pattern_guard_state::InferPatternGuardState as InferPatternVisited;
 
 /// Selects how co-located `infer T` candidates are merged when the same name
 /// gets distinct bindings from multiple structurally adjacent positions.
@@ -42,55 +45,6 @@ enum CoLocatedMerge {
 struct InferContainsWalk {
     visited: FxHashMap<TypeId, bool>,
     tainted: bool,
-}
-
-/// Logged visited set for one infer-pattern match operation.
-///
-/// The match algorithm needs branch-local rollback for speculative alias
-/// recovery, but cloning the full visited set on every branch is a hot-path
-/// multiplier for recursive conditional utilities. Logging only successful
-/// inserts lets a branch checkpoint and roll back the entries it added while
-/// preserving the parent walk's cycle guard.
-#[derive(Default)]
-pub(crate) struct InferPatternVisited {
-    entries: FxHashSet<(TypeId, TypeId)>,
-    insert_log: Vec<(TypeId, TypeId)>,
-}
-
-impl InferPatternVisited {
-    #[inline]
-    fn insert(&mut self, pair: (TypeId, TypeId)) -> bool {
-        if self.entries.insert(pair) {
-            self.insert_log.push(pair);
-            true
-        } else {
-            false
-        }
-    }
-
-    #[inline]
-    pub(super) fn contains(&self, pair: &(TypeId, TypeId)) -> bool {
-        self.entries.contains(pair)
-    }
-
-    #[inline]
-    pub(super) const fn checkpoint(&self) -> usize {
-        self.insert_log.len()
-    }
-
-    pub(super) fn rollback_to(&mut self, checkpoint: usize) {
-        while self.insert_log.len() > checkpoint {
-            if let Some(pair) = self.insert_log.pop() {
-                self.entries.remove(&pair);
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn clear(&mut self) {
-        self.entries.clear();
-        self.insert_log.clear();
-    }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
@@ -1587,8 +1541,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Cheap cycle guard first: re-entering the same `(source, pattern)` pair
         // is a converged cycle and returns before any further work or stack
         // growth.
-        if !visited.insert((source, pattern)) {
-            return true;
+        match visited.enter_pair(source, pattern) {
+            InferPatternVisitDecision::Entered => {}
+            InferPatternVisitDecision::RevisitedConverged => return true,
         }
         // Defensive stack growth for the structural infer-match recursion in
         // `match_infer_pattern_inner`. That recursion is already logically
