@@ -182,8 +182,6 @@ impl<'a> CheckerState<'a> {
         if array_type_params.is_empty() {
             array_type_params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
         }
-        let array_type_params_for_flow = array_type_params.clone();
-
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.
         // Unreferenced symbols are still resolved lazily through normal lookup paths.
@@ -423,81 +421,35 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.register_this_type_def_id(def_id);
         }
 
-        // 2. Populate the environment
-        // We use try_borrow_mut to be safe, though at this stage it should be free
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            if let Some(ty) = string_type {
-                env.set_boxed_type(IntrinsicKind::String, ty);
-            }
-            if let Some(ty) = number_type {
-                env.set_boxed_type(IntrinsicKind::Number, ty);
-            }
-            if let Some(ty) = boolean_type {
-                env.set_boxed_type(IntrinsicKind::Boolean, ty);
-            }
-            if let Some(ty) = symbol_type {
-                env.set_boxed_type(IntrinsicKind::Symbol, ty);
-            }
-            if let Some(ty) = bigint_type {
-                env.set_boxed_type(IntrinsicKind::Bigint, ty);
-            }
-            if let Some(ty) = object_type {
-                env.set_boxed_type(IntrinsicKind::Object, ty);
-            }
-            if let Some(ty) = function_type {
-                env.set_boxed_type(IntrinsicKind::Function, ty);
-            }
-            // Register the Array<T> interface for array property resolution
-            // Use the instance type (Array<T> interface), not the constructor (Callable)
-            if let Some(ty) = array_instance_type {
-                env.set_array_base_type(ty, array_type_params);
-            }
-
-            // 3. Register DefId mappings for non-generic boxed types in the env too.
-            // When user code writes `a: Function`, the type annotation creates a
-            // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
-            // uses TypeEnvironment as its resolver, which resolves Lazy types via
-            // def_types. Without this registration, Lazy(DefId) for Function can't
-            // be resolved, causing false TS2345/TS2322 errors.
-            for &(kind, ty, def_id) in &boxed_def_entries {
-                env.insert_def(def_id, ty);
-                env.register_boxed_def_id(kind, def_id);
+        for &(kind, ty) in &[
+            (IntrinsicKind::String, string_type),
+            (IntrinsicKind::Number, number_type),
+            (IntrinsicKind::Boolean, boolean_type),
+            (IntrinsicKind::Symbol, symbol_type),
+            (IntrinsicKind::Bigint, bigint_type),
+            (IntrinsicKind::Object, object_type),
+            (IntrinsicKind::Function, function_type),
+        ] {
+            if let Some(ty) = ty {
+                self.ctx.register_boxed_type_in_envs(kind, ty);
             }
         }
 
-        // Mirror boxed DefId mappings into type_environment (flow-analyzer env)
-        // so both environments stay consistent for narrowing contexts.
-        if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
-            for &(kind, ty, def_id) in &boxed_def_entries {
-                env.insert_def(def_id, ty);
-                env.register_boxed_def_id(kind, def_id);
-            }
+        // Register the Array<T> interface for array property resolution. Use
+        // the instance type (Array<T> interface), not the constructor (Callable).
+        if let Some(ty) = array_instance_type {
+            self.ctx
+                .register_array_base_type_in_envs(ty, array_type_params);
+        }
 
-            // Mirror boxed types and array base type into flow-analyzer env
-            if let Some(ty) = string_type {
-                env.set_boxed_type(IntrinsicKind::String, ty);
-            }
-            if let Some(ty) = number_type {
-                env.set_boxed_type(IntrinsicKind::Number, ty);
-            }
-            if let Some(ty) = boolean_type {
-                env.set_boxed_type(IntrinsicKind::Boolean, ty);
-            }
-            if let Some(ty) = symbol_type {
-                env.set_boxed_type(IntrinsicKind::Symbol, ty);
-            }
-            if let Some(ty) = bigint_type {
-                env.set_boxed_type(IntrinsicKind::Bigint, ty);
-            }
-            if let Some(ty) = object_type {
-                env.set_boxed_type(IntrinsicKind::Object, ty);
-            }
-            if let Some(ty) = function_type {
-                env.set_boxed_type(IntrinsicKind::Function, ty);
-            }
-            if let Some(ty) = array_instance_type {
-                env.set_array_base_type(ty, array_type_params_for_flow);
-            }
+        // Register DefId mappings for non-generic boxed types in both envs too.
+        // When user code writes `a: Function`, the type annotation creates a
+        // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
+        // uses TypeEnvironment as its resolver, which resolves Lazy types via
+        // def_types. Without this registration, Lazy(DefId) for Function can't
+        // be resolved, causing false TS2345/TS2322 errors.
+        for &(kind, ty, def_id) in &boxed_def_entries {
+            self.ctx.register_boxed_def_in_envs(kind, ty, def_id);
         }
     }
 

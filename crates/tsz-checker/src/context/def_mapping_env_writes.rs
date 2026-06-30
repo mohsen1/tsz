@@ -27,6 +27,41 @@ impl CheckerContext<'_> {
         self.register_in_envs(DeferredFlowEnvWrite::InsertTypeofValueType { symbol, value_type });
     }
 
+    /// Register the boxed interface type for a primitive in **both** type
+    /// environments through the race-safe deferral discipline.
+    pub(crate) fn register_boxed_type_in_envs(
+        &self,
+        kind: tsz_solver::IntrinsicKind,
+        type_id: TypeId,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterBoxedType { kind, type_id });
+    }
+
+    /// Register the canonical `Array<T>` base type in **both** type environments
+    /// through the race-safe deferral discipline.
+    pub(crate) fn register_array_base_type_in_envs(
+        &self,
+        type_id: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterArrayBaseType { type_id, params });
+    }
+
+    /// Register a boxed interface's `Lazy(DefId)` body and boxed-kind marker in
+    /// **both** type environments through the race-safe deferral discipline.
+    pub(crate) fn register_boxed_def_in_envs(
+        &self,
+        kind: tsz_solver::IntrinsicKind,
+        type_id: TypeId,
+        def_id: DefId,
+    ) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterBoxedDef {
+            kind,
+            type_id,
+            def_id,
+        });
+    }
+
     /// Register a `[Symbol.*]` computed property name's backing `SymbolRef` in
     /// **both** type environments through the race-safe deferral discipline.
     pub(crate) fn register_well_known_symbol_name_in_envs(

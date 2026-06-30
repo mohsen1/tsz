@@ -342,13 +342,20 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "symbol_types should use dual-env helpers for interface DefId registration"
     );
 
-    // global type registration must mirror into type_environment
+    // global type registration must use the dual-env authority for boxed
+    // globals instead of raw evaluator/flow env mutation.
     let global_src = fs::read_to_string("src/types/type_checking/global.rs")
         .expect("failed to read src/types/type_checking/global.rs for architecture guard");
-    assert!(
-        global_src.contains("type_environment.try_borrow_mut()"),
-        "global type registration must mirror boxed DefId mappings into type_environment"
-    );
+    for required in [
+        "register_boxed_type_in_envs(",
+        "register_array_base_type_in_envs(",
+        "register_boxed_def_in_envs(",
+    ] {
+        assert!(
+            global_src.contains(required),
+            "global type registration must publish boxed metadata through {required}"
+        );
+    }
 
     let queries_src = fs::read_to_string("src/types/queries/core.rs")
         .expect("failed to read src/types/queries/core.rs for architecture guard");
