@@ -32,6 +32,22 @@ pub struct InheritanceGraph {
     max_symbol_id: Cell<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MroVisitState {
+    Entered,
+    AlreadyVisited,
+}
+
+impl MroVisitState {
+    fn enter(visited: &mut FxHashSet<SymbolId>, symbol: SymbolId) -> Self {
+        if visited.insert(symbol) {
+            Self::Entered
+        } else {
+            Self::AlreadyVisited
+        }
+    }
+}
+
 impl InheritanceGraph {
     pub fn new() -> Self {
         Self {
@@ -226,8 +242,9 @@ impl InheritanceGraph {
         queue.push_back(symbol_id);
 
         while let Some(current) = queue.pop_front() {
-            if !visited.insert(current) {
-                continue;
+            match MroVisitState::enter(&mut visited, current) {
+                MroVisitState::Entered => {}
+                MroVisitState::AlreadyVisited => continue,
             }
 
             mro.push(current);

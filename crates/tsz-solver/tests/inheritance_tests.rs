@@ -86,6 +86,33 @@ fn test_multiple_inheritance() {
 }
 
 #[test]
+fn mro_visit_state_enters_first_symbol() {
+    let mut visited = FxHashSet::default();
+    let symbol = SymbolId(1);
+
+    assert_eq!(
+        MroVisitState::enter(&mut visited, symbol),
+        MroVisitState::Entered
+    );
+    assert!(visited.contains(&symbol));
+}
+
+#[test]
+fn mro_visit_state_skips_revisited_symbol() {
+    let mut visited = FxHashSet::default();
+    let symbol = SymbolId(1);
+
+    assert_eq!(
+        MroVisitState::enter(&mut visited, symbol),
+        MroVisitState::Entered
+    );
+    assert_eq!(
+        MroVisitState::enter(&mut visited, symbol),
+        MroVisitState::AlreadyVisited
+    );
+}
+
+#[test]
 fn test_common_ancestor() {
     let graph = InheritanceGraph::new();
     let a = SymbolId(1);
