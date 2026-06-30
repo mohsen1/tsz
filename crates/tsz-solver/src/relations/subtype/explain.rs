@@ -8,6 +8,7 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
+use crate::relations::subtype::explain_guard::{ExplainFuelState, ExplainRecursionEntryState};
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement,
@@ -287,23 +288,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // pathological traversals that would otherwise not terminate. On
         // terminating workloads the budget is never reached, so this is inert
         // and rendered output is byte-identical.
-        if self.explain_eval_fuel == Some(0) {
-            return Some(SubtypeFailureReason::TypeMismatch {
-                source_type: source,
-                target_type: target,
-            });
+        if let Some(reason) =
+            ExplainFuelState::from_fuel(self.explain_eval_fuel).fallback_reason(source, target)
+        {
+            return Some(reason);
         }
         let pair = (source, target);
-        match self.guard.enter(pair) {
-            crate::recursion::RecursionResult::Entered => {}
-            crate::recursion::RecursionResult::Cycle
-            | crate::recursion::RecursionResult::DepthExceeded
-            | crate::recursion::RecursionResult::IterationExceeded => {
-                return Some(SubtypeFailureReason::TypeMismatch {
-                    source_type: source,
-                    target_type: target,
-                });
-            }
+        let entry_state = ExplainRecursionEntryState::from_recursion_result(self.guard.enter(pair));
+        if let Some(reason) = entry_state.fallback_reason(source, target) {
+            return Some(reason);
         }
         let result = self.explain_failure_body(source, target);
         self.guard.leave(pair);
