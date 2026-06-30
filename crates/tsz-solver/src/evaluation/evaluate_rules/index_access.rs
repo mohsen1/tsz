@@ -806,6 +806,51 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             Some(self.evaluator.interner().union(results))
         }
     }
+
+    /// #14344 / #14345: redirect an index access against a frozen *pre-merge*
+    /// empty snapshot of a cross-file augmented interface to the merged body
+    /// published under the home `DefId`.
+    ///
+    /// The base shape that reaches this consumer carries `shape.symbol = <home
+    /// interface symbol>` but EMPTY properties (a stale pre-merge snapshot). The
+    /// resolver maps that home symbol to the home `DefId` whose `get_body` holds
+    /// the merged augmented members; this re-indexes that body for the current
+    /// `index_type`. Returns `None` (caller keeps its `undefined`/defer
+    /// behavior) when no edge is published, the merged body is not an object, or
+    /// the key is genuinely absent from the recovered body too.
+    ///
+    /// Discriminator is structural: channel membership keyed on `shape.symbol`
+    /// plus empty properties. No name/string match.
+    fn redirect_empty_augmented_base_index(
+        &mut self,
+        symbol: Option<tsz_binder::SymbolId>,
+    ) -> Option<TypeId> {
+        use crate::visitors::visitor::{object_shape_id, object_with_index_shape_id};
+
+        let symbol = symbol?;
+        let merged_body = self
+            .evaluator
+            .resolver()
+            .augmented_base_body_for_symbol(symbol.0)?;
+        // The merged body may arrive as a `Lazy`/`Application`; evaluate it to a
+        // concrete shape before re-indexing. The merged registry interface is a
+        // plain object, but accept an indexed object form defensively.
+        let evaluated = self.evaluator.evaluate(merged_body);
+        let interner = self.evaluator.interner();
+        let shape_id = object_shape_id(interner, evaluated)
+            .or_else(|| object_with_index_shape_id(interner, evaluated))?;
+        let shape = interner.object_shape(shape_id);
+        // Only redirect when the recovered body genuinely has members (the
+        // populated home def). An empty recovered body has nothing to add and
+        // must fall through to the caller's existing behavior.
+        if shape.properties.is_empty() {
+            return None;
+        }
+        let result = self
+            .evaluator
+            .evaluate_object_index(&shape.properties, self.index_type);
+        (result != TypeId::UNDEFINED).then_some(result)
+    }
 }
 
 impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
@@ -857,6 +902,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 self.evaluator
                     .evaluate_object_index(&shape.properties, self.index_type)
             });
+
+        // #14344 / #14345 redirect: a frozen *pre-merge* empty snapshot of a
+        // cross-file augmented interface (the fp-ts `URItoKindN` registry) has
+        // EMPTY properties but carries `shape.symbol = <home interface symbol>`.
+        // When the property was not found here, re-index the merged body
+        // published under the home `DefId` (default-OFF; the resolver only
+        // surfaces the edge when `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT` is ON).
+        if result == TypeId::UNDEFINED
+            && shape.properties.is_empty()
+            && let Some(redirected) = self.redirect_empty_augmented_base_index(shape.symbol)
+        {
+            return Some(self.bind_property_this(redirected));
+        }
 
         // CRITICAL FIX: If we can't find the property, but the index is generic,
         // we must defer evaluation (return None) instead of returning UNDEFINED.

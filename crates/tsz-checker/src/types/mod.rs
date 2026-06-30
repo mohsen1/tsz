@@ -9,6 +9,7 @@ pub(crate) mod function_type_signature_display;
 pub mod interface_type;
 pub mod module_augmentation;
 pub(crate) mod module_augmentation_value;
+mod module_augmentation_redirect;
 pub mod object_type;
 mod property_access_augmentation;
 pub(crate) mod property_access_helpers;

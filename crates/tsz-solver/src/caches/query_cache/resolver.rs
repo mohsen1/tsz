@@ -86,6 +86,16 @@ impl TypeResolver for QueryCache<'_> {
         self.definition_store?.get_symbol_id(def_id).map(SymbolId)
     }
 
+    fn augmented_base_body_for_symbol(&self, symbol_id: u32) -> Option<TypeId> {
+        // Same redirect as `TypeEnvironment`: map a frozen empty pre-merge
+        // snapshot's home symbol to the home `DefId` whose merged body is
+        // published, so inference-driven index reduction can re-index it.
+        // Flag-OFF has no published edge, so this returns `None`.
+        let store = self.definition_store?;
+        let home_def = store.augmented_base_body_def_for_symbol(symbol_id)?;
+        store.get_body(home_def)
+    }
+
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
         if !crate::inference::xarena_base::xarena_base_decl_enabled() {
             return None;

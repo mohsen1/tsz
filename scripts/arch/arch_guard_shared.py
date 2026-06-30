@@ -607,7 +607,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: def/resolver.rs size ratchet",
         ROOT / "crates/tsz-solver/src/def/resolver.rs",
-        2506,
+        2541,
     ),
     (
         "Solver boundary: evaluate_rules/infer_pattern.rs size ratchet",
@@ -1147,7 +1147,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "evaluation"
         / "evaluate_rules"
         / "index_access.rs",
-        1794,
+        1818,
     ),
     (
         "Solver boundary: subtype/rules/generics.rs size ratchet",

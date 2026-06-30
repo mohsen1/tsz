@@ -66,6 +66,25 @@ pub(crate) fn typeof_uri_selfloop_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TSZ_TYPEOF_URI_SELFLOOP").is_ok_and(|v| v == "1"))
 }
 
+/// `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT=1` activates the home-symbol →
+/// home-`DefId` redirect for index reduction against a frozen *pre-merge* empty
+/// snapshot of a cross-file augmented interface (issue #14344 / #14345).
+/// Default-OFF, so flag-OFF is byte-parity with the historical behavior (the
+/// empty snapshot indexes to `undefined`).
+///
+/// When ON, both the producer write-through
+/// (`register_augmented_base_body_def_if_enabled`, called at the augmentation
+/// merge site) and the consumer read (the index-reduction redirect in
+/// `evaluate_rules::index_access`) are active: a frozen empty `Object` carrying
+/// `shape.symbol = <home interface symbol>` is re-indexed against the merged
+/// body published under the home `DefId`, instead of falling to `undefined`.
+/// The redirect is gated structurally on channel membership (no name/file
+/// string), so flag-ON only affects symbols a checker actually published.
+pub fn augmented_body_symbol_redirect_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT").is_ok_and(|v| v == "1"))
+}
+
 /// Global counter for assigning unique instance IDs to `DefinitionStore` instances.
 /// Used for debugging `DefId` collision issues.
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -511,6 +530,31 @@ pub struct DefinitionStore {
     /// Empty registry `DefId` -> merged module-augmentation body and source files.
     module_augmented_bodies: DefDashMap<DefId, (TypeId, Vec<u32>)>,
 
+    /// Program-wide redirect from a HOME interface `SymbolId` (raw u32) to the
+    /// HOME `DefId` whose `get_body` holds its fully-merged augmented body
+    /// (issue #14344 / #14345).
+    ///
+    /// The fp-ts higher-kinded-type registry idiom publishes a per-module
+    /// augmented `interface URItoKindN { [URI]: Kind<...> }` whose merged body
+    /// (all augmentation blocks folded together) is materialized under the home
+    /// interface's own `DefId`. A frozen *pre-merge* snapshot of that interface
+    /// — a bare `Object(ObjectShapeId)` with EMPTY properties and NO `DefId`,
+    /// but still carrying `shape.symbol = <home interface symbol>` — can reach
+    /// the index-reduction consumer (`URItoKind<A>[URI]`). That consumer holds
+    /// only the home symbol, and the file-agnostic `symbol_only_index` was never
+    /// written for the home symbol (the home def was registered without a
+    /// `symbol_id`, and `set_body_with_params_impl` publishes the merged body
+    /// without touching any symbol index), so `find_def_by_symbol(home_symbol)`
+    /// misses and the consumer falls to `undefined`.
+    ///
+    /// This dedicated slot is the producer-published edge: the augmentation
+    /// merge site records `home_symbol -> home_def_id` once the merged body is
+    /// assembled, so the consumer can map its frozen `shape.symbol` back to the
+    /// populated home def and re-index that body for the URI literal key.
+    /// First-wins (the home def's identity is stable). Keyed and consulted
+    /// structurally on the raw `SymbolId`; no name/file-string drives it.
+    augmented_base_body_def_for_symbol: DefDashMap<u32, DefId>,
+
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
     /// Populated during `register()` for every definition. Enables O(1) lookup
@@ -593,6 +637,7 @@ impl DefinitionStore {
             ),
             typeof_value_to_literal: DefDashMap::default(),
             module_augmented_bodies: DefDashMap::default(),
+            augmented_base_body_def_for_symbol: DefDashMap::default(),
             enum_member_to_parent: DefDashMap::default(),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             cross_file_cache: CrossFileQueryCache::default(),
@@ -1304,6 +1349,7 @@ impl DefinitionStore {
         self.class_to_instance.clear();
         self.typeof_value_to_literal.clear();
         self.module_augmented_bodies.clear();
+        self.augmented_base_body_def_for_symbol.clear();
         self.enum_member_to_parent.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
@@ -1477,6 +1523,31 @@ impl DefinitionStore {
         self.typeof_value_to_literal.get(&symbol_id).map(|r| *r)
     }
 
+    /// Record the redirect from a HOME interface `SymbolId` (raw u32) to the
+    /// HOME `DefId` whose `get_body` holds its fully-merged augmented body
+    /// (see the `augmented_base_body_def_for_symbol` field doc).
+    ///
+    /// First-wins (the home def's identity is stable across re-checks), so a
+    /// later re-publication of the same edge is a no-op and does not perturb the
+    /// store generation. Write-through target for the checker's augmentation
+    /// merge site.
+    pub fn register_augmented_base_body_def(&self, symbol_id: u32, def_id: DefId) {
+        use dashmap::mapref::entry::Entry;
+        if let Entry::Vacant(vacant) = self.augmented_base_body_def_for_symbol.entry(symbol_id) {
+            vacant.insert(def_id);
+            self.bump_generation();
+        }
+    }
+
+    /// Look up the HOME `DefId` whose merged augmented body should answer an
+    /// index access against a frozen empty pre-merge snapshot carrying this home
+    /// `SymbolId`, if some checker has published the edge.
+    pub fn augmented_base_body_def_for_symbol(&self, symbol_id: u32) -> Option<DefId> {
+        self.augmented_base_body_def_for_symbol
+            .get(&symbol_id)
+            .map(|r| *r)
+    }
+
     /// Flag-gated write-through of a merged value+type symbol's value literal
     /// into the program-wide slot (issue #14345). Called from
     /// `TypeEnvironment::insert_typeof_value_type`; the producer only passes a
@@ -1487,6 +1558,17 @@ impl DefinitionStore {
     pub fn register_typeof_value_literal_if_enabled(&self, symbol_id: u32, literal: TypeId) {
         if typeof_uri_selfloop_enabled() {
             self.register_typeof_value_literal(symbol_id, literal);
+        }
+    }
+
+    /// Flag-gated write-through of the home-symbol → home-`DefId` redirect edge
+    /// (issue #14344 / #14345). Called from the checker's augmentation merge
+    /// site once the merged augmented body is published under the home `DefId`.
+    /// Gated on `augmented_body_symbol_redirect_enabled()` so flag-OFF leaves
+    /// the shared store (and its generation) untouched — fully byte-parity.
+    pub fn register_augmented_base_body_def_if_enabled(&self, symbol_id: u32, def_id: DefId) {
+        if augmented_body_symbol_redirect_enabled() {
+            self.register_augmented_base_body_def(symbol_id, def_id);
         }
     }
 
