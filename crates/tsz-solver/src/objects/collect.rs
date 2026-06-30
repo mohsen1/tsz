@@ -37,31 +37,69 @@ thread_local! {
 // local `seen` set skips them inside a single public call.
 const MAX_COLLECT_PROPERTIES_DEPTH: usize = 16_384;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectPropertiesDepthState {
+    Entered,
+    AlreadyActive { position: usize },
+    StackLimitExceeded,
+}
+
+fn collect_properties_depth_state(
+    stack: &[TypeId],
+    type_id: TypeId,
+) -> CollectPropertiesDepthState {
+    if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH {
+        CollectPropertiesDepthState::StackLimitExceeded
+    } else if let Some(position) = stack.iter().position(|&active| active == type_id) {
+        CollectPropertiesDepthState::AlreadyActive { position }
+    } else {
+        CollectPropertiesDepthState::Entered
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectPropertiesWorklistState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn collect_properties_worklist_state(processed: usize) -> CollectPropertiesWorklistState {
+    if processed >= MAX_COLLECT_PROPERTIES_DEPTH {
+        CollectPropertiesWorklistState::LimitExceeded
+    } else {
+        CollectPropertiesWorklistState::Continue
+    }
+}
+
 struct CollectPropertiesDepthGuard {
     type_id: TypeId,
 }
 
 impl CollectPropertiesDepthGuard {
-    fn enter(type_id: TypeId) -> Option<Self> {
+    fn enter(type_id: TypeId) -> Result<Self, CollectPropertiesDepthState> {
         COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
-            if stack.len() >= MAX_COLLECT_PROPERTIES_DEPTH {
-                return None;
+            match collect_properties_depth_state(stack, type_id) {
+                CollectPropertiesDepthState::Entered => {
+                    stack.push(type_id);
+                    Ok(Self { type_id })
+                }
+                // A reentry means `type_id` is already being collected by some
+                // frame up the chain. Record the position so the owning
+                // `collect_properties_cached` invocation(s) can tell whether the
+                // truncation was against one of their own in-flight entries
+                // (would also happen on a standalone collection, result still
+                // context-free) or against an outer ancestor frame
+                // (context-dependent, partial closure; must not be cached). Any
+                // active invocation whose entry floor is strictly greater than
+                // `position` experienced an ancestor truncation.
+                CollectPropertiesDepthState::AlreadyActive { position } => {
+                    COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| min.set(min.get().min(position)));
+                    Err(CollectPropertiesDepthState::AlreadyActive { position })
+                }
+                CollectPropertiesDepthState::StackLimitExceeded => {
+                    Err(CollectPropertiesDepthState::StackLimitExceeded)
+                }
             }
-            // A `stack.contains` hit means `type_id` is already being collected
-            // by *some* frame up the chain. Record the position so the owning
-            // `collect_properties_cached` invocation(s) can tell whether the
-            // truncation was against one of their *own* in-flight entries (would
-            // also happen on a standalone collection, result still context-free)
-            // or against an *outer ancestor* frame (context-dependent, partial
-            // closure — must not be cached; the #12142 pitfall). Any active
-            // invocation whose entry floor is strictly greater than `pos`
-            // experienced an ancestor truncation.
-            if let Some(pos) = stack.iter().position(|&active| active == type_id) {
-                COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| min.set(min.get().min(pos)));
-                return None;
-            }
-            stack.push(type_id);
-            Some(Self { type_id })
         })
     }
 }
@@ -439,8 +477,9 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         let mut processed = 0usize;
 
         while let Some(type_id) = stack.pop() {
-            if processed >= MAX_COLLECT_PROPERTIES_DEPTH {
-                return;
+            match collect_properties_worklist_state(processed) {
+                CollectPropertiesWorklistState::Continue => {}
+                CollectPropertiesWorklistState::LimitExceeded => return,
             }
             processed += 1;
 
@@ -448,7 +487,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             if !self.seen.insert(type_id) {
                 continue;
             }
-            let Some(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
+            let Ok(_depth_guard) = CollectPropertiesDepthGuard::enter(type_id) else {
                 continue;
             };
 
@@ -841,8 +880,86 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 }
 
 #[cfg(test)]
-mod cache_verdict_tests {
-    use super::PropertyCollectionCacheVerdict;
+mod termination_state_tests {
+    use super::{
+        COLLECT_PROPERTIES_MIN_TRUNCATION, COLLECT_PROPERTIES_STACK, CollectPropertiesDepthGuard,
+        CollectPropertiesDepthState, CollectPropertiesWorklistState, MAX_COLLECT_PROPERTIES_DEPTH,
+        PropertyCollectionCacheVerdict, collect_properties_depth_state,
+        collect_properties_worklist_state,
+    };
+    use crate::types::TypeId;
+
+    fn reset_collect_properties_stack() {
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(Vec::clear);
+        COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| min.set(usize::MAX));
+    }
+
+    #[test]
+    fn depth_state_enters_new_type_below_limit() {
+        let stack = [TypeId::STRING, TypeId::NUMBER];
+
+        assert_eq!(
+            collect_properties_depth_state(&stack, TypeId::BOOLEAN),
+            CollectPropertiesDepthState::Entered
+        );
+    }
+
+    #[test]
+    fn depth_state_reports_active_position() {
+        let stack = [TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN];
+
+        assert_eq!(
+            collect_properties_depth_state(&stack, TypeId::STRING),
+            CollectPropertiesDepthState::AlreadyActive { position: 1 }
+        );
+    }
+
+    #[test]
+    fn depth_state_reports_stack_limit_before_active_reentry() {
+        let stack = vec![TypeId::STRING; MAX_COLLECT_PROPERTIES_DEPTH];
+
+        assert_eq!(
+            collect_properties_depth_state(&stack, TypeId::STRING),
+            CollectPropertiesDepthState::StackLimitExceeded
+        );
+    }
+
+    #[test]
+    fn depth_guard_records_active_reentry_position() {
+        reset_collect_properties_stack();
+        COLLECT_PROPERTIES_STACK.with_borrow_mut(|stack| {
+            stack.push(TypeId::NUMBER);
+            stack.push(TypeId::STRING);
+        });
+
+        assert!(matches!(
+            CollectPropertiesDepthGuard::enter(TypeId::STRING),
+            Err(CollectPropertiesDepthState::AlreadyActive { position: 1 })
+        ));
+        assert_eq!(
+            COLLECT_PROPERTIES_MIN_TRUNCATION.with(std::cell::Cell::get),
+            1
+        );
+        assert_eq!(COLLECT_PROPERTIES_STACK.with_borrow(Vec::len), 2);
+
+        reset_collect_properties_stack();
+    }
+
+    #[test]
+    fn worklist_state_continues_below_limit() {
+        assert_eq!(
+            collect_properties_worklist_state(MAX_COLLECT_PROPERTIES_DEPTH - 1),
+            CollectPropertiesWorklistState::Continue
+        );
+    }
+
+    #[test]
+    fn worklist_state_limits_at_limit() {
+        assert_eq!(
+            collect_properties_worklist_state(MAX_COLLECT_PROPERTIES_DEPTH),
+            CollectPropertiesWorklistState::LimitExceeded
+        );
+    }
 
     #[test]
     fn no_query_cache_never_publishes() {
