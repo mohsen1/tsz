@@ -56,6 +56,13 @@ use crate::def::DefId;
 use crate::types::*;
 
 #[cfg(test)]
+impl TypeInterner {
+    pub(crate) fn readonly_type_fresh_for_test(&self, inner: TypeId) -> TypeId {
+        self.intern_fresh(TypeData::ReadonlyType(inner))
+    }
+}
+
+#[cfg(test)]
 #[path = "../../tests/intern_tests.rs"]
 mod tests;
 
