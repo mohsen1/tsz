@@ -24,6 +24,9 @@ const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_GLOBAL_INSTANTIAT
 /// Canonical definition in [`crate::limits`].
 const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATION_FUEL;
 
+/// Maximum re-entrant conditional-subtype relation depth.
+const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = crate::limits::MAX_CONDITIONAL_SUBTYPE_DEPTH;
+
 /// Whether the shared evaluation session can enter another instantiation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvaluationSessionLimitState {
@@ -51,10 +54,42 @@ pub struct EvaluationSession {
     global_instantiation_depth: Cell<u32>,
     /// Cross-context instantiation fuel (total non-cached evaluations per file).
     global_instantiation_fuel: Cell<u32>,
+    /// Re-entrant conditional-subtype depth for
+    /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chains.
+    conditional_subtype_depth: Cell<u32>,
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
     query_memo: RefCell<FxHashMap<(TypeId, bool), TypeId>>,
+}
+
+/// RAII entry for one conditional-subtype relation probe in an
+/// [`EvaluationSession`].
+#[must_use]
+pub(crate) struct ConditionalSubtypeDepthEntry<'a> {
+    session: &'a EvaluationSession,
+    prior_depth: u32,
+}
+
+impl ConditionalSubtypeDepthEntry<'_> {
+    pub(crate) const fn prior_depth(&self) -> u32 {
+        self.prior_depth
+    }
+
+    pub(crate) const fn limit() -> u32 {
+        MAX_CONDITIONAL_SUBTYPE_DEPTH
+    }
+}
+
+impl Drop for ConditionalSubtypeDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session.conditional_subtype_depth.set(
+            self.session
+                .conditional_subtype_depth
+                .get()
+                .saturating_sub(1),
+        );
+    }
 }
 
 impl EvaluationSession {
@@ -63,6 +98,7 @@ impl EvaluationSession {
         Self {
             global_instantiation_depth: Cell::new(0),
             global_instantiation_fuel: Cell::new(0),
+            conditional_subtype_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
         }
@@ -120,6 +156,24 @@ impl EvaluationSession {
     #[inline]
     pub const fn global_instantiation_fuel(&self) -> u32 {
         self.global_instantiation_fuel.get()
+    }
+
+    /// Enter a conditional-subtype probe and return the observed prior depth.
+    #[inline]
+    pub(crate) fn enter_conditional_subtype_depth(&self) -> ConditionalSubtypeDepthEntry<'_> {
+        let prior_depth = self.conditional_subtype_depth.get();
+        self.conditional_subtype_depth.set(prior_depth + 1);
+        ConditionalSubtypeDepthEntry {
+            session: self,
+            prior_depth,
+        }
+    }
+
+    /// Current re-entrant conditional-subtype depth.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn conditional_subtype_depth(&self) -> u32 {
+        self.conditional_subtype_depth.get()
     }
 
     /// Enter cross-evaluator expansion of `type_id`.
@@ -295,5 +349,19 @@ mod tests {
         session.reset_query_memo();
         assert_eq!(session.query_memo_get(type_id, false), None);
         assert_eq!(session.query_memo_get(type_id, true), None);
+    }
+
+    #[test]
+    fn conditional_subtype_depth_entry_restores_on_drop() {
+        let session = EvaluationSession::new();
+        assert_eq!(session.conditional_subtype_depth(), 0);
+
+        {
+            let entry = session.enter_conditional_subtype_depth();
+            assert_eq!(entry.prior_depth(), 0);
+            assert_eq!(session.conditional_subtype_depth(), 1);
+        }
+
+        assert_eq!(session.conditional_subtype_depth(), 0);
     }
 }

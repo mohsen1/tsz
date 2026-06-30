@@ -138,8 +138,8 @@ impl ConditionalBranchProbeResult {
 }
 
 /// Run a structural relation probe that chooses a conditional branch and
-/// classify its result, following the thread-local unresolved-`Lazy` sentinel
-/// so a `false` that depended on an unregistered `Lazy` body is reported as
+/// classify its result, following the unresolved-`Lazy` sentinel so a `false`
+/// that depended on an unregistered `Lazy` body is reported as
 /// [`BranchRelation::Undetermined`] instead of [`BranchRelation::Fails`].
 ///
 /// This mirrors the subtype cache's own poison-sentinel discipline (it never
@@ -174,74 +174,6 @@ pub(super) struct ConditionalOperands {
     pub(super) extends_type: TypeId,
     pub(super) extends_has_infer: bool,
     pub(super) extends_has_type_params: bool,
-}
-
-thread_local! {
-    /// Re-entrant conditional-subtype recursion depth on this thread.
-    ///
-    /// The counter is consulted by [`ConditionalSubtypeDepthGuard`] to cap the
-    /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chain at depth 50.
-    /// It MUST be zero between compilations: a leaked positive depth would make
-    /// later conditional-subtype checks on a reused batch/merge-group worker
-    /// conservatively take the false branch, so the same code would select
-    /// different conditional branches run-to-run (#13368). The guard restores
-    /// the depth on every exit including a panic-unwind a caller swallows, so
-    /// no manual post-call decrement (which the unwind skips) is needed.
-    static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// RAII recursion-depth guard for [`check_conditional_subtype`].
-///
-/// [`enter`](Self::enter) increments [`CONDITIONAL_SUBTYPE_DEPTH`] and returns a
-/// [`ConditionalSubtypeDepthEntry`] containing the depth observed *before* the
-/// increment plus the guard; `Drop` decrements it, so the counter is restored on
-/// the normal return path and when the guarded subtype walk unwinds via a caught
-/// panic. The counter is
-/// function-private state that the batch boundary reset cannot reach, so this
-/// self-cleaning guard is the only correct cross-compilation isolation for it.
-#[must_use]
-struct ConditionalSubtypeDepthGuard;
-
-#[must_use]
-struct ConditionalSubtypeDepthEntry {
-    prior_depth: u32,
-    guard: ConditionalSubtypeDepthGuard,
-}
-
-impl ConditionalSubtypeDepthGuard {
-    /// Cap above which the conditional-subtype relation conservatively returns
-    /// `false`, matching tsc returning the deferred conditional once the
-    /// instantiation depth is exceeded.
-    const LIMIT: u32 = 50;
-
-    fn enter() -> ConditionalSubtypeDepthEntry {
-        let prior_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
-            let c = d.get();
-            d.set(c + 1);
-            c
-        });
-        ConditionalSubtypeDepthEntry {
-            prior_depth,
-            guard: Self,
-        }
-    }
-}
-
-impl ConditionalSubtypeDepthEntry {
-    const fn prior_depth(&self) -> u32 {
-        self.prior_depth
-    }
-
-    fn exit(self) {
-        let Self { guard, .. } = self;
-        drop(guard);
-    }
-}
-
-impl Drop for ConditionalSubtypeDepthGuard {
-    fn drop(&mut self) {
-        CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-    }
 }
 
 /// Result from tail-call dispatch in conditional evaluation.
@@ -704,7 +636,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Structural subtype probe that decides a conditional branch, with cache
-    /// lookup, a thread-local depth guard, and unresolved-`Lazy` classification.
+    /// lookup, a session-owned depth guard, and unresolved-`Lazy` classification.
     ///
     /// Returns [`BranchRelation::Holds`] when
     /// `check_type <: extends_type`,
@@ -714,7 +646,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// in which case the spurious false is neither cached nor used to take the
     /// false branch and the conditional defers (issue #14238). The result cache
     /// consults `conditional_subtype_cache` first; the structural fallback is
-    /// guarded by a thread-local recursion counter that caps at depth 50.
+    /// guarded by a session recursion counter that caps at depth 50.
     pub(super) fn conditional_subtype_relation(
         &mut self,
         check_type: TypeId,
@@ -757,76 +689,78 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Depth guard: evaluating conditional types can trigger subtype checks
         // that evaluate MORE conditional types, creating an
         // Evaluator -> SubtypeChecker -> Evaluator -> ... chain where each
-        // instance has fresh cycle-detection state. Without this global depth
+        // instance has fresh cycle-detection state. Without this session depth
         // limit, recursive generic types like `Vector<T> implements Seq<T>`
         // with `Exclude<T, U>` in overloads cause stack overflow. The guard is
-        // RAII (see `ConditionalSubtypeDepthGuard`) so the depth is restored on
-        // every exit including a caught panic-unwind, keeping the relation
-        // schedule-independent across batch-worker reuse (#13368).
-        let depth_entry = ConditionalSubtypeDepthGuard::enter();
+        // RAII, so the depth is restored on every exit including a caught
+        // panic-unwind, keeping the relation schedule-independent across
+        // batch-worker reuse (#13368).
         // A verdict produced by the depth bail or by a structural walk that
         // itself tripped a recursion/iteration limit is a *budget-bounded*
         // conservative answer, not a stable function of the type pair: it must
         // never be published to the cross-evaluator cache (it would permanently
         // shadow the full answer a deeper-budget run derives). Carry that as a
         // typed publication verdict and consult it at the write site.
-        let mut cache_stability = ConditionalBranchCacheStability::DepthAgnostic;
-        // Classify against the unresolved-`Lazy` sentinel: a `false` produced
-        // only because the structural walk descended into an unregistered
-        // `Lazy` body is reported as `Undetermined` rather than a definitive
-        // false (issue #14238). Shared with the array fast path via
-        // `classify_branch_relation`.
-        let relation = classify_branch_relation(|| {
-            if depth_entry.prior_depth() >= ConditionalSubtypeDepthGuard::LIMIT {
-                // At excessive depth, conservatively assume not a subtype
-                // (takes the false/else branch of the conditional).
-                // This matches tsc's behavior of returning the deferred
-                // conditional when instantiation depth is exceeded.
-                cache_stability.mark_budget_bounded();
-                false
-            } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type) {
-                // Fast-path: primitive types (string, number, boolean, bigint,
-                // symbol) are never subtypes of Function. The structural subtype
-                // checker may incorrectly autobox the primitive to its wrapper
-                // type (String, Number, etc.) and find structural compatibility
-                // with the evaluated Function interface. This fast-path prevents
-                // `string extends Function` from incorrectly taking the true
-                // branch, matching tsc's behavior where primitives never extend
-                // Function.
-                false
-            } else if Self::function_intrinsic_extends_callable_target(
-                self.interner(),
-                check_type,
-                extends_type,
-            ) {
-                // In conditional types, tsc treats the global `Function`
-                // intrinsic as satisfying callable targets. Ordinary
-                // assignment intentionally remains stricter.
-                true
-            } else if self
-                .object_literals_have_conflicting_required_property(check_type, extends_type)
-            {
-                // `Extract<Union, { kind: "x" }>` and similar discriminant filters
-                // distribute over every union member. If both sides expose the same
-                // required property with distinct literal values, the relation is
-                // definitively false, so avoid the full structural subtype walk.
-                false
-            } else {
-                let mut strict_checker = self.conditional_subtype_checker();
-                let verdict = strict_checker.is_subtype_of(check_type, extends_type);
-                // A walk that exhausted its own depth/iteration budget returned
-                // a conservative verdict; mark it un-publishable.
-                if strict_checker.depth_exceeded() || strict_checker.iteration_exceeded() {
+        let probe = crate::evaluation::session::with_current_session(|session| {
+            let depth_entry = session.enter_conditional_subtype_depth();
+            let mut cache_stability = ConditionalBranchCacheStability::DepthAgnostic;
+            // Classify against the unresolved-`Lazy` sentinel: a `false` produced
+            // only because the structural walk descended into an unregistered
+            // `Lazy` body is reported as `Undetermined` rather than a definitive
+            // false (issue #14238). Shared with the array fast path via
+            // `classify_branch_relation`.
+            let relation = classify_branch_relation(|| {
+                if depth_entry.prior_depth()
+                    >= crate::evaluation::session::ConditionalSubtypeDepthEntry::limit()
+                {
+                    // At excessive depth, conservatively assume not a subtype
+                    // (takes the false/else branch of the conditional).
+                    // This matches tsc's behavior of returning the deferred
+                    // conditional when instantiation depth is exceeded.
                     cache_stability.mark_budget_bounded();
+                    false
+                } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type)
+                {
+                    // Fast-path: primitive types (string, number, boolean,
+                    // bigint, symbol) are never subtypes of Function. The
+                    // structural subtype checker may incorrectly autobox the
+                    // primitive to its wrapper type (String, Number, etc.) and
+                    // find structural compatibility with the evaluated Function
+                    // interface. This fast-path prevents `string extends Function`
+                    // from incorrectly taking the true branch, matching tsc's
+                    // behavior where primitives never extend Function.
+                    false
+                } else if Self::function_intrinsic_extends_callable_target(
+                    self.interner(),
+                    check_type,
+                    extends_type,
+                ) {
+                    // In conditional types, tsc treats the global `Function`
+                    // intrinsic as satisfying callable targets. Ordinary
+                    // assignment intentionally remains stricter.
+                    true
+                } else if self
+                    .object_literals_have_conflicting_required_property(check_type, extends_type)
+                {
+                    // `Extract<Union, { kind: "x" }>` and similar discriminant
+                    // filters distribute over every union member. If both sides
+                    // expose the same required property with distinct literal
+                    // values, the relation is definitively false, so avoid the
+                    // full structural subtype walk.
+                    false
+                } else {
+                    let mut strict_checker = self.conditional_subtype_checker();
+                    let verdict = strict_checker.is_subtype_of(check_type, extends_type);
+                    // A walk that exhausted its own depth/iteration budget returned
+                    // a conservative verdict; mark it un-publishable.
+                    if strict_checker.depth_exceeded() || strict_checker.iteration_exceeded() {
+                        cache_stability.mark_budget_bounded();
+                    }
+                    verdict
                 }
-                verdict
-            }
+            });
+            ConditionalBranchProbeResult::new(relation, cache_stability)
         });
-        let probe = ConditionalBranchProbeResult::new(relation, cache_stability);
-        // Restore the depth before the cache write to preserve the original
-        // decrement ordering; `Drop` would otherwise run at end of scope, but
-        // either way the depth is restored on a panic-unwind exit.
-        depth_entry.exit();
         // An `Undetermined` false consumed an unregistered `Lazy` body: do not
         // cache it and do not let it take the false branch — defer so a later
         // resolved pass decides the conditional (issue #14238). Definitive
@@ -1170,30 +1104,39 @@ mod conditional_branch_probe_result_tests {
 
 #[cfg(test)]
 mod conditional_subtype_depth_guard_tests {
-    use super::{CONDITIONAL_SUBTYPE_DEPTH, ConditionalSubtypeDepthGuard};
-
-    fn current_depth() -> u32 {
-        CONDITIONAL_SUBTYPE_DEPTH.with(std::cell::Cell::get)
-    }
+    use crate::evaluation::session::EvaluationSession;
 
     #[test]
     fn enter_reports_prior_depth_and_drop_restores() {
-        assert_eq!(current_depth(), 0, "counter starts clean");
-        let entry0 = ConditionalSubtypeDepthGuard::enter();
+        let session = EvaluationSession::new();
+        assert_eq!(
+            session.conditional_subtype_depth(),
+            0,
+            "counter starts clean"
+        );
+        let entry0 = session.enter_conditional_subtype_depth();
         assert_eq!(entry0.prior_depth(), 0, "first entry observes depth 0");
-        assert_eq!(current_depth(), 1);
+        assert_eq!(session.conditional_subtype_depth(), 1);
         {
-            let entry1 = ConditionalSubtypeDepthGuard::enter();
+            let entry1 = session.enter_conditional_subtype_depth();
             assert_eq!(
                 entry1.prior_depth(),
                 1,
                 "nested entry observes the outer depth"
             );
-            assert_eq!(current_depth(), 2);
+            assert_eq!(session.conditional_subtype_depth(), 2);
         }
-        assert_eq!(current_depth(), 1, "nested drop restores one level");
+        assert_eq!(
+            session.conditional_subtype_depth(),
+            1,
+            "nested drop restores one level"
+        );
         drop(entry0);
-        assert_eq!(current_depth(), 0, "outer drop restores the clean slate");
+        assert_eq!(
+            session.conditional_subtype_depth(),
+            0,
+            "outer drop restores the clean slate"
+        );
     }
 
     /// #13368: the guard must restore the depth even when the guarded subtype
@@ -1203,15 +1146,20 @@ mod conditional_subtype_depth_guard_tests {
     /// conditional-subtype checks onto the conservative false branch).
     #[test]
     fn depth_is_restored_on_unwind() {
-        assert_eq!(current_depth(), 0, "counter starts clean");
-        let result = std::panic::catch_unwind(|| {
-            let _entry = ConditionalSubtypeDepthGuard::enter();
-            assert_eq!(current_depth(), 1);
+        let session = EvaluationSession::new();
+        assert_eq!(
+            session.conditional_subtype_depth(),
+            0,
+            "counter starts clean"
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _entry = session.enter_conditional_subtype_depth();
+            assert_eq!(session.conditional_subtype_depth(), 1);
             panic!("simulated mid-subtype-walk panic");
-        });
+        }));
         assert!(result.is_err(), "the closure panicked");
         assert_eq!(
-            current_depth(),
+            session.conditional_subtype_depth(),
             0,
             "guard Drop must restore the depth during unwind"
         );

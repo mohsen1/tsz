@@ -209,6 +209,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     let evaluate_api_rs = read_solver_source("evaluation/evaluate/api.rs");
     let cross_eval_guard_rs = read_solver_source("evaluation/cross_eval_guard.rs");
     let infer_pattern_rs = read_solver_source("evaluation/evaluate_rules/infer_pattern.rs");
+    let infer_match_expansion_rs =
+        read_solver_source("evaluation/evaluate_rules/infer_match_expansion.rs");
     let instantiation_result_rs = read_solver_source("instantiation/result.rs");
     let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
     let subtype_core_rs = read_solver_source("relations/subtype/core.rs");
@@ -280,10 +282,13 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && result_rs.contains("cache_stability: EvaluationMemoStability")
             && !result_rs.contains("stable_for_depth_agnostic_cache: bool")
             && cross_eval_guard_rs.contains("EvaluationMemoResult::unstable_complete(TypeId(80))")
-            && infer_pattern_rs.contains("EvaluationMemoResult::unstable_complete(type_id)")
+            && infer_match_expansion_rs
+                .contains("EvaluationMemoResult::unstable_complete(type_id)")
             && !cross_eval_guard_rs
                 .contains("EvaluationMemoResult::new(EvaluationResult::complete")
-            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete"),
+            && !infer_pattern_rs.contains("EvaluationMemoResult::new(EvaluationResult::complete")
+            && !infer_match_expansion_rs
+                .contains("EvaluationMemoResult::new(EvaluationResult::complete"),
         "unstable complete memo results must use the named EvaluationMemoResult boundary instead of rebuilding the stability bit by hand"
     );
     assert!(
@@ -368,17 +373,20 @@ fn relation_queries_keep_overflow_flags_on_relation_result() {
 
     let conditional_phases_rs =
         read_solver_source("evaluation/evaluate_rules/conditional/phases.rs");
+    let evaluation_session_rs = read_solver_source("evaluation/session.rs");
     assert!(
-        conditional_phases_rs.contains("struct ConditionalSubtypeDepthEntry")
-            && conditional_phases_rs.contains("fn enter() -> ConditionalSubtypeDepthEntry")
-            && conditional_phases_rs
-                .contains("let depth_entry = ConditionalSubtypeDepthGuard::enter()")
+        evaluation_session_rs.contains("pub(crate) struct ConditionalSubtypeDepthEntry")
+            && evaluation_session_rs.contains(
+                "pub(crate) fn enter_conditional_subtype_depth(&self) -> ConditionalSubtypeDepthEntry<'_>"
+            )
+            && evaluation_session_rs.contains("MAX_CONDITIONAL_SUBTYPE_DEPTH")
+            && conditional_phases_rs.contains("session.enter_conditional_subtype_depth()")
             && conditional_phases_rs.contains("depth_entry.prior_depth()")
-            && conditional_phases_rs.contains("depth_entry.exit()")
-            && !conditional_phases_rs
-                .contains("let (prev_depth, depth_guard) = ConditionalSubtypeDepthGuard::enter()"),
-        "conditional subtype depth probes must carry prior-depth plus RAII guard \
-         as a named entry object instead of an anonymous tuple"
+            && !conditional_phases_rs.contains("CONDITIONAL_SUBTYPE_DEPTH")
+            && !conditional_phases_rs.contains("ConditionalSubtypeDepthGuard"),
+        "conditional subtype depth probes must be owned by EvaluationSession and \
+         entered through its named RAII entry, not a private conditional-phase \
+         thread-local guard"
     );
 }
 
