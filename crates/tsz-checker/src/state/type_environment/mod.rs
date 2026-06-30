@@ -8,6 +8,7 @@ mod formatting;
 pub(crate) mod lazy;
 mod lazy_flow_mirror;
 mod lazy_fuel;
+pub(crate) mod lazy_guard_state;
 mod lazy_impossible_pruning;
 mod property_access_visited;
 mod source_location;

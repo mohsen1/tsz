@@ -10,6 +10,11 @@ use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
+use super::lazy_guard_state::{
+    ApplicationResolutionEntryState, ApplicationResolutionWorkState, EvalEnvEntryState,
+    application_resolution_entry_state, application_resolution_local_fuel_state,
+    application_resolution_post_consume_state, eval_env_entry_state,
+};
 use super::property_access_visited::PropertyAccessVisited;
 use crate::query_boundaries::state::type_environment::{
     CacheEntryCollection, EvaluateTypeWithCacheOptions, for_each_direct_referenced_type,
@@ -55,6 +60,8 @@ const MAX_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
 // Maximum total `DefId` resolutions across recursive `ensure_refs_resolved`
 // invocations within one top-level call.
 const MAX_REFS_RESOLUTION_FUEL: u32 = 2000;
+
+const MAX_EVAL_ENV_DEPTH: u32 = 5;
 
 /// Check if refs resolution fuel is exhausted.
 pub(crate) fn refs_resolution_fuel_exhausted() -> bool {
@@ -122,10 +129,10 @@ impl CheckerState<'_> {
         // (e.g., react + create-emotion-styled). Uses thread-local counter
         // because cross-arena delegation resets per-context counters.
         let eval_depth = EVAL_ENV_DEPTH.get();
-        if eval_depth >= 5 {
-            return type_id;
+        match eval_env_entry_state(eval_depth, MAX_EVAL_ENV_DEPTH) {
+            EvalEnvEntryState::DepthExceeded => return type_id,
+            EvalEnvEntryState::Entered { depth } => EVAL_ENV_DEPTH.set(depth),
         }
-        EVAL_ENV_DEPTH.set(eval_depth + 1);
 
         // Set this_type on the TypeEnvironment so the evaluator can resolve `keyof this`
         // and similar constructs that depend on the enclosing class type.
@@ -1368,30 +1375,31 @@ impl CheckerState<'_> {
     pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
         use rustc_hash::FxHashSet;
 
-        if self.ctx.application_symbols_resolved.contains(&type_id) {
-            return;
-        }
-        if !self.ctx.application_symbols_resolution_set.insert(type_id) {
-            return;
-        }
-
-        // Check global fuel first - if exhausted from a previous call, bail immediately.
-        let fuel = APP_SYMBOL_RESOLUTION_FUEL.get();
-        if fuel >= MAX_APP_SYMBOL_RESOLUTION_FUEL {
-            self.ctx.application_symbols_resolution_set.remove(&type_id);
-            return;
-        }
-
-        // Bail out when nested too deeply. Uses thread-local counter because
-        // cross-arena delegation creates child CheckerContexts that would reset
-        // a per-context counter to 0.
+        let already_resolved = self.ctx.application_symbols_resolved.contains(&type_id);
+        let inserted_active_visit = if already_resolved {
+            true
+        } else {
+            self.ctx.application_symbols_resolution_set.insert(type_id)
+        };
         let depth = APP_SYMBOL_RESOLUTION_DEPTH.get();
-        if depth >= MAX_APP_SYMBOL_RESOLUTION_DEPTH {
-            self.ctx.application_symbols_resolution_set.remove(&type_id);
-            return;
-        }
-
-        let is_outermost = depth == 0;
+        let entry_state = application_resolution_entry_state(
+            already_resolved,
+            inserted_active_visit,
+            APP_SYMBOL_RESOLUTION_FUEL.get(),
+            MAX_APP_SYMBOL_RESOLUTION_FUEL,
+            depth,
+            MAX_APP_SYMBOL_RESOLUTION_DEPTH,
+        );
+        let is_outermost = match entry_state {
+            ApplicationResolutionEntryState::Entered { outermost } => outermost,
+            ApplicationResolutionEntryState::AlreadyResolved
+            | ApplicationResolutionEntryState::AlreadyVisiting => return,
+            ApplicationResolutionEntryState::FuelExhausted
+            | ApplicationResolutionEntryState::DepthExceeded => {
+                self.ctx.application_symbols_resolution_set.remove(&type_id);
+                return;
+            }
+        };
         if is_outermost {
             // Reset fuel for each top-level resolution
             APP_SYMBOL_RESOLUTION_FUEL.set(0);
@@ -1631,9 +1639,16 @@ impl CheckerState<'_> {
         while let Some(current) = worklist.pop() {
             // Check global fuel - bail if exhausted (prevents unbounded work
             // on deeply-nested generic type graphs like react16.d.ts).
-            if APP_SYMBOL_RESOLUTION_FUEL.get() >= MAX_APP_SYMBOL_RESOLUTION_FUEL {
-                fully_resolved = false;
-                break;
+            match application_resolution_local_fuel_state(
+                APP_SYMBOL_RESOLUTION_FUEL.get(),
+                MAX_APP_SYMBOL_RESOLUTION_FUEL,
+            ) {
+                ApplicationResolutionWorkState::Continue => {}
+                ApplicationResolutionWorkState::LocalFuelExhausted
+                | ApplicationResolutionWorkState::GlobalFuelExhausted => {
+                    fully_resolved = false;
+                    break;
+                }
             }
 
             if !seen_types.insert(current) {
@@ -1663,9 +1678,14 @@ impl CheckerState<'_> {
                 // Consume fuel for each DefId resolution (the expensive part)
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
-                if global_resolution_fuel_exhausted() {
-                    fully_resolved = false;
-                    break;
+                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
+                {
+                    ApplicationResolutionWorkState::Continue => {}
+                    ApplicationResolutionWorkState::GlobalFuelExhausted
+                    | ApplicationResolutionWorkState::LocalFuelExhausted => {
+                        fully_resolved = false;
+                        break;
+                    }
                 }
 
                 match self.resolve_lazy_def_for_type_env(def_id) {
@@ -1703,9 +1723,14 @@ impl CheckerState<'_> {
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
-                if global_resolution_fuel_exhausted() {
-                    fully_resolved = false;
-                    break;
+                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
+                {
+                    ApplicationResolutionWorkState::Continue => {}
+                    ApplicationResolutionWorkState::GlobalFuelExhausted
+                    | ApplicationResolutionWorkState::LocalFuelExhausted => {
+                        fully_resolved = false;
+                        break;
+                    }
                 }
 
                 match self.resolve_enum_def_for_type_env(def_id) {
@@ -1746,9 +1771,14 @@ impl CheckerState<'_> {
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
                 increment_global_resolution_fuel();
-                if global_resolution_fuel_exhausted() {
-                    fully_resolved = false;
-                    break;
+                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
+                {
+                    ApplicationResolutionWorkState::Continue => {}
+                    ApplicationResolutionWorkState::GlobalFuelExhausted
+                    | ApplicationResolutionWorkState::LocalFuelExhausted => {
+                        fully_resolved = false;
+                        break;
+                    }
                 }
 
                 let resolved = if symbol.as_ref().is_some_and(|s| {
