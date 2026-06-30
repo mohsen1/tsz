@@ -22,6 +22,7 @@ use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::infer_matching_guard_state as guard_state;
 use super::infer_matching_helpers::constraint_is_nullable_union;
 use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
 use super::template_segment_prefix::match_template_segment_prefix;
@@ -78,13 +79,17 @@ impl<'a> InferenceContext<'a> {
         target: TypeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
-        if self.infer_depth >= Self::MAX_INFER_DEPTH {
-            return Ok(());
+        let inserted_visit =
+            self.infer_depth < Self::MAX_INFER_DEPTH && self.infer_visited.insert((source, target));
+        match guard_state::infer_match_entry_state(
+            self.infer_depth,
+            Self::MAX_INFER_DEPTH,
+            inserted_visit,
+        ) {
+            guard_state::InferMatchEntryState::Entered { depth } => self.infer_depth = depth,
+            guard_state::InferMatchEntryState::DepthExceeded
+            | guard_state::InferMatchEntryState::AlreadyVisited => return Ok(()),
         }
-        if !self.infer_visited.insert((source, target)) {
-            return Ok(());
-        }
-        self.infer_depth += 1;
         let result = self.infer_from_types_inner(source, target, priority);
         self.infer_depth -= 1;
         result
@@ -923,17 +928,10 @@ impl<'a> InferenceContext<'a> {
     /// inference to proceed. Without this, `(Object, Application)` falls through
     /// the match and inference candidates are lost.
     ///
-    /// Returns `None` if:
-    /// - No resolver is available
-    /// - The base isn't a resolvable DefId
-    /// - Type parameters or body can't be resolved
-    /// - Application expansion depth limit is exceeded (prevents infinite recursion
-    ///   for recursive type aliases)
     fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
         let resolver = self.resolver?;
         let app = self.interner.type_application(app_id);
 
-        // Extract DefId from the base type (must be Lazy(DefId))
         if app.base.is_intrinsic() {
             return None;
         }
@@ -942,13 +940,13 @@ impl<'a> InferenceContext<'a> {
             _ => return None,
         };
 
-        // Depth guard: prevent infinite recursion for recursive type aliases
-        // (e.g., type Spec<T> = { [P in keyof T]: Spec<T[P]> })
         let depth = self.app_expansion_depth;
-        if depth >= Self::MAX_APP_EXPANSION_DEPTH {
-            return None;
+        match guard_state::app_expansion_state(depth, Self::MAX_APP_EXPANSION_DEPTH) {
+            guard_state::AppExpansionState::Entered { depth } => {
+                self.app_expansion_depth = depth;
+            }
+            guard_state::AppExpansionState::DepthExceeded => return None,
         }
-        self.app_expansion_depth += 1;
 
         // Resolve the type alias body and its type parameters
         let type_params = resolver.get_lazy_type_params(def_id)?;
@@ -1642,8 +1640,9 @@ impl<'a> InferenceContext<'a> {
         if target.is_intrinsic() {
             return false;
         }
-        if !visited.insert(target) {
-            return false;
+        match guard_state::target_param_visit_state(visited.insert(target)) {
+            guard_state::TargetParamVisitState::Entered => {}
+            guard_state::TargetParamVisitState::AlreadyVisited { fallback } => return fallback,
         }
         let Some(key) = self.interner.lookup(target) else {
             return false;
