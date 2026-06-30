@@ -127,6 +127,32 @@ fn test_widen_object_properties() {
 }
 
 #[test]
+fn widen_type_memo_hit_replays_late_display_properties() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("x");
+    let literal = interner.literal_string("late");
+    let obj_type = interner.object(vec![PropertyInfo::new(name, literal)]);
+
+    let widened = widen_type(&interner, obj_type);
+    assert_eq!(
+        interner.get_display_properties(widened),
+        None,
+        "first semantic widening ran before display provenance existed"
+    );
+
+    interner.store_display_properties(obj_type, vec![PropertyInfo::new(name, literal)]);
+
+    let warmed = widen_type(&interner, obj_type);
+    assert_eq!(warmed, widened, "memo hit must preserve semantic result");
+    let display_props = interner
+        .get_display_properties(warmed)
+        .expect("memo hit should replay display properties onto widened result");
+    assert_eq!(display_props.len(), 1);
+    assert_eq!(display_props[0].name, name);
+    assert_eq!(display_props[0].type_id, literal);
+}
+
+#[test]
 fn test_widen_nested_object_properties() {
     let interner = TypeInterner::new();
     // Create nested object { a: { b: "hello" } }
