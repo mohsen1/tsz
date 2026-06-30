@@ -236,6 +236,7 @@ impl<'a> CheckerContext<'a> {
             binder,
             types,
             file_name,
+            current_directory: None,
             compiler_options,
             capabilities,
             report_unresolved_imports: false,

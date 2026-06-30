@@ -114,7 +114,7 @@ impl<'a> CheckerState<'a> {
                     let extensions = unresolved_extensions.join("', '");
                     let display_path = if reference_path.is_empty() {
                         let resolved = source_path.parent().unwrap_or_else(|| Path::new(""));
-                        normalize_path(resolved)
+                        display_reference_path(resolved, self.ctx.current_directory.as_deref())
                     } else {
                         reference_path.clone()
                     };
@@ -131,8 +131,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Resolve the reference path relative to the source file's directory,
-                // matching tsc behavior which reports absolute/resolved paths.
+                // Resolve the reference path relative to the source file's directory.
                 // tsc normalizes Windows-style backslashes before resolution, so
                 // `../../../foo` from `..\..\..\foo` resolves correctly on Unix.
                 let forward_slash_path = reference_path.replace('\\', "/");
@@ -141,9 +140,14 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| Path::new(""))
                     .join(&forward_slash_path);
 
-                // Normalize the path to resolve . and .. components.
-                // tsc reports normalized paths like "/tmp/file.ts" not "/tmp/dir/../file.ts".
-                let display_path = normalize_path(&resolved);
+                // Render the resolved path the way tsc does: relative to the
+                // program's current directory (tsc keeps source file names, and
+                // thus reference paths resolved from them, relative to
+                // `host.getCurrentDirectory()`). `.` and `..` components are
+                // collapsed so the path reads like "sub/file.ts", not
+                // "dir/../file.ts".
+                let display_path =
+                    display_reference_path(&resolved, self.ctx.current_directory.as_deref());
                 let message = format_message("File '{0}' not found.", &[&display_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
@@ -198,6 +202,59 @@ impl<'a> CheckerState<'a> {
     }
 }
 
+/// Render a resolved triple-slash reference path for a TS6053/TS6054 message.
+///
+/// `tsc` keeps source file names relative to `host.getCurrentDirectory()`, so a
+/// reference path resolved from one prints relative to the current directory
+/// too (e.g. `nested/missing.d.ts`, `../up.d.ts`). When the program's current
+/// directory is known, this relativizes the resolved path against it; otherwise
+/// it falls back to the normalized (absolute) path. `.` and `..` components are
+/// always collapsed.
+fn display_reference_path(resolved: &std::path::Path, current_dir: Option<&str>) -> String {
+    let normalized = normalize_path(resolved);
+    let Some(current_dir) = current_dir.filter(|dir| !dir.is_empty()) else {
+        return normalized;
+    };
+    let normalized_path = std::path::Path::new(&normalized);
+    // Only relativize an absolute resolved path against the (absolute) current
+    // directory. A path that is already relative is resolved relative to the
+    // source file, which `tsc` also keeps relative, so it is left untouched.
+    if !normalized_path.is_absolute() {
+        return normalized;
+    }
+    relative_to(normalized_path, std::path::Path::new(current_dir)).unwrap_or(normalized)
+}
+
+/// Compute `path` relative to `base`, mirroring `tsc`'s
+/// `getRelativePathFromDirectory`. Returns `None` when the two share no common
+/// root, so the caller keeps the absolute form. The result always uses forward
+/// slashes, matching `tsc`'s diagnostic paths.
+fn relative_to(path: &std::path::Path, base: &std::path::Path) -> Option<String> {
+    use std::path::Component;
+
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let base_components: Vec<Component<'_>> = base.components().collect();
+    let common_len = path_components
+        .iter()
+        .zip(base_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    if common_len == 0 {
+        return None;
+    }
+
+    let mut result = std::path::PathBuf::new();
+    for _ in common_len..base_components.len() {
+        result.push("..");
+    }
+    for component in &path_components[common_len..] {
+        result.push(component);
+    }
+
+    let rel = result.to_string_lossy().replace('\\', "/");
+    Some(if rel.is_empty() { ".".to_string() } else { rel })
+}
+
 /// Normalize a path by resolving `.` and `..` components without requiring the file to exist.
 ///
 /// This matches tsc behavior which reports clean paths like `/tmp/file.ts`
@@ -237,4 +294,74 @@ fn normalize_path(path: &std::path::Path) -> String {
     }
 
     result.to_string_lossy().into_owned()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::display_reference_path;
+    use std::path::Path;
+
+    // Unix-only: the relativization depends on POSIX absolute-path semantics
+    // (`/...` is absolute). The cross-platform behavior is exercised end-to-end
+    // by `tsz-cli`'s `triple_slash_reference_not_found_relative_path_tests`.
+
+    #[test]
+    fn sibling_reference_is_relative_to_cwd() {
+        let resolved = Path::new("/proj/app/missing-a.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, Some("/proj/app")),
+            "missing-a.d.ts"
+        );
+    }
+
+    #[test]
+    fn parent_escaping_reference_keeps_single_dotdot() {
+        let resolved = Path::new("/proj/up-missing.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, Some("/proj/app")),
+            "../up-missing.d.ts"
+        );
+    }
+
+    #[test]
+    fn subdirectory_reference_keeps_prefix() {
+        let resolved = Path::new("/proj/app/sub/deep-missing.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, Some("/proj/app")),
+            "sub/deep-missing.d.ts"
+        );
+    }
+
+    #[test]
+    fn dot_components_are_collapsed_before_relativizing() {
+        let resolved = Path::new("/proj/app/sub/../x.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, Some("/proj/app")),
+            "x.d.ts"
+        );
+    }
+
+    #[test]
+    fn without_current_directory_path_stays_absolute() {
+        let resolved = Path::new("/proj/app/missing-a.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, None),
+            "/proj/app/missing-a.d.ts"
+        );
+        assert_eq!(
+            display_reference_path(resolved, Some("")),
+            "/proj/app/missing-a.d.ts"
+        );
+    }
+
+    #[test]
+    fn already_relative_path_is_left_untouched() {
+        // A relative resolved path (source file stored relative) is already in
+        // the form tsc keeps; do not attempt to relativize it further.
+        let resolved = Path::new("app/missing-a.d.ts");
+        assert_eq!(
+            display_reference_path(resolved, Some("/proj/app")),
+            "app/missing-a.d.ts"
+        );
+    }
 }
