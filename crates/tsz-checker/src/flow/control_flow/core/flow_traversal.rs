@@ -1,5 +1,5 @@
 use super::super::flow_dp::FlowConditionDpMemos;
-use super::flow_cache_policy::{FlowCachePolicy, FlowCacheRead, FlowCacheWrite};
+use super::flow_cache_policy::{FlowCacheBypass, FlowCachePolicy, FlowCacheRead, FlowCacheWrite};
 use super::{
     FlowAnalyzer, FlowDeferMemos, defer_to_antecedent, flow_boundary, flow_step_budget, query,
 };
@@ -227,6 +227,10 @@ impl<'a> FlowAnalyzer<'a> {
                     reference,
                     &mut condition_dp_memos.typeof_exclusions,
                 );
+            let cache_bypass = FlowCacheBypass::new(
+                skip_cache_for_explicit_unknown_switch,
+                skip_cache_for_exhaustive_unknown_typeof,
+            );
 
             // Use cache if: 1) not a switch clause, AND
             // 2) either initial type is concrete OR this is a loop label.
@@ -236,8 +240,7 @@ impl<'a> FlowAnalyzer<'a> {
             if cache_policy.allows_read(FlowCacheRead {
                 is_switch_clause,
                 is_loop_label_node,
-                skip_cache_for_explicit_unknown_switch,
-                skip_cache_for_exhaustive_unknown_typeof,
+                bypass: cache_bypass,
             }) && let Some(cache) = self.flow_cache()
             {
                 let key = (current_flow, cache_symbol, initial_type);
@@ -1246,17 +1249,19 @@ impl<'a> FlowAnalyzer<'a> {
             let final_has_type_params = self.contains_type_parameters_cached(final_type);
             if cache_policy.allows_write(FlowCacheWrite {
                 is_loop_label_node: flow.has_any_flags(flow_flags::LOOP_LABEL),
-                skip_cache_for_explicit_unknown_switch: initial_type == TypeId::UNKNOWN
-                    && self.flow_chain_contains_switch_clause_with_memo(
-                        current_flow,
-                        &mut condition_dp_memos.switch_chains,
-                    ),
-                skip_cache_for_exhaustive_unknown_typeof: initial_type == TypeId::UNKNOWN
-                    && self.flow_has_exhaustive_typeof_exclusions_with_memo(
-                        current_flow,
-                        reference,
-                        &mut condition_dp_memos.typeof_exclusions,
-                    ),
+                bypass: FlowCacheBypass::new(
+                    initial_type == TypeId::UNKNOWN
+                        && self.flow_chain_contains_switch_clause_with_memo(
+                            current_flow,
+                            &mut condition_dp_memos.switch_chains,
+                        ),
+                    initial_type == TypeId::UNKNOWN
+                        && self.flow_has_exhaustive_typeof_exclusions_with_memo(
+                            current_flow,
+                            reference,
+                            &mut condition_dp_memos.typeof_exclusions,
+                        ),
+                ),
                 final_type,
                 final_has_type_params,
                 unreachable_never: Self::UNREACHABLE_NEVER,

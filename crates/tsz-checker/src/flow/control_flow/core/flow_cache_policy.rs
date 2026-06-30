@@ -14,22 +14,43 @@ pub(super) struct FlowCachePolicy {
     stability: FlowCacheStability,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct FlowCacheBypass {
+    explicit_unknown_switch: bool,
+    exhaustive_unknown_typeof: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FlowCacheRead {
     pub is_switch_clause: bool,
     pub is_loop_label_node: bool,
-    pub skip_cache_for_explicit_unknown_switch: bool,
-    pub skip_cache_for_exhaustive_unknown_typeof: bool,
+    pub bypass: FlowCacheBypass,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct FlowCacheWrite {
     pub is_loop_label_node: bool,
-    pub skip_cache_for_explicit_unknown_switch: bool,
-    pub skip_cache_for_exhaustive_unknown_typeof: bool,
+    pub bypass: FlowCacheBypass,
     pub final_type: TypeId,
     pub final_has_type_params: bool,
     pub unreachable_never: TypeId,
+}
+
+impl FlowCacheBypass {
+    pub const fn new(explicit_unknown_switch: bool, exhaustive_unknown_typeof: bool) -> Self {
+        Self {
+            explicit_unknown_switch,
+            exhaustive_unknown_typeof,
+        }
+    }
+
+    pub const fn none() -> Self {
+        Self::new(false, false)
+    }
+
+    const fn any(self) -> bool {
+        self.explicit_unknown_switch || self.exhaustive_unknown_typeof
+    }
 }
 
 impl FlowCachePolicy {
@@ -57,8 +78,7 @@ impl FlowCachePolicy {
     pub const fn allows_read(self, read: FlowCacheRead) -> bool {
         !read.is_switch_clause
             && (!self.skip_cache_for_control_flow_typed_any || read.is_loop_label_node)
-            && !read.skip_cache_for_explicit_unknown_switch
-            && !read.skip_cache_for_exhaustive_unknown_typeof
+            && !read.bypass.any()
             && (!self.initial_has_type_params || read.is_loop_label_node)
     }
 
@@ -66,8 +86,7 @@ impl FlowCachePolicy {
         write.final_type != write.unreachable_never
             && self.stability == FlowCacheStability::Stable
             && (!self.skip_cache_for_control_flow_typed_any || write.is_loop_label_node)
-            && !write.skip_cache_for_explicit_unknown_switch
-            && !write.skip_cache_for_exhaustive_unknown_typeof
+            && !write.bypass.any()
             && !self.initial_has_type_params
             && !write.final_has_type_params
     }
@@ -87,7 +106,9 @@ impl FlowCachePolicy {
 
 #[cfg(test)]
 mod tests {
-    use super::{FlowCachePolicy, FlowCacheRead, FlowCacheStability, FlowCacheWrite};
+    use super::{
+        FlowCacheBypass, FlowCachePolicy, FlowCacheRead, FlowCacheStability, FlowCacheWrite,
+    };
     use tsz_solver::TypeId;
 
     #[test]
@@ -97,13 +118,11 @@ mod tests {
         assert!(policy.allows_read(FlowCacheRead {
             is_switch_clause: false,
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
         }));
         assert!(policy.allows_write(FlowCacheWrite {
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
             final_type: TypeId::STRING,
             final_has_type_params: false,
             unreachable_never: TypeId::NEVER,
@@ -117,16 +136,14 @@ mod tests {
 
         assert!(!generic_initial.allows_write(FlowCacheWrite {
             is_loop_label_node: true,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
             final_type: TypeId::STRING,
             final_has_type_params: false,
             unreachable_never: TypeId::NEVER,
         }));
         assert!(!concrete_initial.allows_write(FlowCacheWrite {
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
             final_type: TypeId::STRING,
             final_has_type_params: true,
             unreachable_never: TypeId::NEVER,
@@ -143,8 +160,7 @@ mod tests {
         assert!(!policy.allows_pending_writes());
         assert!(!policy.allows_write(FlowCacheWrite {
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
             final_type: TypeId::STRING,
             final_has_type_params: false,
             unreachable_never: TypeId::NEVER,
@@ -159,8 +175,7 @@ mod tests {
         let loop_read = FlowCacheRead {
             is_switch_clause: false,
             is_loop_label_node: true,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::none(),
         };
 
         assert!(generic_policy.allows_read(loop_read));
@@ -174,13 +189,11 @@ mod tests {
         assert!(!policy.allows_read(FlowCacheRead {
             is_switch_clause: false,
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: true,
-            skip_cache_for_exhaustive_unknown_typeof: false,
+            bypass: FlowCacheBypass::new(true, false),
         }));
         assert!(!policy.allows_write(FlowCacheWrite {
             is_loop_label_node: false,
-            skip_cache_for_explicit_unknown_switch: false,
-            skip_cache_for_exhaustive_unknown_typeof: true,
+            bypass: FlowCacheBypass::new(false, true),
             final_type: TypeId::STRING,
             final_has_type_params: false,
             unreachable_never: TypeId::NEVER,
