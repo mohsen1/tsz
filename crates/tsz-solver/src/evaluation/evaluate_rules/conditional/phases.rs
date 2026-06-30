@@ -82,6 +82,22 @@ impl ConditionalBranchCacheVerdict {
     }
 }
 
+const MAX_UNRESOLVABLE_KEYOF_LAZY_DEPTH: u32 = 8;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UnresolvableKeyofLazyDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn unresolvable_keyof_lazy_depth_state(depth: u32) -> UnresolvableKeyofLazyDepthState {
+    if depth > MAX_UNRESOLVABLE_KEYOF_LAZY_DEPTH {
+        UnresolvableKeyofLazyDepthState::LimitExceeded
+    } else {
+        UnresolvableKeyofLazyDepthState::Continue
+    }
+}
+
 /// Conditional-branch relation result plus its publication verdict.
 ///
 /// The per-evaluator cache can remember any definitive branch relation. The
@@ -240,6 +256,23 @@ pub(super) enum TailCallStep {
     NoTailCall,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TailCallDepthState {
+    Continue,
+    LimitExceeded,
+}
+
+const fn tail_call_depth_state(
+    tail_recursion_count: usize,
+    max_tail_recursion_depth: usize,
+) -> TailCallDepthState {
+    if tail_recursion_count >= max_tail_recursion_depth {
+        TailCallDepthState::LimitExceeded
+    } else {
+        TailCallDepthState::Continue
+    }
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// True when either operand of a failed branch relation hides part of its
     /// key space behind a `keyof` of a `Lazy(DefId)` this resolver cannot expand.
@@ -266,8 +299,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// unresolvable `Lazy(DefId)`. Bounded depth keeps a malformed self-referential
     /// type from recursing without progress.
     fn type_has_unresolvable_keyof_lazy(&mut self, ty: TypeId, depth: u32) -> bool {
-        if depth > 8 {
-            return false;
+        match unresolvable_keyof_lazy_depth_state(depth) {
+            UnresolvableKeyofLazyDepthState::Continue => {}
+            UnresolvableKeyofLazyDepthState::LimitExceeded => return false,
         }
         match self.interner().lookup(ty) {
             // `type_list` returns an owned `Arc`, so iterating it does not hold a
@@ -286,8 +320,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// True when `ty` is — or a union/intersection member of `ty` is — a
     /// `Lazy(DefId)` the resolver returns `None` for (cannot expand).
     fn keyof_inner_is_unresolvable_lazy(&mut self, ty: TypeId, depth: u32) -> bool {
-        if depth > 8 {
-            return false;
+        match unresolvable_keyof_lazy_depth_state(depth) {
+            UnresolvableKeyofLazyDepthState::Continue => {}
+            UnresolvableKeyofLazyDepthState::LimitExceeded => return false,
         }
         match self.interner().lookup(ty) {
             Some(TypeData::Lazy(def_id)) => self
@@ -999,8 +1034,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         tail_application_branch: &mut Option<TypeId>,
         tail_recursion_count: usize,
     ) -> TailCallStep {
-        if tail_recursion_count >= Self::MAX_TAIL_RECURSION_DEPTH {
-            return TailCallStep::NoTailCall;
+        match tail_call_depth_state(tail_recursion_count, Self::MAX_TAIL_RECURSION_DEPTH) {
+            TailCallDepthState::Continue => {}
+            TailCallDepthState::LimitExceeded => return TailCallStep::NoTailCall,
         }
 
         match self.interner().lookup(branch) {
@@ -1026,6 +1062,53 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => TailCallStep::NoTailCall,
         }
+    }
+}
+
+#[cfg(test)]
+mod unresolvable_keyof_lazy_depth_state_tests {
+    use super::{
+        MAX_UNRESOLVABLE_KEYOF_LAZY_DEPTH, UnresolvableKeyofLazyDepthState,
+        unresolvable_keyof_lazy_depth_state,
+    };
+
+    #[test]
+    fn continues_at_depth_cap() {
+        assert_eq!(
+            unresolvable_keyof_lazy_depth_state(MAX_UNRESOLVABLE_KEYOF_LAZY_DEPTH),
+            UnresolvableKeyofLazyDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn limits_past_depth_cap() {
+        assert_eq!(
+            unresolvable_keyof_lazy_depth_state(MAX_UNRESOLVABLE_KEYOF_LAZY_DEPTH + 1),
+            UnresolvableKeyofLazyDepthState::LimitExceeded
+        );
+    }
+}
+
+#[cfg(test)]
+mod tail_call_depth_state_tests {
+    use super::{TailCallDepthState, tail_call_depth_state};
+
+    const MAX: usize = 4;
+
+    #[test]
+    fn continues_before_tail_call_cap() {
+        assert_eq!(
+            tail_call_depth_state(MAX - 1, MAX),
+            TailCallDepthState::Continue
+        );
+    }
+
+    #[test]
+    fn limits_at_tail_call_cap() {
+        assert_eq!(
+            tail_call_depth_state(MAX, MAX),
+            TailCallDepthState::LimitExceeded
+        );
     }
 }
 
