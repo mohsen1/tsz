@@ -735,6 +735,30 @@ fn base_instance_merge_function_callable_intrinsic_are_other() {
 // =============================================================================
 
 #[test]
+fn abstract_constructor_anchor_visit_state_enters_new_type() {
+    let mut visited = rustc_hash::FxHashSet::default();
+
+    assert_eq!(
+        abstract_constructor_anchor_visit_state(&mut visited, TypeId::STRING),
+        AbstractConstructorAnchorVisitState::Entered,
+    );
+}
+
+#[test]
+fn abstract_constructor_anchor_visit_state_reports_repeated_type() {
+    let mut visited = rustc_hash::FxHashSet::default();
+
+    assert_eq!(
+        abstract_constructor_anchor_visit_state(&mut visited, TypeId::STRING),
+        AbstractConstructorAnchorVisitState::Entered,
+    );
+    assert_eq!(
+        abstract_constructor_anchor_visit_state(&mut visited, TypeId::STRING),
+        AbstractConstructorAnchorVisitState::AlreadyVisited,
+    );
+}
+
+#[test]
 fn anchor_type_query_returns_type_query_anchor() {
     let interner = TypeInterner::new();
     let tq = interner.type_query(SymbolRef(13));
@@ -763,6 +787,19 @@ fn anchor_application_unwraps_to_base_callable() {
     let app = interner.application(callable, vec![TypeId::NUMBER]);
     assert_eq!(
         resolve_abstract_constructor_anchor(&interner, app),
+        AbstractConstructorAnchor::CallableType(callable),
+    );
+}
+
+#[test]
+fn anchor_nested_application_unwraps_to_base_callable() {
+    let interner = TypeInterner::new();
+    let callable = interner.callable(CallableShape::default());
+    let app = interner.application(callable, vec![TypeId::NUMBER]);
+    let outer = interner.application(app, vec![TypeId::STRING]);
+
+    assert_eq!(
+        resolve_abstract_constructor_anchor(&interner, outer),
         AbstractConstructorAnchor::CallableType(callable),
     );
 }
