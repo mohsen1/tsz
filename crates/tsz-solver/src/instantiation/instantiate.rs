@@ -11,6 +11,7 @@
 
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
+use crate::instantiation::result::InstantiationTermination;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -28,6 +29,60 @@ use tsz_common::interner::Atom;
 /// notes at the canonical definition in [`crate::limits`].
 pub const MAX_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_TYPE_SUBSTITUTION_DEPTH;
 const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
+
+/// Named owner for one instantiation walk's recursion-depth verdict.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct InstantiationWalkState {
+    depth: u32,
+    max_depth: u32,
+    termination: InstantiationTermination,
+}
+
+/// Entry decision for an instantiation recursion frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InstantiationFrameState {
+    Entered,
+    DepthExceeded,
+}
+
+impl InstantiationWalkState {
+    const fn new(max_depth: u32) -> Self {
+        Self {
+            depth: 0,
+            max_depth,
+            termination: InstantiationTermination::Complete,
+        }
+    }
+
+    const fn depth(&self) -> u32 {
+        self.depth
+    }
+
+    const fn has_depth_exceeded(&self) -> bool {
+        self.termination.depth_exceeded()
+    }
+
+    const fn termination(&self) -> InstantiationTermination {
+        self.termination
+    }
+
+    const fn mark_depth_exceeded(&mut self) {
+        self.termination = InstantiationTermination::DepthExceeded;
+    }
+
+    const fn enter_frame(&mut self) -> InstantiationFrameState {
+        if self.has_depth_exceeded() || self.depth >= self.max_depth {
+            self.mark_depth_exceeded();
+            return InstantiationFrameState::DepthExceeded;
+        }
+        self.depth += 1;
+        InstantiationFrameState::Entered
+    }
+
+    const fn leave_frame(&mut self) {
+        self.depth -= 1;
+    }
+}
 
 /// Instantiator for applying type substitutions.
 pub struct TypeInstantiator<'a> {
@@ -61,9 +116,7 @@ pub struct TypeInstantiator<'a> {
     /// `instantiate_type_with_this`) where the substitution legitimately
     /// means "specialize this method body for this class".
     pub shallow_this_only: bool,
-    depth: u32,
-    max_depth: u32,
-    depth_exceeded: bool,
+    walk_state: InstantiationWalkState,
     /// Cached: `true` when every key in `substitution.map` is a solver
     /// inference variable (`__infer_*`). The substitution is immutable for the
     /// lifetime of the instantiator, so this is computed once at construction.
@@ -93,9 +146,7 @@ impl<'a> TypeInstantiator<'a> {
             preserve_unsubstituted_type_params: false,
             this_type: None,
             shallow_this_only: false,
-            depth: 0,
-            max_depth: MAX_INSTANTIATION_DEPTH,
-            depth_exceeded: false,
+            walk_state: InstantiationWalkState::new(MAX_INSTANTIATION_DEPTH),
             substitution_is_inference_only,
         }
     }
@@ -160,7 +211,19 @@ impl<'a> TypeInstantiator<'a> {
     /// deeper than `MAX_INSTANTIATION_DEPTH`.
     #[cfg(test)]
     pub(crate) const fn force_depth_exceeded_for_test(&mut self) {
-        self.depth_exceeded = true;
+        self.walk_state.termination = InstantiationTermination::DepthExceeded;
+    }
+
+    pub(crate) const fn has_depth_exceeded(&self) -> bool {
+        self.walk_state.has_depth_exceeded()
+    }
+
+    pub(crate) const fn termination(&self) -> InstantiationTermination {
+        self.walk_state.termination()
+    }
+
+    pub(crate) const fn mark_depth_exceeded(&mut self) {
+        self.walk_state.mark_depth_exceeded();
     }
 
     /// Restore the homomorphic modifier source of a self-indexed mapped type
@@ -537,20 +600,22 @@ impl<'a> TypeInstantiator<'a> {
     /// Wrapped with `stacker::maybe_grow()` to handle deeply nested generic
     /// instantiation chains that would otherwise overflow the stack.
     pub fn instantiate(&mut self, type_id: TypeId) -> TypeId {
-        let _span =
-            tracing::trace_span!("instantiate", ty = type_id.0, depth = self.depth,).entered();
+        let _span = tracing::trace_span!(
+            "instantiate",
+            ty = type_id.0,
+            depth = self.walk_state.depth(),
+        )
+        .entered();
 
         // Fast path: intrinsic types don't need instantiation
         if type_id.is_intrinsic() {
             return type_id;
         }
 
-        if self.depth_exceeded {
-            return self.bail_value(type_id);
-        }
-
-        if self.depth >= self.max_depth {
-            self.depth_exceeded = true;
+        if matches!(
+            self.walk_state.enter_frame(),
+            InstantiationFrameState::DepthExceeded
+        ) {
             return self.bail_value(type_id);
         }
 
@@ -562,13 +627,13 @@ impl<'a> TypeInstantiator<'a> {
         // `depth` is adjusted inside the body so it only counts frames we
         // actually descend into, never the exhausted-bail path.
         crate::recursion::with_solver_frame(|| {
-            self.depth += 1;
             let result = self.instantiate_inner(type_id);
-            self.depth -= 1;
+            self.walk_state.leave_frame();
             result
         })
         .unwrap_or_else(|| {
-            self.depth_exceeded = true;
+            self.walk_state.leave_frame();
+            self.mark_depth_exceeded();
             self.bail_value(type_id)
         })
     }

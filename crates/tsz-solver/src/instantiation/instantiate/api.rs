@@ -3,9 +3,7 @@ use crate::caches::db::QueryDatabase;
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::instantiation::instantiate::cache_stability::ProjectInstantiationCacheLimitSnapshot;
 use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
-use crate::instantiation::result::{
-    InstantiationMemoResult, InstantiationResult, InstantiationTermination,
-};
+use crate::instantiation::result::{InstantiationMemoResult, InstantiationResult};
 use crate::types::{ConditionalType, FunctionShape, PropertyInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -968,8 +966,7 @@ fn run_instantiator(
     instantiator.shallow_this_only = options.shallow_this_only();
     instantiator.this_type = request.this_type();
     let result = instantiator.instantiate(request.type_id());
-    let termination = InstantiationTermination::from_depth_exceeded(instantiator.depth_exceeded);
-    InstantiationResult::from_walk(result, termination)
+    InstantiationResult::from_walk(result, instantiator.termination())
 }
 
 /// Convenience function for instantiating a type with a substitution.
@@ -1365,8 +1362,7 @@ pub fn instantiate_type_with_depth_status(
     // Report the overflow verdict for callers that gate on it, but hand back
     // the relation-preserving bail value (never a substitution-bound free type
     // parameter) instead of the `TypeId::ERROR` sentinel (#13652).
-    let termination = InstantiationTermination::from_depth_exceeded(instantiator.depth_exceeded);
-    InstantiationResult::from_walk(result, termination)
+    InstantiationResult::from_walk(result, instantiator.termination())
 }
 
 /// Convenience function for instantiating a type while preserving meta-type
