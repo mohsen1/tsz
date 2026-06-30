@@ -67,3 +67,14 @@ pub(crate) fn optionb_store_resolver_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("TSZ_OPTIONB_STORE_RESOLVER").is_ok_and(|v| v == "1"))
 }
+
+/// `TSZ_INFER_HKT_REDUCE=1` activates the generic-call inference HKT-reduce
+/// lever (issue #14344 / #14345). Default-OFF, byte-parity when OFF.
+///
+/// Requires the resolver-rereduce and option-B store-only resolver gates plus
+/// an attached `DefinitionStore`; callers keep their literal resolver path
+/// when any gate is OFF.
+pub(crate) fn infer_hkt_reduce_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_INFER_HKT_REDUCE").is_ok_and(|v| v == "1"))
+}

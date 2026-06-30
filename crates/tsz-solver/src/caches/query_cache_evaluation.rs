@@ -8,7 +8,7 @@ use crate::def::resolver::NoopResolver;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled;
 use crate::relations::subtype::TypeResolver;
-use crate::types::{SymbolRef, TypeId};
+use crate::types::{SymbolRef, TypeId, TypeParamInfo};
 
 /// A `query_db`-backed evaluator: a `TypeEvaluator` with the `NoopResolver`
 /// (matching `evaluate_type_with_options`) whose cross-call caches are wired to
@@ -80,6 +80,23 @@ impl TypeResolver for StoreOnlyResolver<'_> {
         interner: &dyn TypeDatabase,
     ) -> Option<TypeId> {
         self.resolve_lazy(def_id, interner)
+    }
+
+    /// Type parameters for a `DefId`, read flat from the shared store under the
+    /// alias-forward-canonicalized home key.
+    ///
+    /// `store.get_type_params(canonical_def_id(def))` is the parameter-list
+    /// analogue of [`Self::resolve_lazy`]'s body lookup: both are pure functions
+    /// of the arena-invariant `DefId` home, so the answer is the same in every
+    /// arena. Overriding this lets `try_expand_application`
+    /// (`infer_matching.rs`) reach its `instantiate_generic_cached` step for a
+    /// cross-arena `Lazy(DefId)` base — without it the trait default returns
+    /// `None`, so expansion bails BEFORE the body is even resolved and the
+    /// HKT-carried inner parameter positions never get an inference candidate
+    /// (issue #14344 / #14345, default-OFF behind `TSZ_INFER_HKT_REDUCE`).
+    fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        self.store
+            .get_type_params(self.store.canonical_def_id(def_id))
     }
 
     fn canonical_def_id(&self, def_id: DefId) -> DefId {

@@ -265,7 +265,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return result;
         }
 
+        // #14344 / #14345 HKT-reduce lever (default-OFF, byte-parity): see
+        // `build_inference_hkt_reduce_shim`. Declared before `infer_ctx` so the
+        // shim outlives the inference context that borrows it.
+        let hkt_reduce_shim = self.build_inference_hkt_reduce_shim();
         let mut infer_ctx = InferenceContext::with_query_db(self.interner);
+        if let Some(ref shim) = hkt_reduce_shim {
+            infer_ctx.resolver = Some(shim);
+        }
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();

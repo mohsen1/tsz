@@ -1346,6 +1346,10 @@ impl QueryDatabase for QueryCache<'_> {
         self
     }
 
+    fn definition_store_for_inference(&self) -> Option<&crate::def::DefinitionStore> {
+        self.definition_store()
+    }
+
     fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
         self.interner.fresh_type_param(info)
     }

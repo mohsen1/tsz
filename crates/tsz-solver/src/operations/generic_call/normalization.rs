@@ -9,6 +9,37 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{constraint_is_primitive_type_with_resolver, write_placeholder_name};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    /// Build the arena-invariant store-only resolver shim that the generic-call
+    /// inference sites borrow to expand a cross-arena `Lazy(DefId)` base
+    /// (issue #14344 / #14345 HKT-reduce lever, default-OFF behind
+    /// `TSZ_INFER_HKT_REDUCE`).
+    ///
+    /// Returns `None` unless all of `TSZ_INFER_HKT_REDUCE`,
+    /// `TSZ_INST_RESOLVER_REREDUCE` and `TSZ_OPTIONB_STORE_RESOLVER` are ON and a
+    /// shared `DefinitionStore` is attached — so the OFF / no-store path keeps
+    /// the `InferenceContext`'s literal `with_query_db` resolver (the
+    /// `QueryCache`, whose `resolve_lazy` returns `None` for a cross-arena
+    /// `DefId`) and stays byte-identical.
+    ///
+    /// The store borrow is taken from the `'a`-lived `interner` field (not a
+    /// `&self` reborrow), so the returned shim lives for `'a` and can be
+    /// assigned to the `InferenceContext`'s `resolver` field. The shim borrows
+    /// only `&'a DefinitionStore` (a shared, program-global read) and never the
+    /// `&mut C` checker, so there is no E0502 here.
+    pub(crate) fn build_inference_hkt_reduce_shim(
+        &self,
+    ) -> Option<crate::caches::query_cache_evaluation::StoreOnlyResolver<'a>> {
+        if !crate::instantiation::instantiate::flags::infer_hkt_reduce_enabled()
+            || !crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
+            || !crate::instantiation::instantiate::flags::optionb_store_resolver_enabled()
+        {
+            return None;
+        }
+        let interner: &'a dyn crate::construction::QueryDatabase = self.interner;
+        let store = interner.definition_store_for_inference()?;
+        Some(crate::caches::query_cache_evaluation::StoreOnlyResolver::new(store))
+    }
+
     /// Fast path for direct single-parameter generic calls:
     /// `<T extends C>(x: T | W<T>) => R<T>` with a single non-rest argument.
     ///
@@ -567,7 +598,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Save state to prevent pollution if evaluator is reused
         let previous_defaulted = std::mem::take(&mut self.defaulted_placeholders);
 
+        // #14344 / #14345 HKT-reduce lever (default-OFF, byte-parity): build the
+        // arena-invariant store-only resolver shim BEFORE `infer_ctx` so it
+        // outlives the inference context whose `resolver` field will borrow it.
+        // OFF (or no store) leaves `shim = None`, so the literal `with_query_db`
+        // resolver (the `QueryCache`) is kept and the path is byte-identical.
+        let hkt_reduce_shim = self.build_inference_hkt_reduce_shim();
         let mut infer_ctx = InferenceContext::with_query_db(self.interner);
+        if let Some(ref shim) = hkt_reduce_shim {
+            infer_ctx.resolver = Some(shim);
+        }
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
