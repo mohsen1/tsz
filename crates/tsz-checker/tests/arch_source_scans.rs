@@ -21,7 +21,11 @@
 //!   constructs signature-bearing solver types only through
 //!   `query_boundaries::construct_signatures`, never via inline shape
 //!   literals or direct interning calls.
+//! - `class_instance_walk_state_scans`: class instance base traversal uses a
+//!   named checker-owned walk state instead of paired raw visited sets.
 
+#[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
+mod class_instance_walk_state_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]

@@ -9,9 +9,9 @@
 
 use super::helpers::exceeds_class_inheritance_depth_limit;
 use super::instance::{ClassInstanceBuilder, ClassInstanceFlags, RestoreEnclosingClass};
+use super::walk_state::ClassInstanceWalkState;
 use crate::state::CheckerState;
-use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_binder::SymbolId;
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
@@ -25,12 +25,11 @@ impl<'a> CheckerState<'a> {
     /// 4. Merging base class members
     /// 5. Adding private brand for nominal typing if needed
     /// 6. Inheriting Object prototype members
-    pub(crate) fn get_class_instance_type_inner(
+    pub(super) fn get_class_instance_type_inner(
         &mut self,
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
-        visited: &mut FxHashSet<SymbolId>,
-        visited_nodes: &mut FxHashSet<NodeIndex>,
+        walk_state: &mut ClassInstanceWalkState,
         apply_module_augmentations: bool,
     ) -> TypeId {
         let current_sym = self.class_declaration_symbol(class_idx);
@@ -50,7 +49,7 @@ impl<'a> CheckerState<'a> {
         // Check for cycles using both symbol ID (for same-file cycles)
         // and node index (for cross-file cycles with @Filename annotations)
         if let Some(sym_id) = current_sym
-            && !visited.insert(sym_id)
+            && !walk_state.enter_symbol(sym_id)
         {
             // Cleanup global set before returning (only if we inserted it)
             if did_insert_into_global_set {
@@ -58,14 +57,14 @@ impl<'a> CheckerState<'a> {
             }
             return TypeId::ERROR; // Circular reference detected via symbol
         }
-        if !visited_nodes.insert(class_idx) {
+        if !walk_state.enter_node(class_idx) {
             // Cleanup global set before returning (only if we inserted it)
             if did_insert_into_global_set && let Some(sym_id) = current_sym {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
             return TypeId::ERROR; // Circular reference detected via node index
         }
-        if exceeds_class_inheritance_depth_limit(visited_nodes.len()) {
+        if exceeds_class_inheritance_depth_limit(walk_state.node_depth()) {
             if did_insert_into_global_set && let Some(sym_id) = current_sym {
                 self.ctx.class_instance_resolution_set.remove(&sym_id);
             }
@@ -140,13 +139,9 @@ impl<'a> CheckerState<'a> {
 
         // Merge base class members. A detected cycle/forward reference performs
         // the resolution-set cleanup inline and short-circuits the whole call.
-        if let Some(early) = self.class_instance_merge_base_members(
-            class,
-            class_idx,
-            visited,
-            visited_nodes,
-            &mut builder,
-        ) {
+        if let Some(early) =
+            self.class_instance_merge_base_members(class, class_idx, walk_state, &mut builder)
+        {
             return early;
         }
 
@@ -158,8 +153,7 @@ impl<'a> CheckerState<'a> {
         self.class_instance_build_final_type(
             class_idx,
             apply_module_augmentations,
-            visited,
-            visited_nodes,
+            walk_state,
             builder,
         )
     }
