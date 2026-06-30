@@ -1058,11 +1058,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     );
                 }
 
-                // Check numeric index signature for numeric property names
-                use crate::objects::index_signatures::IndexSignatureResolver;
-                let resolver = IndexSignatureResolver::new(self.interner());
+                // Check numeric index signature for numeric property names.
                 if let Some(ref idx) = shape.number_index
-                    && resolver
+                    && self
                         .is_numeric_index_name(self.interner().resolve_atom_ref(prop_atom).as_ref())
                 {
                     let instantiated_value = self.instantiate_application_member_type(
@@ -1213,14 +1211,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// signature; callers should fall back to the standard `T[any] = any`
     /// behaviour in that case.
     pub fn resolve_any_index_access(&self, obj_type: TypeId) -> Option<PropertyAccessResult> {
-        use crate::objects::index_signatures::IndexSignatureResolver;
-        let resolver = IndexSignatureResolver::new(self.interner());
         // String index signatures cover string and numeric keys (number falls
         // through to string when no number signature exists). Try string first
         // and fall back to number-only.
-        let value_type = resolver
-            .resolve_string_index(obj_type)
-            .or_else(|| resolver.resolve_number_index(obj_type))?;
+        let value_type = self
+            .resolve_string_index_signature(obj_type)
+            .or_else(|| self.resolve_number_index_signature(obj_type))?;
         Some(self.index_signature_result_with_nuia_write_type(value_type))
     }
 
@@ -1424,8 +1420,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             }
         }
 
-        use crate::objects::index_signatures::IndexSignatureResolver;
-        if IndexSignatureResolver::new(self.interner()).is_numeric_index_name(prop_name) {
+        if self.is_numeric_index_name(prop_name) {
             let element_or_undefined = self.element_type_with_undefined(elem);
             return PropertyAccessResult::from_index(element_or_undefined);
         }
@@ -1505,9 +1500,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Handle numeric index access (e.g., arr[0], arr["0"])
-        use crate::objects::index_signatures::IndexSignatureResolver;
-        let resolver = IndexSignatureResolver::new(self.interner());
-        if resolver.is_numeric_index_name(prop_name) {
+        if self.is_numeric_index_name(prop_name) {
             let element_or_undefined = self.element_type_with_undefined(element_type);
             return PropertyAccessResult::from_index(element_or_undefined);
         }
