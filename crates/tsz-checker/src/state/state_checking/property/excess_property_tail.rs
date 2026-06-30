@@ -24,7 +24,7 @@ impl<'a> CheckerState<'a> {
         if def.kind != tsz_solver::def::DefKind::TypeAlias || !def.type_params.is_empty() {
             return resolved_target;
         }
-        let Some(body) = def.body else {
+        let Some(body) = self.ctx.get_semantic_def_body(def_id).or(def.body) else {
             return resolved_target;
         };
         if query::union_members(self.ctx.types, body).is_some() {
@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
         if outer_members.contains(&lazy_candidate) {
             return true;
         }
-        let body = self.ctx.definition_store.get_body(def_id);
+        let body = self.ctx.get_semantic_def_body(def_id);
         outer_members.iter().any(|&m| {
             body == Some(m)
                 || self.ctx.definition_store.find_def_for_type(m) == Some(def_id)
@@ -164,7 +164,7 @@ impl<'a> CheckerState<'a> {
             return Some(target);
         }
         if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
-            && let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && let Some(body) = self.ctx.get_semantic_def_body(def_id)
             && is_intersection(body)
         {
             return Some(body);
@@ -198,7 +198,7 @@ impl<'a> CheckerState<'a> {
             return nested_target;
         };
 
-        let Some(body) = self.ctx.definition_store.get_body(def_id) else {
+        let Some(body) = self.ctx.get_semantic_def_body(def_id) else {
             return nested_target;
         };
 

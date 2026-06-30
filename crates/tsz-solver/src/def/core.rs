@@ -508,6 +508,8 @@ pub struct DefinitionStore {
     /// rejects unknown/error/any), so an abstract URI / literal-less `typeof`
     /// stays deferred.
     typeof_value_to_literal: DefDashMap<u32, TypeId>,
+    /// Empty registry `DefId` -> merged module-augmentation body and source files.
+    module_augmented_bodies: DefDashMap<DefId, (TypeId, Vec<u32>)>,
 
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
@@ -590,6 +592,7 @@ impl DefinitionStore {
                 Default::default(),
             ),
             typeof_value_to_literal: DefDashMap::default(),
+            module_augmented_bodies: DefDashMap::default(),
             enum_member_to_parent: DefDashMap::default(),
             name_to_defs: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             cross_file_cache: CrossFileQueryCache::default(),
@@ -1300,6 +1303,7 @@ impl DefinitionStore {
         self.class_to_constructor.clear();
         self.class_to_instance.clear();
         self.typeof_value_to_literal.clear();
+        self.module_augmented_bodies.clear();
         self.enum_member_to_parent.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
@@ -1871,6 +1875,7 @@ impl DefinitionStore {
     ///
     /// Returns the number of definitions invalidated.
     pub fn invalidate_file(&self, file_id: u32) -> usize {
+        self.invalidate_module_augmented_bodies_for_file(file_id);
         let def_ids = match self.file_to_defs.remove(&file_id) {
             Some((_, ids)) => ids,
             None => return 0,
@@ -1895,6 +1900,8 @@ impl DefinitionStore {
                         self.invalidate_symbol_mappings_log();
                     }
                 }
+
+                self.module_augmented_bodies.remove(def_id);
 
                 // Clean up type_to_def (reverse scan is expensive, but invalidation
                 // is rare and bounded by per-file definition count).
