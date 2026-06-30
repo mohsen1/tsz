@@ -75,6 +75,52 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         self.check_function_subtype(&source_fn, &target_fn)
     }
 
+    /// Resolve a symbol's [`DefKind`](crate::def::DefKind) through the nominal
+    /// `symbol -> def` mapping, falling back to the injected `is_class_symbol`
+    /// classifier (the binder `CLASS` flag) when no def mapping is available
+    /// (e.g. partially constructed programs). The closure can only witness
+    /// classes, so a positive fallback resolves to [`DefKind::Class`].
+    ///
+    /// Shared by the relation layer's nominal-kind checks
+    /// (`callable_target_is_class_constructor`,
+    /// `requires_explicit_declared_index_signature`).
+    pub(crate) fn symbol_def_kind(
+        &self,
+        symbol_ref: crate::SymbolRef,
+    ) -> Option<crate::def::DefKind> {
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
+            return self.resolver.get_def_kind(def_id);
+        }
+        self.is_class_symbol.and_then(|is_class_symbol| {
+            is_class_symbol(symbol_ref).then_some(crate::def::DefKind::Class)
+        })
+    }
+
+    /// Whether a callable's construct signatures originate from a class
+    /// declaration (`typeof Class`), which `tsc` compares with constructor-
+    /// parameter bivariance (declaration kind `Constructor`).
+    ///
+    /// A `new (...) => T` construct-signature **type literal** carries no
+    /// nominal symbol, and an **interface** construct signature carries an
+    /// interface symbol; both compare parameters strictly (contravariantly
+    /// under `strict_function_types`), exactly like call-signature literals
+    /// (declaration kind `ConstructSignature`). Detection is the same nominal
+    /// `symbol -> DefKind` lookup the rest of the relation layer uses, narrowed
+    /// to `DefKind::Class` so interface construct signatures stay strict.
+    pub(crate) fn callable_target_is_class_constructor(
+        &self,
+        target: &crate::types::CallableShape,
+    ) -> bool {
+        // `new (...) => T` type literal: no nominal class identity.
+        let Some(sym_id) = target.symbol else {
+            return false;
+        };
+        matches!(
+            self.symbol_def_kind(crate::SymbolRef(sym_id.0)),
+            Some(crate::def::DefKind::Class)
+        )
+    }
+
     pub(crate) fn constructor_signatures_need_strict_params(
         source: &FunctionShape,
         target: &FunctionShape,

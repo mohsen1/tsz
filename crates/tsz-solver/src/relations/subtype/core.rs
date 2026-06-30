@@ -402,6 +402,18 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// check via `in_property_check` (e.g. a callable property whose value is a genuine
     /// weak object still triggers TS2559).
     pub(crate) in_callable_property_check: bool,
+    /// When `true`, the immediate construct-signature comparison about to start
+    /// must compare its parameters **strictly** (contravariantly under
+    /// `strict_function_types`), suppressing constructor-parameter bivariance.
+    /// `tsc` applies constructor-parameter bivariance only to class-derived
+    /// constructor functions (`typeof Class`, declaration kind `Constructor`);
+    /// standalone `new (...) => T` type literals and interface construct
+    /// signatures (declaration kind `ConstructSignature`) compare parameters
+    /// like call-signature literals. This flag is set by `check_callable_subtype`
+    /// per construct-signature comparison when the target callable is not a
+    /// class, and is consumed (reset) on entry to `check_function_subtype` so
+    /// nested function comparisons start fresh.
+    pub(crate) force_strict_construct_params: bool,
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
@@ -569,6 +581,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             in_property_check: false,
             in_intersection_member_check: false,
             in_callable_property_check: false,
+            force_strict_construct_params: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
@@ -625,6 +638,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             in_property_check: false,
             in_intersection_member_check: false,
             in_callable_property_check: false,
+            force_strict_construct_params: false,
             assume_related_on_cycle: true,
             identity_cycle_check: false,
             bypass_evaluation: false,

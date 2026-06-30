@@ -33,8 +33,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> SubtypeResult {
-        let allow_constructor_bivariance =
-            !Self::constructor_signatures_need_strict_params(source, target);
+        // Consume (and clear) the construct-parameter strictness request set by
+        // `check_callable_subtype` for the immediate construct-signature
+        // comparison. Clearing it here means nested function comparisons reached
+        // from the constructor's parameter/return types start fresh, matching
+        // `tsc`, where only the construct signature whose declaration kind is a
+        // class `Constructor` gets parameter bivariance; a `new (...) => T` type
+        // literal or interface construct signature (`ConstructSignature`) is
+        // compared strictly like a call-signature literal.
+        let force_strict_construct_params = std::mem::take(&mut self.force_strict_construct_params);
+        let allow_constructor_bivariance = !force_strict_construct_params
+            && !Self::constructor_signatures_need_strict_params(source, target);
         let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
         if result.is_true() {
             return result;
@@ -1780,9 +1789,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // follow the regular property-function relation instead of method-style
         // bivariance. Standalone constructor function types still flow through
         // `check_function_subtype` with `is_constructor = true`.
+        // Constructor-parameter bivariance is reserved for class-derived
+        // constructor functions (`typeof Class`). A `new (...) => T` type literal
+        // and an interface construct signature compare parameters strictly
+        // (contravariantly under `strict_function_types`), exactly like a
+        // call-signature literal — `tsc` keys this on whether the construct
+        // signature's declaration is a class `Constructor`. The strictness is
+        // driven by the *target* signature's kind, mirroring `tsc`'s
+        // `compareSignaturesRelated`, so it is computed from the target callable.
+        // Short-circuit on the empty case so a callable with only call
+        // signatures pays no resolver lookup.
+        let force_strict = !target.construct_signatures.is_empty()
+            && !self.callable_target_is_class_constructor(target);
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
+                self.force_strict_construct_params = force_strict;
                 let result = self.check_call_signature_subtype_as_constructor(s_sig, t_sig);
                 if result.is_true() {
                     found_match = true;
@@ -1793,6 +1815,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && (source.construct_signatures.len() > 1 || target.construct_signatures.len() > 1)
             {
                 for s_sig in &source.construct_signatures {
+                    self.force_strict_construct_params = force_strict;
                     if self
                         .check_erased_call_signature_subtype_as_constructor(s_sig, t_sig)
                         .is_true()
@@ -1806,6 +1829,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::False;
             }
         }
+        // Defensive reset: ensure no leftover request leaks into the property
+        // comparison below (and any later sibling relation) if the final
+        // construct-signature comparison short-circuited before reaching
+        // `check_function_subtype`.
+        self.force_strict_construct_params = false;
 
         // Check properties (excluding private `#` fields), sorted by name to match
         // check_object_subtype's merge scan. When both callables have construct

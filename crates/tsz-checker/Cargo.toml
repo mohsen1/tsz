@@ -297,6 +297,9 @@ path = "tests/conditional_branch_array_literal_widening_tests.rs"
 name = "extract_alias_distributive_mapped_tests"
 path = "tests/extract_alias_distributive_mapped_tests.rs"
 [[test]]
+name = "construct_signature_param_variance_tests"
+path = "tests/construct_signature_param_variance_tests.rs"
+[[test]]
 name = "fresh_object_literal_arg_callback_param_variance_tests"
 path = "tests/fresh_object_literal_arg_callback_param_variance_tests.rs"
 [[test]]

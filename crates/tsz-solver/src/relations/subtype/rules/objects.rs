@@ -990,16 +990,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        let symbol_ref = crate::SymbolRef(sym_id.0);
-        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
-            return matches!(
-                self.resolver.get_def_kind(def_id),
-                Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
-            );
-        }
-
-        self.is_class_symbol
-            .is_some_and(|is_class_symbol| is_class_symbol(symbol_ref))
+        matches!(
+            self.symbol_def_kind(crate::SymbolRef(sym_id.0)),
+            Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+        )
     }
 
     /// Whether a target string index whose value type is `any` waives the
