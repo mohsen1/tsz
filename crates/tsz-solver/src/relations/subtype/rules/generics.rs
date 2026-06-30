@@ -222,11 +222,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // a transiently-unresolvable ref.
         let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
         if s_resolved.is_none() {
-            crate::relations::subtype::cache::note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
         }
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
         if t_resolved.is_none() {
-            crate::relations::subtype::cache::note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
         }
 
         // Detect self-referencing Lazy types (namespace circular references).
@@ -1144,7 +1144,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // structural fallback that can produce a cacheable False —
                 // record the undetermined-result event so the enclosing
                 // `check_subtype` call skips caching for this pair.
-                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                self.note_unresolved_lazy_relation_event();
                 return None;
             }
         };
@@ -1498,7 +1498,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // structural fallback that can produce a cacheable False —
                 // record the undetermined-result event so the enclosing
                 // `check_subtype` call skips caching for this pair.
-                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                self.note_unresolved_lazy_relation_event();
                 return None;
             }
         };

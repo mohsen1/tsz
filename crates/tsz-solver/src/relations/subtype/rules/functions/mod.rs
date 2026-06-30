@@ -983,10 +983,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// yet registered), or a self-referential `Lazy` wrapper — justifies the
     /// raw-form fallback.
     ///
-    /// Detecting a placeholder also records an undetermined-result event
-    /// (`note_lazy_resolve_failure`): any relation result derived from the
-    /// raw comparison is schedule-dependent and must not be memoized as
-    /// definitive in the shared relation cache.
+    /// Detecting a placeholder also records an unresolved-lazy relation event:
+    /// any relation result derived from the raw comparison is
+    /// schedule-dependent and must not be memoized as definitive in the shared
+    /// relation cache.
     fn return_type_needs_raw_fallback(&mut self, return_type: TypeId) -> bool {
         // Single interner lookup yields both the alias-shape gate and the
         // defining `DefId` (this runs for every function-pair return check).
@@ -1034,7 +1034,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None => true,
         };
         if is_placeholder {
-            crate::relations::subtype::cache::note_lazy_resolve_failure();
+            self.note_unresolved_lazy_relation_event();
         }
         is_placeholder
     }

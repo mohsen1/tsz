@@ -201,10 +201,13 @@ struct LimitBudgets {
     subtype_state: Cell<u64>,
     /// Monotonic counter bumped whenever a `Lazy(DefId)` could not be
     /// resolved (its body is not yet registered — typically a re-entrant
-    /// lib-resolution window). A subtype result computed while this counter
-    /// changed depended on an undetermined type and must NOT be cached as
-    /// definitive, or it poisons every later structural check that shares
-    /// the same member type.
+    /// lib-resolution window).
+    ///
+    /// This remains a public compatibility sentinel for checker-side proof
+    /// caches and conditional branch probes that run outside the relation frame
+    /// owner. The relation cache itself uses a `SubtypeChecker`-local
+    /// unresolved-lazy counter so fresh/nested checker probes do not suppress
+    /// unrelated relation cache writes.
     lazy_resolve_failures: Cell<u64>,
     /// Monotonic counter bumped whenever a structural comparison hits the
     /// weak-type (TS2559) trigger: a non-empty, non-weak source compared
@@ -303,7 +306,7 @@ const fn unpack_fuel(state: u64) -> u32 {
 // -----------------------------------------------------------------------------
 
 /// Snapshot returned by [`enter_subtype_frame`]: the chain state *before*
-/// this frame's increment plus the cache-poisoning sentinel counters and the
+/// this frame's increment plus the weak-type cache-poisoning sentinel and the
 /// shared solver-frame depth, all read under one TLS resolution.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct SubtypeFrameEntry {
@@ -311,8 +314,6 @@ pub(crate) struct SubtypeFrameEntry {
     pub(crate) global_depth: u32,
     /// Fuel consumed by the chain before this frame entered.
     pub(crate) fuel: u32,
-    /// [`lazy_resolve_failure_count`] at entry.
-    pub(crate) lazy_failures: u64,
     /// [`weak_type_sensitivity_count`] at entry.
     pub(crate) weak_sensitivity: u64,
     /// [`solver_stack_frame_depth`](crate::recursion::solver_stack_frame_depth)
@@ -322,7 +323,7 @@ pub(crate) struct SubtypeFrameEntry {
 
 /// Enter one non-trivial `check_subtype` frame: increments chain depth and
 /// consumes one unit of global fuel, returning the pre-increment state and
-/// sentinel snapshots. Single TLS access.
+/// weak-type sentinel snapshot. Single TLS access.
 #[inline]
 pub(crate) fn enter_subtype_frame() -> SubtypeFrameEntry {
     LIMIT_BUDGETS.with(|b| {
@@ -333,7 +334,6 @@ pub(crate) fn enter_subtype_frame() -> SubtypeFrameEntry {
         SubtypeFrameEntry {
             global_depth: depth,
             fuel,
-            lazy_failures: b.lazy_resolve_failures.get(),
             weak_sensitivity: b.weak_type_sensitivity.get(),
             solver_stack_frames: b.solver_stack_frames.get(),
         }
@@ -403,9 +403,20 @@ pub(crate) fn note_weak_type_sensitivity() {
     });
 }
 
-/// Both cache-poisoning sentinel counters under one TLS resolution:
-/// `(lazy_resolve_failures, weak_type_sensitivity)`. Used at relation-frame
-/// exits that gate cache writes/promotions on sentinel stability.
+/// Current value of the weak-type sensitivity counter; compare a snapshot taken
+/// before computing a relation result with the value after to detect whether
+/// the computation depended on weak-type enforcement state that the
+/// flag-agnostic relation cache key does not encode.
+#[inline]
+pub(crate) fn weak_type_sensitivity_count() -> u64 {
+    LIMIT_BUDGETS.with(|b| b.weak_type_sensitivity.get())
+}
+
+/// Both legacy cache-poisoning sentinel counters under one TLS resolution:
+/// `(lazy_resolve_failures, weak_type_sensitivity)`. Checker-side proof caches
+/// still snapshot both counters; relation cache writes now use a
+/// `SubtypeChecker`-local unresolved-lazy counter plus the weak-type sentinel.
+#[cfg(test)]
 #[inline]
 pub(crate) fn poison_sentinel_counts() -> (u64, u64) {
     LIMIT_BUDGETS.with(|b| (b.lazy_resolve_failures.get(), b.weak_type_sensitivity.get()))
