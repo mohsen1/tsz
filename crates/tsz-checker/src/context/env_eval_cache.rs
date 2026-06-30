@@ -1,4 +1,5 @@
-use tsz_solver::TypeId;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz_solver::{DefId, TypeId};
 
 use super::{CheckerContext, EnvEvalCacheEntry};
 
@@ -21,6 +22,143 @@ use super::{CheckerContext, EnvEvalCacheEntry};
 /// sub-term values on demand. The cap is keyed by cache size (a structural
 /// invariant), not by any fixture, file name, or identifier.
 pub(crate) const ENV_EVAL_SEED_PERSIST_SOFT_CAP: usize = 256;
+
+#[derive(Default)]
+pub(crate) struct EnvEvalCache {
+    entries: FxHashMap<TypeId, EnvEvalCacheEntry>,
+    defs_by_key: FxHashMap<TypeId, Box<[DefId]>>,
+    keys_by_def: FxHashMap<DefId, FxHashSet<TypeId>>,
+}
+
+impl EnvEvalCache {
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(crate) fn get(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
+        self.entries.get(&type_id).copied()
+    }
+
+    pub(crate) fn contains_key(&self, type_id: TypeId) -> bool {
+        self.entries.contains_key(&type_id)
+    }
+
+    pub(crate) fn entry_capacity(&self) -> usize {
+        self.entries.capacity()
+    }
+
+    pub(crate) fn insert(
+        &mut self,
+        type_id: TypeId,
+        entry: EnvEvalCacheEntry,
+        dependency_defs: Box<[DefId]>,
+    ) {
+        if self.entries.insert(type_id, entry).is_some() {
+            self.remove_key_from_index(type_id);
+        }
+        self.insert_key_into_index(type_id, dependency_defs);
+    }
+
+    pub(crate) fn insert_if_absent(
+        &mut self,
+        type_id: TypeId,
+        entry: EnvEvalCacheEntry,
+        dependency_defs: Box<[DefId]>,
+    ) {
+        if self.entries.contains_key(&type_id) {
+            return;
+        }
+        self.entries.insert(type_id, entry);
+        self.insert_key_into_index(type_id, dependency_defs);
+    }
+
+    pub(crate) fn remove(&mut self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
+        let removed = self.entries.remove(&type_id);
+        if removed.is_some() {
+            self.remove_key_from_index(type_id);
+        }
+        removed
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries.clear();
+        self.defs_by_key.clear();
+        self.keys_by_def.clear();
+    }
+
+    pub(crate) fn seed_entries(&self) -> Vec<(TypeId, TypeId)> {
+        let mut entries = Vec::with_capacity(self.entries.len());
+        for (&k, v) in &self.entries {
+            if k != v.result && !k.is_intrinsic() && !v.depth_exceeded {
+                entries.push((k, v.result));
+            }
+        }
+        entries
+    }
+
+    pub(crate) fn invalidate_for_def(&mut self, def_id: DefId) {
+        let Some(keys) = self.keys_by_def.remove(&def_id) else {
+            return;
+        };
+        let keys: Vec<_> = keys.into_iter().collect();
+        for key in keys {
+            self.entries.remove(&key);
+            self.remove_key_from_index(key);
+        }
+    }
+
+    pub(crate) fn invalidate_matching(
+        &mut self,
+        should_remove: impl Fn(TypeId, EnvEvalCacheEntry) -> bool,
+    ) -> usize {
+        if self.entries.is_empty() {
+            return 0;
+        }
+        let keys: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|(&key, &entry)| should_remove(key, entry).then_some(key))
+            .collect();
+        let removed = keys.len();
+        for key in keys {
+            self.remove(key);
+        }
+        removed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn indexed_key_count_for_def(&self, def_id: DefId) -> usize {
+        self.keys_by_def.get(&def_id).map_or(0, FxHashSet::len)
+    }
+
+    fn insert_key_into_index(&mut self, type_id: TypeId, dependency_defs: Box<[DefId]>) {
+        if dependency_defs.is_empty() {
+            return;
+        }
+        for &def_id in &dependency_defs {
+            self.keys_by_def.entry(def_id).or_default().insert(type_id);
+        }
+        self.defs_by_key.insert(type_id, dependency_defs);
+    }
+
+    fn remove_key_from_index(&mut self, type_id: TypeId) {
+        let Some(defs) = self.defs_by_key.remove(&type_id) else {
+            return;
+        };
+        for def_id in &defs {
+            if let Some(keys) = self.keys_by_def.get_mut(def_id) {
+                keys.remove(&type_id);
+                if keys.is_empty() {
+                    self.keys_by_def.remove(def_id);
+                }
+            }
+        }
+    }
+}
 
 /// Kill-switch: set `TSZ_DISABLE_ENV_EVAL_SEED_CAP` to a non-empty, non-`0`
 /// value to force the legacy behavior (always seed/persist the full cache).
@@ -141,7 +279,7 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
-        self.env_eval_cache.borrow().get(&type_id).copied()
+        self.env_eval_cache.borrow().get(type_id)
     }
 
     pub(crate) fn env_eval_cache_seed_entries(&self) -> Vec<(TypeId, TypeId)> {
@@ -152,13 +290,33 @@ impl<'a> CheckerContext<'a> {
         if !env_eval_seed_cap_disabled() && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
             return Vec::new();
         }
-        let mut entries = Vec::with_capacity(cache.len());
-        for (&k, v) in cache.iter() {
-            if k != v.result && !k.is_intrinsic() && !v.depth_exceeded {
-                entries.push((k, v.result));
+        cache.seed_entries()
+    }
+
+    fn collect_env_eval_dependency_defs(
+        &self,
+        type_id: TypeId,
+        defs: &mut FxHashSet<DefId>,
+        stack: &mut Vec<DefId>,
+    ) {
+        for def_id in self.collect_lazy_def_ids_cached(type_id).iter().copied() {
+            if defs.insert(def_id) {
+                stack.push(def_id);
             }
         }
-        entries
+    }
+
+    fn env_eval_entry_dependency_defs(&self, key: TypeId, result: TypeId) -> Box<[DefId]> {
+        let mut defs = FxHashSet::default();
+        let mut stack = Vec::new();
+        self.collect_env_eval_dependency_defs(key, &mut defs, &mut stack);
+        self.collect_env_eval_dependency_defs(result, &mut defs, &mut stack);
+        while let Some(def_id) = stack.pop() {
+            if let Some(body) = self.definition_store.get_body(def_id) {
+                self.collect_env_eval_dependency_defs(body, &mut defs, &mut stack);
+            }
+        }
+        defs.into_iter().collect::<Vec<_>>().into_boxed_slice()
     }
 
     pub(crate) fn cache_env_eval_result(
@@ -167,12 +325,14 @@ impl<'a> CheckerContext<'a> {
         result: TypeId,
         depth_exceeded: bool,
     ) {
+        let dependency_defs = self.env_eval_entry_dependency_defs(type_id, result);
         self.env_eval_cache.borrow_mut().insert(
             type_id,
             EnvEvalCacheEntry {
                 result,
                 depth_exceeded,
             },
+            dependency_defs,
         );
     }
 
@@ -182,13 +342,15 @@ impl<'a> CheckerContext<'a> {
         result: TypeId,
         depth_exceeded: bool,
     ) {
-        self.env_eval_cache
-            .borrow_mut()
-            .entry(type_id)
-            .or_insert(EnvEvalCacheEntry {
+        let dependency_defs = self.env_eval_entry_dependency_defs(type_id, result);
+        self.env_eval_cache.borrow_mut().insert_if_absent(
+            type_id,
+            EnvEvalCacheEntry {
                 result,
                 depth_exceeded,
-            });
+            },
+            dependency_defs,
+        );
     }
 
     pub(crate) fn clear_env_eval_cache(&self) {
@@ -207,7 +369,7 @@ impl<'a> CheckerContext<'a> {
     /// so the next [`Self::lookup_env_eval_cache`] recomputes rather than
     /// short-circuiting to the stale entry.
     pub(crate) fn invalidate_env_eval_for(&self, type_id: TypeId) -> bool {
-        self.env_eval_cache.borrow_mut().remove(&type_id).is_some()
+        self.env_eval_cache.borrow_mut().remove(type_id).is_some()
     }
 
     /// Drop every `env_eval_cache` entry structurally reachable from `type_id`:
@@ -236,8 +398,7 @@ impl<'a> CheckerContext<'a> {
     /// those are invalidated through the def-keyed path and are not part of a
     /// per-type evaluation closure.
     pub(crate) fn invalidate_env_eval_reachable_from(&self, type_id: TypeId) -> usize {
-        let mut cache = self.env_eval_cache.borrow_mut();
-        if cache.is_empty() {
+        if self.env_eval_cache.borrow().is_empty() {
             // Nothing to drop: skip the structural walk entirely (mirrors the
             // empty-cache early-out in `env_eval_cache_seed_entries`).
             return 0;
@@ -245,15 +406,15 @@ impl<'a> CheckerContext<'a> {
         let reachable = crate::query_boundaries::type_computation::core::collect_referenced_types(
             self.types, type_id,
         );
-        let before = cache.len();
-        cache.retain(|&key, value| !reachable.contains(&key) && !reachable.contains(&value.result));
-        before - cache.len()
+        self.env_eval_cache
+            .borrow_mut()
+            .invalidate_matching(|key, value| {
+                reachable.contains(&key) || reachable.contains(&value.result)
+            })
     }
 
     pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
-        self.env_eval_cache.borrow_mut().retain(|&key, value| {
-            !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value.result, def_id)
-        });
+        self.env_eval_cache.borrow_mut().invalidate_for_def(def_id);
         self.flow_shared
             .narrowing_cache
             .resolve_cache
@@ -294,12 +455,12 @@ impl<'a> CheckerContext<'a> {
         // callers still use the authoritative top-level env-eval memo but stop
         // scanning and storing intermediate entries.
         let cap_disabled = env_eval_seed_cap_disabled();
-        let mut cache = self.env_eval_cache.borrow_mut();
-        if !cap_disabled && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
+        if !cap_disabled && self.env_eval_cache.borrow().len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
             return;
         }
         for (k, v) in entries {
-            if !cap_disabled && cache.len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP {
+            if !cap_disabled && self.env_eval_cache.borrow().len() > ENV_EVAL_SEED_PERSIST_SOFT_CAP
+            {
                 break;
             }
             if k == v || k.is_intrinsic() {
@@ -329,11 +490,25 @@ impl<'a> CheckerContext<'a> {
                 {
                     continue;
                 }
-                cache.entry(k).or_insert(EnvEvalCacheEntry {
-                    result: v,
-                    depth_exceeded: false,
-                });
+                if !self.env_eval_cache.borrow().contains_key(k) {
+                    let dependency_defs = self.env_eval_entry_dependency_defs(k, v);
+                    self.env_eval_cache.borrow_mut().insert_if_absent(
+                        k,
+                        EnvEvalCacheEntry {
+                            result: v,
+                            depth_exceeded: false,
+                        },
+                        dependency_defs,
+                    );
+                }
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn env_eval_cache_indexed_key_count_for_def(&self, def_id: DefId) -> usize {
+        self.env_eval_cache
+            .borrow()
+            .indexed_key_count_for_def(def_id)
     }
 }

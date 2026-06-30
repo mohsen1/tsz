@@ -312,7 +312,7 @@ impl<'a> CheckerContext<'a> {
             class_instance_type_cache: RefCell::new(FxHashMap::default()),
             class_constructor_type_cache: RefCell::new(FxHashMap::default()),
             class_chain_summary_cache: RefCell::new(FxHashMap::default()),
-            env_eval_cache: RefCell::new(FxHashMap::default()),
+            env_eval_cache: RefCell::new(crate::context::env_eval_cache::EnvEvalCache::default()),
             lazy_def_ids_cache: RefCell::new(FxHashMap::default()),
             type_queries_cache: RefCell::new(FxHashMap::default()),
             type_position_resolution_cache: RefCell::new(FxHashMap::default()),
