@@ -6,7 +6,27 @@ use crate::types::{TypeData, TypeId};
 
 use super::super::evaluate::TypeEvaluator;
 
-const MAX_UNION_INDEX_SIZE: usize = 500;
+pub(super) const MAX_UNION_INDEX_SIZE: usize = 500;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnionIndexSizeState {
+    Continue,
+    LimitExceeded,
+}
+
+impl UnionIndexSizeState {
+    pub(super) const fn for_member_count(member_count: usize) -> Self {
+        if member_count > MAX_UNION_INDEX_SIZE {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+
+    pub(super) const fn is_limit_exceeded(self) -> bool {
+        matches!(self, Self::LimitExceeded)
+    }
+}
 
 pub(super) fn evaluate_index_union_distribution<R: TypeResolver>(
     evaluator: &mut TypeEvaluator<'_, R>,
@@ -14,9 +34,12 @@ pub(super) fn evaluate_index_union_distribution<R: TypeResolver>(
     members: &[TypeId],
 ) -> TypeId {
     // Limit to prevent OOM with large unions.
-    if members.len() > MAX_UNION_INDEX_SIZE {
-        evaluator.mark_depth_exceeded_for_request();
-        return TypeId::ERROR;
+    match UnionIndexSizeState::for_member_count(members.len()) {
+        UnionIndexSizeState::Continue => {}
+        UnionIndexSizeState::LimitExceeded => {
+            evaluator.mark_depth_exceeded_for_request();
+            return TypeId::ERROR;
+        }
     }
 
     // TS2590 union-complexity bail (parity with tsc's `getUnionType`, which
@@ -86,4 +109,21 @@ fn index_result_is_string_like<R: TypeResolver>(
             .all(|&member| index_result_is_string_like(evaluator, member));
     }
     crate::type_queries::is_string_like_type(evaluator.interner(), ty)
+}
+
+#[cfg(test)]
+mod union_index_size_state_tests {
+    use super::*;
+
+    #[test]
+    fn union_index_size_state_names_exact_cap_and_overflow() {
+        assert_eq!(
+            UnionIndexSizeState::for_member_count(MAX_UNION_INDEX_SIZE),
+            UnionIndexSizeState::Continue
+        );
+        assert_eq!(
+            UnionIndexSizeState::for_member_count(MAX_UNION_INDEX_SIZE + 1),
+            UnionIndexSizeState::LimitExceeded
+        );
+    }
 }
