@@ -2,6 +2,7 @@ use crate::caches::db::TypeApplicationEvalCache;
 use crate::construction::{QueryCache, QueryCacheStatistics, RelationCacheProbe};
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::relation_queries::RelationPolicy;
+use crate::types::{TypeParamInfo, TypeParamOrigin};
 use crate::{
     LiteralValue, ObjectFlags, PropertyInfo, QueryDatabase, RelationCacheConfig, RelationCacheKey,
     TupleElement, TypeData, TypeDatabase, TypeId, TypeInterner, Visibility,
@@ -347,6 +348,45 @@ fn query_cache_caches_object_spread_properties() {
 
     let props_again = db.collect_object_spread_properties(spread_type);
     assert_eq!(props_again.len(), 2);
+    assert_eq!(db.object_spread_properties_cache_len(), 1);
+}
+
+#[test]
+fn object_spread_union_sibling_constraints_reenter_shared_constraint() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let shared = db.object(vec![PropertyInfo::new(
+        interner.intern_string("shared"),
+        TypeId::STRING,
+    )]);
+    let left = db.type_param(TypeParamInfo {
+        name: interner.intern_string("Left"),
+        constraint: Some(shared),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let right = db.type_param(TypeParamInfo {
+        name: interner.intern_string("Right"),
+        constraint: Some(shared),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let spread_type = db.union(vec![left, right]);
+
+    let props = db.collect_object_spread_properties(spread_type);
+
+    assert_eq!(props.len(), 1);
+    let shared_prop = props
+        .iter()
+        .find(|prop| interner.resolve_atom_ref(prop.name).as_ref() == "shared")
+        .expect("spread should retain the shared constrained property");
+    assert_eq!(shared_prop.type_id, TypeId::STRING);
+    assert!(
+        !shared_prop.optional,
+        "both non-nullish sibling constraints provide the property"
+    );
     assert_eq!(db.object_spread_properties_cache_len(), 1);
 }
 

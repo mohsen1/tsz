@@ -1824,9 +1824,11 @@ impl QueryDatabase for QueryCache<'_> {
             return cached;
         }
 
-        let mut visited: FxHashSet<TypeId> = FxHashSet::default();
-        let result = self.collect_object_spread_properties_inner(spread_type, &mut visited);
-        self.insert_object_spread_properties_cache(spread_type, result.clone());
+        let mut traversal = spread::ObjectSpreadTraversalState::default();
+        let result = self.collect_object_spread_properties_inner(spread_type, &mut traversal);
+        if traversal.is_cacheable() {
+            self.insert_object_spread_properties_cache(spread_type, result.clone());
+        }
         result
     }
 

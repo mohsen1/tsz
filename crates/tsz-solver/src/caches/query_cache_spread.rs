@@ -14,14 +14,28 @@ enum ObjectSpreadVisitState {
     AlreadyVisited,
 }
 
-fn object_spread_visit_state(
-    visited: &mut FxHashSet<TypeId>,
-    normalized: TypeId,
-) -> ObjectSpreadVisitState {
-    if visited.insert(normalized) {
-        ObjectSpreadVisitState::Entered
-    } else {
-        ObjectSpreadVisitState::AlreadyVisited
+#[derive(Debug, Default)]
+pub(super) struct ObjectSpreadTraversalState {
+    active: FxHashSet<TypeId>,
+    saw_cycle: bool,
+}
+
+impl ObjectSpreadTraversalState {
+    fn enter(&mut self, normalized: TypeId) -> ObjectSpreadVisitState {
+        if self.active.insert(normalized) {
+            ObjectSpreadVisitState::Entered
+        } else {
+            self.saw_cycle = true;
+            ObjectSpreadVisitState::AlreadyVisited
+        }
+    }
+
+    fn leave(&mut self, normalized: TypeId) {
+        self.active.remove(&normalized);
+    }
+
+    pub(super) const fn is_cacheable(&self) -> bool {
+        !self.saw_cycle
     }
 }
 
@@ -162,21 +176,22 @@ impl QueryCache<'_> {
     pub(super) fn collect_object_spread_properties_inner(
         &self,
         spread_type: TypeId,
-        visited: &mut FxHashSet<TypeId>,
+        traversal: &mut ObjectSpreadTraversalState,
     ) -> Vec<PropertyInfo> {
         let normalized =
             self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
 
-        match object_spread_visit_state(visited, normalized) {
+        if normalized != spread_type {
+            return self.collect_object_spread_properties_inner(normalized, traversal);
+        }
+
+        match traversal.enter(normalized) {
             ObjectSpreadVisitState::Entered => {}
             ObjectSpreadVisitState::AlreadyVisited => return Vec::new(),
         }
 
-        if normalized != spread_type {
-            return self.collect_object_spread_properties_inner(normalized, visited);
-        }
-
         let Some(key) = self.interner.lookup(normalized) else {
+            traversal.leave(normalized);
             return Vec::new();
         };
 
@@ -192,7 +207,7 @@ impl QueryCache<'_> {
                 let mut merged: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
 
                 for &member in members.iter() {
-                    for prop in self.collect_object_spread_properties_inner(member, visited) {
+                    for prop in self.collect_object_spread_properties_inner(member, traversal) {
                         merged.insert(prop.name, prop);
                     }
                 }
@@ -209,66 +224,69 @@ impl QueryCache<'_> {
                 let non_nullish_count = members.iter().filter(|m| !m.is_nullable()).count();
 
                 if non_nullish_count == 0 {
-                    return Vec::new();
-                }
-
-                // Collect properties per member
-                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish_count);
-                for &member in members.iter().filter(|m| !m.is_nullable()) {
-                    all_props.push(self.collect_object_spread_properties_inner(member, visited));
-                }
-
-                // Merge: a property appears in the result if it exists in at
-                // least one member. Its type is the union of types across
-                // members where it appears. It is optional if it doesn't
-                // appear in all non-nullish members or if any nullish member
-                // exists (since the spread could be null/undefined → {}).
-                let mut merged: FxHashMap<Atom, (TypeId, bool, usize)> = FxHashMap::default();
-                for member_props in &all_props {
-                    for prop in member_props {
-                        let entry =
-                            merged
-                                .entry(prop.name)
-                                .or_insert((prop.type_id, prop.optional, 0));
-                        if entry.0 != prop.type_id {
-                            entry.0 = self.interner.union2(entry.0, prop.type_id);
-                        }
-                        entry.1 = entry.1 && prop.optional;
-                        entry.2 += 1;
+                    Vec::new()
+                } else {
+                    // Collect properties per member
+                    let mut all_props: Vec<Vec<PropertyInfo>> =
+                        Vec::with_capacity(non_nullish_count);
+                    for &member in members.iter().filter(|m| !m.is_nullable()) {
+                        all_props
+                            .push(self.collect_object_spread_properties_inner(member, traversal));
                     }
-                }
 
-                merged
-                    .into_iter()
-                    .map(|(name, (type_id, was_optional, count))| {
-                        let optional = was_optional || has_nullish || count < non_nullish_count;
-                        PropertyInfo {
-                            name,
-                            type_id,
-                            optional,
-                            readonly: false,
-                            write_type: type_id,
-                            is_class_prototype: false,
-                            is_method: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
+                    // Merge: a property appears in the result if it exists in at
+                    // least one member. Its type is the union of types across
+                    // members where it appears. It is optional if it doesn't
+                    // appear in all non-nullish members or if any nullish member
+                    // exists (since the spread could be null/undefined → {}).
+                    let mut merged: FxHashMap<Atom, (TypeId, bool, usize)> = FxHashMap::default();
+                    for member_props in &all_props {
+                        for prop in member_props {
+                            let entry =
+                                merged
+                                    .entry(prop.name)
+                                    .or_insert((prop.type_id, prop.optional, 0));
+                            if entry.0 != prop.type_id {
+                                entry.0 = self.interner.union2(entry.0, prop.type_id);
+                            }
+                            entry.1 = entry.1 && prop.optional;
+                            entry.2 += 1;
                         }
-                    })
-                    .collect()
+                    }
+
+                    merged
+                        .into_iter()
+                        .map(|(name, (type_id, was_optional, count))| {
+                            let optional = was_optional || has_nullish || count < non_nullish_count;
+                            PropertyInfo {
+                                name,
+                                type_id,
+                                optional,
+                                readonly: false,
+                                write_type: type_id,
+                                is_class_prototype: false,
+                                is_method: false,
+                                visibility: Visibility::Public,
+                                parent_id: None,
+                                declaration_order: 0,
+                                is_string_named: false,
+                                is_symbol_named: false,
+                                single_quoted_name: false,
+                                non_widening: false,
+                            }
+                        })
+                        .collect()
+                }
             }
             TypeData::TypeParameter(info) => {
                 // For type parameters with constraints (e.g. `T extends { x: number }`),
                 // collect properties from the constraint. Required properties in the
                 // constraint are guaranteed to exist on any value of type T.
                 if let Some(constraint) = info.constraint {
-                    return self.collect_object_spread_properties_inner(constraint, visited);
+                    self.collect_object_spread_properties_inner(constraint, traversal)
+                } else {
+                    Vec::new()
                 }
-                Vec::new()
             }
             _ => Vec::new(),
         };
@@ -279,7 +297,7 @@ impl QueryCache<'_> {
         // Class prototype members (methods/accessors) are excluded from spread results
         // because they live on the prototype, not as own enumerable properties.
         // This matches tsc's isSpreadPrototypeProperty() behavior.
-        props
+        let result = props
             .into_iter()
             .filter(|p| {
                 !p.is_class_prototype
@@ -293,7 +311,9 @@ impl QueryCache<'_> {
                 p.write_type = p.type_id;
                 p
             })
-            .collect()
+            .collect();
+        traversal.leave(normalized);
+        result
     }
 }
 
@@ -303,26 +323,44 @@ mod tests {
 
     #[test]
     fn object_spread_visit_state_records_first_entry() {
-        let mut visited = FxHashSet::default();
+        let mut traversal = ObjectSpreadTraversalState::default();
 
-        let state = object_spread_visit_state(&mut visited, TypeId::STRING);
+        let state = traversal.enter(TypeId::STRING);
 
         assert_eq!(state, ObjectSpreadVisitState::Entered);
-        assert!(visited.contains(&TypeId::STRING));
+        assert!(traversal.active.contains(&TypeId::STRING));
+        assert!(traversal.is_cacheable());
     }
 
     #[test]
     fn object_spread_visit_state_records_reentry() {
-        let mut visited = FxHashSet::default();
+        let mut traversal = ObjectSpreadTraversalState::default();
 
         assert_eq!(
-            object_spread_visit_state(&mut visited, TypeId::STRING),
+            traversal.enter(TypeId::STRING),
             ObjectSpreadVisitState::Entered
         );
         assert_eq!(
-            object_spread_visit_state(&mut visited, TypeId::STRING),
+            traversal.enter(TypeId::STRING),
             ObjectSpreadVisitState::AlreadyVisited
         );
-        assert_eq!(visited.len(), 1);
+        assert_eq!(traversal.active.len(), 1);
+        assert!(!traversal.is_cacheable());
+    }
+
+    #[test]
+    fn object_spread_traversal_leave_allows_sibling_reentry() {
+        let mut traversal = ObjectSpreadTraversalState::default();
+
+        assert_eq!(
+            traversal.enter(TypeId::STRING),
+            ObjectSpreadVisitState::Entered
+        );
+        traversal.leave(TypeId::STRING);
+        assert_eq!(
+            traversal.enter(TypeId::STRING),
+            ObjectSpreadVisitState::Entered
+        );
+        assert!(traversal.is_cacheable());
     }
 }
