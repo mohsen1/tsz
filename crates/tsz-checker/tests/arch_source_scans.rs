@@ -30,3 +30,5 @@ mod construction_boundary_signature_scans;
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
 mod relation_routing_residual_arch_tests;
+#[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]
+mod spelling_suggestion_gateway_scans;

@@ -326,12 +326,27 @@ impl<'a> CheckerState<'a> {
                                 qn.left,
                             );
                             match self.resolve_name_structured(&req) {
-                                Err(_failure) => {
-                                    // Emit TS2503 (cannot find namespace) with suggestions
-                                    self.error_cannot_find_namespace_with_suggestion(
-                                        left_name.as_str(),
-                                        qn.left,
-                                    );
+                                Err(failure) => {
+                                    // The boundary precomputes suggestion eligibility for true
+                                    // not-found failures. Wrong-meaning namespace anchors (for
+                                    // example a value-only `m` near namespace `M`) still need the
+                                    // namespace diagnostic owner to apply the suggestion cap at
+                                    // emission time.
+                                    if matches!(
+                                        &failure.kind,
+                                        crate::query_boundaries::name_resolution::ResolutionFailureKind::NotFound
+                                    ) {
+                                        self.error_cannot_find_namespace_with_precomputed_eligibility(
+                                            left_name.as_str(),
+                                            qn.left,
+                                            failure.suggestions_eligible,
+                                        );
+                                    } else {
+                                        self.error_cannot_find_namespace_with_suggestion(
+                                            left_name.as_str(),
+                                            qn.left,
+                                        );
+                                    }
                                 }
                                 Ok(_) => {
                                     // Shouldn't happen since resolve_qualified_symbol_in_type_position
