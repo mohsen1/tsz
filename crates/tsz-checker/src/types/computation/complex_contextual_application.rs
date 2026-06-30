@@ -1,3 +1,4 @@
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -40,7 +41,7 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_ref) =
             crate::query_boundaries::common::type_query_symbol(self.ctx.types, base)
         {
-            return Some(tsz_binder::SymbolId(sym_ref.0));
+            return Some(symbol_ref_to_symbol_id(sym_ref));
         }
 
         if !visited.insert(base) {
