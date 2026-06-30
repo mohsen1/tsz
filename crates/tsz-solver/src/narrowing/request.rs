@@ -55,26 +55,25 @@ impl NarrowingOptions {
     }
 }
 
-/// Cache key for option-sensitive predicate-guard narrowing.
+/// Generation-independent key for option-sensitive predicate-guard narrowing.
 ///
-/// Extracted from `narrowing/core.rs` so all cache-key inputs are visible in
-/// one canonical location. The `options` field replaces the former packed `u8`
-/// `compiler_flags`, making each option explicit.
+/// Narrowing cache entries are valid only for the resolver generation at which
+/// they were computed, but old generations are dead once the resolver advances.
+/// Keeping the generation as a separate memo stamp lets the cache retain only
+/// recent generations per stable predicate key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct NarrowTypeCacheKey {
+pub(crate) struct NarrowTypeStableCacheKey {
     source_type: TypeId,
     guard: TypeGuard,
     sense: GuardSense,
     options: NarrowingOptions,
-    resolver_generation: u64,
 }
 
 /// A normalized request to narrow one type by a guard under caller-supplied
 /// inputs.
 ///
 /// Groups `source_type`, `guard`, and `sense` so they travel together and the
-/// cache key can be built canonically via `cache_key()` rather than at each
-/// call site.
+/// stable cache key can be built canonically rather than at each call site.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NarrowingRequest {
     source_type: TypeId,
@@ -103,19 +102,12 @@ impl NarrowingRequest {
         self.sense
     }
 
-    /// Build the option-sensitive cache key, binding in context-derived
-    /// options and resolver generation from the calling `NarrowingContext`.
-    pub(crate) fn cache_key(
-        &self,
-        options: NarrowingOptions,
-        resolver_generation: u64,
-    ) -> NarrowTypeCacheKey {
-        NarrowTypeCacheKey {
+    pub(crate) fn stable_cache_key(&self, options: NarrowingOptions) -> NarrowTypeStableCacheKey {
+        NarrowTypeStableCacheKey {
             source_type: self.source_type,
             guard: self.guard.clone(),
             sense: self.sense,
             options,
-            resolver_generation,
         }
     }
 }
@@ -168,16 +160,13 @@ mod tests {
     }
 
     #[test]
-    fn narrowing_request_cache_key_binds_resolver_generation() {
+    fn narrowing_request_stable_cache_key_omits_resolver_generation() {
         let guard = TypeGuard::Typeof(TypeofKind::String);
         let req = NarrowingRequest::new(TypeId::NUMBER, guard, GuardSense::Positive);
         let opts = NarrowingOptions::new();
-        let key0 = req.cache_key(opts, 0);
-        let key1 = req.cache_key(opts, 1);
-        assert_ne!(
-            key0, key1,
-            "different resolver generations must produce different cache keys"
-        );
+        let key0 = req.stable_cache_key(opts);
+        let key1 = req.stable_cache_key(opts);
+        assert_eq!(key0, key1, "resolver generation is a memo stamp now");
     }
 
     #[test]
@@ -186,8 +175,8 @@ mod tests {
         let req = NarrowingRequest::new(TypeId::ANY, guard, GuardSense::Negative);
         let opts_default = NarrowingOptions::new();
         let opts_unchecked = NarrowingOptions::new().with_no_unchecked_indexed_access(true);
-        let key_default = req.cache_key(opts_default, 0);
-        let key_unchecked = req.cache_key(opts_unchecked, 0);
+        let key_default = req.stable_cache_key(opts_default);
+        let key_unchecked = req.stable_cache_key(opts_unchecked);
         assert_ne!(
             key_default, key_unchecked,
             "different options must produce different cache keys"
@@ -199,8 +188,8 @@ mod tests {
         let make_req =
             || NarrowingRequest::new(TypeId::STRING, TypeGuard::Truthy, GuardSense::Positive);
         let opts = NarrowingOptions::new();
-        let k1 = make_req().cache_key(opts, 7);
-        let k2 = make_req().cache_key(opts, 7);
+        let k1 = make_req().stable_cache_key(opts);
+        let k2 = make_req().stable_cache_key(opts);
         assert_eq!(k1, k2, "equal inputs must produce equal cache keys");
     }
 }

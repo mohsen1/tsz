@@ -832,11 +832,8 @@ impl<'a> CheckerState<'a> {
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let cache_key = (
-            mapped_type,
-            TypeResolver::resolver_generation(&self.ctx),
-            prop_atom,
-        );
+        let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
+        let cache_key = (mapped_type, prop_atom);
 
         if let Some(cached) = self
             .ctx
@@ -844,8 +841,7 @@ impl<'a> CheckerState<'a> {
             .narrowing_cache
             .property_cache
             .borrow()
-            .get(&cache_key)
-            .copied()
+            .get(&cache_key, resolver_generation)
         {
             return Some(match cached {
                 Some(entry) => tsz_solver::operations::property::PropertyAccessResult::Success {
@@ -924,6 +920,7 @@ impl<'a> CheckerState<'a> {
                 .borrow_mut()
                 .insert(
                     cache_key,
+                    resolver_generation,
                     Some(tsz_solver::narrowing::CachedPropertyType::explicit(
                         property_type,
                     )),
@@ -955,7 +952,7 @@ impl<'a> CheckerState<'a> {
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()
-                    .insert(cache_key, None);
+                    .insert(cache_key, resolver_generation, None);
             }
             if !names.contains(&prop_atom) {
                 return Some(
@@ -986,7 +983,7 @@ impl<'a> CheckerState<'a> {
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()
-                    .insert(cache_key, None);
+                    .insert(cache_key, resolver_generation, None);
                 return Some(
                     tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                         type_id: mapped_type,
@@ -1010,7 +1007,7 @@ impl<'a> CheckerState<'a> {
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
-                            .insert(cache_key, None);
+                            .insert(cache_key, resolver_generation, None);
                         return Some(
                             tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                                 type_id: mapped_type,
@@ -1024,7 +1021,7 @@ impl<'a> CheckerState<'a> {
                         .narrowing_cache
                         .property_cache
                         .borrow_mut()
-                        .insert(cache_key, None);
+                        .insert(cache_key, resolver_generation, None);
                     return Some(
                         tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                             type_id: mapped_type,
@@ -1071,6 +1068,7 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(
                 cache_key,
+                resolver_generation,
                 Some(tsz_solver::narrowing::CachedPropertyType::explicit(
                     property_type,
                 )),

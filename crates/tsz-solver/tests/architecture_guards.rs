@@ -333,7 +333,7 @@ fn narrowing_engine_keeps_request_stage_boundary() {
     assert!(
         request_rs.contains("pub struct NarrowingOptions")
             && request_rs.contains("pub struct NarrowingRequest")
-            && request_rs.contains("pub(crate) struct NarrowTypeCacheKey"),
+            && request_rs.contains("pub(crate) struct NarrowTypeStableCacheKey"),
         "narrowing/request.rs must own the typed options, request, and cache-key stage"
     );
     assert!(

@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
             self.resolve_property_access_base_materialized(non_nullish_base)
         };
         let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
-        let cache_key = |base, name| (base, resolver_generation, name);
+        let cache_key = |base, name| (base, name);
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
             if skip_flow_narrowing {
                 if write_presence_only {
@@ -119,8 +119,7 @@ impl<'a> CheckerState<'a> {
             .narrowing_cache
             .property_cache
             .borrow()
-            .get(&cache_key(resolved_base, prop_atom))
-            .copied();
+            .get(&cache_key(resolved_base, prop_atom), resolver_generation);
         if let Some(Some(entry)) = cached_property_type {
             let mut result_type = self.refine_expando_property_read_type(
                 idx,
@@ -205,6 +204,7 @@ impl<'a> CheckerState<'a> {
                     .borrow_mut()
                     .insert(
                         cache_key(resolved_base, prop_atom),
+                        resolver_generation,
                         Some(CachedPropertyType::new(
                             refined_type_id,
                             from_index_signature,
@@ -248,6 +248,7 @@ impl<'a> CheckerState<'a> {
                     .borrow_mut()
                     .insert(
                         cache_key(resolved_base, prop_atom),
+                        resolver_generation,
                         property_type.map(CachedPropertyType::explicit),
                     );
                 let mut result_type = property_type.unwrap_or(TypeId::ERROR);
@@ -270,7 +271,11 @@ impl<'a> CheckerState<'a> {
                     .narrowing_cache
                     .property_cache
                     .borrow_mut()
-                    .insert(cache_key(resolved_base, prop_atom), None);
+                    .insert(
+                        cache_key(resolved_base, prop_atom),
+                        resolver_generation,
+                        None,
+                    );
                 None
             }
             PropertyAccessResult::IsUnknown => None,

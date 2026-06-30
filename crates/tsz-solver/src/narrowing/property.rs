@@ -414,8 +414,14 @@ impl<'a> NarrowingContext<'a> {
             return false;
         }
 
-        let key = (resolved_type, self.resolver_generation(), property_name);
-        if let Some(&cached) = self.cache.required_property_cache.borrow().get(&key) {
+        let generation = self.resolver_generation();
+        let key = (resolved_type, property_name);
+        if let Some(cached) = self
+            .cache
+            .required_property_cache
+            .borrow()
+            .get(&key, generation)
+        {
             return cached;
         }
 
@@ -423,7 +429,7 @@ impl<'a> NarrowingContext<'a> {
         self.cache
             .required_property_cache
             .borrow_mut()
-            .insert(key, required);
+            .insert(key, generation, required);
         required
     }
 
@@ -537,9 +543,10 @@ impl<'a> NarrowingContext<'a> {
         property_name: Atom,
     ) -> Option<CachedPropertyType> {
         let resolved_type = self.resolve_type(type_id);
-        let key = (resolved_type, self.resolver_generation(), property_name);
+        let generation = self.resolver_generation();
+        let key = (resolved_type, property_name);
 
-        if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
+        if let Some(cached) = self.cache.property_cache.borrow().get(&key, generation) {
             if let Some(cached_entry) = cached {
                 let cached_prop_type = cached_entry.type_id;
                 if cached_prop_type != TypeId::ERROR
@@ -556,10 +563,11 @@ impl<'a> NarrowingContext<'a> {
                         type_id: resolved_cached,
                         from_index_signature: cached_entry.from_index_signature,
                     };
-                    self.cache
-                        .property_cache
-                        .borrow_mut()
-                        .insert(key, Some(resolved_entry));
+                    self.cache.property_cache.borrow_mut().insert(
+                        key,
+                        generation,
+                        Some(resolved_entry),
+                    );
                     return Some(resolved_entry);
                 }
                 return Some(cached_entry);
@@ -590,7 +598,10 @@ impl<'a> NarrowingContext<'a> {
             None => true,
         };
         if should_cache {
-            self.cache.property_cache.borrow_mut().insert(key, result);
+            self.cache
+                .property_cache
+                .borrow_mut()
+                .insert(key, generation, result);
         }
         result
     }
