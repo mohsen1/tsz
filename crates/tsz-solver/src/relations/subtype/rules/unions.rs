@@ -25,6 +25,41 @@ use super::super::{SubtypeChecker, SubtypeFailureReason, SubtypeResult, TypeReso
 /// This matches TypeScript's limit to prevent exponential blowup.
 const MAX_DISCRIMINANT_COMBINATIONS: usize = 25;
 
+/// Maximum source properties considered for discriminated-union splitting.
+const MAX_PROPERTIES_FOR_DISCRIMINATED: usize = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscriminatedObjectSizeState {
+    Continue,
+    TooManyProperties,
+}
+
+impl DiscriminatedObjectSizeState {
+    const fn for_property_count(property_count: usize) -> Self {
+        if property_count > MAX_PROPERTIES_FOR_DISCRIMINATED {
+            Self::TooManyProperties
+        } else {
+            Self::Continue
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiscriminantCombinationState {
+    Continue,
+    LimitExceeded,
+}
+
+impl DiscriminantCombinationState {
+    const fn for_count(count: usize) -> Self {
+        if count > MAX_DISCRIMINANT_COMBINATIONS {
+            Self::LimitExceeded
+        } else {
+            Self::Continue
+        }
+    }
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if a type parameter is a subtype of a target type.
     ///
@@ -433,9 +468,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // DOM interfaces like HTMLElement have hundreds of properties; creating narrowed
         // copies (clone + sort + hash + intern) for each discriminant combination is
         // prohibitively expensive and never matches real discriminated union patterns.
-        const MAX_PROPERTIES_FOR_DISCRIMINATED: usize = 50;
-        if source_shape.properties.len() > MAX_PROPERTIES_FOR_DISCRIMINATED {
-            return SubtypeResult::False;
+        match DiscriminatedObjectSizeState::for_property_count(source_shape.properties.len()) {
+            DiscriminatedObjectSizeState::Continue => {}
+            DiscriminatedObjectSizeState::TooManyProperties => return SubtypeResult::False,
         }
 
         let target_members_for_discriminants: Vec<TypeId> = target_members
@@ -467,8 +502,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         for &(prop_name, source_prop_type) in &disc_props {
             let source_values = get_discriminant_values(self.interner, source_prop_type);
-            if source_values.len() > MAX_DISCRIMINANT_COMBINATIONS {
-                return SubtypeResult::False;
+            match DiscriminantCombinationState::for_count(source_values.len()) {
+                DiscriminantCombinationState::Continue => {}
+                DiscriminantCombinationState::LimitExceeded => return SubtypeResult::False,
             }
 
             // For this discriminant, track which target members are reachable
@@ -529,8 +565,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check total combinations don't exceed limit
         let total_combinations: usize = disc_values.iter().map(|v| v.len()).product();
-        if total_combinations > MAX_DISCRIMINANT_COMBINATIONS {
-            return SubtypeResult::False;
+        match DiscriminantCombinationState::for_count(total_combinations) {
+            DiscriminantCombinationState::Continue => {}
+            DiscriminantCombinationState::LimitExceeded => return SubtypeResult::False,
         }
 
         // Iterate over all combinations using index-based enumeration
@@ -648,8 +685,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let total_combinations: usize = disc_values.iter().map(|values| values.len()).product();
-        if total_combinations > MAX_DISCRIMINANT_COMBINATIONS {
-            return SubtypeResult::False;
+        match DiscriminantCombinationState::for_count(total_combinations) {
+            DiscriminantCombinationState::Continue => {}
+            DiscriminantCombinationState::LimitExceeded => return SubtypeResult::False,
         }
 
         let mut combo_indices = vec![0usize; disc_values.len()];
@@ -904,4 +942,33 @@ fn narrow_tuple_elements(
         elements[position].optional = false;
     }
     db.tuple(elements)
+}
+
+#[cfg(test)]
+mod discriminant_guard_state_tests {
+    use super::*;
+
+    #[test]
+    fn discriminated_object_size_state_names_exact_cap_and_overflow() {
+        assert_eq!(
+            DiscriminatedObjectSizeState::for_property_count(MAX_PROPERTIES_FOR_DISCRIMINATED),
+            DiscriminatedObjectSizeState::Continue
+        );
+        assert_eq!(
+            DiscriminatedObjectSizeState::for_property_count(MAX_PROPERTIES_FOR_DISCRIMINATED + 1),
+            DiscriminatedObjectSizeState::TooManyProperties
+        );
+    }
+
+    #[test]
+    fn discriminant_combination_state_names_exact_cap_and_overflow() {
+        assert_eq!(
+            DiscriminantCombinationState::for_count(MAX_DISCRIMINANT_COMBINATIONS),
+            DiscriminantCombinationState::Continue
+        );
+        assert_eq!(
+            DiscriminantCombinationState::for_count(MAX_DISCRIMINANT_COMBINATIONS + 1),
+            DiscriminantCombinationState::LimitExceeded
+        );
+    }
 }
