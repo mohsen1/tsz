@@ -21,7 +21,7 @@ const TS2636: u32 = 2636;
 const TS5082_ARBITRARY_NOTE: u32 = 5082;
 const TS5075_SUBTYPE_NOTE: u32 = 5075;
 
-fn ts2636_with_related<'a>(diags: &'a [Diagnostic]) -> &'a Diagnostic {
+fn ts2636_with_related(diags: &[Diagnostic]) -> &Diagnostic {
     diags
         .iter()
         .find(|d| d.code == TS2636)
@@ -43,15 +43,11 @@ fn in_annotation_method_return_attaches_return_reason_tail() {
     let diag = ts2636_with_related(&diags);
     let texts = related_texts(diag);
     assert!(
-        texts
-            .iter()
-            .any(|t| *t == "The types returned by 'read()' are incompatible between these types."),
+        texts.contains(&"The types returned by 'read()' are incompatible between these types."),
         "expected the method-return frame in the TS2636 tail; got {texts:?}"
     );
     assert!(
-        texts
-            .iter()
-            .any(|t| *t == "Type 'super-Elem' is not assignable to type 'sub-Elem'."),
+        texts.contains(&"Type 'super-Elem' is not assignable to type 'sub-Elem'."),
         "expected the marker leaf in the TS2636 tail; got {texts:?}"
     );
 }
@@ -64,20 +60,17 @@ fn out_annotation_property_param_attaches_parameter_reason_tail() {
     let diag = ts2636_with_related(&diags);
     let texts = related_texts(diag);
     assert!(
-        texts
-            .iter()
-            .any(|t| *t == "Types of property 'write' are incompatible."),
+        texts.contains(&"Types of property 'write' are incompatible."),
         "expected the property frame in the TS2636 tail; got {texts:?}"
     );
     assert!(
-        texts.iter().any(|t| *t
-            == "Type '(x: sub-Item) => void' is not assignable to type '(x: super-Item) => void'."),
+        texts.contains(
+            &"Type '(x: sub-Item) => void' is not assignable to type '(x: super-Item) => void'.",
+        ),
         "expected the signature frame in the TS2636 tail; got {texts:?}"
     );
     assert!(
-        texts
-            .iter()
-            .any(|t| *t == "Type 'super-Item' is not assignable to type 'sub-Item'."),
+        texts.contains(&"Type 'super-Item' is not assignable to type 'sub-Item'."),
         "expected the marker leaf in the TS2636 tail; got {texts:?}"
     );
 }
