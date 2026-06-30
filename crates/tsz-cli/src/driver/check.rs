@@ -45,11 +45,12 @@ mod check_tests;
 mod checker_diagnostics;
 mod checker_lib_diagnostics;
 mod no_check_diagnostics;
+mod parse_only_diagnostics;
 mod source_resolution_setup;
 
 use check_file::{
-    CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
-    check_file_for_parallel, check_files_cost_balanced_pool,
+    CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFileResultRecorder,
+    CheckFilesReuseCtx, check_file_for_parallel, check_files_cost_balanced_pool,
     check_files_in_parallel_chunks_with_reuse, check_files_sequentially_with_reuse,
 };
 use checker_diagnostics::{
@@ -66,6 +67,7 @@ use checker_lib_diagnostics::{
     should_preserve_datetimeformatpart_spelling_baseline,
 };
 use no_check_diagnostics::{NoCheckDiagnosticsInput, collect_no_check_diagnostics_for_files};
+use parse_only_diagnostics::{ParseOnlyDiagnosticsInput, collect_parse_only_diagnostics_result};
 use source_resolution_setup::{
     SourceResolutionSetup, SourceResolutionSetupInput, prepare_source_resolution_setup,
 };
@@ -96,106 +98,6 @@ pub(super) struct CollectDiagnosticsResult {
     pub def_store_stats: Option<tsz_solver::StoreStatistics>,
     /// Module dependency graph statistics (populated for `--extendedDiagnostics`).
     pub module_dep_stats: Option<super::ModuleDependencyStats>,
-}
-
-/// Inputs for parse-only short-circuit paths that bypass the full checker
-/// pipeline (either `--noCheck` without `--declaration`, or `--noEmit
-/// --skipLibCheck` on a pure `.d.ts` project).
-struct ParseOnlyDiagnosticsInput<'a> {
-    program: &'a MergedProgram,
-    options: &'a ResolvedCompilerOptions,
-    program_has_real_syntax_errors: bool,
-    include_isolated_declaration_diagnostics: bool,
-    per_file_ts7016_diagnostics: &'a [Vec<Diagnostic>],
-    cache: Option<&'a mut CompilationCache>,
-    base_dir: &'a Path,
-    file_is_esm_map: &'a FxHashMap<String, bool>,
-    resolved_module_paths: &'a FxHashMap<(usize, String), usize>,
-    collect_compile_stats: bool,
-    request_cache_counters: RequestCacheCounters,
-}
-
-/// Collect parse-only diagnostics and return an early `CollectDiagnosticsResult`
-/// for paths that skip the full checker pipeline.
-///
-/// Used by two short-circuit arms in `collect_diagnostics_with_source_resolutions`:
-/// - `--noCheck` (without `--declaration`): collects parse + isolated-declarations
-///   diagnostics and returns before any checker binder or `ProgramContext` setup.
-/// - `--noEmit --skipLibCheck` on a pure `.d.ts` project: collects parse
-///   diagnostics only and returns before expensive checker infrastructure.
-///
-/// Both arms share the same post-collection steps: extend with per-file TS7016
-/// diagnostics, trim the `CompilationCache`, detect missing-tslib helpers, and
-/// build the optional module-dependency stats.
-fn collect_parse_only_diagnostics_result(
-    input: ParseOnlyDiagnosticsInput<'_>,
-) -> CollectDiagnosticsResult {
-    let ParseOnlyDiagnosticsInput {
-        program,
-        options,
-        program_has_real_syntax_errors,
-        include_isolated_declaration_diagnostics,
-        per_file_ts7016_diagnostics,
-        cache,
-        base_dir,
-        file_is_esm_map,
-        resolved_module_paths,
-        collect_compile_stats,
-        request_cache_counters,
-    } = input;
-
-    let all_file_indices: Vec<usize> = (0..program.files.len()).collect();
-
-    let mut diagnostics: Vec<Diagnostic> =
-        collect_no_check_diagnostics_for_files(NoCheckDiagnosticsInput {
-            files: &program.files,
-            file_indices: &all_file_indices,
-            options,
-            program_has_real_syntax_errors,
-            include_isolated_declaration_diagnostics,
-        })
-        .into_iter()
-        .flat_map(|file_diags| file_diags.diagnostics)
-        .collect();
-
-    let mut used_paths =
-        FxHashSet::with_capacity_and_hasher(program.files.len(), Default::default());
-    for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
-        diagnostics.extend(file_diags.iter().cloned());
-        if let Some(file) = program.files.get(file_idx) {
-            used_paths.insert(PathBuf::from(&file.file_name));
-        }
-    }
-
-    if let Some(c) = cache {
-        c.type_caches.retain(|path, _| used_paths.contains(path));
-        c.diagnostics.retain(|path, _| used_paths.contains(path));
-        c.export_hashes.retain(|path, _| used_paths.contains(path));
-    }
-
-    diagnostics.extend(detect_missing_tslib_helper_diagnostics(
-        program,
-        options,
-        base_dir,
-        file_is_esm_map,
-    ));
-
-    let module_dep_stats = if collect_compile_stats {
-        Some(compute_module_dependency_stats(
-            program.files.len(),
-            resolved_module_paths,
-        ))
-    } else {
-        None
-    };
-
-    CollectDiagnosticsResult {
-        diagnostics,
-        request_cache_counters,
-        query_cache_stats: Some(tsz_solver::construction::QueryCacheStatistics::default()),
-        def_store_stats: None,
-        module_dep_stats,
-    }
 }
 
 #[derive(Default)]
@@ -789,8 +691,10 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
-    let can_recheck_checker_libs =
-        !options.no_check && !options.skip_lib_check && !checker_libs.files.is_empty();
+    // `skipLibCheck` suppresses checker-lib diagnostics, not checker-lib
+    // materialization. Source files can still consume utility/JSX shapes whose
+    // post-merge lib pass publishes optionality and heritage details.
+    let can_recheck_checker_libs = !options.no_check && !checker_libs.files.is_empty();
     let affected_lib_interfaces = if can_recheck_checker_libs {
         affected_lib_interface_names(program, checker_libs)
     } else {
@@ -1287,10 +1191,13 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         let skip_lib_check = options.skip_lib_check;
         let compiler_options = options.checker.clone();
         let mut work_items: Vec<usize> = Vec::with_capacity(work_queue.len());
+        let mut skip_lib_check_preparation_items: Vec<usize> = Vec::new();
         let mut skipped_file_indices: Vec<usize> = Vec::new();
         for file_idx in work_queue {
             let file = &program.files[file_idx];
-            if should_skip_type_checking_for_file(&file.file_name, options, false) {
+            if skip_lib_check && is_declaration_file(&file.file_name) {
+                skip_lib_check_preparation_items.push(file_idx);
+            } else if should_skip_type_checking_for_file(&file.file_name, options, false) {
                 skipped_file_indices.push(file_idx);
             } else {
                 work_items.push(file_idx);
@@ -1353,12 +1260,14 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // the parallel fresh-checking campaign: it disables the cross-file
         // shared cache so cache-poisoning races can be isolated from other
         // parallel-lane defects.
-        let shared_query_cache =
-            if work_items.len() > 1 && std::env::var_os("TSZ_EXPERIMENT_NO_SHARED_QC").is_none() {
-                Some(tsz_solver::construction::SharedQueryCache::new())
-            } else {
-                None
-            };
+        let checker_item_count = work_items.len() + skip_lib_check_preparation_items.len();
+        let shared_query_cache = if checker_item_count > 1
+            && std::env::var_os("TSZ_EXPERIMENT_NO_SHARED_QC").is_none()
+        {
+            Some(tsz_solver::construction::SharedQueryCache::new())
+        } else {
+            None
+        };
 
         let check_file_with_fresh_checker = |file_idx: usize| {
             let binder = build_checker_binder(file_idx);
@@ -1382,6 +1291,25 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             };
             check_file_for_parallel(context)
         };
+
+        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
+        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
+        {
+            let mut tc_out = type_cache_output
+                .lock()
+                .expect("type_cache_output mutex poisoned");
+            let mut recorder = CheckFileResultRecorder {
+                diagnostics: &mut diagnostics,
+                type_cache_output: &mut tc_out,
+                per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+                request_cache_counters: &mut request_cache_counters,
+                query_cache_stats: &mut parallel_qc_stats,
+                program,
+            };
+            for file_idx in skip_lib_check_preparation_items.iter().copied() {
+                recorder.record(file_idx, check_file_with_fresh_checker(file_idx));
+            }
+        }
 
         // Check all files in parallel — each file gets its own CheckerState and QueryCache.
         // TypeInterner (DashMap) is thread-safe; QueryCache uses RefCell/Cell per-thread.
@@ -1605,25 +1533,20 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // come from the shared store computed once after the loop (workers
         // all see the same shared store, so summing per-file was both
         // wasted work and N× inflated).
-        let mut parallel_qc_stats = tsz_solver::construction::QueryCacheStatistics::default();
-        let parallel_ds_stats = tsz_solver::StoreStatistics::default();
         {
             let mut tc_out = type_cache_output
                 .lock()
                 .expect("type_cache_output mutex poisoned");
-            for (idx, (file_diags, type_cache, file_counters, qc_stats, _ds_stats)) in
-                file_results.into_iter().enumerate()
-            {
-                diagnostics.extend(file_diags);
-                // Inject pre-computed TS7016 diagnostics for CJS require() calls.
-                let file_idx = work_items[idx];
-                diagnostics.extend(per_file_ts7016_diagnostics[file_idx].iter().cloned());
-                request_cache_counters.merge(file_counters);
-                parallel_qc_stats.merge(&qc_stats);
-                if let Some(tc) = type_cache {
-                    let file_path = PathBuf::from(&program.files[file_idx].file_name);
-                    tc_out.insert(file_path, tc);
-                }
+            let mut recorder = CheckFileResultRecorder {
+                diagnostics: &mut diagnostics,
+                type_cache_output: &mut tc_out,
+                per_file_ts7016_diagnostics: &per_file_ts7016_diagnostics,
+                request_cache_counters: &mut request_cache_counters,
+                query_cache_stats: &mut parallel_qc_stats,
+                program,
+            };
+            for (idx, result) in file_results.into_iter().enumerate() {
+                recorder.record(work_items[idx], result);
             }
         }
         // PERF: see `needs_lib_recheck` above — when no user-defined global
@@ -1646,7 +1569,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 );
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                diagnostics.extend(lib_diags);
+                if !options.skip_lib_check {
+                    diagnostics.extend(lib_diags);
+                }
                 request_cache_counters.merge(lib_counters);
                 parallel_qc_stats.merge(&query_cache.statistics());
             }
@@ -1874,6 +1799,17 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             }
             // skipLibCheck: skip type checking of declaration files (.d.ts, .d.cts, .d.mts)
             if options.skip_lib_check && is_declaration_file(&file.file_name) {
+                tsz::checker::reset_stack_overflow_flag();
+                checker.check_source_file(file.source_file);
+                let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+                post_process_checker_diagnostics(
+                    &mut checker_diagnostics,
+                    file,
+                    options,
+                    program_has_real_syntax_errors,
+                    program_has_unsupported_js_root,
+                    has_deprecation_diagnostics,
+                );
                 diagnostics.extend(file_diagnostics);
                 request_cache_counters.merge(checker.ctx.request_cache_counters);
                 continue;
@@ -1977,7 +1913,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     check_checker_lib_file(&checker_lib_file_env, lib_idx, &query_cache, None);
                 let mut lib_diags = lib_diags;
                 retain_program_induced_lib_diagnostics(&mut lib_diags, &baseline_lib_diagnostics);
-                diagnostics.extend(lib_diags);
+                if !options.skip_lib_check {
+                    diagnostics.extend(lib_diags);
+                }
                 request_cache_counters.merge(lib_counters);
             }
         }

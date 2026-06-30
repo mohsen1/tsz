@@ -1195,3 +1195,70 @@ const wrongLeaf: CountTree = wide;
             );
         }
     }
+
+    #[test]
+    fn skip_lib_check_prepares_declaration_heritage_for_jsx_consumers() {
+        let mut options = project_mode_es2015_strict_options();
+        options.skip_lib_check = true;
+        options.checker.jsx_mode = JsxMode::React;
+        options.checker.es_module_interop = true;
+        options.checker.allow_synthetic_default_imports = true;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/react-lite.d.ts",
+                    r#"
+declare const React: { createElement: any };
+interface MiniElement {}
+declare namespace React {
+  type ElementType = keyof JSX.IntrinsicElements | ((props: any) => any);
+  interface DOMAttributes<T> {
+    onClick?: (event: { currentTarget: T }) => void;
+  }
+  interface HTMLAttributes<T> extends DOMAttributes<T> {
+    title?: string;
+  }
+  interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
+    href?: string;
+    download?: unknown;
+  }
+  type DetailedHTMLProps<E extends HTMLAttributes<T>, T> = E;
+  type ComponentPropsWithRef<T extends ElementType> =
+    T extends keyof JSX.IntrinsicElements ? JSX.IntrinsicElements[T] : never;
+}
+declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {
+    a: React.DetailedHTMLProps<React.AnchorHTMLAttributes<MiniElement>, MiniElement>;
+    button: React.DetailedHTMLProps<React.HTMLAttributes<MiniElement>, MiniElement>;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/main.tsx",
+                    r#"
+function MiniLink<T extends React.ElementType = React.ElementType>(
+  props: React.ComponentPropsWithRef<React.ElementType extends T ? "a" : T>,
+) {
+  return <a />;
+}
+
+<MiniLink onClick={(event) => { event.currentTarget; }} />;
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        let leaked: Vec<_> = diagnostics
+            .iter()
+            .filter(|diag| matches!(diag.code, 2339 | 2740 | 7006))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "skipLibCheck must still prepare skipped declaration heritage for JSX consumers: {leaked:?}; all: {diagnostics:?}"
+        );
+    }
