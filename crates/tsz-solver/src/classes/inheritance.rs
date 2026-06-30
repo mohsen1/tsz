@@ -32,6 +32,38 @@ pub struct InheritanceGraph {
     max_symbol_id: Cell<usize>,
 }
 
+#[derive(Debug, Default)]
+struct DescendantInvalidationState {
+    queue: VecDeque<SymbolId>,
+    visited: FxHashSet<SymbolId>,
+}
+
+impl DescendantInvalidationState {
+    fn invalidate_from(&mut self, nodes: &mut FxHashMap<SymbolId, ClassNode>, root: SymbolId) {
+        self.queue.clear();
+        self.visited.clear();
+        self.queue.push_back(root);
+
+        while let Some(current) = self.queue.pop_front() {
+            if !self.visited.insert(current) {
+                continue;
+            }
+
+            let children = if let Some(node) = nodes.get_mut(&current) {
+                node.ancestors_bitset = None;
+                node.mro = None;
+                node.children.clone()
+            } else {
+                Vec::new()
+            };
+
+            for child in children {
+                self.queue.push_back(child);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MroVisitState {
     Entered,
@@ -72,27 +104,36 @@ impl InheritanceGraph {
         }
         self.max_symbol_id.set(max_id);
 
-        // Register child
-        let child_node = nodes.entry(child).or_default();
+        let previous_parents = {
+            // Register child
+            let child_node = nodes.entry(child).or_default();
 
-        // Check if edges actually changed to avoid invalidating cache unnecessarily
-        if child_node.parents == parents {
-            return;
+            // Check if edges actually changed to avoid invalidating cache unnecessarily
+            if child_node.parents == parents {
+                return;
+            }
+
+            std::mem::replace(&mut child_node.parents, parents.to_vec())
+        };
+
+        for old_parent in previous_parents {
+            if parents.contains(&old_parent) {
+                continue;
+            }
+            if let Some(parent_node) = nodes.get_mut(&old_parent) {
+                parent_node.children.retain(|&candidate| candidate != child);
+            }
         }
 
-        child_node.parents = parents.to_vec();
-
-        // Invalidate caches
-        child_node.ancestors_bitset = None;
-        child_node.mro = None;
-
-        // Register reverse edges (for future invalidation logic)
+        // Register reverse edges for descendant cache invalidation.
         for &parent in parents {
             let parent_node = nodes.entry(parent).or_default();
             if !parent_node.children.contains(&child) {
                 parent_node.children.push(child);
             }
         }
+
+        DescendantInvalidationState::default().invalidate_from(&mut nodes, child);
     }
 
     /// Checks if `child` is a subtype of `ancestor` nominally.

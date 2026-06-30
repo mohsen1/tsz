@@ -147,3 +147,85 @@ fn test_no_common_ancestor() {
     // No common ancestor
     assert_eq!(graph.find_common_ancestor(b, d), None);
 }
+
+#[test]
+fn descendant_closure_cache_invalidates_when_intermediate_parent_changes() {
+    let graph = InheritanceGraph::new();
+    let root = SymbolId(1);
+    let mid = SymbolId(2);
+    let leaf = SymbolId(3);
+
+    graph.add_inheritance(mid, &[root]);
+    graph.add_inheritance(leaf, &[mid]);
+
+    assert!(graph.is_derived_from(leaf, root));
+    assert!(graph.is_derived_from(leaf, mid));
+
+    graph.add_inheritance(mid, &[]);
+
+    assert!(!graph.is_derived_from(leaf, root));
+    assert!(graph.is_derived_from(leaf, mid));
+}
+
+#[test]
+fn descendant_mro_cache_invalidates_when_intermediate_parent_changes() {
+    let graph = InheritanceGraph::new();
+    let root = SymbolId(1);
+    let replacement_root = SymbolId(2);
+    let mid = SymbolId(3);
+    let leaf = SymbolId(4);
+
+    graph.add_inheritance(mid, &[root]);
+    graph.add_inheritance(leaf, &[mid]);
+
+    assert_eq!(graph.get_resolution_order(leaf), vec![leaf, mid, root]);
+
+    graph.add_inheritance(mid, &[replacement_root]);
+
+    assert_eq!(
+        graph.get_resolution_order(leaf),
+        vec![leaf, mid, replacement_root]
+    );
+}
+
+#[test]
+fn parent_rewrite_updates_reverse_children_edges() {
+    let graph = InheritanceGraph::new();
+    let old_root = SymbolId(1);
+    let new_root = SymbolId(2);
+    let child = SymbolId(3);
+
+    graph.add_inheritance(child, &[old_root]);
+    graph.add_inheritance(child, &[new_root]);
+
+    let nodes = graph.nodes.borrow();
+    assert!(
+        !nodes
+            .get(&old_root)
+            .is_some_and(|node| node.children.contains(&child))
+    );
+    assert!(
+        nodes
+            .get(&new_root)
+            .is_some_and(|node| node.children.contains(&child))
+    );
+}
+
+#[test]
+fn common_ancestor_recomputes_after_descendant_cache_invalidation() {
+    let graph = InheritanceGraph::new();
+    let root = SymbolId(1);
+    let sibling = SymbolId(2);
+    let mid = SymbolId(3);
+    let leaf = SymbolId(4);
+
+    graph.add_inheritance(sibling, &[root]);
+    graph.add_inheritance(mid, &[root]);
+    graph.add_inheritance(leaf, &[mid]);
+
+    assert_eq!(graph.find_common_ancestor(leaf, sibling), Some(root));
+
+    graph.add_inheritance(mid, &[]);
+
+    assert_eq!(graph.find_common_ancestor(leaf, sibling), None);
+}
