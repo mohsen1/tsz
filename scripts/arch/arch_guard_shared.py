@@ -608,11 +608,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2191,
     ),
     (
-        "Solver boundary: types.rs size ratchet",
-        ROOT / "crates/tsz-solver/src/types.rs",
-        2166,
-    ),
-    (
         "CLI boundary: driver/check_tests/check_tests_part1.rs size ratchet",
         ROOT / "crates/tsz-cli/src/driver/check_tests/check_tests_part1.rs",
         2158,
@@ -656,6 +651,11 @@ FILE_LINE_LIMIT_CHECKS = [
         "Solver boundary: evaluation/evaluate/support.rs size ratchet",
         ROOT / "crates/tsz-solver/src/evaluation/evaluate/support.rs",
         2037,
+    ),
+    (
+        "Solver boundary: diagnostics/format/mod.rs size ratchet",
+        ROOT / "crates/tsz-solver/src/diagnostics/format/mod.rs",
+        2012,
     ),
     (
         "Solver boundary: type_queries/data/tests.rs size ratchet",
