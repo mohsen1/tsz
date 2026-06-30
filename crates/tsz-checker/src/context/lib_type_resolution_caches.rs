@@ -35,3 +35,12 @@ pub struct LibTypeResolutionCaches {
     /// can hit the member cache.
     pub lazy_member_receivers: RefCell<FxHashMap<DefId, bool>>,
 }
+
+impl LibTypeResolutionCaches {
+    pub(crate) fn clear(&mut self) {
+        self.types.clear();
+        self.lazy_members.borrow_mut().clear();
+        self.lazy_member_receiver_properties.borrow_mut().clear();
+        self.lazy_member_receivers.borrow_mut().clear();
+    }
+}

@@ -11,12 +11,13 @@
 //! speculative depth counters that gate recursion.
 //!
 //! Retained caches are retained only when their ownership invariant is explicit:
-//! program-stable lib/type caches are checker orchestration state, query-boundary
+//! shared program lib/type stores are checker orchestration state, query-boundary
 //! caches carry an explicit semantic request shape, and solver caches are owned
-//! by solver data structures. Caches keyed by `NodeIndex`, `FlowNodeId`, or
-//! binder-local `SymbolId` must be cleared or rebuilt when the active file or
-//! binder changes. See `docs/architecture/CHECKER_CONTEXT_CACHE_OWNERSHIP.md`
-//! for the field-level inventory.
+//! by solver data structures. Caches keyed by `NodeIndex`, `FlowNodeId`,
+//! binder-local `SymbolId`, or active-file lib eligibility decisions must be
+//! cleared or rebuilt when the active file or binder changes. See
+//! `docs/architecture/CHECKER_CONTEXT_CACHE_OWNERSHIP.md` for the field-level
+//! inventory.
 //!
 //! This helper is **not yet called from anywhere** — it exists as the
 //! boundary API so that the future T2.1.B "sequential session-reuse
@@ -75,7 +76,8 @@ impl<'a> CheckerContext<'a> {
     /// - `SymbolId`-keyed caches (`symbol_types`,
     ///   `symbol_instance_types`, `lib_delegation_cache`, etc.):
     ///   stable symbol identity makes these correct to retain.
-    /// - `Atom`/string-keyed lib caches: stable across compilations.
+    /// - Shared lib/type stores whose values are explicitly
+    ///   program-scoped and not influenced by active-file shadowing.
     /// - The bulk of the 119 `FileLocalReset` manifest entries:
     ///   purely-keyed caches whose retained entries are
     ///   correctness-neutral and merely costs a re-fetch. They will
@@ -226,6 +228,14 @@ impl<'a> CheckerContext<'a> {
             .borrow_mut()
             .clear();
         self.flow_shared
+            .flow_switch_case_literal_cache
+            .borrow_mut()
+            .clear();
+        self.flow_shared
+            .flow_switch_all_distinct_literals_cache
+            .borrow_mut()
+            .clear();
+        self.flow_shared
             .flow_reference_match_cache
             .borrow_mut()
             .clear();
@@ -317,11 +327,13 @@ impl<'a> CheckerContext<'a> {
         self.application_symbols_resolved.clear();
         self.application_symbols_resolution_set.clear();
         self.namespace_module_names.clear();
+        self.reexport_resolution_cache.borrow_mut().clear();
         // Type-position identifier resolution is memoized by (arena pointer,
         // node index); arena pointers are per-file and can be reused across
         // sessions, so the memo shares the per-file lifecycle (issue #13987).
         self.type_position_resolution_cache.borrow_mut().clear();
         self.clear_env_eval_cache();
+        self.lib_type_resolution_caches.clear();
         // Body-publication history tracks oscillating re-resolutions only to
         // suppress redundant env-eval cache sweeps; it shares that cache's
         // per-file lifecycle, so reset it alongside.
@@ -805,6 +817,90 @@ mod tests {
                 .is_empty()
         );
         assert!(!ctx.in_satisfies_operand);
+    }
+
+    #[test]
+    fn reset_clears_switch_literal_flow_caches() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut ctx = fresh_ctx(&arena, &binder, &types);
+
+        ctx.flow_shared
+            .flow_switch_case_literal_cache
+            .borrow_mut()
+            .insert(1, Some(tsz_solver::TypeId::STRING));
+        ctx.flow_shared
+            .flow_switch_all_distinct_literals_cache
+            .borrow_mut()
+            .insert(2, true);
+
+        ctx.reset_for_next_file();
+
+        assert!(
+            ctx.flow_shared
+                .flow_switch_case_literal_cache
+                .borrow()
+                .is_empty()
+        );
+        assert!(
+            ctx.flow_shared
+                .flow_switch_all_distinct_literals_cache
+                .borrow()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn reset_clears_lib_type_resolution_caches() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut ctx = fresh_ctx(&arena, &binder, &types);
+
+        ctx.lib_type_resolution_caches
+            .types
+            .insert("ShadowedLib".to_string(), Some(tsz_solver::TypeId::STRING));
+        ctx.lib_type_resolution_caches
+            .lazy_members
+            .borrow_mut()
+            .insert(
+                (tsz_common::interner::Atom(1), tsz_common::interner::Atom(2)),
+                Some(tsz_solver::TypeId::NUMBER),
+            );
+        ctx.lib_type_resolution_caches
+            .lazy_member_receiver_properties
+            .borrow_mut()
+            .insert(
+                (tsz_solver::def::DefId(3), tsz_common::interner::Atom(4)),
+                Some(tsz_solver::TypeId::BOOLEAN),
+            );
+        ctx.lib_type_resolution_caches
+            .lazy_member_receivers
+            .borrow_mut()
+            .insert(tsz_solver::def::DefId(5), false);
+
+        ctx.reset_for_next_file();
+
+        assert!(ctx.lib_type_resolution_caches.types.is_empty());
+        assert!(
+            ctx.lib_type_resolution_caches
+                .lazy_members
+                .borrow()
+                .is_empty()
+        );
+        assert!(
+            ctx.lib_type_resolution_caches
+                .lazy_member_receiver_properties
+                .borrow()
+                .is_empty()
+        );
+        assert!(
+            ctx.lib_type_resolution_caches
+                .lazy_member_receivers
+                .borrow()
+                .is_empty()
+        );
     }
 
     #[test]
