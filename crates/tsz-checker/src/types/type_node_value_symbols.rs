@@ -2,7 +2,7 @@ use super::type_node::TypeNodeChecker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
-impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+impl TypeNodeChecker<'_, '_> {
     pub(super) fn declared_type_annotation_for_value_symbol(
         &self,
         sym_id: tsz_binder::SymbolId,
