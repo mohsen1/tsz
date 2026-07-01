@@ -586,10 +586,11 @@ impl CheckerState<'_> {
                         continue;
                     }
                     let params = if is_current_arena {
-                        let (params, updates) =
-                            self.push_type_parameters(&type_alias.type_parameters);
-                        self.pop_type_parameters(updates);
-                        params
+                        self.collect_current_arena_type_alias_params_with_resolved_refs(
+                            decl_arena,
+                            type_alias,
+                            effective_sym_id,
+                        )
                     } else {
                         let type_resolver = |node_idx: NodeIndex| {
                             decl_arena.get_identifier_text(node_idx).and_then(|name| {

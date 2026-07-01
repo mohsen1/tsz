@@ -11,6 +11,42 @@ use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
+use crate::query_boundaries::common::TypeEnvironment;
+
+use std::cell::RefCell;
+
+pub(super) fn apply_or_defer_env_write(
+    env: &RefCell<TypeEnvironment>,
+    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
+    op: DeferredFlowEnvWrite,
+) {
+    match env.try_borrow_mut() {
+        Ok(mut env) => {
+            drain_env_write_queue_into(queue, &mut env);
+            op.apply(&mut env);
+        }
+        Err(_) => queue.borrow_mut().push(op),
+    }
+}
+
+pub(super) fn drain_env_write_queue_into(
+    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
+    env: &mut TypeEnvironment,
+) {
+    let pending = std::mem::take(&mut *queue.borrow_mut());
+    for op in pending {
+        op.apply(env);
+    }
+}
+
+pub(super) fn flush_env_write_queue(
+    env: &RefCell<TypeEnvironment>,
+    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
+) {
+    if let Ok(mut env) = env.try_borrow_mut() {
+        drain_env_write_queue_into(queue, &mut env);
+    }
+}
 
 impl CheckerContext<'_> {
     /// Register a merged interface+value symbol's `typeof` value-space type in

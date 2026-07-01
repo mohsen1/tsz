@@ -1181,7 +1181,20 @@ impl CheckerState<'_> {
                         .binder
                         .get_symbol(sym_id)
                         .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS));
-            if cached_is_stale_alias_placeholder {
+            let cached_is_wrong_alias_body = !self.ctx.symbol_resolution_set.contains(&sym_id)
+                && self.ctx.resolve_symbol_file_index(sym_id).is_some()
+                && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                    if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+                        return false;
+                    }
+                    let expected_def = self
+                        .ctx
+                        .get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name);
+                    crate::query_boundaries::common::lazy_def_id(self.ctx.types, cached)
+                        .or_else(|| self.ctx.definition_store.find_def_for_type(cached))
+                        .is_some_and(|cached_def| cached_def != expected_def)
+                });
+            if cached_is_stale_alias_placeholder || cached_is_wrong_alias_body {
                 self.ctx.symbol_types.remove(&sym_id);
             } else {
                 if cached == TypeId::ERROR && self.ctx.symbol_resolution_set.contains(&sym_id) {

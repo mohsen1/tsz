@@ -27,6 +27,22 @@ fn matched_interface_type_params_no_2428() {
 }
 
 #[test]
+fn self_referential_interface_constraints_after_mismatch_add_no_2428() {
+    let bad_merge = "interface Bad<T> {}\ninterface Bad<T, U> {}\n";
+    let bad_count = count(bad_merge, 2428);
+    assert!(bad_count > 0);
+
+    let source = format!(
+        "{bad_merge}
+class Foo<T> {{}}
+interface Good<T extends Foo<T>> {{}}
+interface Good<T extends Foo<T>> {{}}
+"
+    );
+    assert_eq!(count(&source, 2428), bad_count);
+}
+
+#[test]
 fn mismatched_interface_type_params_reports_2428() {
     let source = "interface Box<T> { a: T; }\ninterface Box<T, U> { b: U; }\n";
     assert!(count(source, 2428) >= 1);

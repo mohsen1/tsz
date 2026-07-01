@@ -30,7 +30,27 @@ impl DefinitionStore {
     ) -> (DefId, bool) {
         use dashmap::mapref::entry::Entry;
         match self.symbol_def_index.entry((symbol_id, file_idx)) {
-            Entry::Occupied(existing) => (*existing.get(), false),
+            Entry::Occupied(existing) => {
+                let existing_def_id = *existing.get();
+                if Self::decl_site_key_for_info(&info).is_none() {
+                    return (existing_def_id, false);
+                }
+
+                let existing_matches_decl_site =
+                    self.get(existing_def_id).is_some_and(|existing_info| {
+                        Self::infos_have_same_decl_site(&existing_info, &info)
+                    });
+                if existing_matches_decl_site {
+                    return (existing_def_id, false);
+                }
+
+                if let Some(def_id) = self.find_decl_site_def_for_info(&info) {
+                    return (def_id, false);
+                }
+
+                drop(existing);
+                (self.register(info), true)
+            }
             Entry::Vacant(vacant) => {
                 // `register` touches only other maps (`definitions`,
                 // `name_to_defs`, `symbol_only_index`, `file_to_defs`),

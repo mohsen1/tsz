@@ -90,6 +90,55 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             import_name,
             &mut visited,
         )
+        .or_else(|| self.resolve_ambient_import_alias_type_target(module_name, import_name))
+    }
+
+    fn resolve_ambient_import_alias_type_target(
+        &self,
+        module_name: &str,
+        import_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let resolve_candidate =
+            |sym_id: tsz_binder::SymbolId, file_idx: usize| -> Option<tsz_binder::SymbolId> {
+                let symbol = if file_idx == self.ctx.current_file_idx {
+                    self.ctx.binder.get_symbol(sym_id)
+                } else {
+                    self.ctx
+                        .get_binder_for_file(file_idx)
+                        .and_then(|binder| binder.get_symbol(sym_id))
+                }
+                .or_else(|| self.get_symbol_from_any_context(sym_id))?;
+                if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE) {
+                    return None;
+                }
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+                Some(sym_id)
+            };
+
+        if let Some(exports) = self
+            .ctx
+            .module_exports_for_module(self.ctx.binder, module_name)
+            && let Some(sym_id) = exports.get(import_name)
+            && let Some(resolved) = resolve_candidate(sym_id, self.ctx.current_file_idx)
+        {
+            return Some(resolved);
+        }
+
+        if let Some(entries) = self
+            .ctx
+            .global_module_exports_index
+            .as_ref()
+            .and_then(|idx| idx.get(module_name))
+            .and_then(|inner| inner.get(import_name))
+        {
+            for &(file_idx, sym_id) in entries {
+                if let Some(resolved) = resolve_candidate(sym_id, file_idx) {
+                    return Some(resolved);
+                }
+            }
+        }
+
+        None
     }
 
     /// Walk a plain named re-export chain (`export { X } from './y'`) across
@@ -222,7 +271,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// `self.ctx.binder`), so the alias's `DefId` never gets a body registered
     /// and `resolve_lazy` falls back to the raw-number index — potentially
     /// resolving to a same-named type from an unrelated file.
-    fn resolve_import_alias_in_decl_binder(
+    pub(super) fn resolve_import_alias_in_decl_binder(
         &self,
         decl_binder: &tsz_binder::BinderState,
         decl_arena: &NodeArena,
@@ -394,7 +443,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         Some(current_sym)
     }
 
-    fn resolve_entity_name_text_symbol_in_binder(
+    pub(super) fn resolve_entity_name_text_symbol_in_binder(
         &self,
         binder: &tsz_binder::BinderState,
         name: &str,
@@ -560,7 +609,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         None
     }
 
-    fn declaration_namespace_prefix(
+    pub(super) fn declaration_namespace_prefix(
         &self,
         arena: &NodeArena,
         node_idx: NodeIndex,
@@ -742,101 +791,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         def_id
     }
 
-    pub(super) fn ensure_declared_type_params_cached(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-        def_id: tsz_solver::def::DefId,
-    ) {
-        if self.ctx.get_def_type_params(def_id).is_some() {
-            return;
-        }
-        let Some(symbol) = self.get_symbol_from_any_context(sym_id) else {
-            return;
-        };
-        if !symbol.has_any_flags(
-            tsz_binder::symbol_flags::TYPE_ALIAS
-                | tsz_binder::symbol_flags::INTERFACE
-                | tsz_binder::symbol_flags::CLASS,
-        ) {
-            return;
-        }
-
-        // When `sym_id` belongs to a different file (cross-file symbol), use that
-        // file's binder to look up declaration arenas. The current binder only has
-        // arenas for symbols declared in its own file.
-        let auth_binder: &tsz_binder::BinderState = self
-            .ctx
-            .resolve_symbol_file_index(sym_id)
-            .filter(|&f| f != self.ctx.current_file_idx)
-            .and_then(|f| self.ctx.get_binder_for_file(f))
-            .unwrap_or(self.ctx.binder);
-        let mut decls_with_arenas = Vec::new();
-        for &decl_idx in &symbol.declarations {
-            if let Some(arenas) = auth_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                decls_with_arenas.extend(arenas.iter().map(|arena| (decl_idx, arena.as_ref())));
-            } else if let Some(arena) = auth_binder.symbol_arenas.get(&sym_id) {
-                decls_with_arenas.push((decl_idx, arena.as_ref()));
-            } else if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-            {
-                // Fallback: also check the current binder for merged declarations.
-                decls_with_arenas.extend(arenas.iter().map(|arena| (decl_idx, arena.as_ref())));
-            } else if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
-                decls_with_arenas.push((decl_idx, arena.as_ref()));
-            } else {
-                decls_with_arenas.push((decl_idx, self.ctx.arena));
-            }
-        }
-
-        let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
-            let name = decls_with_arenas
-                .iter()
-                .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
-                .or_else(|| self.ctx.arena.get_identifier_text(node_idx))?;
-            self.resolve_entity_name_text_symbol(name).map(|sym| sym.0)
-        };
-        let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-            let name = decls_with_arenas
-                .iter()
-                .find_map(|(_, arena)| arena.get_identifier_text(node_idx))
-                .or_else(|| self.ctx.arena.get_identifier_text(node_idx))?;
-            self.resolve_entity_name_text_symbol(name)
-                .map(|sym| self.ctx.get_or_create_def_id(sym))
-        };
-        let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-            self.resolve_entity_name_text_symbol(type_name)
-                .map(|sym| self.ctx.get_or_create_def_id(sym))
-        };
-        let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
-            self.ctx.arena,
-            self.ctx.types,
-            &type_resolver,
-            &def_id_resolver,
-            &value_resolver,
-        )
-        .with_name_def_id_resolver(&name_resolver)
-        .prefer_name_def_id_resolution();
-
-        let mut params = Vec::new();
-        for (decl_idx, decl_arena) in &decls_with_arenas {
-            let Some(node) = decl_arena.get(*decl_idx) else {
-                continue;
-            };
-            if let Some(alias) = decl_arena.get_type_alias(node) {
-                params = lowering
-                    .with_arena(decl_arena)
-                    .collect_type_alias_type_parameters(alias);
-            } else if decl_arena.get_interface(node).is_some() {
-                params =
-                    lowering.collect_merged_interface_type_parameters(&[(*decl_idx, *decl_arena)]);
-            }
-            if !params.is_empty() {
-                self.ctx.insert_def_type_params(def_id, params);
-                return;
-            }
-        }
-    }
-
     /// Ensure a type alias symbol has its type params and body registered
     /// so the solver can expand Application(Lazy(DefId), Args) later.
     ///
@@ -892,6 +846,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
 
+        let cached_symbol_type_matches_def = |type_id: TypeId| {
+            type_id != TypeId::UNKNOWN
+                && type_id != TypeId::ERROR
+                && crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+                    != Some(def_id)
+                && self
+                    .ctx
+                    .definition_store
+                    .find_def_for_type(type_id)
+                    .is_none_or(|cached_def_id| cached_def_id == def_id)
+        };
+
         // If already resolved via get_type_of_symbol, ensure the TypeEnvironment
         // has the DefId-keyed entry. This handles a timing issue: register_resolved_type
         // may have been called before the DefId was created (DefId is created during
@@ -903,11 +869,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 drop(env);
                 // Body not registered for this DefId — register it now
                 if let Some(type_id) = self.ctx.symbol_types.get(&sym_id) {
-                    if type_id == TypeId::UNKNOWN
-                        || type_id == TypeId::ERROR
-                        || crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
-                            == Some(def_id)
-                    {
+                    if !cached_symbol_type_matches_def(type_id) {
                         // A placeholder/self-lazy wrapper is not the alias body.
                     } else {
                         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
@@ -922,12 +884,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 }
             }
-            if self.ctx.symbol_types.get(&sym_id).is_some_and(|type_id| {
-                type_id != TypeId::UNKNOWN
-                    && type_id != TypeId::ERROR
-                    && crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
-                        != Some(def_id)
-            }) {
+            if self
+                .ctx
+                .symbol_types
+                .get(&sym_id)
+                .is_some_and(cached_symbol_type_matches_def)
+            {
                 return;
             }
         }
@@ -998,11 +960,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .iter()
                             .any(|lib| lib.file_locals.get(leaf_name) == Some(referenced_sym_id));
 
-                    if is_lib_global {
+                    let authoritative_symbol_exists = self
+                        .ctx
+                        .resolve_symbol_file_index(referenced_sym_id)
+                        .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                        .and_then(|binder| binder.get_symbol(referenced_sym_id))
+                        .is_some_and(|symbol| symbol.escaped_name == leaf_name);
+
+                    if is_lib_global && !authoritative_symbol_exists {
                         self.ctx
                             .get_canonical_lib_def_id(leaf_name, referenced_sym_id)
                     } else {
-                        self.ctx.get_or_create_def_id(referenced_sym_id)
+                        self.ctx
+                            .get_or_create_def_id_for_symbol_name(referenced_sym_id, leaf_name)
                     }
                 };
             // When `decl_binder` differs from the current-file binder (cross-file
@@ -1041,7 +1011,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             follow_decl_binder_alias(raw_sym_id).unwrap_or(raw_sym_id);
                         (effective_sym_id, ident_name.to_string())
                     };
-                let resolved_def_id = def_id_for_symbol(referenced_sym_id, &referenced_name);
+                let resolved_def_id = if std::ptr::eq(decl_arena, self.ctx.arena) {
+                    let expected_name = referenced_name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(referenced_name.as_str());
+                    self.ctx
+                        .get_or_create_def_id_for_symbol_name(referenced_sym_id, expected_name)
+                } else {
+                    def_id_for_symbol(referenced_sym_id, &referenced_name)
+                };
                 self.ensure_declared_type_params_cached(referenced_sym_id, resolved_def_id);
                 // Recursively ensure referenced type aliases have their body
                 // and params registered in TypeEnvironment. Without this,

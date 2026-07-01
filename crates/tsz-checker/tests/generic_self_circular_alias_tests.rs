@@ -133,6 +133,35 @@ fn non_generic_circular_alias_still_emits_ts2456() {
     );
 }
 
+/// Regression: recursive mapped-type alias detection may query the shared
+/// `DefId` store while checking `def_to_symbol`. The cache read must not hold a
+/// `RefCell` borrow across a lookup that can warm the same cache.
+#[test]
+fn recursive_mapped_alias_detection_drops_reverse_symbol_borrow() {
+    let source = r#"
+type Recurse = {
+    [K in keyof Recurse]: Recurse[K]
+}
+
+type Other = {
+    [K in keyof Wrapped]: Wrapped[K]
+}
+
+type Wrapped = {
+    [K in keyof Other]: Other[K]
+}
+"#;
+    let c = codes(source);
+    assert!(
+        c.contains(&2456),
+        "expected TS2456 for recursive mapped aliases. got: {c:?}"
+    );
+    assert!(
+        c.contains(&2313),
+        "expected TS2313 for circular mapped constraints. got: {c:?}"
+    );
+}
+
 /// Negative: a legitimate recursive generic alias whose self-reference is
 /// structurally wrapped (union + array) must NOT error.
 #[test]
