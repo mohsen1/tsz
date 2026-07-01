@@ -31,6 +31,21 @@ pub(super) fn lib_def_freeze_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TSZ_ENABLE_LIB_DEF_FREEZE").is_ok_and(|v| v == "1"))
 }
 
+fn lib_decl_has_heritage(decl_idx: NodeIndex, arena: &NodeArena) -> bool {
+    let Some(node) = arena.get(decl_idx) else {
+        return false;
+    };
+    arena
+        .get_interface(node)
+        .and_then(|iface| iface.heritage_clauses.as_ref())
+        .or_else(|| {
+            arena
+                .get_class(node)
+                .and_then(|class| class.heritage_clauses.as_ref())
+        })
+        .is_some_and(|heritage| !heritage.nodes.is_empty())
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_actual_lib_name_to_def_id_for_lowering(
         &self,
@@ -85,10 +100,12 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// True when callers must skip `shared_lib_type_cache` for `name`:
-    /// either this checker locally augments `name`, or `name` is multi-lib
-    /// merged where property-listing order in printed diagnostic messages
-    /// is sensitive to who resolves first (e.g. `Array<T>`).
+    /// True when callers must avoid checker-agnostic treatment for `name`.
+    ///
+    /// This includes names with local augmentations and selected multi-lib
+    /// builtins whose printed/order-sensitive shape depends on the resolving
+    /// checker. Heritage-bearing lib interfaces are handled by
+    /// [`Self::lib_name_requires_checker_local_resolution`].
     pub(crate) fn lib_name_locally_augmented(&self, name: &str) -> bool {
         // Array is merged across lib.es5/lib.es2015.iterable/etc.; cross-checker
         // shared TypeIds expose property-order races to the type printer
@@ -100,6 +117,42 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.lib_name_has_local_augmentation(name)
+    }
+
+    /// True when a lib name must be resolved by the requesting checker rather
+    /// than through checker-agnostic direct/shared fast paths.
+    pub(crate) fn lib_name_requires_checker_local_resolution(&self, name: &str) -> bool {
+        self.lib_name_locally_augmented(name) || self.lib_name_declares_heritage(name)
+    }
+
+    fn lib_name_declares_heritage(&self, name: &str) -> bool {
+        for lib_ctx in self.ctx.lib_contexts.iter() {
+            let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                continue;
+            };
+            let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if !symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::CLASS) {
+                continue;
+            }
+            let fallback_arena =
+                resolve_lib_context_fallback_arena(&lib_ctx.binder, sym_id, lib_ctx.arena.as_ref());
+            let decls_with_arenas = super::lib_resolution::collect_lib_decls_with_arenas(
+                &lib_ctx.binder,
+                sym_id,
+                &symbol.declarations,
+                fallback_arena,
+                None,
+            );
+            if decls_with_arenas
+                .iter()
+                .any(|(decl_idx, decl_arena)| lib_decl_has_heritage(*decl_idx, decl_arena))
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Resolve a lib type by name and also return its type parameters.
@@ -124,10 +177,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Short-circuit via shared cache; skip when this checker locally
-        // augments `name` (its merged TypeId would differ from peers').
-        let lib_name_locally_augmented = self.lib_name_locally_augmented(name);
-        if !lib_name_locally_augmented
+        // Short-circuit via shared cache only for names whose completed shape
+        // is independent of the checker that resolved them first.
+        let requires_checker_local_resolution =
+            self.lib_name_requires_checker_local_resolution(name);
+        if !requires_checker_local_resolution
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(name)
             && let Some(ty) = *entry
@@ -354,7 +408,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Mirror into shared cache when safe (no local augmentations).
-        if !lib_name_locally_augmented && let Some(ref shared) = self.ctx.shared_lib_type_cache {
+        if !requires_checker_local_resolution
+            && let Some(ref shared) = self.ctx.shared_lib_type_cache
+        {
             shared.insert(name.to_string(), lib_type_id);
         }
 

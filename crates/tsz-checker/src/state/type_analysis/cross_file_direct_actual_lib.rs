@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let name = symbol.escaped_name;
-        if self.lib_name_locally_augmented(&name) {
+        if self.lib_name_requires_checker_local_resolution(&name) {
             return None;
         }
 
@@ -205,7 +205,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let name = symbol.escaped_name.clone();
-        if self.lib_name_locally_augmented(&name) {
+        if self.lib_name_requires_checker_local_resolution(&name) {
             return None;
         }
         // DOM value/interface pairs used in type position can stay as lazy lib

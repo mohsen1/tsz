@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
             return *cached;
         }
         // Skip shared cache when this checker locally augments `name`.
-        if !self.lib_name_locally_augmented(name)
+        if !self.lib_name_requires_checker_local_resolution(name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(name)
         {
@@ -1431,7 +1431,7 @@ impl<'a> CheckerState<'a> {
             .lib_type_resolution_caches
             .types
             .insert(name.to_string(), lib_type_id);
-        if !self.lib_name_locally_augmented(name)
+        if !self.lib_name_requires_checker_local_resolution(name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
         {
             shared.insert(name.to_string(), lib_type_id);
