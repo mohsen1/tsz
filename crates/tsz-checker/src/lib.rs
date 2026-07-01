@@ -733,6 +733,9 @@ mod bigint_exponentiation_target_tests;
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
+#[path = "tests/bind_overloaded_receiver_preserves_signatures_tests.rs"]
+mod bind_overloaded_receiver_preserves_signatures_tests;
+#[cfg(test)]
 #[path = "tests/boolean_literal_union_narrowing_tests.rs"]
 mod boolean_literal_union_narrowing_tests;
 #[cfg(test)]
