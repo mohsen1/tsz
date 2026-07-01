@@ -745,7 +745,38 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
     ) -> Option<TypeId> {
         let mut visited = FxHashSet::default();
-        self.instance_type_from_constructor_type_inner(ctor_type, &mut visited)
+        self.instance_type_from_constructor_type_inner(ctor_type, None, &mut visited)
+    }
+
+    /// Derive the instance type of a class whose base is a class-like constructor
+    /// *function* (a value typed with construct signatures, e.g. the lib `Map`
+    /// value typed `MapConstructor`, or a mixin result), rather than a class or
+    /// interface reference.
+    ///
+    /// This mirrors `tsc`'s `resolveBaseTypesOfClass` else-branch: the base type
+    /// is `getReturnTypeOfSignature(getInstantiatedConstructorsForTypeArguments(
+    /// baseConstructorType, typeArguments)[0])`. `getConstructorsForTypeArguments`
+    /// keeps only the construct signatures applicable to the extends clause's
+    /// type-argument count `N` — those where
+    /// `N in [minTypeArgumentCount, typeParameters.len()]` — and the base is the
+    /// return type of the *first* survivor. Crucially, a generic construct
+    /// signature whose minimum arity exceeds `N` (e.g. `new <K, V>(): Map<K, V>`
+    /// when `class X extends Map` supplies `N == 0`) is dropped rather than
+    /// contributing its uninstantiated return type. Without this filter tsz
+    /// unions every construct signature's return type, producing a spurious
+    /// `Map<K, V> | Map<any, any>` base whose leaked type parameters misfire the
+    /// TS2416 override-variance check (issue #15248).
+    pub(crate) fn base_class_instance_type_from_constructor_type(
+        &mut self,
+        ctor_type: TypeId,
+        base_type_arg_count: usize,
+    ) -> Option<TypeId> {
+        let mut visited = FxHashSet::default();
+        self.instance_type_from_constructor_type_inner(
+            ctor_type,
+            Some(base_type_arg_count),
+            &mut visited,
+        )
     }
 
     /// Resolve `instance_type`'s references to the construct signature's own type
@@ -833,6 +864,7 @@ impl<'a> CheckerState<'a> {
     fn instance_type_from_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
+        base_type_arg_count: Option<usize>,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<TypeId> {
         if ctor_type == TypeId::NULL {
@@ -863,11 +895,28 @@ impl<'a> CheckerState<'a> {
             }
             match classify_for_instance_type(self.ctx.types, current) {
                 InstanceTypeKind::Callable(shape_id) => {
-                    let instance_type =
-                        crate::query_boundaries::common::get_construct_return_type_union(
-                            self.ctx.types,
-                            shape_id,
-                        )?;
+                    // For a class-like constructor *function* base, tsc filters
+                    // the construct signatures to those applicable for the
+                    // extends clause's type-argument count and takes the first
+                    // survivor's return type (the solver-owned arity-aware query).
+                    // Fall back to the whole-shape union when either there is no
+                    // base-class context or no construct signature is applicable
+                    // (the latter is the separate `TS2508`-shaped gap, preserved
+                    // as-is here).
+                    let instance_type = base_type_arg_count
+                        .and_then(|count| {
+                            crate::query_boundaries::construct_signatures::get_base_construct_return_type(
+                                self.ctx.types,
+                                shape_id,
+                                count,
+                            )
+                        })
+                        .or_else(|| {
+                            crate::query_boundaries::common::get_construct_return_type_union(
+                                self.ctx.types,
+                                shape_id,
+                            )
+                        })?;
                     let resolved = self.resolve_type_for_property_access(instance_type);
                     // Register TypeId→DefId so the TypeFormatter can display the
                     // interface name (e.g., "String", "Date") instead of structural
@@ -908,7 +957,13 @@ impl<'a> CheckerState<'a> {
                 InstanceTypeKind::Intersection(members) => {
                     let instance_types: Vec<TypeId> = members
                         .into_iter()
-                        .filter_map(|m| self.instance_type_from_constructor_type_inner(m, visited))
+                        .filter_map(|m| {
+                            self.instance_type_from_constructor_type_inner(
+                                m,
+                                base_type_arg_count,
+                                visited,
+                            )
+                        })
                         .collect();
                     if instance_types.is_empty() {
                         return None;
@@ -920,7 +975,13 @@ impl<'a> CheckerState<'a> {
                 InstanceTypeKind::Union(members) => {
                     let instance_types: Vec<TypeId> = members
                         .into_iter()
-                        .filter_map(|m| self.instance_type_from_constructor_type_inner(m, visited))
+                        .filter_map(|m| {
+                            self.instance_type_from_constructor_type_inner(
+                                m,
+                                base_type_arg_count,
+                                visited,
+                            )
+                        })
                         .collect();
                     if instance_types.is_empty() {
                         return None;
@@ -930,7 +991,11 @@ impl<'a> CheckerState<'a> {
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Readonly(inner) => {
-                    return self.instance_type_from_constructor_type_inner(inner, visited);
+                    return self.instance_type_from_constructor_type_inner(
+                        inner,
+                        base_type_arg_count,
+                        visited,
+                    );
                 }
                 InstanceTypeKind::TypeParameter { constraint } => {
                     let constraint = constraint?;

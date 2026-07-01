@@ -18,7 +18,9 @@
 //! signatures.
 
 use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{CallSignature, CallableShape, FunctionShape, ParamInfo, TypeId, TypePredicate};
+use tsz_solver::{
+    CallSignature, CallableShape, CallableShapeId, FunctionShape, ParamInfo, TypeId, TypePredicate,
+};
 
 pub(crate) fn construct_signatures_for_type(
     db: &dyn TypeDatabase,
@@ -43,6 +45,19 @@ pub(crate) fn construct_signatures_for_type(
 
 pub(crate) fn has_construct_overloads(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     construct_signatures_for_type(db, type_id).is_some_and(|sigs| sigs.len() > 1)
+}
+
+/// tsc's `getInstantiatedConstructorsForTypeArguments(...)[0]` return type: the
+/// arity-aware base type of a class extending a class-like constructor function,
+/// keyed on the extends clause's type-argument count. See
+/// [`tsz_solver::type_queries::get_base_construct_return_type`]. Returns `None`
+/// when no construct signature is applicable to `type_arg_count`.
+pub(crate) fn get_base_construct_return_type(
+    db: &dyn TypeDatabase,
+    shape_id: CallableShapeId,
+    type_arg_count: usize,
+) -> Option<TypeId> {
+    tsz_solver::type_queries::get_base_construct_return_type(db, shape_id, type_arg_count)
 }
 
 /// View one call/construct signature as a standalone, non-method

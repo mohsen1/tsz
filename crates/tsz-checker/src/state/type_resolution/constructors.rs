@@ -982,7 +982,14 @@ impl<'a> CheckerState<'a> {
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
         let adds_implicit_any_index = self.constructor_type_explicitly_returns_any(ctor_type);
-        let mut resolved = self.instance_type_from_constructor_type(ctor_type);
+        // A class-like constructor *function* base (e.g. `class X extends Map`,
+        // where `Map`'s value is typed `MapConstructor`, or a mixin result)
+        // follows tsc's `resolveBaseTypesOfClass` else-branch: filter the
+        // construct signatures to those applicable for the extends clause's
+        // type-argument count and take the first survivor's return type, rather
+        // than unioning every construct signature's return type (issue #15248).
+        let mut resolved =
+            self.base_class_instance_type_from_constructor_type(ctor_type, type_argument_count);
         if adds_implicit_any_index && resolved.is_some_and(TypeId::is_any) {
             resolved = Some(self.implicit_any_index_base_instance_type());
         }
