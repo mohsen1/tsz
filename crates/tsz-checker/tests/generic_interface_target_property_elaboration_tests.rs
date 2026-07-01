@@ -86,6 +86,138 @@ fn generic_interface_member_mismatch_drill_in_is_name_independent() {
     }
 }
 
+fn ts2322_all(source: &str) -> Vec<Diagnostic> {
+    check_source_diagnostics(source)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code == 2322)
+        .collect()
+}
+
+/// A **fresh object literal** returned to a generic-interface target elaborates
+/// per-property, mirroring `tsc`'s `elaborateObjectLiteral`: each incompatible
+/// property gets its own TS2322 anchored at the property value with a direct
+/// `Type 'X' is not assignable to type 'Y'.` message — not a single whole-object
+/// `Type '{ ... }' is not assignable to type 'A<T>'.` wrapper (which would carry
+/// a nested `Types of property ...` chain and surface only once).
+///
+/// Regression: because the generic target routed to the coarse
+/// `target_prefers_outer_assignment_diagnostic` surface, the fresh-literal
+/// source elaboration was skipped and the return collapsed to the single outer
+/// wrapper, dropping the second property's error entirely. The variable-init
+/// path already drilled; only the return/assignment path diverged.
+#[test]
+fn fresh_object_literal_return_to_generic_target_elaborates_per_property() {
+    let diagnostics = ts2322_all(
+        "interface A<T> { x: number; y: string; }\n\
+         function make<T>(): A<T> { return { x: \"bad\", y: 5 }; }\n",
+    );
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "expected one TS2322 per incompatible property, got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message_text == "Type 'string' is not assignable to type 'number'."),
+        "expected the direct per-property message for 'x', got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message_text == "Type 'number' is not assignable to type 'string'."),
+        "expected the direct per-property message for 'y', got {diagnostics:#?}"
+    );
+    // No whole-object wrapper: a per-property elaboration never nests a
+    // `Types of property ...` frame.
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| !has_related(d, "Types of property")),
+        "expected flat per-property diagnostics, not a nested wrapper, got {diagnostics:#?}"
+    );
+}
+
+/// The per-property drill for a fresh literal is keyed on the structural
+/// relation, not on any identifier: vary the interface name, the type-parameter
+/// spelling, and the property names. Every variant elaborates both mismatches.
+#[test]
+fn fresh_object_literal_return_per_property_is_name_independent() {
+    for (iface, type_param, num_prop, str_prop) in [
+        ("Container", "Element", "head", "tail"),
+        ("Wrapper", "K", "slot", "label"),
+        ("Holder", "Payload", "count", "name"),
+    ] {
+        let source = format!(
+            "interface {iface}<{type_param}> {{ {num_prop}: number; {str_prop}: string; }}\n\
+             function build<{type_param}>(): {iface}<{type_param}> {{ \
+                return {{ {num_prop}: \"bad\", {str_prop}: 5 }}; }}\n",
+        );
+        let diagnostics = ts2322_all(&source);
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "[{iface}/{type_param}] expected two per-property TS2322, got {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message_text == "Type 'string' is not assignable to type 'number'."),
+            "[{iface}/{type_param}] expected '{num_prop}' message, got {diagnostics:#?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message_text == "Type 'number' is not assignable to type 'string'."),
+            "[{iface}/{type_param}] expected '{str_prop}' message, got {diagnostics:#?}"
+        );
+    }
+}
+
+/// A property whose target type is the bare free type parameter and whose source
+/// value already satisfies it is NOT flagged; only the genuinely incompatible
+/// sibling property elaborates. This proves the drill uses the real per-property
+/// relation rather than blanket-erroring every member of a generic target.
+#[test]
+fn fresh_object_literal_return_skips_satisfied_free_param_property() {
+    let diagnostics = ts2322_all(
+        "interface A<T> { x: T; y: string; }\n\
+         function make<T>(t: T): A<T> { return { x: t, y: 5 }; }\n",
+    );
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected only the incompatible 'y' property to error, got {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics[0].message_text, "Type 'number' is not assignable to type 'string'.",
+        "expected the direct 'y' message, got {diagnostics:#?}"
+    );
+}
+
+/// Guard against over-drilling: when the generic target is an unresolved
+/// conditional application (`C<T>` with `T` still free), `tsc` keeps the single
+/// whole-object `Type '{ ... }' is not assignable to type 'C<T>'.` wrapper
+/// because there is no concrete member surface to elaborate into. The fix must
+/// not manufacture per-property errors here.
+#[test]
+fn fresh_object_literal_return_to_unresolved_conditional_target_stays_outer() {
+    let diagnostics = ts2322_all(
+        "type C<T> = T extends string ? { a: number } : { b: string };\n\
+         function make<T extends string>(): C<T> { return { a: \"bad\" }; }\n",
+    );
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected a single whole-object wrapper for the unresolved conditional target, \
+         got {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics[0].message_text.contains("C<T>"),
+        "expected the outer wrapper naming the conditional target, got {diagnostics:#?}"
+    );
+}
+
 /// A missing required member against a generic-interface target keeps its
 /// dedicated TS2741 elaboration rather than collapsing to the outer line.
 #[test]
