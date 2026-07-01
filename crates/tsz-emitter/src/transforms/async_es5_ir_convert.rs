@@ -905,6 +905,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 },
                 generator_body,
                 hoisted_var_groups,
+                func.body,
             );
             let is_expression_body = !transformer.state.captures_arguments;
 
