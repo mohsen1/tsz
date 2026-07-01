@@ -4,6 +4,7 @@ mod core;
 mod decorated_class_expression_export_tests;
 mod exports;
 mod exports_destructuring;
+mod exports_destructuring_esm;
 mod imports;
 #[cfg(test)]
 mod namespace_export_fold_tests;

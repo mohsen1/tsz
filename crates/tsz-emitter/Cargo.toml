@@ -235,6 +235,10 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "esm_destructuring_export_temp_hoist_tests"
+path = "tests/esm_destructuring_export_temp_hoist_tests.rs"
+
+[[test]]
 name = "destructuring_es5_nested_single_inline_tests"
 path = "tests/destructuring_es5_nested_single_inline_tests.rs"
 

@@ -1087,6 +1087,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_esm_destructuring_export_statement(node) {
+            return;
+        }
+
         if self.is_es5_empty_binding_pattern_export_statement(node)
             && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {
