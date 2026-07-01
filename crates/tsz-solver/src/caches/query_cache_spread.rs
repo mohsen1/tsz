@@ -197,9 +197,13 @@ impl QueryCache<'_> {
 
         let props = match key {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                let mut props = self.interner.object_shape(shape_id).properties.to_vec();
-                crate::types::normalize_display_property_order(&mut props);
-                props
+                if let Some(display_props) = self.interner.get_display_properties(normalized) {
+                    display_props.as_ref().clone()
+                } else {
+                    let mut props = self.interner.object_shape(shape_id).properties.to_vec();
+                    crate::types::normalize_display_property_order(&mut props);
+                    props
+                }
             }
             TypeData::Callable(shape_id) => {
                 self.interner.callable_shape(shape_id).properties.to_vec()

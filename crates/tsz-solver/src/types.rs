@@ -860,11 +860,11 @@ pub fn merge_display_properties_for_intersection(
     let mut prop_indices: rustc_hash::FxHashMap<Atom, usize> = rustc_hash::FxHashMap::default();
 
     for &member in members {
-        let Some(props) = db.get_display_properties(member) else {
+        let Some(props) = display_properties_for_intersection_member(db, member) else {
             continue;
         };
 
-        for prop in props.as_ref() {
+        for prop in &props {
             if let Some(&idx) = prop_indices.get(&prop.name) {
                 let existing: &mut PropertyInfo = &mut merged[idx];
                 if existing.type_id != prop.type_id {
@@ -885,6 +885,29 @@ pub fn merge_display_properties_for_intersection(
         prop.declaration_order = idx as u32 + 1;
     }
     merged
+}
+
+fn display_properties_for_intersection_member(
+    db: &dyn crate::construction::TypeDatabase,
+    member: TypeId,
+) -> Option<Vec<PropertyInfo>> {
+    if let Some(props) = db.get_display_properties(member) {
+        return Some(props.as_ref().clone());
+    }
+
+    match db.lookup(member)? {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let mut props = db.object_shape(shape_id).properties.to_vec();
+            normalize_display_property_order(&mut props);
+            Some(props)
+        }
+        TypeData::Callable(shape_id) => {
+            let mut props = db.callable_shape(shape_id).properties.to_vec();
+            normalize_display_property_order(&mut props);
+            Some(props)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
