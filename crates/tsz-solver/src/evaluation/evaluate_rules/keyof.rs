@@ -537,6 +537,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         {
             // For non-union types, evaluate normally
             let evaluated_operand = self.evaluate(operand);
+            if evaluated_operand != operand
+                && self.same_meta_recursion_identity(operand, evaluated_operand)
+            {
+                self.defer_same_identity_meta_recursion();
+                return self.interner().keyof(operand);
+            }
 
             let key = match self.interner().lookup(evaluated_operand) {
                 Some(k) => k,
