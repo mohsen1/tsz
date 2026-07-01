@@ -413,7 +413,7 @@ impl<'a> LoweringPass<'a> {
             && export_decl.export_clause.is_none()
         {
             let helpers = self.transforms.helpers_mut();
-            helpers.export_star = true;
+            helpers.mark_export_star();
             helpers.create_binding = true; // __exportStar depends on __createBinding
         }
 
@@ -431,7 +431,7 @@ impl<'a> LoweringPass<'a> {
             })
         {
             let helpers = self.transforms.helpers_mut();
-            helpers.import_star = true;
+            helpers.mark_import_star();
             helpers.create_binding = true;
         }
 
@@ -1538,7 +1538,7 @@ impl<'a> LoweringPass<'a> {
             && expr_node.kind == SyntaxKind::ImportKeyword as u16
         {
             let helpers = self.transforms.helpers_mut();
-            helpers.import_star = true;
+            helpers.mark_import_star();
             helpers.create_binding = true;
         }
 
