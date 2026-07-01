@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
     CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
-    checker_target_from_emitter, parse_tsconfig_with_diagnostics, resolve_default_lib_files,
-    resolve_lib_files, strict_family,
+    checker_target_from_emitter, derive_default_module_kind, parse_tsconfig_with_diagnostics,
+    resolve_default_lib_files, resolve_lib_files, strict_family,
 };
 use tsz::checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_common::common::NewLineKind;
@@ -52,6 +52,29 @@ pub(super) fn apply_cli_overrides_with_config_options(
     }
     if let Some(module_resolution) = args.module_resolution {
         options.module_resolution = Some(module_resolution.to_module_resolution_kind());
+    }
+    // Re-derive the default `module` from the effective target/moduleResolution
+    // when neither the tsconfig nor a CLI `--module` set it explicitly. The
+    // config-level resolution (`resolve_compiler_options`) computed the module
+    // default from the *config's* target, but a CLI `--target`/`--moduleResolution`
+    // override changes those inputs afterwards, so the default must be recomputed
+    // here to match tsc: an unspecified module resolves to CommonJS for a target
+    // below ES2015 (e.g. `--target es5`) and to the target's ES module kind
+    // otherwise, with moduleResolution `node16`/`nodenext` implying the matching
+    // module kind. Without this, `--target es5` alone wrongly kept the ambient ES
+    // module default and emitted invalid `export` syntax at an ES5 target.
+    if !options.checker.module_explicitly_set
+        && (args.target.is_some() || args.module_resolution.is_some())
+    {
+        let target_explicitly_set =
+            args.target.is_some() || config_options.is_some_and(|config| config.target.is_some());
+        let default_module = derive_default_module_kind(
+            options.printer.target,
+            target_explicitly_set,
+            options.module_resolution,
+        );
+        options.printer.module = default_module;
+        options.checker.module = default_module;
     }
     apply_module_resolution_derived_options(options, args, config_options);
     if let Some(resolve_package_json_exports) = args.resolve_package_json_exports {
