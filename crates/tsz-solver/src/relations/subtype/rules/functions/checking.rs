@@ -8,11 +8,11 @@ use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
     ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
-    Visibility,
+    TypeParamOrigin, Visibility,
 };
 use crate::visitor::callable_shape_id;
 
-use super::super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::super::super::{SubtypeChecker, SubtypeResult, TypeParamEquivalence, TypeResolver};
 use super::erase_type_params_to_constraints;
 
 mod call_signatures;
@@ -140,6 +140,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1"))
+    }
+
+    /// #14345 WAVE-1 decl-origin-through-reduction flag (default-OFF, composes
+    /// on top of `TSZ_TYPEPARAM_DECL_IDENTITY`).
+    ///
+    /// When ON (and the construction stamp is ON), the alpha-rename registration
+    /// records each paired param's `DeclScoped { file, node }` origin alongside
+    /// the pre-instantiate `TypeId` pair, and the consult
+    /// (`check_subtype`) additionally accepts two reduced-body `TypeParameter`
+    /// leaves whose carried decl-origins form a registered pair — the same-origin
+    /// `B ≡ A` bridge that the name-keyed re-mint loses (the leaf id is a THIRD
+    /// identity, but its `(file, node)` origin survives). A different-origin pair
+    /// (`T`/`U` from distinct decls that were never registered) is NOT accepted,
+    /// which is the sound discriminator the name+surface structural strip cannot
+    /// express.
+    ///
+    /// Requires `TSZ_TYPEPARAM_DECL_IDENTITY=1` to have any effect: without the
+    /// construction stamp no leaf carries a `DeclScoped` origin, so the extra
+    /// match never fires. Flag-OFF the registered `origins` field is always
+    /// `None` and the consult is byte-identical to the id-only match.
+    pub(crate) fn decl_origin_reduction_enabled() -> bool {
+        use std::sync::OnceLock;
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| {
+            std::env::var("TSZ_TYPEPARAM_DECL_IDENTITY").is_ok_and(|v| v == "1")
+                && std::env::var("TSZ_DECL_ORIGIN_REDUCTION").is_ok_and(|v| v == "1")
+        })
     }
 
     /// Build a name-keyed substitution that maps every free `DeclScoped` type
@@ -387,8 +414,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let source_tp_type = self.interner.type_param(*source_tp);
                     let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
-                        self.type_param_equivalences
-                            .push((source_tp_type, target_tp_type));
+                        // #14345 WAVE-1: additionally record the decl-origin pair
+                        // when BOTH params carry a `DeclScoped { file, node }`
+                        // construction stamp, so the consult can bridge
+                        // reduced-body `Kind<F,A>` leaves that survive the
+                        // name-keyed re-mint as a THIRD id but keep their carried
+                        // origin. Gated behind `decl_origin_reduction_enabled`
+                        // (composes with `TSZ_TYPEPARAM_DECL_IDENTITY`); OFF ->
+                        // `origins: None`, byte-identical id-only behavior.
+                        let origins = if Self::decl_origin_reduction_enabled()
+                            && matches!(source_tp.origin, TypeParamOrigin::DeclScoped { .. })
+                            && matches!(target_tp.origin, TypeParamOrigin::DeclScoped { .. })
+                        {
+                            Some((source_tp.origin, target_tp.origin))
+                        } else {
+                            None
+                        };
+                        self.type_param_equivalences.push(TypeParamEquivalence {
+                            source: source_tp_type,
+                            target: target_tp_type,
+                            origins,
+                        });
                     }
                 }
 

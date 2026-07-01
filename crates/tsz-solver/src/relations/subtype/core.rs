@@ -26,7 +26,7 @@ use crate::operations::AssignabilityChecker;
 use crate::types::*;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationCacheKey,
-    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId,
+    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId, TypeParamOrigin,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -217,6 +217,84 @@ impl RelationEvaluationResult {
 }
 
 #[cfg(test)]
+mod type_param_equivalence_tests {
+    use super::TypeParamEquivalence;
+    use crate::types::{TypeId, TypeParamOrigin};
+    use tsz_common::interner::Atom;
+
+    fn decl(file: u32, node: u32) -> TypeParamOrigin {
+        TypeParamOrigin::DeclScoped {
+            file: Atom(file),
+            node,
+        }
+    }
+
+    /// An id-only equivalence carries no decl-origin discriminator, so it never
+    /// matches on origins and keeps the historical id-keyed behavior.
+    #[test]
+    fn ids_equivalence_matches_only_by_id() {
+        let a = TypeId(100);
+        let b = TypeId(200);
+        let eq = TypeParamEquivalence::ids(a, b);
+        assert!(eq.matches_ids(a, b));
+        assert!(eq.matches_ids(b, a), "id match is order-insensitive");
+        assert!(!eq.matches_ids(a, TypeId(300)));
+        // No origins recorded -> origin match never fires.
+        assert!(!eq.matches_origins(decl(1, 2), decl(3, 4)));
+    }
+
+    /// A registered decl-origin pair matches a same-origin leaf pair in either
+    /// order (the accepted `B ≡ A` bridge). This is the #14345 WAVE-1 positive
+    /// case: two reduced-body leaves whose `(file, node)` origins equal the
+    /// registered signature params relate.
+    #[test]
+    fn origin_equivalence_matches_registered_pair_both_orders() {
+        let eq = TypeParamEquivalence {
+            source: TypeId(100),
+            target: TypeId(200),
+            origins: Some((decl(57, 20), decl(5, 20))),
+        };
+        assert!(eq.matches_origins(decl(57, 20), decl(5, 20)));
+        assert!(
+            eq.matches_origins(decl(5, 20), decl(57, 20)),
+            "origin match is order-insensitive"
+        );
+    }
+
+    /// A different-origin leaf pair (distinct `(file, node)` that was never
+    /// registered) must NOT match — the sound discriminator the name+surface
+    /// strip cannot express. A single differing node is enough to reject.
+    #[test]
+    fn origin_equivalence_rejects_unregistered_pair() {
+        let eq = TypeParamEquivalence {
+            source: TypeId(100),
+            target: TypeId(200),
+            origins: Some((decl(57, 20), decl(5, 20))),
+        };
+        // Different file on one side.
+        assert!(!eq.matches_origins(decl(99, 20), decl(5, 20)));
+        // Different node on one side (same file) — distinct declaration site.
+        assert!(!eq.matches_origins(decl(57, 21), decl(5, 20)));
+        // Both sides different.
+        assert!(!eq.matches_origins(decl(1, 1), decl(2, 2)));
+    }
+
+    /// A `User` (unstamped) leaf carries no declaration site and must never
+    /// match on origins, even against a registered decl-scoped pair.
+    #[test]
+    fn origin_equivalence_never_matches_user_leaves() {
+        let eq = TypeParamEquivalence {
+            source: TypeId(100),
+            target: TypeId(200),
+            origins: Some((decl(57, 20), decl(5, 20))),
+        };
+        assert!(!eq.matches_origins(TypeParamOrigin::User, decl(5, 20)));
+        assert!(!eq.matches_origins(decl(57, 20), TypeParamOrigin::User));
+        assert!(!eq.matches_origins(TypeParamOrigin::User, TypeParamOrigin::User));
+    }
+}
+
+#[cfg(test)]
 mod relation_evaluation_result_tests {
     use super::{RelationEvaluationResult, RelationEvaluationStability};
     use crate::evaluation::result::{
@@ -270,6 +348,84 @@ mod relation_evaluation_result_tests {
         );
         assert!(!incomplete.is_stable_for_depth_agnostic_cache());
         assert!(incomplete.is_unstable_unknown());
+    }
+}
+
+/// One alpha-rename type-parameter equivalence registered during generic
+/// function subtype checking.
+///
+/// The `source`/`target` `TypeId`s are the pre-instantiate signature-param ids
+/// (the historical `(TypeId, TypeId)` pair). `origins` additionally records the
+/// two params' declaration origins when BOTH carry a `DeclScoped { file, node }`
+/// construction stamp (`TSZ_TYPEPARAM_DECL_IDENTITY`).
+///
+/// #14345 WAVE-1 decl-origin-through-reduction: the name-keyed re-mint
+/// (`instantiate_function_shape`) rewrites deeper, arg-position `Kind<F,A>`
+/// param leaves to a THIRD id that the registered `TypeId` pair never contains,
+/// so the id-keyed consult (`check_subtype`) misses and the two alpha-equivalent
+/// bodies fail to relate. The decl-origin `(file, node)` is STABLE across that
+/// re-mint (the leaf's origin survives — a substitution hit maps it to the
+/// same-origin top-level param, a miss returns the original id, and the
+/// `TypeParameter` re-intern preserves the origin field). So the consult can
+/// additionally match a reduced-body leaf against a registered equivalence by
+/// its CARRIED origin: a same-origin leaf pair relates, a different-origin pair
+/// (never registered) does not. This is the sound discriminator the name-keyed
+/// structural strip cannot express (a name-keyed substitution collapses
+/// colliding names to one `User` id).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TypeParamEquivalence {
+    pub(crate) source: TypeId,
+    pub(crate) target: TypeId,
+    /// Declaration origins of the two paired params, recorded only when BOTH are
+    /// `DeclScoped`. `None` for every other registration path (mapped-key
+    /// constraints, index-access keys, non-stamped params) so those keep the
+    /// pure id-keyed behavior.
+    pub(crate) origins: Option<(TypeParamOrigin, TypeParamOrigin)>,
+}
+
+impl TypeParamEquivalence {
+    /// An id-only equivalence (no decl-origin discriminator). Used by every
+    /// registration path except the decl-origin-aware alpha-rename.
+    #[inline]
+    pub(crate) const fn ids(source: TypeId, target: TypeId) -> Self {
+        Self {
+            source,
+            target,
+            origins: None,
+        }
+    }
+
+    /// Whether this registered pair matches the given leaf id pair by exact
+    /// `TypeId` (order-insensitive) — the historical id-keyed consult.
+    #[inline]
+    pub(crate) fn matches_ids(&self, source: TypeId, target: TypeId) -> bool {
+        (self.source == source && self.target == target)
+            || (self.source == target && self.target == source)
+    }
+
+    /// Whether this registered pair matches the given leaf ORIGIN pair
+    /// (order-insensitive), for the #14345 WAVE-1 decl-origin consult. Both the
+    /// registered entry and the queried leaves must carry `DeclScoped` origins;
+    /// two `DeclScoped { file, node }` values are equal iff their `(file, node)`
+    /// declaration site is identical.
+    #[inline]
+    pub(crate) fn matches_origins(
+        &self,
+        source_origin: TypeParamOrigin,
+        target_origin: TypeParamOrigin,
+    ) -> bool {
+        let Some((reg_source, reg_target)) = self.origins else {
+            return false;
+        };
+        // Only decl-scoped origins are a sound discriminator; a `User` origin
+        // carries no declaration site so it must never match here.
+        if !matches!(source_origin, TypeParamOrigin::DeclScoped { .. })
+            || !matches!(target_origin, TypeParamOrigin::DeclScoped { .. })
+        {
+            return false;
+        }
+        (reg_source == source_origin && reg_target == target_origin)
+            || (reg_source == target_origin && reg_target == source_origin)
     }
 }
 
@@ -470,7 +626,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// identical, fixing false TS2416 for generic methods with structurally identical signatures
     /// but different type param names (e.g., `<D>(f: (t: C) => D) => IList<D>` vs
     /// `<B>(f: (t: C) => B) => IList<B>`).
-    pub(crate) type_param_equivalences: Vec<(TypeId, TypeId)>,
+    pub(crate) type_param_equivalences: Vec<TypeParamEquivalence>,
     /// In-flight `Ternary.Maybe`-style relation outcomes awaiting validation
     /// by the outermost frame of this checker instance (tsc `maybeKeys`
     /// parity, issue #13241). See `cache::MaybeRelationEntry` and

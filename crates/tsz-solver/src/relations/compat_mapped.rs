@@ -516,9 +516,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let target_param = self.interner.type_param(t_mapped.type_param);
         let equiv_start = self.subtype.type_param_equivalences.len();
-        self.subtype
-            .type_param_equivalences
-            .push((source_param, target_param));
+        self.subtype.type_param_equivalences.push(
+            crate::relations::subtype::TypeParamEquivalence::ids(source_param, target_param),
+        );
 
         if let Some(assignable) =
             self.deferred_indexed_mapped_templates_assignable(source_template, target_template)
@@ -637,9 +637,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let source_param = self.interner.type_param(source_mapped.type_param);
         let target_param = self.interner.type_param(target_mapped.type_param);
         let equiv_start = self.subtype.type_param_equivalences.len();
-        self.subtype
-            .type_param_equivalences
-            .push((source_param, target_param));
+        self.subtype.type_param_equivalences.push(
+            crate::relations::subtype::TypeParamEquivalence::ids(source_param, target_param),
+        );
         let compatible = self.subtype.is_subtype_of(source_name, target_name)
             && self.subtype.is_subtype_of(target_name, source_name);
         self.subtype.type_param_equivalences.truncate(equiv_start);

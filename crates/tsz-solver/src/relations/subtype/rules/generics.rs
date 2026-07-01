@@ -1457,7 +1457,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_param = self.interner.type_param(target_mapped.type_param);
         let equiv_start = self.type_param_equivalences.len();
         self.type_param_equivalences
-            .push((source_param, target_param));
+            .push(crate::relations::subtype::TypeParamEquivalence::ids(
+                source_param,
+                target_param,
+            ));
 
         let result = if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),

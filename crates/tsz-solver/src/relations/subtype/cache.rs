@@ -206,17 +206,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // subtype checking (alpha-renaming). When both types are TypeParameters
         // in the equivalence set, treat them as identical.
         if !self.type_param_equivalences.is_empty()
-            && matches!(
-                self.interner.lookup(source),
-                Some(TypeData::TypeParameter(_))
-            )
-            && matches!(
-                self.interner.lookup(target),
-                Some(TypeData::TypeParameter(_))
-            )
+            && let Some(TypeData::TypeParameter(source_info)) = self.interner.lookup(source)
+            && let Some(TypeData::TypeParameter(target_info)) = self.interner.lookup(target)
         {
-            for &(eq_a, eq_b) in &self.type_param_equivalences {
-                if (source == eq_a && target == eq_b) || (source == eq_b && target == eq_a) {
+            // #14345 WAVE-1: when the decl-origin-through-reduction flag is on,
+            // a reduced-body `Kind<F,A>` param leaf survives the name-keyed
+            // re-mint as a THIRD id (not the registered pre-instantiate id) but
+            // KEEPS its carried `DeclScoped { file, node }` origin. The id-keyed
+            // match below misses that leaf; the origin-keyed match bridges it
+            // when — and only when — the leaf's origin pair was registered by
+            // the alpha-rename (same declaration site on both sides). A
+            // different-origin pair (distinct decls, never registered) is not
+            // accepted. Flag-OFF, every registered `origins` is `None` and this
+            // match never fires (byte-identical id-only behavior).
+            let origin_match_enabled = Self::decl_origin_reduction_enabled();
+            for eq in &self.type_param_equivalences {
+                if eq.matches_ids(source, target) {
+                    return SubtypeResult::True;
+                }
+                if origin_match_enabled
+                    && eq.matches_origins(source_info.origin, target_info.origin)
+                {
                     return SubtypeResult::True;
                 }
             }
@@ -1748,7 +1758,11 @@ mod tests {
         let cache_key = checker.make_cache_key(source, target);
         db.insert_subtype_cache(cache_key, false);
 
-        checker.type_param_equivalences.push((left_key, right_key));
+        checker
+            .type_param_equivalences
+            .push(crate::relations::subtype::TypeParamEquivalence::ids(
+                left_key, right_key,
+            ));
         assert!(
             checker.check_subtype(source, target).is_true(),
             "active alpha-pairing must recompute instead of replaying a flagless cached false"

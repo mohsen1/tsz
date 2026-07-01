@@ -182,10 +182,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_param: TypeId,
     ) -> bool {
         source_param == target_param
-            || self.type_param_equivalences.iter().any(|&(left, right)| {
-                (source_param == left && target_param == right)
-                    || (source_param == right && target_param == left)
-            })
+            || self
+                .type_param_equivalences
+                .iter()
+                .any(|eq| eq.matches_ids(source_param, target_param))
     }
 
     /// Build the elaboration carrier for two distinct type-parameter keys
