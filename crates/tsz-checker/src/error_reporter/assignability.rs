@@ -842,9 +842,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
+                let use_structural_variadic_tuple_display = matches!(
+                    &failure_reason,
+                    tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                        | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+                );
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
                 if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && use_structural_variadic_tuple_display
                     && let Some(target_str) =
                         self.variadic_tuple_alias_structural_display(target, source)
                 {

@@ -80,3 +80,25 @@ const data: Unbounded = [false, false];
         "unbounded tuple target diagnostic must not leak alias; got {ts2322:?}"
     );
 }
+
+#[test]
+fn underfilled_variadic_tuple_assignment_preserves_alias_target() {
+    let source = r#"
+type Handler = (arg: number) => void;
+type Funcs = [...Handler[], (arg: string) => void];
+const data: Funcs = [];
+"#;
+
+    let diags = messages(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(ts2322.len(), 1, "expected one TS2322, got {diags:?}");
+    assert!(
+        ts2322[0].contains("Type '[]' is not assignable to type 'Funcs'."),
+        "arity-only variadic tuple target should preserve alias; got {ts2322:?}"
+    );
+}

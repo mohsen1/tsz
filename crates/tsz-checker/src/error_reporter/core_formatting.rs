@@ -1139,9 +1139,6 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.constrained_variadic_tuple_parameter_display(ty, other) {
             return display;
         }
-        if let Some(display) = self.variadic_tuple_alias_structural_display(ty, other) {
-            return display;
-        }
         if let Some(type_name) = self.format_class_constructor_name_for_assignment(ty, other) {
             return type_name;
         }
