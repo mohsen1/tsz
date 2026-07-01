@@ -1608,9 +1608,15 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     /// Store an `instantiate_type` result in the cross-call cache.
-    fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
+    fn insert_instantiation_cache_with_project_stability(
+        &self,
+        key: InstantiationCacheKey,
+        result: TypeId,
+        stable_for_project_cache: bool,
+    ) {
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
+            && stable_for_project_cache
         {
             shared.instantiation_cache.insert(key.clone(), result);
             self.instantiation_cache_stats.record_shared_insert();

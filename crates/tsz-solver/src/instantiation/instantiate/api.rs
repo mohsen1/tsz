@@ -909,12 +909,22 @@ fn instantiate_with_request_cached_inner(
             && let Some(cached) = db.lookup_instantiation_cache(&alpha_key.key)
             && let Some(restored) = restore_alpha_result(interner, cached, &alpha_key.bindings)
         {
-            db.insert_instantiation_cache(key, restored);
+            db.insert_instantiation_cache_with_project_stability(key, restored, false);
             return InstantiationResult::ok(restored);
         }
+        let limit_snapshot = ProjectInstantiationCacheLimitSnapshot::capture(interner);
         let result = run_instantiator(interner, query_db, request);
         if !result.depth_exceeded() {
-            db.insert_instantiation_cache(key, result.type_id());
+            let request_state_stability = limit_snapshot.request_state_stability_after(interner);
+            let memo_result = InstantiationMemoResult::for_project_cache(
+                result,
+                request_state_stability.is_stable_for_project_cache(),
+            );
+            db.insert_instantiation_cache_with_project_stability(
+                key,
+                result.type_id(),
+                memo_result.is_stable_for_project_cache(),
+            );
             if let Some(alpha_key) = alpha_key
                 && let Some(alpha_result) = alpha_canonicalize_cached_result(
                     interner,
@@ -922,7 +932,11 @@ fn instantiate_with_request_cached_inner(
                     &alpha_key.bindings,
                 )
             {
-                db.insert_instantiation_cache(alpha_key.key, alpha_result);
+                db.insert_instantiation_cache_with_project_stability(
+                    alpha_key.key,
+                    alpha_result,
+                    memo_result.is_stable_for_project_cache(),
+                );
             }
         }
         return result;

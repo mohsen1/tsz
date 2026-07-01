@@ -1589,9 +1589,24 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCa
         None
     }
 
-    /// Store an `instantiate_type` result in the cross-call cache.
-    /// Default is a no-op for the same reason as `lookup_instantiation_cache`.
-    fn insert_instantiation_cache(&self, _key: InstantiationCacheKey, _result: TypeId) {}
+    /// Store an `instantiate_type` result in the cross-call cache. Callers that
+    /// do not have a stability verdict use the stable-publication path, which
+    /// preserves the pre-existing direct test helper behavior.
+    fn insert_instantiation_cache(&self, key: InstantiationCacheKey, result: TypeId) {
+        self.insert_instantiation_cache_with_project_stability(key, result, true);
+    }
+
+    /// Store an `instantiate_type` result while naming whether it may be
+    /// promoted to a project-wide shared cache. Per-file caches may still keep
+    /// unstable but non-overflowed results; cross-file caches must only see
+    /// results whose ambient request state stayed stable.
+    fn insert_instantiation_cache_with_project_stability(
+        &self,
+        _key: InstantiationCacheKey,
+        _result: TypeId,
+        _stable_for_project_cache: bool,
+    ) {
+    }
 
     /// Look up a cached `remove_subtypes_for_bct` result.
     ///
