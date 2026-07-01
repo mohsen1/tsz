@@ -1817,6 +1817,7 @@ impl CheckerState<'_> {
                 .type_resolution_fuel
                 .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
             self.ctx.eval_session.reset_lazy_resolution_fuel();
+            self.ctx.eval_session.reset_lazy_readiness_guards();
         }
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.

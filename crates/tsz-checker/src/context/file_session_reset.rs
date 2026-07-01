@@ -257,6 +257,7 @@ impl<'a> CheckerContext<'a> {
         self.typeof_resolution_stack.borrow_mut().clear();
         self.omitted_default_constraint_stack.borrow_mut().clear();
         self.symbol_resolution_depth.set(0);
+        self.eval_session.reset_lazy_readiness_guards();
         self.eval_session.reset_type_reference_resolution_depth();
 
         // Implicit-any tracking sets.
@@ -920,9 +921,9 @@ mod tests {
 
     #[test]
     fn reset_clears_all_recursion_depth_counters() {
-        // The reset helper resets local depth counters: four
+        // The reset helper resets local and session-owned depth counters: four
         // `RefCell<DepthCounter>` (call/circ_ref/overlap/recursion) plus
-        // checker-owned `Cell` counters. The original "diagnostic
+        // checker/session `Cell` counters. The original "diagnostic
         // buffers" test only exercises `instantiation_depth`. This test
         // locks the semantics of the RefCell-backed counters,
         // including the sticky `exceeded` flag that a careless future
@@ -952,6 +953,13 @@ mod tests {
         ctx.instantiation_depth.set(11);
         ctx.symbol_resolution_depth.set(12);
         let eval_session = std::rc::Rc::clone(&ctx.eval_session);
+        let _eval_depth_entry = eval_session
+            .enter_eval_env_depth()
+            .expect("pre-reset env-eval depth entry should fit");
+        let _app_symbol_depth_entry = eval_session.enter_app_symbol_resolution_depth();
+        eval_session.increment_app_symbol_resolution_fuel();
+        let _refs_scope = eval_session.enter_refs_resolution_scope();
+        eval_session.increment_refs_resolution_fuel();
         let _type_ref_depth_entry = eval_session
             .enter_type_reference_resolution_depth()
             .expect("type-reference depth entry should fit");
@@ -974,6 +982,10 @@ mod tests {
         }
         assert_eq!(ctx.instantiation_depth.get(), 0);
         assert_eq!(ctx.symbol_resolution_depth.get(), 0);
+        assert_eq!(ctx.eval_session.eval_env_depth(), 0);
+        assert_eq!(ctx.eval_session.app_symbol_resolution_depth(), 0);
+        assert_eq!(ctx.eval_session.app_symbol_resolution_fuel(), 0);
+        assert_eq!(ctx.eval_session.refs_resolution_fuel(), 0);
         assert_eq!(ctx.eval_session.type_reference_resolution_depth(), 0);
     }
 

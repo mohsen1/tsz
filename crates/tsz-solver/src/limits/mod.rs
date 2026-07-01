@@ -41,6 +41,8 @@
 //! | Cross-evaluator stack depth, thread-local (this module) | [`MAX_GLOBAL_EVAL_DEPTH`] = 200 live frames | none (fresh-instance artifact) | silent opaque bail (`mark_silent_depth_bailed`) | deep `implements` chains |
 //! | Conditional subtype relation depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CONDITIONAL_SUBTYPE_DEPTH`] = 50 re-entrant branch probes | `instantiationDepth` adjacent | conservative false, not published to branch cache | recursive conditional subtype probes |
 //! | Infer-match fresh-evaluator expansion depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_INFER_MATCH_EXPANSION_DEPTH`] = 100 nested expansions | `instantiationDepth` | leave source/pattern opaque and skip infer expansion | recursive conditional/`infer` wrappers |
+//! | Checker lazy-resolution fuel, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_LAZY_RESOLUTION_FUEL`] = 50k forced lazy/enum/type-query resolutions | no direct analogue (checker readiness artifact) | stop publishing degraded memo/failure results and leave remaining refs lazy | `lazy_lib_fuel_determinism`, DOM fuel exhaustion tests |
+//! | Checker lazy-readiness guards, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH`] = 1, [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL`] = 200, [`MAX_CHECKER_REFS_RESOLUTION_FUEL`] = 2000, [`MAX_CHECKER_EVAL_ENV_DEPTH`] = 5 | no direct analogue (checker eager-readiness artifact) | stop the local readiness prewalk or leave env-eval root opaque | `lazy_guard_state`, `lazy_resolution_session_scans` |
 //! | Type-reference alias-forwarding depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_TYPE_REFERENCE_RESOLUTION_DEPTH`] = 350 nested alias forwards | none (checker alias-resolution artifact) | checker leaves the symbol as its own `Lazy(DefId)` reference | #13212 raw-`SymbolId` alias ping-pong witness, `symbol_types_tests::type_reference_depth_cap_falls_back_to_own_lazy_reference` |
 //! | Per-query eval op budget, thread-local (this module) | [`DEFAULT_MAX_EVAL_OPS_PER_QUERY`] = 2M ops per top-level query (`TSZ_MAX_EVAL_OPS` override) | `instantiationCount` (5M) per checked element | silent opaque bail | `Unbox`/`Awaited` runaway tests (`query_budget`) |
 //! | Per-file evaluation fuel, thread-local (this module) | [`MAX_EVALUATION_FUEL`] = 2M, sampled every [`EVAL_FUEL_CHECK_INTERVAL`] = 128 guard iterations | `instantiationCount` (5M; tsz lower because eager expansion is heavier) | `TS2589`-style `ERROR` bail | ts-toolbelt corpus, #13172/#13181 |
@@ -172,6 +174,24 @@ pub(crate) const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = 50;
 /// the source or pattern unchanged instead of recursing through another fresh
 /// evaluator with empty per-instance guards.
 pub(crate) const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
+
+/// Maximum checker lazy-resolution fuel across all top-level calls in one
+/// shared evaluation session.
+pub(crate) const MAX_CHECKER_LAZY_RESOLUTION_FUEL: u32 = 50_000;
+
+/// Maximum nested `ensure_application_symbols_resolved` calls.
+pub(crate) const MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH: u32 = 1;
+
+/// Maximum `DefId`/type-query resolutions within
+/// `ensure_application_symbols_resolved`.
+pub(crate) const MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
+
+/// Maximum `DefId` resolutions across recursive `ensure_refs_resolved`
+/// cascades within one top-level call.
+pub(crate) const MAX_CHECKER_REFS_RESOLUTION_FUEL: u32 = 2000;
+
+/// Maximum recursive `evaluate_type_with_env_impl` depth.
+pub(crate) const MAX_CHECKER_EVAL_ENV_DEPTH: u32 = 5;
 
 /// Maximum nesting depth for checker type-reference alias-forwarding.
 ///

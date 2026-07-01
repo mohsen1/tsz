@@ -12,79 +12,21 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
 use super::lazy_guard_state::{
-    ApplicationResolutionEntryState, ApplicationResolutionWorkState, EvalEnvEntryState,
+    ApplicationResolutionEntryState, ApplicationResolutionWorkState,
     application_resolution_entry_state, application_resolution_local_fuel_state,
-    application_resolution_post_consume_state, eval_env_entry_state,
+    application_resolution_post_consume_state,
 };
 use super::property_access_visited::PropertyAccessVisited;
 use crate::query_boundaries::state::type_environment::{
     CacheEntryCollection, EvaluateTypeWithCacheOptions, for_each_direct_referenced_type,
 };
 
-// Thread-local counters survive cross-arena child `CheckerContext`s, where
-// per-context counters would reset and defeat these recursion/fuel guards.
-thread_local! {
-    static APP_SYMBOL_RESOLUTION_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Total `DefId` resolutions within `ensure_application_symbols_resolved`.
-    static APP_SYMBOL_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Total `DefId` resolutions across recursive `ensure_refs_resolved` cascades.
-    static REFS_RESOLUTION_FUEL: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-    // Tracks whether we're inside a top-level `ensure_refs_resolved` call tree.
-    static REFS_RESOLUTION_ACTIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    // Depth counter for recursive `evaluate_type_with_env_impl` calls.
-    static EVAL_ENV_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-/// Reset ALL thread-local state in the lazy resolution module.
-/// Called between compilation sessions to prevent cross-compilation contamination.
-pub(crate) fn reset_all_thread_local_state() {
-    APP_SYMBOL_RESOLUTION_DEPTH.set(0);
-    APP_SYMBOL_RESOLUTION_FUEL.set(0);
-    REFS_RESOLUTION_FUEL.set(0);
-    REFS_RESOLUTION_ACTIVE.set(false);
-    EVAL_ENV_DEPTH.set(0);
-}
-
-// Maximum depth for nested `ensure_application_symbols_resolved` calls.
-const MAX_APP_SYMBOL_RESOLUTION_DEPTH: u32 = 1;
-
-// Maximum total `DefId` resolutions across all nesting levels of
-// `ensure_application_symbols_resolved`.
-const MAX_APP_SYMBOL_RESOLUTION_FUEL: u32 = 200;
-
-// Maximum total `DefId` resolutions across recursive `ensure_refs_resolved`
-// invocations within one top-level call.
-const MAX_REFS_RESOLUTION_FUEL: u32 = 2000;
-
-const MAX_EVAL_ENV_DEPTH: u32 = 5;
-
-/// Check if refs resolution fuel is exhausted.
-pub(crate) fn refs_resolution_fuel_exhausted() -> bool {
-    REFS_RESOLUTION_FUEL.get() >= MAX_REFS_RESOLUTION_FUEL
-}
-
-/// Increment the refs resolution fuel counter. Called from `ensure_refs_resolved`
-/// each time a DefId is resolved via `resolve_and_insert_def_type`.
-pub(crate) fn increment_refs_resolution_fuel() {
-    REFS_RESOLUTION_FUEL.set(REFS_RESOLUTION_FUEL.get() + 1);
-}
-
-/// Enter a top-level refs resolution scope. Resets fuel if not already active.
-/// Returns true if this is the outermost call (and thus responsible for cleanup).
-pub(crate) fn enter_refs_resolution_scope() -> bool {
-    if REFS_RESOLUTION_ACTIVE.get() {
-        false
-    } else {
-        REFS_RESOLUTION_ACTIVE.set(true);
-        REFS_RESOLUTION_FUEL.set(0);
-        true
-    }
-}
-
-/// Exit a top-level refs resolution scope.
-pub(crate) fn exit_refs_resolution_scope() {
-    REFS_RESOLUTION_ACTIVE.set(false);
-}
+/// Compatibility hook for the file-boundary guard reset path.
+///
+/// Lazy-readiness depth/fuel state is now stored on `EvaluationSession`, so
+/// fresh checker contexts start clean and reused contexts reset through
+/// `CheckerContext::reset_for_next_file`.
+pub(crate) const fn reset_all_thread_local_state() {}
 
 impl CheckerState<'_> {
     fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
@@ -121,13 +63,14 @@ impl CheckerState<'_> {
         // ensure_relation_input_ready → resolve_and_insert_def_type →
         // get_type_of_symbol → evaluate_type_with_env_impl, causing
         // unbounded stack growth on cross-referencing module augmentations
-        // (e.g., react + create-emotion-styled). Uses thread-local counter
-        // because cross-arena delegation resets per-context counters.
-        let eval_depth = EVAL_ENV_DEPTH.get();
-        match eval_env_entry_state(eval_depth, MAX_EVAL_ENV_DEPTH) {
-            EvalEnvEntryState::DepthExceeded => return type_id,
-            EvalEnvEntryState::Entered { depth } => EVAL_ENV_DEPTH.set(depth),
-        }
+        // (e.g., react + create-emotion-styled). The counter lives in the
+        // shared evaluation session so cross-arena child contexts see the
+        // same recursion budget.
+        let eval_session = std::rc::Rc::clone(&self.ctx.eval_session);
+        let Some(eval_depth_entry) = eval_session.enter_eval_env_depth() else {
+            return type_id;
+        };
+        let eval_depth = eval_depth_entry.prior_depth();
 
         // Set this_type on the TypeEnvironment so the evaluator can resolve `keyof this`
         // and similar constructs that depend on the enclosing class type.
@@ -148,7 +91,7 @@ impl CheckerState<'_> {
         if eval_depth == 0
             && self.ctx.symbol_resolution_depth.get() == 0
             && self.ctx.heritage_merge_depth.get() == 0
-            && REFS_RESOLUTION_FUEL.get() < MAX_REFS_RESOLUTION_FUEL
+            && !eval_session.refs_resolution_fuel_exhausted()
         {
             self.ensure_relation_input_ready(type_id);
         } else if eval_depth == 0 {
@@ -383,7 +326,6 @@ impl CheckerState<'_> {
             env.set_this_type(None);
         }
 
-        EVAL_ENV_DEPTH.set(eval_depth);
         final_result
     }
 
@@ -1375,14 +1317,15 @@ impl CheckerState<'_> {
         } else {
             self.ctx.application_symbols_resolution_set.insert(type_id)
         };
-        let depth = APP_SYMBOL_RESOLUTION_DEPTH.get();
+        let eval_session = std::rc::Rc::clone(&self.ctx.eval_session);
+        let depth = eval_session.app_symbol_resolution_depth();
         let entry_state = application_resolution_entry_state(
             already_resolved,
             inserted_active_visit,
-            APP_SYMBOL_RESOLUTION_FUEL.get(),
-            MAX_APP_SYMBOL_RESOLUTION_FUEL,
+            eval_session.app_symbol_resolution_fuel(),
+            eval_session.app_symbol_resolution_fuel_limit(),
             depth,
-            MAX_APP_SYMBOL_RESOLUTION_DEPTH,
+            eval_session.app_symbol_resolution_depth_limit(),
         );
         let is_outermost = match entry_state {
             ApplicationResolutionEntryState::Entered { outermost } => outermost,
@@ -1396,14 +1339,14 @@ impl CheckerState<'_> {
         };
         if is_outermost {
             // Reset fuel for each top-level resolution
-            APP_SYMBOL_RESOLUTION_FUEL.set(0);
+            eval_session.reset_app_symbol_resolution_fuel();
         }
-        APP_SYMBOL_RESOLUTION_DEPTH.set(depth + 1);
+        let app_symbol_depth_entry = eval_session.enter_app_symbol_resolution_depth();
+        debug_assert_eq!(app_symbol_depth_entry.outermost(), is_outermost);
 
         let mut visited: FxHashSet<TypeId> = FxHashSet::default();
         let fully_resolved = self.ensure_application_symbols_resolved_inner(type_id, &mut visited);
         self.ctx.application_symbols_resolution_set.remove(&type_id);
-        APP_SYMBOL_RESOLUTION_DEPTH.set(depth);
         if fully_resolved {
             self.ctx.application_symbols_resolved.extend(visited);
         }
@@ -1640,11 +1583,13 @@ impl CheckerState<'_> {
         let mut resolved_types: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
 
         while let Some(current) = worklist.pop() {
-            // Check global fuel - bail if exhausted (prevents unbounded work
-            // on deeply-nested generic type graphs like react16.d.ts).
+            // Check local application-symbol fuel - bail if exhausted
+            // (prevents unbounded work on deeply-nested generic type graphs
+            // like react16.d.ts).
+            let eval_session = std::rc::Rc::clone(&self.ctx.eval_session);
             match application_resolution_local_fuel_state(
-                APP_SYMBOL_RESOLUTION_FUEL.get(),
-                MAX_APP_SYMBOL_RESOLUTION_FUEL,
+                eval_session.app_symbol_resolution_fuel(),
+                eval_session.app_symbol_resolution_fuel_limit(),
             ) {
                 ApplicationResolutionWorkState::Continue => {}
                 ApplicationResolutionWorkState::LocalFuelExhausted
@@ -1679,10 +1624,10 @@ impl CheckerState<'_> {
                 }
 
                 // Consume fuel for each DefId resolution (the expensive part)
-                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                eval_session.increment_app_symbol_resolution_fuel();
+                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
-                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                    eval_session.lazy_resolution_fuel_exhausted(),
                 ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
@@ -1725,10 +1670,10 @@ impl CheckerState<'_> {
                 }
 
                 // Consume fuel for enum resolution too
-                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                eval_session.increment_app_symbol_resolution_fuel();
+                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
-                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                    eval_session.lazy_resolution_fuel_exhausted(),
                 ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
@@ -1774,10 +1719,10 @@ impl CheckerState<'_> {
                 }
 
                 // Consume fuel for type query resolution
-                APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                eval_session.increment_app_symbol_resolution_fuel();
+                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
-                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                    eval_session.lazy_resolution_fuel_exhausted(),
                 ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
