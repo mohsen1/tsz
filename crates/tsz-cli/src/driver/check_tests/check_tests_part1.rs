@@ -1683,6 +1683,51 @@ declare namespace Intl {
         );
     }
 
+    #[test]
+    fn datetimeformatpart_spelling_baseline_keys_on_span_not_message() {
+        // The Intl baseline predicate must identify the diagnostic by the
+        // unresolved identifier at its span, NOT by the rendered TS2552 sentence
+        // (a formatted-diagnostic-string predicate is forbidden and brittle across
+        // locales/wording). These two cases pin that contract.
+        let source = "declare namespace Intl {\n    interface DateTimeFormat {\n        formatToParts(): DateTimeFormatPart[];\n    }\n}\n";
+        let checker_libs = checker_lib_set_for_test(&[("lib.esnext.intl.d.ts", source)]);
+
+        let part_name = "DateTimeFormatPart";
+        let part_offset = source
+            .find(&format!("{part_name}["))
+            .expect("DateTimeFormatPart reference present") as u32;
+
+        // Correct span, deliberately non-canonical message: still matched.
+        let span_diag = Diagnostic::error(
+            "lib.esnext.intl.d.ts",
+            part_offset,
+            part_name.len() as u32,
+            "a completely different wording",
+            2552,
+        );
+        assert!(
+            is_datetimeformatpart_spelling_baseline_diagnostic(&span_diag, &checker_libs),
+            "must match on the span identifier regardless of the rendered message"
+        );
+
+        // Canonical-looking message, but the span covers a different identifier:
+        // not matched.
+        let other_offset = source
+            .find("DateTimeFormat {")
+            .expect("DateTimeFormat interface present") as u32;
+        let mismatched_diag = Diagnostic::error(
+            "lib.esnext.intl.d.ts",
+            other_offset,
+            "DateTimeFormat".len() as u32,
+            "Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?",
+            2552,
+        );
+        assert!(
+            !is_datetimeformatpart_spelling_baseline_diagnostic(&mismatched_diag, &checker_libs),
+            "must not match when the span identifier is not DateTimeFormatPart"
+        );
+    }
+
     fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
         collect_es2015_default_lib_diagnostics_with_options(source, |_: &mut _| {})
     }

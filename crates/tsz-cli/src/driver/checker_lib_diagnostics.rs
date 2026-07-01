@@ -897,15 +897,15 @@ pub(super) fn baseline_lib_datetimeformatpart_spelling_interface_names(
             continue;
         };
         let text = source_file.text.as_ref();
-        if !text.contains("DateTimeFormatPart") || !text.contains("DateTimeFormat") {
+        if !text.contains(DATE_TIME_FORMAT_PART) || !text.contains(DATE_TIME_FORMAT) {
             continue;
         }
 
         if matches!(file_name, "lib.es2021.intl.d.ts" | "es2021.intl.d.ts") {
-            interfaces.insert("DateTimeRangeFormatPart".to_string());
+            interfaces.insert(DATE_TIME_RANGE_FORMAT_PART.to_string());
         }
         if matches!(file_name, "lib.esnext.intl.d.ts" | "esnext.intl.d.ts") {
-            interfaces.insert("DateTimeFormat".to_string());
+            interfaces.insert(DATE_TIME_FORMAT.to_string());
         }
     }
 
@@ -948,6 +948,14 @@ fn is_parallel_order_sensitive_global_lib(file_name: &str) -> bool {
     )
 }
 
+/// Intl lib interface names involved in the `DateTimeFormatPart` spelling
+/// baseline. Centralized so the checker-lib recheck path has a single source of
+/// truth for these built-in identifiers instead of spreading the same string
+/// literals across call sites.
+const DATE_TIME_FORMAT: &str = "DateTimeFormat";
+const DATE_TIME_FORMAT_PART: &str = "DateTimeFormatPart";
+const DATE_TIME_RANGE_FORMAT_PART: &str = "DateTimeRangeFormatPart";
+
 fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -958,6 +966,31 @@ fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool 
     )
 }
 
+/// The source text covered by a diagnostic's `(file, start, length)` span, read
+/// from the checker lib whose file name matches. Diagnostic offsets are byte
+/// offsets into the source, so the range slices directly (a token span always
+/// lands on a `char` boundary, and `str::get` returns `None` rather than
+/// panicking if it somehow does not).
+fn checker_lib_diagnostic_span_text<'a>(
+    checker_libs: &'a CheckerLibSet,
+    file: &str,
+    start: u32,
+    length: u32,
+) -> Option<&'a str> {
+    let base_name = Path::new(file).file_name().and_then(|name| name.to_str())?;
+    let lib = checker_libs.files.iter().find(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some(base_name)
+    })?;
+    let source_file = lib.arena.get_source_file_at(lib.root_index)?;
+    let text = source_file.text.as_ref();
+    let start = start as usize;
+    let end = start.checked_add(length as usize)?;
+    text.get(start..end)
+}
+
 fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -965,18 +998,32 @@ fn is_datetimeformatpart_spelling_baseline_lib(file_name: &str) -> bool {
     )
 }
 
-pub(super) fn is_datetimeformatpart_spelling_baseline_diagnostic(diag: &Diagnostic) -> bool {
-    if diag.code != 2552
-        || diag.message_text
-            != "Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?"
-    {
+/// Whether `diag` is the `DateTimeFormatPart` cannot-find-name diagnostic the
+/// checker-lib baseline recheck must preserve.
+///
+/// The decision is structural, not textual: the diagnostic is `TS2552`, it
+/// originates in one of the Intl baseline libs, and the identifier it reports as
+/// unresolved — read from the lib source at the diagnostic's own span — is
+/// `DateTimeFormatPart`. It deliberately does *not* compare the rendered
+/// "Did you mean …?" message. Matching a formatted diagnostic string as a
+/// semantic predicate is forbidden by the anti-hardcoding gate and is brittle:
+/// it breaks under `--locale` and silently rots if the `TS2552` wording changes.
+pub(super) fn is_datetimeformatpart_spelling_baseline_diagnostic(
+    diag: &Diagnostic,
+    checker_libs: &CheckerLibSet,
+) -> bool {
+    if diag.code != 2552 {
         return false;
     }
-
-    Path::new(&diag.file)
+    let originates_in_baseline_lib = Path::new(&diag.file)
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(is_datetimeformatpart_spelling_baseline_lib)
+        .is_some_and(is_datetimeformatpart_spelling_baseline_lib);
+    if !originates_in_baseline_lib {
+        return false;
+    }
+    checker_lib_diagnostic_span_text(checker_libs, &diag.file, diag.start, diag.length)
+        == Some(DATE_TIME_FORMAT_PART)
 }
 
 fn build_lib_bound_file_for_interface_checks(
