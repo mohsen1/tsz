@@ -162,13 +162,19 @@ impl<'a> Printer<'a> {
         }
 
         if !is_element_access && !is_property_access {
-            // Simple identifier: `x **= y` → `x = Math.pow(x, y)`
-            self.emit_assignment_target(original_left);
-            self.write(" = Math.pow(");
-            self.emit(unwrapped_left);
-            self.write(", ");
-            self.emit(right);
-            self.write(")");
+            // Simple identifier: `x **= y` -> `x = Math.pow(x, y)`.
+            // CommonJS live exports are emitted by `emit_assignment_target`;
+            // System live exports wrap the value-producing write in
+            // `exports_1("x", ...)`, matching the non-lowered path.
+            let system_exports = self.system_live_export_names(unwrapped_left);
+            self.emit_wrapped_in_system_export(system_exports.as_deref(), |this| {
+                this.emit_assignment_target(original_left);
+                this.write(" = Math.pow(");
+                this.emit(unwrapped_left);
+                this.write(", ");
+                this.emit(right);
+                this.write(")");
+            });
             return;
         }
 
@@ -362,26 +368,40 @@ impl<'a> Printer<'a> {
             None => return,
         }
 
+        // A System-exported identifier target keeps its live named export in
+        // sync by wrapping the inner `x = <value>` write in `exports_1("x", ...)`
+        // (nested per alias), matching the non-lowered assignment path. The
+        // short-circuit read positions stay unwrapped, exactly as `tsc` emits.
+        let system_exports = self.system_live_export_names(left);
         if is_and {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" && (");
-            self.emit_logical_assignment_write_target(left, binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_write(
+                left,
+                binary.left,
+                binary.right,
+                system_exports.as_deref(),
+            );
             self.write(")");
         } else if binary.operator_token == SyntaxKind::BarBarEqualsToken as u16 {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" || (");
-            self.emit_logical_assignment_write_target(left, binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_write(
+                left,
+                binary.left,
+                binary.right,
+                system_exports.as_deref(),
+            );
             self.write(")");
         } else if self.ctx.options.target.supports_es2020() {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" ?? (");
-            self.emit_logical_assignment_write_target(left, binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_write(
+                left,
+                binary.left,
+                binary.right,
+                system_exports.as_deref(),
+            );
             self.write(")");
         } else {
             self.emit_expression_for_logical_assignment(binary.left);
@@ -390,9 +410,12 @@ impl<'a> Printer<'a> {
             self.write(" !== void 0 ? ");
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" : (");
-            self.emit_logical_assignment_write_target(left, binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_write(
+                left,
+                binary.left,
+                binary.right,
+                system_exports.as_deref(),
+            );
             self.write(")");
         }
     }
@@ -417,6 +440,41 @@ impl<'a> Printer<'a> {
             return;
         }
         self.emit_expression_for_logical_assignment(original_left);
+    }
+
+    /// Emit the inner value-producing write `<target> = <value>` of a lowered
+    /// logical assignment. CommonJS live exports rewrite the assignment target;
+    /// System live exports wrap the whole write in `exports_1("x", ...)`.
+    fn emit_logical_assignment_write(
+        &mut self,
+        unwrapped_left: NodeIndex,
+        original_left: NodeIndex,
+        value: NodeIndex,
+        system_exports: Option<&[String]>,
+    ) {
+        self.emit_wrapped_in_system_export(system_exports, |this| {
+            this.emit_logical_assignment_write_target(unwrapped_left, original_left);
+            this.write(" = ");
+            this.emit_expression_for_logical_assignment(value);
+        });
+    }
+
+    /// Run `emit_body`, wrapping its output in the System live-export call chain
+    /// `exports_1("x", ...)` when `system_exports` is `Some` (nested per alias).
+    /// `None` runs the body unwrapped, so non-System output is byte-identical.
+    /// Shared by the down-leveled `**=` and `&&=`/`||=`/`??=` write paths.
+    fn emit_wrapped_in_system_export<F: FnOnce(&mut Self)>(
+        &mut self,
+        system_exports: Option<&[String]>,
+        emit_body: F,
+    ) {
+        if let Some(names) = system_exports {
+            self.write_system_export_call_chain_start(names);
+        }
+        emit_body(self);
+        if let Some(names) = system_exports {
+            self.write_system_export_call_chain_end(names);
+        }
     }
 
     /// Whether lowering a non-es2020 `??=` with target `left` consumes a hoisted
