@@ -153,6 +153,65 @@ export function makeCompleteLookupMapping<T extends ReadonlyArray<any>, Attr ext
 }
 
 #[test]
+fn test_mapped_type_constraint_union_operator_spacing_normalized() {
+    // A mapped-type key constraint used to be echoed verbatim from source
+    // text, so union/intersection operators kept whatever spacing the author
+    // wrote (`"x"|"y"` or `"x"   |   "y"`). tsc reprints the constraint type
+    // node with normalized ` | ` / ` & ` spacing; reconstruct it from the AST
+    // instead of slicing source.
+    let output = emit_dts(
+        r#"
+export type Compact = { [K in "x"|"y"]: number };
+export type Spread = { [K in "a"   |   "b"]: number };
+export type Inter = { [K in "a"&"b"]: number };
+export type Paren = { [K in ("x"|"y")]: number };
+"#,
+    );
+
+    assert!(
+        output.contains(r#"[K in "x" | "y"]"#),
+        "Compact union constraint must normalize to ` | `: {output}"
+    );
+    assert!(
+        output.contains(r#"[K in "a" | "b"]"#),
+        "Odd-spaced union constraint must normalize to ` | `: {output}"
+    );
+    assert!(
+        output.contains(r#"[K in "a" & "b"]"#),
+        "Intersection constraint must normalize to ` & `: {output}"
+    );
+    assert!(
+        output.contains(r#"[K in ("x" | "y")]"#),
+        "Parenthesized union constraint keeps its parens and normalizes spacing: {output}"
+    );
+    // Guard against the old source-echoing behavior leaking back.
+    assert!(
+        !output.contains(r#""x"|"y""#) && !output.contains(r#""a"&"b""#),
+        "No un-normalized operator spacing should survive: {output}"
+    );
+}
+
+#[test]
+fn test_mapped_type_as_clause_union_operator_spacing_normalized() {
+    // The key-remapping `as` clause shared the same source-slicing path, so
+    // its operators kept source spacing too. It must also normalize.
+    let output = emit_dts(
+        r#"
+export type Remap = { [K in string as K|"extra"]: number };
+"#,
+    );
+
+    assert!(
+        output.contains(r#"as K | "extra""#),
+        "as-clause union must normalize operator spacing: {output}"
+    );
+    assert!(
+        !output.contains(r#"K|"extra""#),
+        "No un-normalized as-clause spacing should survive: {output}"
+    );
+}
+
+#[test]
 fn test_override_modifier_stripped_in_dts() {
     // tsc strips `override` from class members in .d.ts output —
     // it is not part of the declaration surface.
