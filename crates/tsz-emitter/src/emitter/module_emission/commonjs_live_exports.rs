@@ -167,7 +167,7 @@ impl<'a> Printer<'a> {
         local_name: &str,
         operator: u16,
     ) -> bool {
-        let needs_parens = !self.ctx.flags.in_statement_expression;
+        let needs_parens = !self.ctx.flags.value_discarded;
         match self.cjs_live_export_kind(local_name) {
             CjsLiveExportKind::NotExported => false,
             CjsLiveExportKind::Inline(aliases) => {

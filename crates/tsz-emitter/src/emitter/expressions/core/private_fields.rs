@@ -1803,7 +1803,7 @@ impl<'a> Printer<'a> {
             || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && let Some(pfa) = self.try_extract_private_field_access(unary.operand)
         {
-            let is_statement = self.ctx.flags.in_statement_expression;
+            let is_statement = self.ctx.flags.value_discarded;
             self.emit_private_field_unary_mutation(pfa, unary.operator, false, is_statement);
             return;
         }
@@ -1835,7 +1835,7 @@ impl<'a> Printer<'a> {
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            let is_statement = self.ctx.flags.in_statement_expression;
+            let is_statement = self.ctx.flags.value_discarded;
             if self.emit_system_live_export_postfix_unary(&local_name, unary.operator, is_statement)
                 || self.emit_cjs_live_export_postfix_unary(
                     &local_name,

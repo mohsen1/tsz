@@ -57,10 +57,25 @@ pub struct EmitFlags {
     /// `(function(){})()` instead of `(function(){}())`.
     pub paren_leftmost_function_or_object: bool,
 
-    /// Whether the current expression's result value is discarded (statement context).
-    /// Set by expression-statement and for-loop incrementor emitters so that
-    /// postfix unary lowering can use the simpler (non-value-preserving) form.
+    /// Discarded-value *propagation* flag: set by expression-statement and
+    /// for-loop incrementor emitters to mark that the expression they are about
+    /// to emit is in value-discarded position. It propagates to a node's
+    /// children only through a parenthesized expression (matching tsc, whose
+    /// `discardedValueVisitor` is transparent through parentheses only); every
+    /// other node places its children in value-used positions, so `emit_node`
+    /// clears this flag for the subtree. Readers must consult `value_discarded`
+    /// (the resolved per-node status), not this propagation flag.
     pub in_statement_expression: bool,
+
+    /// Whether the node currently being emitted is itself in value-discarded
+    /// position. Resolved by `emit_node` from `in_statement_expression` for
+    /// every node, then read by the read-modify-write lowerings (private-field
+    /// and live-export `++`/`--`, scoped-static-`super` updates, destructuring
+    /// rest assignment) to choose between the value-preserving form (result is
+    /// used) and the simpler statement form (result is discarded). Kept
+    /// separate from `in_statement_expression` so a node's own discard status
+    /// does not leak into its value-used children.
+    pub value_discarded: bool,
 
     /// A recovered JSX conditional with a missing false branch just emitted its
     /// synthetic `:`. The enclosing JSX expression owns the recovered close-tail
