@@ -858,6 +858,24 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                     .evaluate_object_index(&shape.properties, self.index_type)
             });
 
+        // #14344 / #14345 redirect: a frozen *pre-merge* empty snapshot of a
+        // cross-file augmented interface (the fp-ts `URItoKindN` registry) has
+        // EMPTY properties but carries `shape.symbol = <home interface symbol>`.
+        // When the property was not found here, re-index the merged body
+        // published under the home `DefId` (default-OFF; the resolver only
+        // surfaces the edge when `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT` is ON).
+        if result == TypeId::UNDEFINED
+            && shape.properties.is_empty()
+            && let Some(redirected) =
+                super::index_access_augmented_redirect::redirect_empty_augmented_base_index(
+                    self.evaluator,
+                    self.index_type,
+                    shape.symbol,
+                )
+        {
+            return Some(self.bind_property_this(redirected));
+        }
+
         // CRITICAL FIX: If we can't find the property, but the index is generic,
         // we must defer evaluation (return None) instead of returning UNDEFINED.
         // This prevents mapped type template evaluation from hardcoding UNDEFINED

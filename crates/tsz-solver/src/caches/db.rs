@@ -6,6 +6,7 @@
 use crate::caches::instantiation_cache::InstantiationCacheKey;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::def::DefId;
+use crate::def::DefinitionStore;
 use crate::intern::type_factory::TypeFactory;
 use crate::intern::{PredicateCacheKind, TypeInterner};
 use crate::narrowing;
@@ -1444,6 +1445,23 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCa
     /// Expose the `TypeResolver` view for inference contexts that need
     /// to expand type alias Applications (variance-aware inference).
     fn as_type_resolver(&self) -> &dyn TypeResolver;
+
+    /// Expose the shared, arena-invariant `DefinitionStore` when one is
+    /// attached, for the generic-call inference HKT-reduce shim
+    /// (`StoreOnlyResolver`, issue #14344 / #14345, default-OFF behind
+    /// `TSZ_INFER_HKT_REDUCE`).
+    ///
+    /// The generic-call inference site holds only `&dyn QueryDatabase`, but the
+    /// store-backed `resolve_lazy`/`get_lazy_type_params` it needs to expand a
+    /// cross-arena `Lazy(DefId)` base live on the concrete `QueryCache`. This
+    /// accessor surfaces the program-global store (never mutated through here)
+    /// so the inference site can build a `StoreOnlyResolver` against it without
+    /// reaching into `QueryCache` internals. The default returns `None` so
+    /// non-`QueryCache` databases (raw `TypeInterner`, tests) keep the existing
+    /// resolver-less inference path and stay byte-identical.
+    fn definition_store_for_inference(&self) -> Option<&DefinitionStore> {
+        None
+    }
 
     /// Allocate a declaration-scoped type parameter whose identity must not be
     /// collapsed with another same-shaped declaration.

@@ -1242,6 +1242,31 @@ impl<'a> CheckerState<'a> {
             base_type
         };
         let kind = classify_for_augmentation(self.ctx.types, resolved_base);
+        // #14344 / #14345 producer: the HOME interface symbol carried by the
+        // base shape, captured when the base is an EMPTY pre-merge object
+        // snapshot (the fp-ts `URItoKindN` registry — zero own members). The
+        // merged body is published below and the home-symbol → home-`DefId`
+        // redirect edge is recorded so the solver's index-reduction consumer
+        // can re-index it. Structural: keyed on the base shape's symbol and
+        // emptiness, never a name/file string.
+        let empty_base_home_symbol: Option<tsz_binder::SymbolId> = match kind {
+            AugmentationTargetKind::Object(shape_id) => {
+                let base_shape = self.ctx.types.object_shape(shape_id);
+                (base_shape.properties.is_empty())
+                    .then_some(base_shape.symbol)
+                    .flatten()
+            }
+            AugmentationTargetKind::ObjectWithIndex(shape_id) => {
+                let base_shape = self.ctx.types.object_shape(shape_id);
+                (base_shape.properties.is_empty()
+                    && base_shape.string_index.is_none()
+                    && base_shape.number_index.is_none()
+                    && base_shape.symbol_index.is_none())
+                .then_some(base_shape.symbol)
+                .flatten()
+            }
+            _ => None,
+        };
         let factory = self.ctx.types.factory();
 
         let result = match kind {
@@ -1367,6 +1392,18 @@ impl<'a> CheckerState<'a> {
         // checks symbol_types first.
         if result != base_type {
             self.update_augmentation_local_symbol_types(module_spec, interface_name, result);
+
+            // #14344 / #14345 producer: when the augmented base was an EMPTY
+            // pre-merge snapshot (the HKT `URItoKindN` registry), publish the
+            // merged body under the home interface's own `DefId` and record the
+            // home-symbol → home-`DefId` redirect edge so the solver's
+            // index-reduction consumer can map a frozen empty `shape.symbol`
+            // back to the populated home def. Flag-gated (default-OFF); the
+            // store's `_if_enabled` write-through is a no-op when the flag is
+            // OFF, so flag-OFF is byte-parity.
+            if let Some(home_symbol) = empty_base_home_symbol {
+                self.publish_augmented_base_body_redirect(home_symbol, result);
+            }
         }
 
         self.ctx

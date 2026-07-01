@@ -16,6 +16,7 @@
 pub mod apparent;
 pub mod conditional;
 pub mod index_access;
+mod index_access_augmented_redirect;
 mod index_access_callable;
 mod index_access_empty_key;
 mod index_access_evaluator_helpers;

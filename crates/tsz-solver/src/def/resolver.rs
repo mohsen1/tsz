@@ -173,6 +173,25 @@ pub trait TypeResolver {
         self.symbol_to_def_id(symbol)
     }
 
+    /// Resolve the fully-merged augmented body for a HOME interface
+    /// `SymbolId` (raw u32), if a checker published the redirect edge
+    /// (issue #14344 / #14345, default-OFF behind `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT`).
+    ///
+    /// The fp-ts HKT registry idiom can leave a frozen *pre-merge* empty
+    /// snapshot of an augmented `interface URItoKindN` reaching the
+    /// index-reduction consumer; that snapshot carries only `shape.symbol`
+    /// (the home symbol) and no `DefId`, and the file-agnostic symbol→def
+    /// index was never written for the home symbol. This method maps the home
+    /// symbol to the home `DefId` whose `get_body` holds the merged members,
+    /// returning that body so the consumer can re-index it for the URI literal
+    /// key instead of falling to `undefined`.
+    ///
+    /// Returns `None` by default; only the `DefinitionStore`-backed resolver
+    /// overrides it, and only when the flag is ON and the edge is present.
+    fn augmented_base_body_for_symbol(&self, _symbol_id: u32) -> Option<TypeId> {
+        None
+    }
+
     /// Get the `DefKind` for a `DefId` (Task #32: Graph Isomorphism).
     ///
     /// This is used by the Canonicalizer to distinguish between structural types
@@ -531,6 +550,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn canonical_decl_site_def_for_symbol(&self, symbol: SymbolRef) -> Option<DefId> {
         (**self).canonical_decl_site_def_for_symbol(symbol)
+    }
+
+    fn augmented_base_body_for_symbol(&self, symbol_id: u32) -> Option<TypeId> {
+        (**self).augmented_base_body_for_symbol(symbol_id)
     }
 
     fn get_def_kind(&self, def_id: DefId) -> Option<crate::def::DefKind> {
@@ -1569,6 +1592,18 @@ impl TypeResolver for TypeEnvironment {
 
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.get(symbol)
+    }
+
+    fn augmented_base_body_for_symbol(&self, symbol_id: u32) -> Option<TypeId> {
+        // #14344 / #14345: map a frozen empty pre-merge snapshot's home symbol
+        // back to the home `DefId` whose `get_body` holds the merged augmented
+        // members, so the index-reduction consumer can re-index that body.
+        // Gated structurally on the published redirect edge (the producer only
+        // records it when the flag is ON), so flag-OFF returns `None` and the
+        // consumer keeps its `undefined` behavior (byte-parity).
+        let store = self.definition_store.as_ref()?;
+        let home_def = store.augmented_base_body_def_for_symbol(symbol_id)?;
+        store.get_body(home_def)
     }
 
     fn resolve_unresolved_type_name(&self, name: &str) -> Option<DefId> {
