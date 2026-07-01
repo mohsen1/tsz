@@ -806,68 +806,6 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             Some(self.evaluator.interner().union(results))
         }
     }
-
-    /// #14344 / #14345: redirect an index access against a frozen *pre-merge*
-    /// empty snapshot of a cross-file augmented interface to the merged body
-    /// published under the home `DefId`.
-    ///
-    /// The base shape that reaches this consumer carries `shape.symbol = <home
-    /// interface symbol>` but EMPTY properties (a stale pre-merge snapshot). The
-    /// resolver maps that home symbol to the home `DefId` whose `get_body` holds
-    /// the merged augmented members; this re-indexes that body for the current
-    /// `index_type`. Returns `None` (caller keeps its `undefined`/defer
-    /// behavior) when no edge is published, the merged body is not an object, or
-    /// the key is genuinely absent from the recovered body too.
-    ///
-    /// Discriminator is structural: channel membership keyed on `shape.symbol`
-    /// plus empty properties. No name/string match.
-    fn redirect_empty_augmented_base_index(
-        &mut self,
-        symbol: Option<tsz_binder::SymbolId>,
-    ) -> Option<TypeId> {
-        use crate::visitors::visitor::{object_shape_id, object_with_index_shape_id};
-
-        let symbol = symbol?;
-        // Consult the channel through the evaluator's own resolver first (the
-        // `TypeEnvironment`/`DefinitionStore`-backed path used at top-level
-        // evaluation). If that misses because this evaluator carries a
-        // resolver-less `NoopResolver` — the case at instantiation-time
-        // re-reduce, where `TSZ_INST_RESOLVER_REREDUCE` threads the store-backed
-        // `QueryCache` as the `query_db` but the `query_backed_evaluator` is
-        // built with `NoopResolver` — fall back to the threaded `query_db`,
-        // which carries the same `augmented_base_body_for_symbol` override
-        // (`QueryDatabase: TypeResolver`). This composes the dormant re-reduce
-        // with the symbol→home-body channel at the empty-Object leak site.
-        // Still gated structurally: the edge is only published when the redirect
-        // flag is ON, so flag-OFF returns `None` on both paths (byte-parity).
-        let merged_body = self
-            .evaluator
-            .resolver()
-            .augmented_base_body_for_symbol(symbol.0)
-            .or_else(|| {
-                self.evaluator
-                    .query_db()
-                    .and_then(|db| db.augmented_base_body_for_symbol(symbol.0))
-            })?;
-        // The merged body may arrive as a `Lazy`/`Application`; evaluate it to a
-        // concrete shape before re-indexing. The merged registry interface is a
-        // plain object, but accept an indexed object form defensively.
-        let evaluated = self.evaluator.evaluate(merged_body);
-        let interner = self.evaluator.interner();
-        let shape_id = object_shape_id(interner, evaluated)
-            .or_else(|| object_with_index_shape_id(interner, evaluated))?;
-        let shape = interner.object_shape(shape_id);
-        // Only redirect when the recovered body genuinely has members (the
-        // populated home def). An empty recovered body has nothing to add and
-        // must fall through to the caller's existing behavior.
-        if shape.properties.is_empty() {
-            return None;
-        }
-        let result = self
-            .evaluator
-            .evaluate_object_index(&shape.properties, self.index_type);
-        (result != TypeId::UNDEFINED).then_some(result)
-    }
 }
 
 impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
@@ -928,7 +866,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // surfaces the edge when `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT` is ON).
         if result == TypeId::UNDEFINED
             && shape.properties.is_empty()
-            && let Some(redirected) = self.redirect_empty_augmented_base_index(shape.symbol)
+            && let Some(redirected) =
+                super::index_access_augmented_redirect::redirect_empty_augmented_base_index(
+                    self.evaluator,
+                    self.index_type,
+                    shape.symbol,
+                )
         {
             return Some(self.bind_property_this(redirected));
         }
