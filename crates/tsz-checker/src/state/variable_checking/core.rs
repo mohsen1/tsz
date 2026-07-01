@@ -1416,9 +1416,12 @@ impl<'a> CheckerState<'a> {
                                     continue;
                                 }
                                 for &lib_decl in &lib_sym.declarations {
-                                    if lib_decl.is_some()
-                                        && CheckerState::enter_cross_arena_delegation()
-                                    {
+                                    if lib_decl.is_some() {
+                                        let Some(cross_arena_guard) =
+                                            CheckerState::enter_cross_arena_delegation()
+                                        else {
+                                            continue;
+                                        };
                                         let mut lib_checker =
                                             CheckerState::new_with_shared_def_store(
                                                 &arena,
@@ -1428,15 +1431,11 @@ impl<'a> CheckerState<'a> {
                                                 compiler_options.clone(),
                                                 definition_store.clone(),
                                             );
-                                        // Ensure lib checker can resolve types from other lib files
                                         lib_checker.ctx.lib_contexts = lib_contexts.clone();
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
-                                        CheckerState::leave_cross_arena_delegation();
+                                        drop(cross_arena_guard);
                                         if !is_in_namespace && !is_in_external_module {
-                                            // Check compatibility (skip for bare declarations).
-                                            // Function-scoped variables shadow globals and
-                                            // never trigger TS2403 against lib types.
-                                            // Module-scoped variables don't merge with globals.
+                                            // TS2403 only applies to compatible global-scope vars.
                                             if !is_in_function_scope
                                                 && !is_js_require_binding
                                                 && !is_bare_declaration
@@ -1743,10 +1742,11 @@ impl<'a> CheckerState<'a> {
                                     if other_is_bare {
                                         continue;
                                     }
-                                    // Resolve the type of the cross-file declaration
-                                    if !CheckerState::enter_cross_arena_delegation() {
+                                    let Some(cross_arena_guard) =
+                                        CheckerState::enter_cross_arena_delegation()
+                                    else {
                                         continue;
-                                    }
+                                    };
                                     let mut cross_checker = CheckerState::new_with_shared_def_store(
                                         other_arena,
                                         other_binder,
@@ -1757,7 +1757,7 @@ impl<'a> CheckerState<'a> {
                                     );
                                     cross_checker.ctx.lib_contexts = lib_contexts.clone();
                                     let other_type = cross_checker.get_type_of_node(other_decl);
-                                    CheckerState::leave_cross_arena_delegation();
+                                    drop(cross_arena_guard);
                                     if other_type != TypeId::ERROR
                                         && !self.are_var_decl_types_compatible(
                                             other_type,

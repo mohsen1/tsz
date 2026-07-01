@@ -36,6 +36,19 @@ fn previous_identifier_token(text: &str, mut end: usize) -> Option<(&str, usize)
     (end < token_end).then(|| (&text[end..token_end], end))
 }
 
+/// Allocation rank of a canonical hoisted temp name (`_a`..`_z` -> 0..25,
+/// `_0`, `_1`, ... -> 26, 27, ...), i.e. the order `generate_fresh_temp_name`
+/// mints them. Returns `None` for non-canonical names. Ordering hoisted `var`
+/// declarations by this rank reproduces `tsc`'s single-`var` creation order.
+pub(in crate::emitter) fn temp_name_rank(name: &str) -> Option<u32> {
+    let tail = name.strip_prefix('_')?;
+    let bytes = tail.as_bytes();
+    if bytes.len() == 1 && bytes[0].is_ascii_lowercase() {
+        return Some(u32::from(bytes[0] - b'a'));
+    }
+    tail.parse::<u32>().ok().map(|rank| rank + 26)
+}
+
 impl<'a> Printer<'a> {
     pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
@@ -833,8 +846,6 @@ impl<'a> Printer<'a> {
         let saved_preallocated_hoisted = std::mem::take(&mut self.preallocated_hoisted_temp_names);
         let saved_preallocated_assignment_temps =
             std::mem::take(&mut self.preallocated_assignment_temps);
-        let saved_preallocated_logical_value_temps =
-            std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
         let saved_block_scoped_private_temps = std::mem::take(&mut self.block_scoped_private_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
@@ -847,7 +858,6 @@ impl<'a> Printer<'a> {
             preallocated_temp_names: saved_preallocated,
             preallocated_hoisted_temp_names: saved_preallocated_hoisted,
             preallocated_assignment_temps: saved_preallocated_assignment_temps,
-            preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
             hoisted_assignment_temps: saved_hoisted,
             block_scoped_private_temps: saved_block_scoped_private_temps,
@@ -867,8 +877,6 @@ impl<'a> Printer<'a> {
             self.preallocated_temp_names = state.preallocated_temp_names;
             self.preallocated_hoisted_temp_names = state.preallocated_hoisted_temp_names;
             self.preallocated_assignment_temps = state.preallocated_assignment_temps;
-            self.preallocated_logical_assignment_value_temps =
-                state.preallocated_logical_assignment_value_temps;
             self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
             self.hoisted_assignment_temps = state.hoisted_assignment_temps;
             self.block_scoped_private_temps = state.block_scoped_private_temps;
@@ -1023,47 +1031,6 @@ impl<'a> Printer<'a> {
         name
     }
 
-    pub(super) fn preallocate_logical_assignment_value_temps(&mut self, count: usize) {
-        self.preallocated_logical_assignment_value_temps.clear();
-        for _ in 0..count {
-            let name = self.generate_fresh_temp_name();
-            self.preallocated_logical_assignment_value_temps
-                .push_back(name);
-        }
-    }
-
-    fn count_logical_assignment_value_temps(&self, node_idx: NodeIndex) -> usize {
-        if self.ctx.options.target.supports_es2020() || node_idx.is_none() {
-            return 0;
-        }
-
-        let mut count = 0usize;
-        let mut stack = vec![node_idx];
-
-        while let Some(current) = stack.pop() {
-            let Some(node) = self.arena.get(current) else {
-                continue;
-            };
-
-            if let Some(binary) = self.arena.get_binary_expr(node)
-                && binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
-                && self.nullish_assignment_consumes_value_temp(binary.left)
-            {
-                count += 1;
-            }
-
-            if self.is_logical_assignment_temp_scope_boundary(node) {
-                continue;
-            }
-
-            for child in self.arena.get_children(current) {
-                stack.push(child);
-            }
-        }
-
-        count
-    }
-
     fn is_logical_assignment_temp_scope_boundary(
         &self,
         node: &tsz_parser::parser::node::Node,
@@ -1073,17 +1040,6 @@ impl<'a> Printer<'a> {
             || self.arena.get_constructor(node).is_some()
             || self.arena.get_accessor(node).is_some()
             || self.arena.get_class(node).is_some()
-    }
-
-    pub(super) fn prepare_logical_assignment_value_temps(&mut self, node_idx: NodeIndex) {
-        if self.ctx.options.target.supports_es2020() {
-            return;
-        }
-
-        let count = self.count_logical_assignment_value_temps(node_idx);
-        if count > 0 {
-            self.preallocate_logical_assignment_value_temps(count);
-        }
     }
 
     fn count_object_rest_assignment_temps(&self, node_idx: NodeIndex) -> usize {
@@ -1303,15 +1259,51 @@ impl<'a> Printer<'a> {
 
     /// Like `make_unique_name` but also records the temp for hoisting before references.
     /// Used for assignment target values in logical-assignment lowering.
+    ///
+    /// The value temp is allocated lazily, at the point the `??=` expression is
+    /// emitted, from the same per-scope counter every other hoisted temp draws
+    /// from. This mirrors `tsc`, which mints each read-cache temp in evaluation
+    /// order so its `_a`/`_b`/... number reflects source position among the
+    /// scope's other down-leveled temps (optional-chaining, assignment-target,
+    /// `for..of`), rather than reserving low numbers ahead of them.
     pub(super) fn make_unique_name_hoisted_value(&mut self) -> String {
-        let name = if let Some(name) = self.preallocated_logical_assignment_value_temps.pop_front()
-        {
-            name
-        } else {
-            self.make_unique_name()
-        };
+        let name = self.make_unique_name();
         self.hoisted_assignment_value_temps.push(name.clone());
         name
+    }
+
+    /// Splice the logical-assignment (`??=`) read-cache value temps into
+    /// `ref_vars` at their allocation-rank positions, so the enclosing lexical
+    /// environment declares every down-leveled temp in one `var _a, _b, ...;` in
+    /// creation order — matching `tsc`, which does not split value temps onto a
+    /// separate declaration. The value temps and the reference temps draw from
+    /// the same per-scope counter, so `temp_name_rank` recovers each value
+    /// temp's creation position; the reference temps keep their relative order.
+    pub(super) fn merge_hoisted_value_temps(&self, ref_vars: &mut Vec<String>) {
+        for value in &self.hoisted_assignment_value_temps {
+            let value_rank = temp_name_rank(value);
+            let insert_at = ref_vars
+                .iter()
+                .position(|existing| match (value_rank, temp_name_rank(existing)) {
+                    (Some(v), Some(existing_rank)) => existing_rank > v,
+                    _ => false,
+                })
+                .unwrap_or(ref_vars.len());
+            ref_vars.insert(insert_at, value.clone());
+        }
+    }
+
+    /// Collect every down-leveled temp of the current lexical environment —
+    /// assignment-target, `for..of`, and merged logical-assignment (`??=`) value
+    /// temps — as one list in allocation order, ready to declare as a single
+    /// `var _a, _b, ...;`. Shared source of truth for the emission sites that
+    /// flush a scope's hoisted temps.
+    pub(super) fn collect_hoisted_ref_vars(&self) -> Vec<String> {
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+        self.merge_hoisted_value_temps(&mut ref_vars);
+        ref_vars
     }
 
     // =========================================================================

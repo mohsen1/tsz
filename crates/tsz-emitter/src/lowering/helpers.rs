@@ -9,6 +9,36 @@ use crate::transforms::emit_utils;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::node::NodeAccess;
 
+/// The first async-iteration runtime helper a down-leveled async generator body
+/// requests, in `tsc`'s request order. Only the relative order of `__await`
+/// (`Await`) and `__asyncValues` (`AsyncValues`) varies; it decides whether the
+/// emitted helper preamble leads with `var __await` or `var __asyncValues`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AsyncGenHelperTrigger {
+    Await,
+    AsyncValues,
+}
+
+/// Async-iteration runtime helpers a down-leveled `async function*` body needs,
+/// collected in a single evaluation-order walk. `delegates` marks a delegating
+/// `yield*` (needs `__asyncValues` + `__asyncDelegator`); `for_await_of` marks a
+/// `for await…of` (needs `__asyncValues`); `first_trigger` is the first
+/// requested helper in `tsc` request order, deciding `__await`-vs-`__asyncValues`
+/// lead.
+#[derive(Default)]
+struct AsyncIterationHelperNeeds {
+    delegates: bool,
+    for_await_of: bool,
+    first_trigger: Option<AsyncGenHelperTrigger>,
+}
+
+impl AsyncIterationHelperNeeds {
+    /// Record the first-requested helper; later triggers do not displace it.
+    fn set_first(&mut self, trigger: AsyncGenHelperTrigger) {
+        self.first_trigger.get_or_insert(trigger);
+    }
+}
+
 impl<'a> LoweringPass<'a> {
     // =========================================================================
     // Helper Methods
@@ -465,28 +495,50 @@ impl<'a> LoweringPass<'a> {
     /// function*`) needs, given its `body`.
     ///
     /// A plain async generator needs `__await` + `__asyncGenerator` (plus
-    /// `__generator` at ES5). When the body additionally contains a *delegating*
-    /// `yield* x`, `tsc` lowers it to
-    /// `yield __await(yield* __asyncDelegator(__asyncValues(x)))` (ES2015+) or the
-    /// `__generator` state-machine equivalent (ES5), so it also needs
-    /// `__asyncValues` and `__asyncDelegator`. All helpers are marked here, at
-    /// the function site, in the canonical tslib emit order (`__asyncValues`,
-    /// `__await`, `__asyncDelegator`, `__asyncGenerator`) so the request-order
-    /// helper table matches `tsc` — a scan is required (rather than marking the
-    /// delegate helpers when the `yield*` node is later visited) precisely so the
-    /// order is fixed before `__await`/`__asyncGenerator` are requested.
+    /// `__generator` at ES5). A *delegating* `yield* x` additionally needs
+    /// `__asyncValues` + `__asyncDelegator` (`tsc` lowers it to
+    /// `yield __await(yield* __asyncDelegator(__asyncValues(x)))`, or the
+    /// `__generator` state-machine equivalent at ES5), and a `for await…of`
+    /// additionally needs `__asyncValues`.
     ///
-    /// The delegate decision keys on the structural presence of a delegating
-    /// `yield*` in this generator's own body, never on identifier spelling or
-    /// rendered text.
+    /// The four async-iteration helpers have no `priority` in `tsc`, so
+    /// `compareEmitHelpers` keeps them in *request order* — the order in which
+    /// the transform first lowers a construct that needs each one. The only
+    /// variable is whether `__await` or `__asyncValues` is requested first:
+    /// `__asyncValues` leads only when the first helper-triggering construct (in
+    /// evaluation order) is one that requests it — a delegating `yield*` or a
+    /// `for await…of` — rather than a plain `yield`/`await` (including an `await`
+    /// nested inside a `yield*`/`for await` operand, which evaluates first).
+    /// `__asyncDelegator` (when delegating) then `__asyncGenerator` always
+    /// follow. Marking every needed helper here at the function site — before the
+    /// body is visited — fixes that order so the request-order helper table
+    /// matches `tsc` regardless of where the later lowering marks the same
+    /// helpers (marks dedupe, and the first mark fixes the slot).
+    ///
+    /// Every decision keys on the structural shape of this generator's own body,
+    /// never on identifier spelling or rendered text.
     pub(super) fn mark_async_generator_helpers_for_body(&mut self, body: NodeIndex) {
-        let delegates = self.async_generator_body_delegates(body);
+        let mut needs = AsyncIterationHelperNeeds::default();
+        self.scan_async_iteration_helper_needs(body, true, &mut needs);
+        let async_values = needs.delegates || needs.for_await_of;
+        // `__asyncValues` leads only when it is the first trigger reached in
+        // evaluation order; otherwise `__await` (the default first trigger) leads.
+        let async_values_first = async_values
+            && matches!(
+                needs.first_trigger,
+                Some(AsyncGenHelperTrigger::AsyncValues)
+            );
         let helpers = self.transforms.helpers_mut();
-        if delegates {
+        if async_values_first {
             helpers.mark_async_values();
+            helpers.mark_await_helper();
+        } else {
+            helpers.mark_await_helper();
+            if async_values {
+                helpers.mark_async_values();
+            }
         }
-        helpers.mark_await_helper();
-        if delegates {
+        if needs.delegates {
             helpers.mark_async_delegator();
         }
         helpers.mark_async_generator();
@@ -495,32 +547,73 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Whether an async generator `body` contains a delegating `yield* x` (with a
-    /// delegate expression) that belongs to *this* generator — i.e. not nested
-    /// inside another function-like body. `yield` is only syntactically valid
-    /// inside a generator, so any `yield*` reached before a function-like
-    /// boundary delegates from this async generator.
-    fn async_generator_body_delegates(&self, body: NodeIndex) -> bool {
-        let mut stack = vec![body];
-        while let Some(idx) = stack.pop() {
-            let Some(node) = self.arena.get(idx) else {
-                continue;
-            };
-            // A `yield*` inside a nested function-like belongs to that inner
-            // generator, so stop descending at function-like boundaries.
-            if idx != body && node.is_function_like() {
-                continue;
-            }
-            if node.kind == syntax_kind_ext::YIELD_EXPRESSION
-                && let Some(unary) = self.arena.get_unary_expr_ex(node)
-                && unary.asterisk_token
-                && self.arena.get(unary.expression).is_some()
-            {
-                return true;
-            }
-            stack.extend(self.arena.get_children(idx));
+    /// Single evaluation-order walk of `node` that records, for *this*
+    /// generator's body, whether it contains a delegating `yield*`
+    /// (`delegates`), a `for await…of` (`for_await_of`), and which async-
+    /// iteration helper is requested first (`first_trigger`). Operands are
+    /// scanned before the node that owns them, so an `await` nested inside a
+    /// `yield*`/`for await` operand (which evaluates first) is the first trigger.
+    /// Nested function-like boundaries are not descended into, since their
+    /// `yield`/`await`/`for await` belong to a different generator/async scope.
+    ///
+    /// `is_root` suppresses the function-like boundary check for the top-level
+    /// body node (an arrow/function body is itself function-like but must be
+    /// scanned).
+    fn scan_async_iteration_helper_needs(
+        &self,
+        node_idx: NodeIndex,
+        is_root: bool,
+        needs: &mut AsyncIterationHelperNeeds,
+    ) {
+        let Some(node) = self.arena.get(node_idx) else {
+            return;
+        };
+        if !is_root && node.is_function_like() {
+            return;
         }
-        false
+        if node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
+            if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+                self.scan_async_iteration_helper_needs(unary.expression, false, needs);
+            }
+            needs.set_first(AsyncGenHelperTrigger::Await);
+            return;
+        }
+        if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
+            let unary = self.arena.get_unary_expr_ex(node);
+            if let Some(unary) = unary {
+                self.scan_async_iteration_helper_needs(unary.expression, false, needs);
+            }
+            // A delegating `yield* x` requests `__asyncValues`/`__asyncDelegator`;
+            // any other `yield` requests `__await`. Its operand is scanned above,
+            // so a nested trigger there still wins the first-trigger slot.
+            let delegates = unary.is_some_and(|unary| {
+                unary.asterisk_token && self.arena.get(unary.expression).is_some()
+            });
+            if delegates {
+                needs.delegates = true;
+                needs.set_first(AsyncGenHelperTrigger::AsyncValues);
+            } else {
+                needs.set_first(AsyncGenHelperTrigger::Await);
+            }
+            return;
+        }
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && let Some(for_of) = self.arena.get_for_in_of(node)
+            && for_of.await_modifier
+        {
+            // The iterable is evaluated before the `__asyncValues(iterable)` call,
+            // so a trigger inside it wins; otherwise `for await` requests
+            // `__asyncValues`, then its body runs.
+            self.scan_async_iteration_helper_needs(for_of.expression, false, needs);
+            needs.for_await_of = true;
+            needs.set_first(AsyncGenHelperTrigger::AsyncValues);
+            self.scan_async_iteration_helper_needs(for_of.initializer, false, needs);
+            self.scan_async_iteration_helper_needs(for_of.statement, false, needs);
+            return;
+        }
+        for child_idx in self.arena.get_children(node_idx) {
+            self.scan_async_iteration_helper_needs(child_idx, false, needs);
+        }
     }
 
     pub(super) fn has_class_member_modifier(

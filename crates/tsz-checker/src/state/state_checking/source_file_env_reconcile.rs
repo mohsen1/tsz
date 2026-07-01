@@ -13,6 +13,7 @@ impl CheckerState<'_> {
 
         if !divergences.is_empty() {
             self.ctx.eval_session.reset_lazy_resolution_fuel();
+            self.ctx.eval_session.reset_lazy_readiness_guards();
 
             let mut converged: Vec<(u32, tsz_solver::TypeId)> = Vec::new();
             for (key, flow_val, eval_val) in divergences {

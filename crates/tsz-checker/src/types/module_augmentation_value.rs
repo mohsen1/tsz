@@ -41,11 +41,8 @@ impl<'a> CheckerState<'a> {
             .and_then(|file_idx| self.ctx.all_binders.as_ref()?.get(file_idx).cloned());
         let delegate_binder = delegate_binder_arc.as_deref()?;
 
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
+        let _cross_arena_guard = Self::enter_cross_arena_delegation()?;
         if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
             return None;
         }
 
@@ -75,7 +72,6 @@ impl<'a> CheckerState<'a> {
         let result = checker.augmentation_node_value_type_local(node);
 
         self.ctx.leave_recursion();
-        Self::leave_cross_arena_delegation();
 
         result
     }

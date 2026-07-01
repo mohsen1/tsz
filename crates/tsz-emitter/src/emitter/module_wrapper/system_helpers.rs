@@ -175,7 +175,7 @@ impl<'a> Printer<'a> {
 
         // Check if lowering pass detected dynamic import() calls needing __importStar
         if self.transforms.helpers_populated() && self.transforms.helpers().import_star {
-            helpers.import_star = true;
+            helpers.mark_import_star();
         }
 
         for &stmt_idx in &source.statements.nodes {
@@ -216,7 +216,7 @@ impl<'a> Printer<'a> {
                 && named_imports.name.is_some()
                 && named_imports.elements.nodes.is_empty()
             {
-                helpers.import_star = true;
+                helpers.mark_import_star();
             }
         }
 
@@ -236,7 +236,7 @@ impl<'a> Printer<'a> {
             if let Some(clause_node) = self.arena.get(export_decl.export_clause)
                 && clause_node.kind != syntax_kind_ext::NAMED_EXPORTS
             {
-                helpers.import_star = true;
+                helpers.mark_import_star();
             }
         }
 

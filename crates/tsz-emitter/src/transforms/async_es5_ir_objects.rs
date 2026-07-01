@@ -614,13 +614,12 @@ impl AsyncES5Transformer<'_> {
             let mut generator_body = nested.transform_generator_body(method.body, has_await);
             let hoisted_var_groups =
                 AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
-            // Preserve the prior behavior for object async methods: hoisted
-            // `var` groups keep the callback body multi-line. Known divergence
-            // from `tsc` (which keeps a single-line source body inline even with
-            // hoisted vars, like the async function/expression path); switching
-            // to the source-line rule here — `method.body` is in scope — is a
-            // follow-up kept out of this zero-regression change.
-            let callback_multiline = !hoisted_var_groups.is_empty();
+            // `tsc` keeps the `__awaiter` callback body inline for a single-line
+            // source method body — even when it hoists `var` groups — and only
+            // breaks it across lines for a multi-line source body, exactly like
+            // the async function/expression path. Key on the source-line shape
+            // (`method.body` is in scope) rather than on hoisted-var presence.
+            let callback_multiline = !nested.body_source_is_single_line(method.body);
             return IRNode::FunctionExpr {
                 name: None,
                 parameters,

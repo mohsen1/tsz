@@ -53,10 +53,20 @@ impl Drop for DeterministicElectionGuard {
 /// byte-identical to `main`: the historical construction allocates `DefId`s in
 /// `FxHashMap` iteration order, and the composed cross-arena `#14344` / `#14345`
 /// substrate channels are what make the elected canonical observable (and what
-/// the run-to-run flap manifests under). Enabled iff at least one of those
-/// shared-store channels is active, or explicitly via
-/// `TSZ_DETERMINISTIC_STORE_ELECTION=1`. When none is set, the historical
-/// construction path is preserved unchanged.
+/// the run-to-run flap manifests under). Enabled iff any campaign substrate
+/// channel is active (see
+/// [`CAMPAIGN_STORE_CHANNELS`](super::campaign_channels::CAMPAIGN_STORE_CHANNELS)),
+/// or explicitly via `TSZ_DETERMINISTIC_STORE_ELECTION=1`. When none is set, the
+/// historical construction path is preserved unchanged.
+///
+/// Pre-#15317 this keyed off only 4 of the publication channels, leaving a
+/// determinism hole: a gauge composing e.g. `TSZ_TYPEPARAM_DECL_IDENTITY +
+/// TSZ_XARENA_BASE_DECL + TSZ_XARENA_HERITAGE_TYPEARG` (none of which was in the
+/// old list) kept hash-order election and could reproduce the historical
+/// run-to-run flap while measuring. Deriving from the full campaign channel set
+/// closes that hole; because two of those channels are read in `tsz-checker`, the
+/// derivation reads their env vars directly rather than calling accessors the
+/// solver cannot reach.
 pub(crate) fn deterministic_store_election_enabled() -> bool {
     #[cfg(test)]
     if let Some(enabled) = DETERMINISTIC_ELECTION_TEST_OVERRIDE.with(std::cell::Cell::get) {
@@ -67,10 +77,7 @@ pub(crate) fn deterministic_store_election_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| {
         std::env::var("TSZ_DETERMINISTIC_STORE_ELECTION").is_ok_and(|v| v == "1")
-            || super::typeof_uri_selfloop_enabled()
-            || super::augmented_body_symbol_redirect_enabled()
-            || super::augmentation_symbols::module_augmentation_symbol_edge_enabled()
-            || super::augmentation_symbols::module_augmentation_body_publish_enabled()
+            || super::campaign_channels::any_campaign_store_channel_enabled()
     })
 }
 

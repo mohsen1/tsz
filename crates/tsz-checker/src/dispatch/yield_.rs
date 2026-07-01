@@ -329,9 +329,23 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             if yield_expr.asterisk_token {
                 self.checker.ctx.skip_array_contextual_supertype_collapse = true;
             }
+            // A bare primitive-literal operand (`yield 1`, `yield "a"`, `yield true`)
+            // must reach the yield-type union *unwidened* so a multi-member literal
+            // union (`yield 1; yield 2` -> `1 | 2`) survives; the union is widened
+            // later only if it collapses to a single literal
+            // (`getWidenedType(getUnionType(...))`). Preserve the literal here — object
+            // and array operands still widen their structure (they are evaluated with
+            // preservation off), and `as const` operands keep their preserved literal.
+            let saved_preserve = self.checker.ctx.preserve_literal_types;
+            if !yield_expr.asterisk_token
+                && self.yield_operand_is_bare_literal(yield_expr.expression)
+            {
+                self.checker.ctx.preserve_literal_types = true;
+            }
             let expression_type = self
                 .checker
                 .get_type_of_node_with_request(yield_expr.expression, &yield_request);
+            self.checker.ctx.preserve_literal_types = saved_preserve;
             self.checker.ctx.skip_array_contextual_supertype_collapse = saved_skip_collapse;
             if yield_expr.asterisk_token {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -692,6 +706,59 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             idx,
             crate::recovery::RecoveryReason::YieldExpressionNoGeneratorContext,
         )
+    }
+
+    /// Whether a `yield` operand is a bare primitive-literal token (`1`, `"a"`,
+    /// `true`, `-1`, `1n`), as opposed to an `as const`/type-assertion, an object
+    /// or array literal, or any other expression. Such operands are evaluated with
+    /// literal preservation so the collected yield type keeps the literal, letting a
+    /// multi-member literal union survive; the union is widened afterwards only when
+    /// it collapses to a single literal. Parentheses are transparent.
+    fn yield_operand_is_bare_literal(&self, expr_idx: NodeIndex) -> bool {
+        let mut current = expr_idx;
+        let mut guard = 0u32;
+        loop {
+            guard += 1;
+            if guard > 4096 {
+                return false;
+            }
+            let Some(node) = self.checker.ctx.arena.get(current) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.checker.ctx.arena.get_parenthesized(node) else {
+                    return false;
+                };
+                current = paren.expression;
+                continue;
+            }
+            if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) else {
+                    return false;
+                };
+                if unary.operator != SyntaxKind::MinusToken as u16
+                    && unary.operator != SyntaxKind::PlusToken as u16
+                {
+                    return false;
+                }
+                return self
+                    .checker
+                    .ctx
+                    .arena
+                    .get(unary.operand)
+                    .is_some_and(|operand| {
+                        operand.kind == SyntaxKind::NumericLiteral as u16
+                            || operand.kind == SyntaxKind::BigIntLiteral as u16
+                    });
+            }
+            let kind = node.kind;
+            return kind == SyntaxKind::NumericLiteral as u16
+                || kind == SyntaxKind::StringLiteral as u16
+                || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || kind == SyntaxKind::BigIntLiteral as u16
+                || kind == SyntaxKind::TrueKeyword as u16
+                || kind == SyntaxKind::FalseKeyword as u16;
+        }
     }
 
     /// Check if an expression's result value is unused (discarded).

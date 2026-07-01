@@ -33,6 +33,9 @@ include!("perf_counters/residency.rs");
 include!("perf_counters/tests.rs");
 
 #[cfg(test)]
+include!("perf_counters/write_json_tests.rs");
+
+#[cfg(test)]
 include!("perf_counters/dump_tests.rs");
 
 #[cfg(test)]

@@ -477,22 +477,6 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Whether lowering a non-es2020 `??=` with target `left` consumes a hoisted
-    /// value temp. Only a property/element-access target does (its reference is
-    /// captured: `(_a = obj.p) !== null && ...`); a bare identifier/`this`/`super`
-    /// is lowered inline with no temp. Shares the `is_property_or_element_access`
-    /// dispatch with `emit_logical_assignment_expression` so the pre-count cannot
-    /// drift from emit and desync the shared temp counter from `tsc`.
-    pub(in crate::emitter) fn nullish_assignment_consumes_value_temp(
-        &self,
-        left: NodeIndex,
-    ) -> bool {
-        let left = self.unwrap_parenthesized_logical_assignment_left(left);
-        self.arena
-            .get(left)
-            .is_some_and(is_property_or_element_access)
-    }
-
     fn unwrap_parenthesized_logical_assignment_left(&self, mut left: NodeIndex) -> NodeIndex {
         while let Some(left_node) = self.arena.get(left) {
             if left_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {

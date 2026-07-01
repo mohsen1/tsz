@@ -774,9 +774,9 @@ impl<'a> CheckerState<'a> {
                 return Some(cached_type);
             }
 
-            if !Self::enter_cross_arena_delegation() {
+            let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                 continue;
-            }
+            };
 
             let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                 arena.as_ref(),
@@ -802,8 +802,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 checker.get_type_of_symbol(sym_id)
             };
-
-            Self::leave_cross_arena_delegation();
 
             if !matches!(
                 candidate_type,

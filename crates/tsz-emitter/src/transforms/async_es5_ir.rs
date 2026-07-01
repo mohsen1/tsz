@@ -232,7 +232,17 @@ impl<'a> AsyncES5Transformer<'a> {
     /// as multi-line), matching the emitter's `is_body_source_single_line`.
     /// Delegates to the shared [`emit_utils::source_block_is_single_line`] scan
     /// so the transform and print phases cannot drift.
-    fn body_source_is_single_line(&self, body_idx: NodeIndex) -> bool {
+    ///
+    /// Shared by every async ES5 lowering site that builds an `__awaiter`
+    /// callback (plain functions, object/class methods, class-field async
+    /// arrows, and async auto-accessor arrows), so they all key
+    /// `multiline_callback` on the same structural signal rather than
+    /// re-deriving it. This source-line shape is the *sole* callback line-break
+    /// trigger for those sites; only the plain async function/expression path
+    /// additionally ORs in an `arguments` capture (there the capture is folded
+    /// into the callback, whereas arrows hoist it onto the outer wrapper and
+    /// methods use native `arguments`).
+    pub(in crate::transforms) fn body_source_is_single_line(&self, body_idx: NodeIndex) -> bool {
         let Some(text) = self.source_text else {
             return false;
         };

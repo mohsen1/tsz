@@ -43,6 +43,7 @@ impl CheckerState<'_> {
         self.ctx.application_symbols_resolution_set.clear();
         // Reset global resolution fuel for the new file.
         self.ctx.eval_session.reset_lazy_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_readiness_guards();
 
         // Register Function DefIds in the interner BEFORE building the environment.
         // This ensures `T extends Function` constraint checks during type alias
@@ -133,6 +134,7 @@ impl CheckerState<'_> {
         self.ctx.eval_session.reset_instantiation_fuel();
         self.ctx.depth_exceeded.set(false);
         self.ctx.eval_session.reset_lazy_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_readiness_guards();
         crate::checkers_domain::reset_stack_overflow_flag();
         // Defensive backstop for the solver's RAII-balanced cross-operation
         // frame breaker (issue #7574): clear any residue left by a panic that
@@ -249,6 +251,7 @@ impl CheckerState<'_> {
                             .type_resolution_fuel
                             .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
                         self.ctx.eval_session.reset_lazy_resolution_fuel();
+                        self.ctx.eval_session.reset_lazy_readiness_guards();
                         let check_extension_compatibility = match extension_filter {
                             Some(filter) => {
                                 interface_name.is_some_and(|name| filter.contains(name))
@@ -1464,6 +1467,7 @@ impl CheckerState<'_> {
     /// body.
     pub(crate) fn reset_per_statement_fuel_budgets(&mut self) {
         self.ctx.eval_session.reset_lazy_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_readiness_guards();
         self.ctx.eval_session.reset_instantiation_fuel();
         self.ctx.depth_exceeded.set(false);
     }

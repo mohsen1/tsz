@@ -257,6 +257,8 @@ impl<'a> CheckerContext<'a> {
         self.typeof_resolution_stack.borrow_mut().clear();
         self.omitted_default_constraint_stack.borrow_mut().clear();
         self.symbol_resolution_depth.set(0);
+        self.eval_session.reset_lazy_readiness_guards();
+        self.eval_session.reset_type_reference_resolution_depth();
 
         // Implicit-any tracking sets.
         self.implicit_any_checked_closures.clear();
@@ -919,11 +921,11 @@ mod tests {
 
     #[test]
     fn reset_clears_all_recursion_depth_counters() {
-        // The reset helper resets five depth counters: four
+        // The reset helper resets local and session-owned depth counters: four
         // `RefCell<DepthCounter>` (call/circ_ref/overlap/recursion) plus
-        // one `Cell<u32>` (instantiation). The original "diagnostic
+        // checker/session `Cell` counters. The original "diagnostic
         // buffers" test only exercises `instantiation_depth`. This test
-        // locks the semantics of the four RefCell-backed counters,
+        // locks the semantics of the RefCell-backed counters,
         // including the sticky `exceeded` flag that a careless future
         // refactor (e.g. clearing only `depth` and forgetting `exceeded`)
         // would silently break — and a non-cleared `exceeded` would
@@ -949,6 +951,18 @@ mod tests {
             assert!(d.is_exceeded());
         }
         ctx.instantiation_depth.set(11);
+        ctx.symbol_resolution_depth.set(12);
+        let eval_session = std::rc::Rc::clone(&ctx.eval_session);
+        let _eval_depth_entry = eval_session
+            .enter_eval_env_depth()
+            .expect("pre-reset env-eval depth entry should fit");
+        let _app_symbol_depth_entry = eval_session.enter_app_symbol_resolution_depth();
+        eval_session.increment_app_symbol_resolution_fuel();
+        let _refs_scope = eval_session.enter_refs_resolution_scope();
+        eval_session.increment_refs_resolution_fuel();
+        let _type_ref_depth_entry = eval_session
+            .enter_type_reference_resolution_depth()
+            .expect("type-reference depth entry should fit");
 
         ctx.reset_for_next_file();
 
@@ -967,5 +981,40 @@ mod tests {
             );
         }
         assert_eq!(ctx.instantiation_depth.get(), 0);
+        assert_eq!(ctx.symbol_resolution_depth.get(), 0);
+        assert_eq!(ctx.eval_session.eval_env_depth(), 0);
+        assert_eq!(ctx.eval_session.app_symbol_resolution_depth(), 0);
+        assert_eq!(ctx.eval_session.app_symbol_resolution_fuel(), 0);
+        assert_eq!(ctx.eval_session.refs_resolution_fuel(), 0);
+        assert_eq!(ctx.eval_session.type_reference_resolution_depth(), 0);
+    }
+
+    #[test]
+    fn child_contexts_share_type_reference_resolution_depth() {
+        let parent_arena = NodeArena::default();
+        let child_arena = NodeArena::default();
+        let parent_binder = BinderState::new();
+        let child_binder = BinderState::new();
+        let types = TypeInterner::new();
+        let parent = fresh_ctx(&parent_arena, &parent_binder, &types);
+
+        let child = CheckerContext::with_parent_cache(
+            &child_arena,
+            &child_binder,
+            &types,
+            "child.ts".to_string(),
+            CheckerOptions::default(),
+            &parent,
+        );
+
+        let _entry = parent
+            .eval_session
+            .enter_type_reference_resolution_depth()
+            .expect("type-reference depth entry should fit");
+        assert_eq!(
+            child.eval_session.type_reference_resolution_depth(),
+            1,
+            "cross-arena type-reference alias forwarding should share one depth counter"
+        );
     }
 }

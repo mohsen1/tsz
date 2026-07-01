@@ -28,11 +28,8 @@ impl<'a> CheckerState<'a> {
         if value_decl.is_none() {
             return None;
         }
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
+        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
         if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
             return None;
         }
 
@@ -63,7 +60,7 @@ impl<'a> CheckerState<'a> {
             checker.synthesize_js_constructor_instance_type(value_decl, ctor_type, &[]);
         drop(checker);
 
-        Self::leave_cross_arena_delegation();
+        drop(cross_arena_guard);
         self.ctx.leave_recursion();
         instance_type
     }

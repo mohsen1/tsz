@@ -830,14 +830,13 @@ impl CheckerState<'_> {
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
-            if !Self::enter_cross_arena_delegation() {
+            let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                 self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 return Some((TypeId::ERROR, Vec::new()));
-            }
+            };
 
             // Also check the per-checker recursion guard
             if !self.ctx.enter_recursion() {
-                Self::leave_cross_arena_delegation();
                 self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
                 return Some((TypeId::ERROR, Vec::new()));
             }
@@ -1183,7 +1182,7 @@ impl CheckerState<'_> {
             }
 
             self.ctx.leave_recursion();
-            Self::leave_cross_arena_delegation();
+            drop(cross_arena_guard);
             return Some((result, result_params));
         }
 
@@ -1293,12 +1292,9 @@ impl CheckerState<'_> {
             return hit.clone();
         }
 
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
+        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
 
         if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
             return None;
         }
 
@@ -1419,7 +1415,7 @@ impl CheckerState<'_> {
         }
 
         self.ctx.leave_recursion();
-        Self::leave_cross_arena_delegation();
+        drop(cross_arena_guard);
 
         result
     }
@@ -1543,12 +1539,9 @@ impl CheckerState<'_> {
         }
 
         // Guard against deep cross-arena recursion
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
+        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
 
         if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
             return None;
         }
 
@@ -1635,7 +1628,7 @@ impl CheckerState<'_> {
             .merge_missing_symbol_file_targets_from(&checker.ctx);
 
         self.ctx.leave_recursion();
-        Self::leave_cross_arena_delegation();
+        drop(cross_arena_guard);
 
         let outcome = if result != TypeId::UNKNOWN && result != TypeId::ERROR {
             // Register instance type → DefId so the TypeFormatter can display
@@ -1767,15 +1760,14 @@ impl CheckerState<'_> {
             }
         }
 
-        if !Self::enter_cross_arena_delegation() {
+        let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
             return if results.is_empty() {
                 None
             } else {
                 Some(results)
             };
-        }
+        };
         if !self.ctx.enter_recursion() {
-            Self::leave_cross_arena_delegation();
             return if results.is_empty() {
                 None
             } else {
@@ -1825,6 +1817,7 @@ impl CheckerState<'_> {
                 .type_resolution_fuel
                 .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
             self.ctx.eval_session.reset_lazy_resolution_fuel();
+            self.ctx.eval_session.reset_lazy_readiness_guards();
         }
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
@@ -1885,7 +1878,7 @@ impl CheckerState<'_> {
         checker.pop_type_parameters(interface_updates);
 
         self.ctx.leave_recursion();
-        Self::leave_cross_arena_delegation();
+        drop(cross_arena_guard);
 
         Some(results)
     }

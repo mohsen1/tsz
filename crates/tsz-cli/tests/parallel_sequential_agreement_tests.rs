@@ -591,3 +591,188 @@ fn forced_parallel_dom_heritage_matches_sequential_witness() {
         );
     }
 }
+
+/// Lib globals a user module can shadow with a file-local interface of the same
+/// name. These names are the load-bearing part of the shadow witness (a shadow
+/// must target the ambient interface by name); the renamed members and file
+/// names are not (anti-hardcoding discipline). Chosen to span the DOM global
+/// surface the serialization gate protects.
+const LIB_GLOBAL_NAMES: &[&str] = &["Element", "Document", "Node", "Event", "HTMLElement"];
+
+/// Files generated per witness — above `FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`
+/// (32) so the forced-parallel fresh per-file checker pool actually engages
+/// instead of falling back to sequential checking.
+const WITNESS_FILE_COUNT: usize = 40;
+
+/// Tiny tsconfig for a witness, varying only the single gated global lib
+/// (`dom` or `webworker`) — both are matched by
+/// `is_parallel_order_sensitive_global_lib`, so both take the serialization gate
+/// this suite exercises the forced-parallel path past.
+fn tiny_lib_tsconfig(lib: &str) -> String {
+    format!(
+        r#"{{
+  "compilerOptions": {{
+    "noEmit": true,
+    "lib": ["{lib}", "es2020"],
+    "strict": true,
+    "skipLibCheck": true,
+    "module": "es2020",
+    "target": "es2020"
+  }},
+  "include": ["*.ts"]
+}}"#
+    )
+}
+
+/// Shared scaffold for the generated-fixture forced-parallel witnesses.
+///
+/// Writes `WITNESS_FILE_COUNT` module files (contents from `gen_file`), then
+/// asserts the sequential baseline is clean (matches `tsc`) and every
+/// forced-parallel schedule is byte-identical — the exit-criterion the #13245
+/// gate-lift needs to hold before the DOM/webworker serialization gate can be
+/// narrowed. `label` names the shape in failure messages; only the per-file
+/// content (the `gen_file` closure) varies between witnesses.
+fn assert_generated_forced_parallel_clean(
+    temp_name: &str,
+    tsconfig: &str,
+    label: &str,
+    gen_file: impl Fn(usize) -> String,
+) {
+    let Some(tsz_bin) = find_tsz_binary() else {
+        println!("skipping #13245 {label} witness: tsz binary not found");
+        return;
+    };
+    let temp = TempDir::new(temp_name).expect("temp dir");
+    for i in 0..WITNESS_FILE_COUNT {
+        std::fs::write(temp.path.join(format!("f{i}.ts")), gen_file(i))
+            .expect("write fixture file");
+    }
+    std::fs::write(temp.path.join("tsconfig.json"), tsconfig).expect("write tsconfig");
+
+    let sequential = run_project(&tsz_bin, &temp.path, false);
+    assert!(
+        !sequential.contains("error TS"),
+        "sequential baseline for {label} must be clean (matches tsc); \
+         got diagnostics:\n{sequential}"
+    );
+    for attempt in 0..8 {
+        let parallel = run_project_tiny_parallel(&tsz_bin, &temp.path);
+        assert_eq!(
+            parallel, sequential,
+            "forced-parallel {label} diverged from sequential on attempt {attempt}"
+        );
+    }
+}
+
+/// Shared body for the forced-parallel global-augmentation witnesses.
+///
+/// Every file adds one distinct no-arg method to the ambient `global_name`
+/// interface through `declare global`, and every file also *calls* several
+/// sibling files' augmented methods. The full augmented member set is therefore
+/// visible only after all declarations merge into the single global interface; a
+/// fresh per-file checker that observes a partial merge (an in-flight
+/// last-writer-wins publication of the shared lib def body) would emit a false
+/// `TS2339` for a not-yet-merged method on some schedules but not others — the
+/// precise flaky lib-global-member class PR #7312 introduced the DOM/webworker
+/// serialization gate to hide. Binders (method and file names) vary per file;
+/// the augmentation target (`global_name`) is the only load-bearing identifier.
+fn assert_forced_parallel_global_augmentation_clean(
+    temp_name: &str,
+    tsconfig: &str,
+    global_name: &str,
+    method_prefix: &str,
+) {
+    const FANOUT: usize = 4;
+    assert_generated_forced_parallel_clean(
+        temp_name,
+        tsconfig,
+        &format!("{global_name} augmentation"),
+        |i| {
+            let mut calls = String::new();
+            for k in 0..FANOUT {
+                let j = (i + k) % WITNESS_FILE_COUNT;
+                calls.push_str(&format!("    receiver.{method_prefix}_{j}();\n"));
+            }
+            format!(
+                "declare global {{\n\
+                 \x20 interface {global_name} {{\n\
+                 \x20   {method_prefix}_{i}(): void;\n\
+                 \x20 }}\n\
+                 }}\n\
+                 export function drive_{i}(receiver: {global_name}): void {{\n\
+                 {calls}}}\n"
+            )
+        },
+    );
+}
+
+/// Forced-parallel regression guard for the issue #13245 required adjacent-case
+/// matrix item *"renamed user types shadowing lib globals"*.
+///
+/// Each module file declares a file-local `interface <LibGlobal>` (shadowing the
+/// ambient DOM lib interface of the same name) whose single member is renamed per
+/// file. Because the file is a module (it `export`s), the interface is
+/// module-scoped and does NOT merge with the ambient global; a same-file
+/// annotation `x: <LibGlobal>` must bind to the shadow, not the lib interface, on
+/// every schedule. The renamed member (`shadow_member_N`) never collides with a
+/// real lib member, so a schedule-dependent mis-resolution to the ambient
+/// interface — the exact lib/global order-sensitivity class the gate serializes to
+/// avoid — surfaces as a false `TS2339`. Sequential is clean (matches `tsc`) and
+/// forced-parallel must be byte-identical.
+///
+/// 40 files engage the fresh per-file checker pool (above
+/// `FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES`); the gate is structural over
+/// declarations, so the shadowing type names are load-bearing but the renamed
+/// members and file names are not. This shape is not covered by the existing
+/// heritage / iterator / delegation / alias witnesses.
+#[test]
+fn forced_parallel_lib_global_shadow_matches_sequential_witness() {
+    assert_generated_forced_parallel_clean(
+        "lib_global_shadow_parallel",
+        &tiny_lib_tsconfig("dom"),
+        "lib-global shadow",
+        |i| {
+            let global = LIB_GLOBAL_NAMES[i % LIB_GLOBAL_NAMES.len()];
+            format!(
+                "interface {global} {{\n\
+                 \x20   shadow_member_{i}: number;\n\
+                 }}\n\
+                 export function read_{i}(x: {global}): number {{\n\
+                 \x20   return x.shadow_member_{i};\n\
+                 }}\n"
+            )
+        },
+    );
+}
+
+/// Forced-parallel regression guard for the issue #13245 required adjacent-case
+/// matrix item *"Global augmentation merging with lib.dom across 2+ files,
+/// checked in both scheduler orders"* — generalized to a cross-file `declare
+/// global` fan-out over `Console` that stresses the merge under concurrency. See
+/// [`assert_forced_parallel_global_augmentation_clean`] for the shape and the
+/// order-sensitivity class it pins.
+#[test]
+fn forced_parallel_lib_global_augmentation_matches_sequential_witness() {
+    assert_forced_parallel_global_augmentation_clean(
+        "lib_global_augmentation_parallel",
+        &tiny_lib_tsconfig("dom"),
+        "Console",
+        "tsz_log",
+    );
+}
+
+/// Webworker-lib variant of
+/// [`forced_parallel_lib_global_augmentation_matches_sequential_witness`], for
+/// the matrix's *"webworker-lib variant"* item: the serialization gate matches
+/// `webworker.d.ts` too, so the cross-file `declare global` merge must be
+/// schedule-independent for a webworker global (`WorkerGlobalScope`) under a
+/// `lib.webworker` program as well.
+#[test]
+fn forced_parallel_webworker_global_augmentation_matches_sequential_witness() {
+    assert_forced_parallel_global_augmentation_clean(
+        "webworker_global_augmentation_parallel",
+        &tiny_lib_tsconfig("webworker"),
+        "WorkerGlobalScope",
+        "tsz_ww",
+    );
+}

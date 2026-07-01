@@ -590,9 +590,9 @@ impl<'a> CheckerState<'a> {
                         {
                             continue;
                         }
-                        if !Self::enter_cross_arena_delegation() {
+                        let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                             continue;
-                        }
+                        };
                         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
                             arena.as_ref(),
                             self.ctx.binder,
@@ -607,7 +607,6 @@ impl<'a> CheckerState<'a> {
                             decl_idx,
                             &symbol_name,
                         );
-                        Self::leave_cross_arena_delegation();
                         if params.is_some() {
                             return params;
                         }

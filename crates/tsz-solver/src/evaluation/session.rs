@@ -27,7 +27,21 @@ const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATI
 
 /// Maximum checker lazy-resolution fuel across all top-level calls in one
 /// shared evaluation session.
-const MAX_LAZY_RESOLUTION_FUEL: u32 = 50_000;
+const MAX_CHECKER_LAZY_RESOLUTION_FUEL: u32 = crate::limits::MAX_CHECKER_LAZY_RESOLUTION_FUEL;
+
+/// Maximum nested checker application-symbol resolution calls.
+const MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH: u32 =
+    crate::limits::MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH;
+
+/// Maximum local checker application-symbol resolution fuel.
+const MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL: u32 =
+    crate::limits::MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL;
+
+/// Maximum checker refs-resolution prewalk fuel.
+const MAX_CHECKER_REFS_RESOLUTION_FUEL: u32 = crate::limits::MAX_CHECKER_REFS_RESOLUTION_FUEL;
+
+/// Maximum recursive checker env-evaluation depth.
+const MAX_CHECKER_EVAL_ENV_DEPTH: u32 = crate::limits::MAX_CHECKER_EVAL_ENV_DEPTH;
 
 /// Maximum re-entrant conditional-subtype relation depth.
 const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = crate::limits::MAX_CONDITIONAL_SUBTYPE_DEPTH;
@@ -55,6 +69,68 @@ pub(crate) enum InferMatchExpansionDepthState {
     LimitExceeded,
 }
 
+/// RAII entry for one checker env-evaluation expansion.
+#[must_use]
+pub struct EvalEnvDepthEntry<'a> {
+    session: &'a EvaluationSession,
+    prior_depth: u32,
+}
+
+impl EvalEnvDepthEntry<'_> {
+    pub const fn prior_depth(&self) -> u32 {
+        self.prior_depth
+    }
+}
+
+impl Drop for EvalEnvDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session.checker_eval_env_depth.set(self.prior_depth);
+    }
+}
+
+/// RAII entry for one checker application-symbol resolution expansion.
+#[must_use]
+pub struct AppSymbolResolutionDepthEntry<'a> {
+    session: &'a EvaluationSession,
+    prior_depth: u32,
+    outermost: bool,
+}
+
+impl AppSymbolResolutionDepthEntry<'_> {
+    pub const fn outermost(&self) -> bool {
+        self.outermost
+    }
+}
+
+impl Drop for AppSymbolResolutionDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session
+            .checker_app_symbol_resolution_depth
+            .set(self.prior_depth);
+    }
+}
+
+/// RAII scope for checker refs-resolution prewalk fuel.
+#[must_use]
+pub struct RefsResolutionScope<'a> {
+    session: &'a EvaluationSession,
+    outermost: bool,
+}
+
+impl RefsResolutionScope<'_> {
+    pub const fn outermost(&self) -> bool {
+        self.outermost
+    }
+}
+
+impl Drop for RefsResolutionScope<'_> {
+    fn drop(&mut self) {
+        if self.outermost {
+            self.session.checker_refs_resolution_active.set(false);
+        }
+    }
+}
+
 /// Explicit evaluation session state.
 ///
 /// Holds depth and fuel counters that must survive across `CheckerContext`
@@ -70,11 +146,23 @@ pub struct EvaluationSession {
     global_instantiation_fuel: Cell<u32>,
     /// Cross-context checker lazy-resolution fuel.
     lazy_resolution_fuel: Cell<u32>,
+    /// Checker application-symbol resolution depth.
+    checker_app_symbol_resolution_depth: Cell<u32>,
+    /// Checker application-symbol resolution local fuel.
+    checker_app_symbol_resolution_fuel: Cell<u32>,
+    /// Checker refs-resolution prewalk local fuel.
+    checker_refs_resolution_fuel: Cell<u32>,
+    /// Whether a checker refs-resolution prewalk is active.
+    checker_refs_resolution_active: Cell<bool>,
+    /// Checker env-evaluation recursive depth.
+    checker_eval_env_depth: Cell<u32>,
     /// Re-entrant conditional-subtype depth for
     /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chains.
     conditional_subtype_depth: Cell<u32>,
     /// Cross-evaluator nesting depth for infer-pattern matching expansion.
     infer_match_expansion_depth: Cell<u32>,
+    /// Checker type-reference alias-forwarding depth.
+    type_reference_resolution_depth: Cell<u32>,
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
@@ -142,6 +230,23 @@ impl Drop for InferMatchExpansionDepthEntry<'_> {
     }
 }
 
+/// RAII entry for one checker type-reference alias-forwarding expansion.
+#[must_use]
+pub struct TypeReferenceResolutionDepthEntry<'a> {
+    session: &'a EvaluationSession,
+}
+
+impl Drop for TypeReferenceResolutionDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session.type_reference_resolution_depth.set(
+            self.session
+                .type_reference_resolution_depth
+                .get()
+                .saturating_sub(1),
+        );
+    }
+}
+
 impl EvaluationSession {
     /// Create a new session with all counters at zero.
     pub fn new() -> Self {
@@ -149,8 +254,14 @@ impl EvaluationSession {
             global_instantiation_depth: Cell::new(0),
             global_instantiation_fuel: Cell::new(0),
             lazy_resolution_fuel: Cell::new(0),
+            checker_app_symbol_resolution_depth: Cell::new(0),
+            checker_app_symbol_resolution_fuel: Cell::new(0),
+            checker_refs_resolution_fuel: Cell::new(0),
+            checker_refs_resolution_active: Cell::new(false),
+            checker_eval_env_depth: Cell::new(0),
             conditional_subtype_depth: Cell::new(0),
             infer_match_expansion_depth: Cell::new(0),
+            type_reference_resolution_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
         }
@@ -213,7 +324,7 @@ impl EvaluationSession {
     /// Check if checker lazy-resolution fuel is exhausted.
     #[inline]
     pub const fn lazy_resolution_fuel_exhausted(&self) -> bool {
-        self.lazy_resolution_fuel.get() >= MAX_LAZY_RESOLUTION_FUEL
+        self.lazy_resolution_fuel.get() >= MAX_CHECKER_LAZY_RESOLUTION_FUEL
     }
 
     /// Increment checker lazy-resolution fuel.
@@ -239,6 +350,138 @@ impl EvaluationSession {
     #[inline]
     pub fn restore_lazy_resolution_fuel(&self, value: u32) {
         self.lazy_resolution_fuel.set(value);
+    }
+
+    /// Reset checker lazy-readiness guards for a new file or statement boundary.
+    #[inline]
+    pub fn reset_lazy_readiness_guards(&self) {
+        self.checker_app_symbol_resolution_depth.set(0);
+        self.checker_app_symbol_resolution_fuel.set(0);
+        self.checker_refs_resolution_fuel.set(0);
+        self.checker_refs_resolution_active.set(false);
+        self.checker_eval_env_depth.set(0);
+    }
+
+    /// Enter checker env evaluation, returning `None` when the depth cap is hit.
+    #[inline]
+    pub fn enter_eval_env_depth(&self) -> Option<EvalEnvDepthEntry<'_>> {
+        let prior_depth = self.checker_eval_env_depth.get();
+        if prior_depth >= MAX_CHECKER_EVAL_ENV_DEPTH {
+            None
+        } else {
+            self.checker_eval_env_depth.set(prior_depth + 1);
+            Some(EvalEnvDepthEntry {
+                session: self,
+                prior_depth,
+            })
+        }
+    }
+
+    /// Current checker env-evaluation depth.
+    #[inline]
+    pub const fn eval_env_depth(&self) -> u32 {
+        self.checker_eval_env_depth.get()
+    }
+
+    /// Checker env-evaluation depth limit.
+    #[inline]
+    pub const fn eval_env_depth_limit(&self) -> u32 {
+        MAX_CHECKER_EVAL_ENV_DEPTH
+    }
+
+    /// Current checker application-symbol resolution depth.
+    #[inline]
+    pub const fn app_symbol_resolution_depth(&self) -> u32 {
+        self.checker_app_symbol_resolution_depth.get()
+    }
+
+    /// Checker application-symbol resolution depth limit.
+    #[inline]
+    pub const fn app_symbol_resolution_depth_limit(&self) -> u32 {
+        MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH
+    }
+
+    /// Current checker application-symbol resolution local fuel.
+    #[inline]
+    pub const fn app_symbol_resolution_fuel(&self) -> u32 {
+        self.checker_app_symbol_resolution_fuel.get()
+    }
+
+    /// Checker application-symbol resolution local fuel limit.
+    #[inline]
+    pub const fn app_symbol_resolution_fuel_limit(&self) -> u32 {
+        MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL
+    }
+
+    /// Enter checker application-symbol resolution.
+    #[inline]
+    pub fn enter_app_symbol_resolution_depth(&self) -> AppSymbolResolutionDepthEntry<'_> {
+        let prior_depth = self.checker_app_symbol_resolution_depth.get();
+        self.checker_app_symbol_resolution_depth
+            .set(prior_depth + 1);
+        AppSymbolResolutionDepthEntry {
+            session: self,
+            prior_depth,
+            outermost: prior_depth == 0,
+        }
+    }
+
+    /// Reset checker application-symbol resolution local fuel.
+    #[inline]
+    pub fn reset_app_symbol_resolution_fuel(&self) {
+        self.checker_app_symbol_resolution_fuel.set(0);
+    }
+
+    /// Increment checker application-symbol resolution local fuel.
+    #[inline]
+    pub fn increment_app_symbol_resolution_fuel(&self) {
+        self.checker_app_symbol_resolution_fuel
+            .set(self.checker_app_symbol_resolution_fuel.get() + 1);
+    }
+
+    /// Whether checker application-symbol resolution local fuel is exhausted.
+    #[inline]
+    pub const fn app_symbol_resolution_fuel_exhausted(&self) -> bool {
+        self.checker_app_symbol_resolution_fuel.get() >= MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL
+    }
+
+    /// Enter a checker refs-resolution prewalk scope.
+    #[inline]
+    pub fn enter_refs_resolution_scope(&self) -> RefsResolutionScope<'_> {
+        let outermost = !self.checker_refs_resolution_active.get();
+        if outermost {
+            self.checker_refs_resolution_active.set(true);
+            self.checker_refs_resolution_fuel.set(0);
+        }
+        RefsResolutionScope {
+            session: self,
+            outermost,
+        }
+    }
+
+    /// Whether checker refs-resolution prewalk local fuel is exhausted.
+    #[inline]
+    pub const fn refs_resolution_fuel_exhausted(&self) -> bool {
+        self.checker_refs_resolution_fuel.get() >= MAX_CHECKER_REFS_RESOLUTION_FUEL
+    }
+
+    /// Current checker refs-resolution prewalk local fuel.
+    #[inline]
+    pub const fn refs_resolution_fuel(&self) -> u32 {
+        self.checker_refs_resolution_fuel.get()
+    }
+
+    /// Checker refs-resolution prewalk local fuel limit.
+    #[inline]
+    pub const fn refs_resolution_fuel_limit(&self) -> u32 {
+        MAX_CHECKER_REFS_RESOLUTION_FUEL
+    }
+
+    /// Increment checker refs-resolution prewalk local fuel.
+    #[inline]
+    pub fn increment_refs_resolution_fuel(&self) {
+        self.checker_refs_resolution_fuel
+            .set(self.checker_refs_resolution_fuel.get() + 1);
     }
 
     /// Enter a conditional-subtype probe and return the observed prior depth.
@@ -281,6 +524,32 @@ impl EvaluationSession {
     #[inline]
     pub(crate) const fn infer_match_expansion_depth(&self) -> u32 {
         self.infer_match_expansion_depth.get()
+    }
+
+    /// Enter one checker type-reference alias-forwarding expansion.
+    #[inline]
+    pub fn enter_type_reference_resolution_depth(
+        &self,
+    ) -> Option<TypeReferenceResolutionDepthEntry<'_>> {
+        let prior_depth = self.type_reference_resolution_depth.get();
+        if prior_depth >= crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH {
+            None
+        } else {
+            self.type_reference_resolution_depth.set(prior_depth + 1);
+            Some(TypeReferenceResolutionDepthEntry { session: self })
+        }
+    }
+
+    /// Current checker type-reference alias-forwarding depth.
+    #[inline]
+    pub const fn type_reference_resolution_depth(&self) -> u32 {
+        self.type_reference_resolution_depth.get()
+    }
+
+    /// Reset checker type-reference alias-forwarding depth for a new file.
+    #[inline]
+    pub fn reset_type_reference_resolution_depth(&self) {
+        self.type_reference_resolution_depth.set(0);
     }
 
     /// Enter cross-evaluator expansion of `type_id`.
@@ -409,12 +678,84 @@ mod tests {
         session.increment_lazy_resolution_fuel();
         assert_eq!(session.lazy_resolution_fuel_value(), 1);
 
-        session.restore_lazy_resolution_fuel(MAX_LAZY_RESOLUTION_FUEL);
+        session.restore_lazy_resolution_fuel(MAX_CHECKER_LAZY_RESOLUTION_FUEL);
         assert!(session.lazy_resolution_fuel_exhausted());
 
         session.reset_lazy_resolution_fuel();
         assert_eq!(session.lazy_resolution_fuel_value(), 0);
         assert!(!session.lazy_resolution_fuel_exhausted());
+    }
+
+    #[test]
+    fn checker_eval_env_depth_entry_restores_on_drop_and_rejects_at_cap() {
+        let session = EvaluationSession::new();
+        let mut entries = Vec::new();
+        for expected_prior in 0..MAX_CHECKER_EVAL_ENV_DEPTH {
+            let entry = session
+                .enter_eval_env_depth()
+                .expect("pre-cap env-eval depth entry should fit");
+            assert_eq!(entry.prior_depth(), expected_prior);
+            entries.push(entry);
+        }
+
+        assert_eq!(session.eval_env_depth(), MAX_CHECKER_EVAL_ENV_DEPTH);
+        assert!(session.enter_eval_env_depth().is_none());
+        while let Some(entry) = entries.pop() {
+            drop(entry);
+        }
+        assert_eq!(session.eval_env_depth(), 0);
+    }
+
+    #[test]
+    fn checker_app_symbol_resolution_depth_and_fuel_are_session_owned() {
+        let session = EvaluationSession::new();
+        {
+            let entry = session.enter_app_symbol_resolution_depth();
+            assert!(entry.outermost());
+            assert_eq!(session.app_symbol_resolution_depth(), 1);
+            let nested = session.enter_app_symbol_resolution_depth();
+            assert!(!nested.outermost());
+            assert_eq!(session.app_symbol_resolution_depth(), 2);
+        }
+        assert_eq!(session.app_symbol_resolution_depth(), 0);
+
+        session.increment_app_symbol_resolution_fuel();
+        assert_eq!(session.app_symbol_resolution_fuel(), 1);
+        session.reset_app_symbol_resolution_fuel();
+        assert_eq!(session.app_symbol_resolution_fuel(), 0);
+        for _ in 0..MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL {
+            session.increment_app_symbol_resolution_fuel();
+        }
+        assert!(session.app_symbol_resolution_fuel_exhausted());
+    }
+
+    #[test]
+    fn checker_refs_resolution_scope_resets_outermost_fuel_and_restores_active() {
+        let session = EvaluationSession::new();
+        {
+            let outer = session.enter_refs_resolution_scope();
+            assert!(outer.outermost());
+            session.increment_refs_resolution_fuel();
+            assert_eq!(session.refs_resolution_fuel(), 1);
+            {
+                let nested = session.enter_refs_resolution_scope();
+                assert!(!nested.outermost());
+                assert_eq!(session.refs_resolution_fuel(), 1);
+            }
+            assert_eq!(session.refs_resolution_fuel(), 1);
+        }
+
+        let new_outer = session.enter_refs_resolution_scope();
+        assert!(new_outer.outermost());
+        assert_eq!(
+            session.refs_resolution_fuel(),
+            0,
+            "a new outer refs-resolution scope should reset local prewalk fuel"
+        );
+        for _ in 0..MAX_CHECKER_REFS_RESOLUTION_FUEL {
+            session.increment_refs_resolution_fuel();
+        }
+        assert!(session.refs_resolution_fuel_exhausted());
     }
 
     #[test]
@@ -484,5 +825,49 @@ mod tests {
         }
 
         assert_eq!(session.conditional_subtype_depth(), 0);
+    }
+
+    #[test]
+    fn type_reference_resolution_depth_entry_restores_on_drop() {
+        let session = EvaluationSession::new();
+        {
+            let _outer = session
+                .enter_type_reference_resolution_depth()
+                .expect("first type-reference depth entry should fit");
+            assert_eq!(session.type_reference_resolution_depth(), 1);
+            {
+                let _inner = session
+                    .enter_type_reference_resolution_depth()
+                    .expect("nested type-reference depth entry should fit");
+                assert_eq!(session.type_reference_resolution_depth(), 2);
+            }
+            assert_eq!(session.type_reference_resolution_depth(), 1);
+        }
+        assert_eq!(session.type_reference_resolution_depth(), 0);
+    }
+
+    #[test]
+    fn type_reference_resolution_depth_rejects_at_cap_without_mutating_depth() {
+        let session = EvaluationSession::new();
+        let mut entries = Vec::new();
+        for _ in 0..crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH {
+            entries.push(
+                session
+                    .enter_type_reference_resolution_depth()
+                    .expect("pre-cap entry should fit"),
+            );
+        }
+
+        assert_eq!(
+            session.type_reference_resolution_depth(),
+            crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH
+        );
+        assert!(session.enter_type_reference_resolution_depth().is_none());
+        assert_eq!(
+            session.type_reference_resolution_depth(),
+            crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH
+        );
+        drop(entries);
+        assert_eq!(session.type_reference_resolution_depth(), 0);
     }
 }

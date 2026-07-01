@@ -117,7 +117,13 @@ impl PerfCounters {
              ... cross-base (HKT)       {:>12}\n\
              Lazy-ref relation (#14351):\n  \
              heritage-reachable pairs   {:>12}\n  \
-             accessor resolved base     {:>12}\n",
+             accessor resolved base     {:>12}\n\
+             Deferred HKT split (#14345/#14351):\n  \
+             inference fallback types   {:>12}\n  \
+             inference placeholders     {:>12}\n  \
+             ... with indexed access    {:>12}\n  \
+             relation index pairs       {:>12}\n  \
+             relation index accepted    {:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -210,6 +216,14 @@ impl PerfCounters {
             snap.identity.relation_app_pair_variance_fallthrough_cross_base,
             snap.identity.relation_lazy_ref_heritage_reachable,
             snap.identity.relation_lazy_ref_accessor_resolved,
+            snap.identity
+                .inference_source_placeholder_unknown_fallback_types,
+            snap.identity
+                .inference_source_placeholder_unknown_fallback_placeholders,
+            snap.identity
+                .inference_source_placeholder_unknown_fallback_index_access_types,
+            snap.identity.relation_deferred_index_access_pair_total,
+            snap.identity.relation_deferred_index_access_pair_accepted,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_shared_instantiation_cache(&snap)
             + &Self::dump_relation_limit_cache(&snap)

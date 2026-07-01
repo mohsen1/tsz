@@ -1815,23 +1815,13 @@ impl<'a> Printer<'a> {
             // Insert any temps hoisted while emitting field initializers (e.g.
             // `_a` for a class expression lowered inside a private-field init, or
             // a `??=` read-cache temp) at the top of this synthesized constructor
-            // body, then drop the scope. Value temps are inserted last so they
-            // land on the first line.
+            // body, then drop the scope. Assignment-target and logical-assignment
+            // value temps are declared in one `var` in allocation order, matching
+            // `tsc`.
             let synth_ctor_indent = self
                 .writer
                 .indent_string_at(synth_ctor_hoist_anchor.indent_level);
-            let assignment_temps = std::mem::take(&mut self.hoisted_assignment_temps);
-            self.insert_hoisted_var_line(
-                &assignment_temps,
-                &synth_ctor_hoist_anchor,
-                &synth_ctor_indent,
-            );
-            let value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
-            self.insert_hoisted_var_line(
-                &value_temps,
-                &synth_ctor_hoist_anchor,
-                &synth_ctor_indent,
-            );
+            self.insert_constructor_hoisted_var_line(&synth_ctor_hoist_anchor, &synth_ctor_indent);
             self.pop_temp_scope();
             self.decrease_indent();
             self.write("}");

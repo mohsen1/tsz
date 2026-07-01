@@ -81,6 +81,46 @@ pub fn record_relation_lazy_ref_probe(reachable: bool, resolved: bool) {
     }
 }
 
+/// #14345/#14351 inference split gauge (measure-only). Record that one
+/// normalized inferred type erased one or more higher-order source placeholders
+/// to `unknown`, partitioned by whether the pre-erasure type still contained a
+/// deferred indexed access. This never feeds back into inference.
+#[inline]
+pub fn record_inference_source_placeholder_unknown_fallback(
+    placeholder_count: u64,
+    contains_index_access: bool,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.inference_source_placeholder_unknown_fallback_types
+        .fetch_add(1, Ordering::Relaxed);
+    c.inference_source_placeholder_unknown_fallback_placeholders
+        .fetch_add(placeholder_count, Ordering::Relaxed);
+    if contains_index_access {
+        c.inference_source_placeholder_unknown_fallback_index_access_types
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// #14345/#14351 relation split gauge (measure-only). Record a raw deferred
+/// indexed-access pair that reached the relation visitor, partitioned by
+/// whether the existing raw/declaration-stripped relation path accepted it.
+#[inline]
+pub fn record_relation_deferred_index_access_pair(accepted: bool) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.relation_deferred_index_access_pair_total
+        .fetch_add(1, Ordering::Relaxed);
+    if accepted {
+        c.relation_deferred_index_access_pair_accepted
+            .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Record a budget-conditional `LimitTrue` relation cache hit (a limit-hit
 /// relation verdict was reused instead of re-burning the relation chain).
 #[inline]

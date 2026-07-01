@@ -745,16 +745,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_function_body_hoisted_temps(&mut self) {
-        if !self.hoisted_assignment_value_temps.is_empty() {
-            self.write("var ");
-            self.write(&self.hoisted_assignment_value_temps.join(", "));
-            self.write(";");
-            self.write_line();
-        }
-
-        let mut ref_vars = Vec::new();
-        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+        let ref_vars = self.collect_hoisted_ref_vars();
 
         if !ref_vars.is_empty() {
             self.write("var ");
@@ -767,37 +758,24 @@ impl<'a> Printer<'a> {
     /// Build the inline `var _a; ` prologue for a *single-line* function/method
     /// body (e.g. `m() { o.v ??= 1; }`) and clear the underlying pools.
     ///
-    /// Mirrors the multi-line [`Self::emit_function_body_hoisted_temps`] ordering
-    /// (logical-assignment value temps first, then assignment-target/for-of
-    /// temps). The single-line block emitters historically flushed only
-    /// `hoisted_assignment_temps`, which dropped the `var` declaration for
-    /// nullish-assignment (`??=`) read-cache temps and produced non-runnable
+    /// Mirrors the multi-line [`Self::emit_function_body_hoisted_temps`]: every
+    /// down-leveled temp of the body — assignment-target, `for..of`, and
+    /// logical-assignment (`??=`) read-cache value temps — is declared in a
+    /// single `var` in allocation order. The single-line block emitters
+    /// historically flushed only `hoisted_assignment_temps`, which dropped the
+    /// `var` declaration for `??=` read-cache temps and produced non-runnable
     /// strict-mode output (`ReferenceError: _a is not defined`).
     pub(in crate::emitter) fn take_single_line_hoisted_temp_prologue(&mut self) -> String {
-        let mut prologue = String::new();
+        let ref_vars = self.collect_hoisted_ref_vars();
 
-        if !self.hoisted_assignment_value_temps.is_empty() {
-            prologue.push_str("var ");
-            prologue.push_str(&self.hoisted_assignment_value_temps.join(", "));
-            prologue.push_str("; ");
-            self.hoisted_assignment_value_temps.clear();
+        self.hoisted_assignment_value_temps.clear();
+        self.hoisted_assignment_temps.clear();
+        self.hoisted_for_of_temps.clear();
+
+        if ref_vars.is_empty() {
+            return String::new();
         }
-
-        if !self.hoisted_assignment_temps.is_empty() || !self.hoisted_for_of_temps.is_empty() {
-            let ref_vars: Vec<&str> = self
-                .hoisted_assignment_temps
-                .iter()
-                .chain(self.hoisted_for_of_temps.iter())
-                .map(String::as_str)
-                .collect();
-            prologue.push_str("var ");
-            prologue.push_str(&ref_vars.join(", "));
-            prologue.push_str("; ");
-            self.hoisted_assignment_temps.clear();
-            self.hoisted_for_of_temps.clear();
-        }
-
-        prologue
+        format!("var {}; ", ref_vars.join(", "))
     }
 
     /// Splice the body's hoisted temp declarations (`var _a, _b;`) into a
@@ -827,10 +805,9 @@ impl<'a> Printer<'a> {
     }
 
     /// Insert a `var <names>;` line for a multi-line function/constructor body at
-    /// `anchor`, indented by `indent`. Inserting the assignment-target temps and
-    /// the logical-assignment value temps at the *same* anchor (assignment first,
-    /// value second) leaves the value temps on the first line, matching
-    /// [`Self::emit_function_body_hoisted_temps`]. No-op when `names` is empty.
+    /// `anchor`, indented by `indent`. Callers pass an already-merged, allocation
+    /// ordered list, so every down-leveled temp lands on the one line. No-op when
+    /// `names` is empty.
     pub(in crate::emitter) fn insert_hoisted_var_line(
         &mut self,
         names: &[String],
@@ -845,40 +822,38 @@ impl<'a> Printer<'a> {
             .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
     }
 
+    /// Take the pending assignment-target temps, merge the logical-assignment
+    /// (`??=`) value temps into them in allocation order, and insert them as one
+    /// `var` line at `anchor`. Used by synthesized/constructor bodies whose
+    /// hoisted temps are inserted after the body is emitted.
+    pub(in crate::emitter) fn insert_constructor_hoisted_var_line(
+        &mut self,
+        anchor: &HoistAnchor,
+        indent: &str,
+    ) {
+        let mut ref_vars = std::mem::take(&mut self.hoisted_assignment_temps);
+        self.merge_hoisted_value_temps(&mut ref_vars);
+        self.hoisted_assignment_value_temps.clear();
+        self.insert_hoisted_var_line(&ref_vars, anchor, indent);
+    }
+
     pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
         &mut self,
         anchor: HoistAnchor,
     ) {
+        let ref_vars = self.collect_hoisted_ref_vars();
+
         // Common path: most function bodies hoist no temps. Skip the indent
         // string allocation and the buffer-shifting insert when there is
         // nothing to declare.
-        if self.hoisted_assignment_temps.is_empty()
-            && self.hoisted_for_of_temps.is_empty()
-            && self.hoisted_assignment_value_temps.is_empty()
-        {
+        if ref_vars.is_empty() {
             return;
         }
 
         let indent = self.writer.indent_string_at(anchor.indent_level);
-        let mut ref_vars = Vec::new();
-        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-
-        if !ref_vars.is_empty() {
-            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-            self.writer
-                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
-        }
-
-        if !self.hoisted_assignment_value_temps.is_empty() {
-            let var_decl = format!(
-                "{}var {};",
-                indent,
-                self.hoisted_assignment_value_temps.join(", ")
-            );
-            self.writer
-                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
-        }
+        let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+        self.writer
+            .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
     }
 
     /// Emit the pending ES2018 object-rest parameter prologue for a function

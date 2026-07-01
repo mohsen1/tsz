@@ -303,7 +303,16 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.types.factory().union(yield_types)
         };
-        let widened = if ctx.early_yield_type.is_some() {
+        // tsc computes the inferred yield type as `getWidenedType(getUnionType(...))`:
+        // a single literal is widened (`yield 1` -> `number`), but a multi-member
+        // literal union is preserved (`yield 1; yield 2` -> `1 | 2`) because a union
+        // is not itself a widenable literal. Mirror that by widening only when the
+        // reduced union is a single literal type — the same gate the regular
+        // return-type inference uses in `return_type.rs`. (The yield operands reach
+        // here unwidened for bare literals, so the union keeps its members.)
+        let widened = if ctx.early_yield_type.is_some()
+            || !crate::query_boundaries::common::is_literal_type(self.ctx.types, inferred_yield)
+        {
             inferred_yield
         } else {
             self.widen_literal_type(inferred_yield)

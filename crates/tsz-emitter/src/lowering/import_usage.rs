@@ -52,7 +52,7 @@ impl<'a> LoweringPass<'a> {
                 // and named exports are accessible.
                 if has_default && has_named_bindings {
                     let helpers = self.transforms.helpers_mut();
-                    helpers.import_star = true;
+                    helpers.mark_import_star();
                     helpers.create_binding = true;
                 } else if has_default {
                     // Default-only import: import d from "mod" -> needs __importDefault
@@ -73,7 +73,7 @@ impl<'a> LoweringPass<'a> {
                             .is_some_and(|name| !name.is_empty())
                     {
                         let helpers = self.transforms.helpers_mut();
-                        helpers.import_star = true;
+                        helpers.mark_import_star();
                         helpers.create_binding = true;
                     } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
                         && self
@@ -82,7 +82,7 @@ impl<'a> LoweringPass<'a> {
                         && named_imports.elements.nodes.is_empty()
                     {
                         let helpers = self.transforms.helpers_mut();
-                        helpers.import_star = true;
+                        helpers.mark_import_star();
                         helpers.create_binding = true;
                     } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
                     {

@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_ten() {
+    fn schema_version_matches_current_snapshot_shape() {
         // Bumping schema_version is a breaking change for the bench harness;
-        // make the intent explicit. v10 added #13240 shared-cache counters.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 10);
+        // make the intent explicit.
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 12);
     }
 
     #[test]
@@ -62,7 +62,7 @@ mod json_tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 10);
+        assert_eq!(json["schema_version"], 12);
     }
 
     #[test]
@@ -483,6 +483,11 @@ mod json_tests {
                 "relation_app_pair_variance_fallthrough_cross_base",
                 "relation_lazy_ref_accessor_resolved",
                 "relation_lazy_ref_heritage_reachable",
+                "inference_source_placeholder_unknown_fallback_types",
+                "inference_source_placeholder_unknown_fallback_placeholders",
+                "inference_source_placeholder_unknown_fallback_index_access_types",
+                "relation_deferred_index_access_pair_total",
+                "relation_deferred_index_access_pair_accepted",
             ],
         );
         assert_eq!(json["wired"]["stable_identity"], true);
@@ -2041,26 +2046,5 @@ mod json_tests {
                 > before_property_classification_target_types,
             "checker.property_classification_string_fallback_target_types did not reflect the bump",
         );
-    }
-
-    #[test]
-    fn write_json_to_writes_valid_json_with_atomic_rename() {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("tsz-perf-counter-snap-{}.json", std::process::id()));
-        // Clean up beforehand if a stale file is sitting around.
-        let _ = std::fs::remove_file(&path);
-        PerfCounters::write_json_to(&path).expect("write succeeds");
-        let raw = std::fs::read_to_string(&path).expect("read back");
-        // Round-trip through serde to confirm structure.
-        let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(
-            value["schema_version"],
-            PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION
-        );
-        assert!(value["wired"].is_object());
-        // The atomic-rename `.json.tmp` should not be left behind.
-        let tmp = path.with_extension("json.tmp");
-        assert!(!tmp.exists(), "tmp file leaked: {tmp:?}");
-        let _ = std::fs::remove_file(&path);
     }
 }

@@ -47,6 +47,10 @@ name = "async_lowered_single_line_hoist_tests"
 path = "tests/async_lowered_single_line_hoist_tests.rs"
 
 [[test]]
+name = "async_es5_callback_source_line_tests"
+path = "tests/async_es5_callback_source_line_tests.rs"
+
+[[test]]
 name = "es5_private_in_brand_check_tests"
 path = "tests/es5_private_in_brand_check_tests.rs"
 

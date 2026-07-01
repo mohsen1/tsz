@@ -1,1 +1,0 @@
-{ "compilerOptions": { "strict": true, "noEmit": true, "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "lib": ["es2022","dom","dom.iterable"], "types": [], "skipLibCheck": false }, "include": ["dom_multi/widgets.ts","dom_multi/forms.ts","dom_multi/app.ts"] }
