@@ -409,6 +409,29 @@ fn subtype_function_fresh_evaluators_use_explicit_session() {
 }
 
 #[test]
+fn infer_match_fresh_evaluators_use_explicit_session_depth() {
+    let session_rs = read_solver_source("evaluation/session.rs");
+    let infer_match_expansion_rs =
+        read_solver_source("evaluation/evaluate_rules/infer_match_expansion.rs");
+    let evaluate_rs = read_solver_source("evaluation/evaluate.rs");
+    let conditional_rs = read_solver_source("evaluation/evaluate_rules/conditional.rs");
+
+    assert!(
+        session_rs.contains("infer_match_expansion_depth: Cell<u32>")
+            && session_rs.contains("enter_infer_match_expansion_depth")
+            && session_rs.contains("InferMatchExpansionDepthEntry")
+            && evaluate_rs.contains("eval_session: Option<&'a EvaluationSession>")
+            && evaluate_rs.contains("with_evaluation_session")
+            && infer_match_expansion_rs.contains("session.enter_infer_match_expansion_depth()")
+            && infer_match_expansion_rs.contains(".with_evaluation_session(session)")
+            && conditional_rs.contains("checker = checker.with_evaluation_session(session)")
+            && !infer_match_expansion_rs.contains("thread_local!")
+            && !infer_match_expansion_rs.contains("INFER_MATCH_EXPANSION_DEPTH"),
+        "infer-match fresh evaluators must route expansion depth through the owning EvaluationSession instead of a module-local thread-local counter"
+    );
+}
+
+#[test]
 fn subtype_reduction_cache_keeps_bct_request_boundary() {
     let cache_rs = read_solver_source("caches/subtype_reduction_cache.rs");
     let expression_ops_rs = read_solver_source("operations/expression_ops.rs");

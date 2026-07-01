@@ -71,7 +71,8 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             type_id,
             no_unchecked_indexed_access,
             || {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver);
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver)
+                    .with_evaluation_session(session);
                 if let Some(db) = self.query_db {
                     evaluator = evaluator.with_query_db(db);
                 }

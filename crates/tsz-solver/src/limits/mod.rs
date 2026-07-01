@@ -40,6 +40,7 @@
 //! | Conditional tail-recursion loop (`evaluation/evaluate_rules/conditional.rs`) | [`MAX_TAIL_RECURSION_DEPTH`] = 1000 | `getConditionalType` `tailCount` 1000 (exact parity) | `TS2589` + `ERROR` | tail-recursive conditional tests |
 //! | Cross-evaluator stack depth, thread-local (this module) | [`MAX_GLOBAL_EVAL_DEPTH`] = 200 live frames | none (fresh-instance artifact) | silent opaque bail (`mark_silent_depth_bailed`) | deep `implements` chains |
 //! | Conditional subtype relation depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CONDITIONAL_SUBTYPE_DEPTH`] = 50 re-entrant branch probes | `instantiationDepth` adjacent | conservative false, not published to branch cache | recursive conditional subtype probes |
+//! | Infer-match fresh-evaluator expansion depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_INFER_MATCH_EXPANSION_DEPTH`] = 100 nested expansions | `instantiationDepth` | leave source/pattern opaque and skip infer expansion | recursive conditional/`infer` wrappers |
 //! | Per-query eval op budget, thread-local (this module) | [`DEFAULT_MAX_EVAL_OPS_PER_QUERY`] = 2M ops per top-level query (`TSZ_MAX_EVAL_OPS` override) | `instantiationCount` (5M) per checked element | silent opaque bail | `Unbox`/`Awaited` runaway tests (`query_budget`) |
 //! | Per-file evaluation fuel, thread-local (this module) | [`MAX_EVALUATION_FUEL`] = 2M, sampled every [`EVAL_FUEL_CHECK_INTERVAL`] = 128 guard iterations | `instantiationCount` (5M; tsz lower because eager expansion is heavier) | `TS2589`-style `ERROR` bail | ts-toolbelt corpus, #13172/#13181 |
 //! | `TypeInstantiator.depth` per-instance (`instantiation/instantiate.rs`) | [`MAX_TYPE_SUBSTITUTION_DEPTH`] = 50 | `instantiateType` recursion (tsc `instantiationDepth` = 100; see note below) | sticky `depth_exceeded`, returns input type opaque | recursive generic instantiation tests |
@@ -164,6 +165,12 @@ pub(crate) const MAX_GLOBAL_EVAL_DEPTH: u32 = 200;
 /// session. Exhaustion conservatively treats the relation as false and marks
 /// the result budget-bounded so it is not published to the branch cache.
 pub(crate) const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = 50;
+
+/// Maximum cross-evaluator nesting for infer-match sub-evaluator expansion.
+/// Mirrors tsc's `instantiationDepth` cutoff: beyond this nesting, tsz leaves
+/// the source or pattern unchanged instead of recursing through another fresh
+/// evaluator with empty per-instance guards.
+pub(crate) const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
 
 /// Total `evaluate` operations permitted for a single top-level evaluation
 /// query (the outermost `evaluate` call on the thread, before it returns).
