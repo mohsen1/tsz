@@ -34,6 +34,35 @@ use crate::visitor::{
 /// pass in PR #13176.
 pub(crate) const EXPLAIN_EVAL_BUDGET: u32 = 16_000;
 
+/// Reorder a source union's members into tsc's relation-iteration order for
+/// error elaboration.
+///
+/// `eachTypeRelatedToType` walks `source.types` in ascending type-id order, and
+/// the intrinsic `undefined` and `null` types are allocated before any user
+/// type — so tsc examines them first and elaborates a failing nullish member
+/// ahead of the others. tsz stores union members with `undefined`/`null` last
+/// (that is tsc's *printer* order, keyed by `builtin_sort_key`), so this
+/// restores the relation order used to pick the first failing member:
+/// `undefined`, then `null`, then the remaining members unchanged. Non-nullish
+/// unions keep their stored order, which already matches tsc's relation order.
+fn reorder_union_members_nullish_first(members: &[TypeId]) -> Vec<TypeId> {
+    let mut ordered = Vec::with_capacity(members.len());
+    // `undefined` before `null` (their intrinsic allocation order), then the
+    // remaining members in their stored order.
+    for nullish in [TypeId::UNDEFINED, TypeId::NULL] {
+        if members.contains(&nullish) {
+            ordered.push(nullish);
+        }
+    }
+    ordered.extend(
+        members
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::UNDEFINED && m != TypeId::NULL),
+    );
+    ordered
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Array element type, transparently peeling a single `readonly` array
     /// wrapper (`readonly T[]` / `ReadonlyArray<T>`).
@@ -1201,7 +1230,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
         if let Some(member_list) = union_member_list {
             let members = self.interner.type_list(member_list);
-            for &member in members.iter() {
+            // Pick the first failing member in tsc's *relation* order (nullish
+            // first), not tsz's stored *printer* order (nullish last) — see
+            // `reorder_union_members_nullish_first`. Example: `number | undefined`
+            // -> `string` drills the `undefined` member, matching tsc.
+            let ordered = reorder_union_members_nullish_first(&members);
+            for &member in ordered.iter() {
                 if member == source || member == union_member_source {
                     // Defensive: avoid self-recursion on a degenerate union.
                     continue;
