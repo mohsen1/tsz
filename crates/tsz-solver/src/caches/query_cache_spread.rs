@@ -8,6 +8,14 @@
 use super::*;
 use crate::types::Visibility;
 
+const fn merge_intersection_visibility(a: Visibility, b: Visibility) -> Visibility {
+    match (a, b) {
+        (Visibility::Private, _) | (_, Visibility::Private) => Visibility::Private,
+        (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+        (Visibility::Protected, Visibility::Protected) => Visibility::Protected,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ObjectSpreadVisitState {
     Entered,
@@ -178,6 +186,10 @@ impl QueryCache<'_> {
         spread_type: TypeId,
         traversal: &mut ObjectSpreadTraversalState,
     ) -> Vec<PropertyInfo> {
+        if let Some(origin) = self.interner.get_merged_intersection_origin(spread_type) {
+            return self.collect_intersection_spread_properties(origin, traversal);
+        }
+
         let normalized =
             self.evaluate_type_with_options(spread_type, self.no_unchecked_indexed_access());
 
@@ -198,7 +210,10 @@ impl QueryCache<'_> {
         let props = match key {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 if let Some(display_props) = self.interner.get_display_properties(normalized) {
-                    display_props.as_ref().clone()
+                    spread_semantic_properties_in_display_order(
+                        self.interner.object_shape(shape_id).properties.clone(),
+                        display_props.as_ref(),
+                    )
                 } else {
                     let mut props = self.interner.object_shape(shape_id).properties.clone();
                     crate::types::normalize_display_property_order(&mut props);
@@ -209,22 +224,7 @@ impl QueryCache<'_> {
                 self.interner.callable_shape(shape_id).properties.clone()
             }
             TypeData::Intersection(members_id) => {
-                let members = self.interner.type_list(members_id);
-                let mut positions: FxHashMap<Atom, usize> = FxHashMap::default();
-                let mut merged: Vec<PropertyInfo> = Vec::new();
-
-                for &member in members.iter() {
-                    for prop in self.collect_object_spread_properties_inner(member, traversal) {
-                        if let Some(&idx) = positions.get(&prop.name) {
-                            merged[idx] = prop;
-                        } else {
-                            positions.insert(prop.name, merged.len());
-                            merged.push(prop);
-                        }
-                    }
-                }
-
-                merged
+                self.collect_spread_properties_from_members(members_id, traversal)
             }
             TypeData::Union(members_id) => {
                 let members = self.interner.type_list(members_id);
@@ -330,6 +330,106 @@ impl QueryCache<'_> {
         traversal.leave(normalized);
         result
     }
+
+    fn collect_intersection_spread_properties(
+        &self,
+        intersection: TypeId,
+        traversal: &mut ObjectSpreadTraversalState,
+    ) -> Vec<PropertyInfo> {
+        let Some(TypeData::Intersection(members_id)) = self.interner.lookup(intersection) else {
+            return Vec::new();
+        };
+        self.collect_spread_properties_from_members(members_id, traversal)
+    }
+
+    fn collect_spread_properties_from_members(
+        &self,
+        members_id: crate::types::TypeListId,
+        traversal: &mut ObjectSpreadTraversalState,
+    ) -> Vec<PropertyInfo> {
+        let members = self.interner.type_list(members_id);
+        let mut positions: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut merged: Vec<PropertyInfo> = Vec::new();
+
+        for &member in members.iter() {
+            for prop in self.collect_object_spread_properties_inner(member, traversal) {
+                if let Some(&idx) = positions.get(&prop.name) {
+                    let existing = &mut merged[idx];
+                    let existing_is_accessor = existing.write_type != TypeId::NONE
+                        && existing.write_type != existing.type_id;
+                    let prop_is_accessor =
+                        prop.write_type != TypeId::NONE && prop.write_type != prop.type_id;
+                    if existing.type_id != prop.type_id {
+                        let lhs = if existing.optional && !prop.optional {
+                            self.interner.union2(existing.type_id, TypeId::UNDEFINED)
+                        } else {
+                            existing.type_id
+                        };
+                        let rhs = if prop.optional && !existing.optional {
+                            self.interner.union2(prop.type_id, TypeId::UNDEFINED)
+                        } else {
+                            prop.type_id
+                        };
+                        existing.type_id = self.interner.intersect_types_raw2(lhs, rhs);
+                    }
+                    existing.optional = existing.optional && prop.optional;
+                    existing.readonly = existing.readonly && prop.readonly;
+                    if existing_is_accessor || prop_is_accessor {
+                        if existing.write_type != prop.write_type && prop.write_type != TypeId::NONE
+                        {
+                            if existing.write_type == TypeId::NONE {
+                                existing.write_type = prop.write_type;
+                            } else {
+                                existing.write_type = self
+                                    .interner
+                                    .intersection2(existing.write_type, prop.write_type);
+                            }
+                        }
+                    } else if existing.readonly {
+                        existing.write_type = self
+                            .interner
+                            .intersect_types_raw2(existing.write_type, prop.write_type);
+                    } else {
+                        existing.write_type = existing.type_id;
+                    }
+                    existing.visibility =
+                        merge_intersection_visibility(existing.visibility, prop.visibility);
+                } else {
+                    positions.insert(prop.name, merged.len());
+                    merged.push(prop);
+                }
+            }
+        }
+
+        merged
+    }
+}
+
+fn spread_semantic_properties_in_display_order(
+    semantic_props: Vec<PropertyInfo>,
+    display_props: &[PropertyInfo],
+) -> Vec<PropertyInfo> {
+    let mut positions: FxHashMap<Atom, usize> = FxHashMap::default();
+    for (idx, prop) in semantic_props.iter().enumerate() {
+        positions.insert(prop.name, idx);
+    }
+
+    let mut used = vec![false; semantic_props.len()];
+    let mut ordered = Vec::with_capacity(semantic_props.len());
+    for display_prop in display_props {
+        if let Some(&idx) = positions.get(&display_prop.name)
+            && !used[idx]
+        {
+            ordered.push(semantic_props[idx].clone());
+            used[idx] = true;
+        }
+    }
+    for (idx, prop) in semantic_props.into_iter().enumerate() {
+        if !used[idx] {
+            ordered.push(prop);
+        }
+    }
+    ordered
 }
 
 #[cfg(test)]
