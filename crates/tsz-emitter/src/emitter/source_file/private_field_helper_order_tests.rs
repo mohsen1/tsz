@@ -287,6 +287,93 @@ class A {
 }
 
 #[test]
+fn es5_getter_only_private_accessor_omits_setter_helper() {
+    // A getter-only private accessor lowered for ES5 must reserve only the
+    // getter helper var. `tsc` never mints a `_set` helper for an accessor that
+    // has no setter; a spurious `var ..., _X_size_set` is a dead binding.
+    let source = r#"
+class Widget {
+    #v = 1;
+    get #size() { return this.#v; }
+    probe() { return this.#size; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("_Widget_size_get"),
+        "getter-only private accessor should reserve its getter helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_Widget_size_set"),
+        "getter-only private accessor must not reserve a dead setter helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_setter_only_private_accessor_omits_getter_helper() {
+    // Symmetric to the getter-only case: a setter-only private accessor reserves
+    // only the setter helper var, never a dead `_get`.
+    let source = r#"
+class Gauge {
+    #v = 0;
+    set #level(n: number) { this.#v = n; }
+    probe(n: number) { this.#level = n; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("_Gauge_level_set"),
+        "setter-only private accessor should reserve its setter helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_Gauge_level_get"),
+        "setter-only private accessor must not reserve a dead getter helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_set_before_get_private_accessor_reserves_and_inits_setter_first() {
+    // When the setter is written before the getter in source, `tsc` reserves and
+    // initializes the `_set` helper before `_get` (source order), not a fixed
+    // get-before-set order.
+    let source = r#"
+class Meter {
+    #v = 0;
+    set #value(n: number) { this.#v = n; }
+    get #value() { return this.#v; }
+    probe() { this.#value = 2; return this.#value; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES5);
+
+    let decl_set = output
+        .find("_Meter_value_set,")
+        .or_else(|| output.find("_Meter_value_set;"))
+        .unwrap_or_else(|| panic!("expected setter helper declaration\n{output}"));
+    let decl_get = output
+        .find("_Meter_value_get,")
+        .or_else(|| output.find("_Meter_value_get;"))
+        .unwrap_or_else(|| panic!("expected getter helper declaration\n{output}"));
+    assert!(
+        decl_set < decl_get,
+        "set-before-get accessor should declare the setter helper first.\nOutput:\n{output}"
+    );
+
+    let init_set = output
+        .find("_Meter_value_set = function")
+        .unwrap_or_else(|| panic!("expected setter helper init\n{output}"));
+    let init_get = output
+        .find("_Meter_value_get = function")
+        .unwrap_or_else(|| panic!("expected getter helper init\n{output}"));
+    assert!(
+        init_set < init_get,
+        "set-before-get accessor should initialize the setter helper first.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn private_async_helpers_downlevel_for_es2015_but_preserve_native_for_es2019() {
     let source = r#"
 class A {

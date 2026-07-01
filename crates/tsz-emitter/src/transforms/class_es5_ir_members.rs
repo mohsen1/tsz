@@ -459,7 +459,6 @@ impl<'a> ES5ClassTransformer<'a> {
             decls.push(alias.clone());
         }
 
-        let mut emitted_accessor_entries: FxHashSet<usize> = FxHashSet::default();
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -484,20 +483,22 @@ impl<'a> ES5ClassTransformer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    if let Some((entry_idx, accessor)) = self
+                    // Declare each accessor's helper var at its own source
+                    // position, so a `set`-before-`get` pair declares `_set`
+                    // first and a getter-only/setter-only accessor declares only
+                    // the var it owns — matching `tsc`.
+                    if let Some(accessor) = self
                         .private_accessors
                         .iter()
-                        .enumerate()
-                        .find(|(_, accessor)| accessor.member_indices.contains(&member_idx))
+                        .find(|accessor| accessor.member_indices.contains(&member_idx))
                     {
-                        if !emitted_accessor_entries.insert(entry_idx) {
-                            continue;
-                        }
-                        if let Some(get_var) = accessor.get_var_name.as_ref() {
-                            decls.push(get_var.clone());
-                        }
-                        if let Some(set_var) = accessor.set_var_name.as_ref() {
-                            decls.push(set_var.clone());
+                        let var = if k == syntax_kind_ext::GET_ACCESSOR {
+                            accessor.get_var_name.as_ref()
+                        } else {
+                            accessor.set_var_name.as_ref()
+                        };
+                        if let Some(var) = var {
+                            decls.push(var.clone());
                         }
                     }
                 }
@@ -515,46 +516,58 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
         for accessor in &self.private_accessors {
-            if let Some(get_var) = accessor.get_var_name.as_ref()
-                && let Some(getter_idx) = accessor.getter_body.and_then(|_| {
-                    accessor.member_indices.iter().copied().find(|&idx| {
-                        self.arena
-                            .get(idx)
-                            .is_some_and(|node| node.kind == syntax_kind_ext::GET_ACCESSOR)
-                    })
-                })
-                && let Some(mut function) = if accessor.is_static {
-                    self.build_getter_function_ir_static(getter_idx)
+            // Initialize each accessor's helper at its own source position by
+            // walking the members in source order, so a `set`-before-`get` pair
+            // assigns `_set` first, matching `tsc`.
+            for &member_idx in &accessor.member_indices {
+                let Some(node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let init = if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    self.private_accessor_init_string(accessor, member_idx, true)
+                } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
+                    self.private_accessor_init_string(accessor, member_idx, false)
                 } else {
-                    self.build_getter_function_ir(getter_idx)
-                }
-            {
-                if let IRNode::FunctionExpr { name, .. } = &mut function {
-                    *name = Some(get_var.clone().into());
-                }
-                inits.push(self.private_assignment_string(get_var, function));
-            }
-            if let Some(set_var) = accessor.set_var_name.as_ref()
-                && let Some(setter_idx) = accessor.setter_body.and_then(|_| {
-                    accessor.member_indices.iter().copied().find(|&idx| {
-                        self.arena
-                            .get(idx)
-                            .is_some_and(|node| node.kind == syntax_kind_ext::SET_ACCESSOR)
-                    })
-                })
-                && let Some(mut function) = if accessor.is_static {
-                    self.build_setter_function_ir_static(setter_idx)
-                } else {
-                    self.build_setter_function_ir(setter_idx)
-                }
-            {
-                if let IRNode::FunctionExpr { name, .. } = &mut function {
-                    *name = Some(set_var.clone().into());
-                }
-                inits.push(self.private_assignment_string(set_var, function));
+                    None
+                };
+                inits.extend(init);
             }
         }
         inits
+    }
+
+    /// Build the `_C_x_get = function ...` / `_C_x_set = function ...` helper
+    /// initializer for a single private accessor member, or `None` when the
+    /// accessor has no body to lower or its helper var was not reserved.
+    fn private_accessor_init_string(
+        &self,
+        accessor: &crate::transforms::private_fields_es5::PrivateAccessorInfo,
+        member_idx: NodeIndex,
+        is_getter: bool,
+    ) -> Option<String> {
+        // A helper is emitted only when its var was reserved and the accessor
+        // has a body to lower.
+        let var = if is_getter {
+            accessor
+                .get_var_name
+                .as_ref()
+                .filter(|_| accessor.getter_body.is_some())?
+        } else {
+            accessor
+                .set_var_name
+                .as_ref()
+                .filter(|_| accessor.setter_body.is_some())?
+        };
+        let mut function = match (is_getter, accessor.is_static) {
+            (true, true) => self.build_getter_function_ir_static(member_idx),
+            (true, false) => self.build_getter_function_ir(member_idx),
+            (false, true) => self.build_setter_function_ir_static(member_idx),
+            (false, false) => self.build_setter_function_ir(member_idx),
+        }?;
+        if let IRNode::FunctionExpr { name, .. } = &mut function {
+            *name = Some(var.clone().into());
+        }
+        Some(self.private_assignment_string(var, function))
     }
 
     pub(super) fn static_private_field_init_strings(&self) -> Vec<String> {
