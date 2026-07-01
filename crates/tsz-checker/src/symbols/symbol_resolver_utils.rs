@@ -1626,6 +1626,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    let authoritative_symbol_exists = self
+                        .ctx
+                        .resolve_symbol_file_index(sym_id)
+                        .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                        .and_then(|binder| binder.get_symbol(sym_id))
+                        .is_some_and(|symbol| symbol.escaped_name == ident.escaped_text);
                     // A same-arena NodeIndex may resolve to a namespace-local type
                     // whose bare name collides with a lib global (`Promise`, etc.).
                     // Only canonicalize to the lib DefId when the resolved symbol
@@ -1633,6 +1639,7 @@ impl<'a> CheckerState<'a> {
                     if !self
                         .ctx
                         .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && !authoritative_symbol_exists
                         && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
                             || self.ctx.symbol_is_from_lib(sym_id))
                         && let Some(def_id) =

@@ -1710,6 +1710,45 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if is_compiler_managed_type(name) && !self.ctx.file_local_type_shadow_for_lib_name(name) {
+            let scoped_shadow = self.ctx.binder.resolve_identifier_with_filter(
+                self.ctx.arena,
+                node_idx,
+                &[],
+                |candidate| {
+                    let Some(symbol) = self.ctx.binder.get_symbol(candidate) else {
+                        return false;
+                    };
+                    if symbol.escaped_name != name {
+                        return false;
+                    }
+                    let is_typeish = symbol.has_any_flags(
+                        symbol_flags::TYPE
+                            | symbol_flags::ALIAS
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM,
+                    );
+                    if !is_typeish {
+                        return false;
+                    }
+                    let file_local = self.ctx.binder.file_locals.get(name) == Some(candidate);
+                    let lib_like_file_local = file_local
+                        && !symbol.has_any_flags(symbol_flags::ALIAS)
+                        && (self.ctx.symbol_is_from_lib(candidate)
+                            || symbol.decl_file_idx == u32::MAX);
+                    !lib_like_file_local
+                },
+            );
+            if let Some(sym_id) = scoped_shadow {
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                if let Some(target_sym_id) = self.resolve_import_alias_type_target_symbol(sym_id) {
+                    return Some(target_sym_id.0);
+                }
+                if symbol.has_any_flags(
+                    symbol_flags::TYPE | symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM,
+                ) {
+                    return Some(sym_id.0);
+                }
+            }
             return None;
         }
 

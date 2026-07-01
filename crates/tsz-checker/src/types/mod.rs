@@ -22,6 +22,7 @@ pub mod type_node;
 mod type_node_advanced;
 mod type_node_cache_policy;
 mod type_node_context;
+mod type_node_declared_params;
 pub(crate) mod type_node_helpers;
 mod type_node_lowering;
 mod type_node_merged_value_query;

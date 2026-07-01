@@ -21,8 +21,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             {
                 return None;
             }
-            if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                || self.ctx.symbol_is_from_lib(sym_id)
+            let authoritative_symbol_exists = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.escaped_name == ident.escaped_text);
+            if (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id))
+                && !authoritative_symbol_exists
             {
                 self.ctx
                     .get_canonical_lib_def_id(ident.escaped_text.as_str(), sym_id)

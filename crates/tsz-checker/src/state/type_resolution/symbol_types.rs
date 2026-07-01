@@ -37,7 +37,11 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
+        let registered_non_import_symbol = self
+            .get_symbol_from_registered_file_target(sym_id)
+            .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
         let symbol_meta = local_alias_symbol
+            .or(registered_non_import_symbol)
             .or(current_non_import_symbol)
             .or_else(|| self.get_cross_file_symbol(sym_id))
             .map(|symbol| {
@@ -397,6 +401,8 @@ impl<'a> CheckerState<'a> {
                 });
                 // Return structural type directly for type aliases (not Lazy) so
                 // conditional types are fully resolved during assignability checking.
+                let shadows_file_local_lib_type =
+                    self.symbol_shadows_file_local_lib_type(sym_id, escaped_name);
                 let mut structural_type =
                     if self
                         .ctx
@@ -412,6 +418,8 @@ impl<'a> CheckerState<'a> {
                     {
                         delegate_type
                     } else if alias_body_is_keyof_type_query {
+                        self.type_reference_symbol_type_with_params(sym_id).0
+                    } else if shadows_file_local_lib_type {
                         self.type_reference_symbol_type_with_params(sym_id).0
                     } else {
                         self.get_type_of_symbol(sym_id)
@@ -1160,13 +1168,13 @@ impl<'a> CheckerState<'a> {
             return (self.ctx.create_lazy_type_ref(sym_id), Vec::new());
         };
 
-        let local_alias_symbol = self
+        let has_local_alias_symbol = self
             .ctx
             .binder
             .get_symbol(sym_id)
-            .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
 
-        if local_alias_symbol.is_none()
+        if !has_local_alias_symbol
             && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
         {
@@ -1180,7 +1188,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+        let symbol_for_type_reference = {
+            let local_alias_symbol = self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+            let registered_non_import_symbol = self
+                .get_symbol_from_registered_file_target(sym_id)
+                .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
+            local_alias_symbol
+                .or(registered_non_import_symbol)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+                .cloned()
+        };
+
+        if let Some(symbol) = symbol_for_type_reference.as_ref() {
             tracing::debug!(
                 sym_id = sym_id.0,
                 name = %symbol.escaped_name,
@@ -1191,7 +1215,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+        if let Some(symbol) = symbol_for_type_reference {
             if symbol.has_any_flags(symbol_flags::ALIAS) {
                 if self
                     .ctx

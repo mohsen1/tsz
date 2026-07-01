@@ -1013,18 +1013,49 @@ impl<'a> CheckerState<'a> {
         // PERF: Use the cached resolve_identifier (which caches results per (arena, node_idx))
         // instead of resolve_identifier_with_filter which is uncached.
         let name_in_local_scope = if !ignore_libs {
-            self.ctx
-                .binder
-                .resolve_identifier(self.ctx.arena, idx)
-                .is_some_and(|found_sym_id| {
-                    // Check if this symbol is different from the file_locals symbol.
-                    // If it's different, it was found in a more local scope (namespace, etc.)
-                    let found_in_file_locals =
-                        self.ctx.binder.file_locals.get(name) == Some(found_sym_id);
-                    !found_in_file_locals
-                        || (self.ctx.binder.is_external_module()
-                            && !self.ctx.symbol_is_from_lib(found_sym_id))
-                })
+            let scoped_type_shadow = self.ctx.binder.resolve_identifier_with_filter(
+                self.ctx.arena,
+                idx,
+                &[],
+                |candidate| {
+                    let Some(symbol) = self.ctx.binder.get_symbol(candidate) else {
+                        return false;
+                    };
+                    if symbol.escaped_name.as_str() != name {
+                        return false;
+                    }
+                    let file_local = self.ctx.binder.file_locals.get(name) == Some(candidate);
+                    let lib_like_file_local = file_local
+                        && !symbol.has_any_flags(symbol_flags::ALIAS)
+                        && (self.ctx.symbol_is_from_lib(candidate)
+                            || symbol.decl_file_idx == u32::MAX);
+                    if lib_like_file_local {
+                        return false;
+                    }
+                    symbol.has_any_flags(
+                        symbol_flags::TYPE
+                            | symbol_flags::ALIAS
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE,
+                    )
+                },
+            );
+            scoped_type_shadow.is_some()
+                || self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, idx)
+                    .is_some_and(|found_sym_id| {
+                        // Check if this symbol is different from the file_locals symbol.
+                        // If it's different, it was found in a more local scope (namespace, etc.)
+                        let found_in_file_locals =
+                            self.ctx.binder.file_locals.get(name) == Some(found_sym_id);
+                        !found_in_file_locals
+                            || (self.ctx.binder.is_external_module()
+                                && !self.ctx.symbol_is_from_lib(found_sym_id))
+                    })
         } else {
             false
         };
@@ -1708,12 +1739,39 @@ impl<'a> CheckerState<'a> {
         if let Some(node) = self.ctx.arena.get(idx)
             && let Some(ident) = self.ctx.arena.get_identifier(node)
         {
-            if is_compiler_managed_type(ident.escaped_text.as_str()) {
-                let shadows_compiler_managed_type =
-                    matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
-                        && self
-                            .ctx
-                            .file_local_type_shadow_for_lib_name(ident.escaped_text.as_str());
+            let name = ident.escaped_text.as_str();
+            if is_compiler_managed_type(name) {
+                let scoped_shadow = self.ctx.binder.resolve_identifier_with_filter(
+                    self.ctx.arena,
+                    idx,
+                    &[],
+                    |candidate| {
+                        let Some(symbol) = self.ctx.binder.get_symbol(candidate) else {
+                            return false;
+                        };
+                        if symbol.escaped_name.as_str() != name {
+                            return false;
+                        }
+                        let typeish = symbol.has_any_flags(
+                            symbol_flags::TYPE
+                                | symbol_flags::ALIAS
+                                | symbol_flags::REGULAR_ENUM
+                                | symbol_flags::CONST_ENUM,
+                        );
+                        if !typeish {
+                            return false;
+                        }
+                        let file_local = self.ctx.binder.file_locals.get(name) == Some(candidate);
+                        let lib_like_file_local = file_local
+                            && !symbol.has_any_flags(symbol_flags::ALIAS)
+                            && (self.ctx.symbol_is_from_lib(candidate)
+                                || symbol.decl_file_idx == u32::MAX);
+                        !lib_like_file_local
+                    },
+                );
+                let shadows_compiler_managed_type = (matches!(name, "Array" | "ReadonlyArray")
+                    && self.ctx.file_local_type_shadow_for_lib_name(name))
+                    || scoped_shadow.is_some();
                 if !shadows_compiler_managed_type {
                     return None;
                 }

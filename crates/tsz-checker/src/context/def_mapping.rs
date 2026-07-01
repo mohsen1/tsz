@@ -371,57 +371,85 @@ impl CheckerContext<'_> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> DefId {
+        let authoritative_file_idx = self.resolve_symbol_file_index(sym_id);
+        let authoritative_symbol = authoritative_file_idx
+            .and_then(|file_idx| self.get_binder_for_file(file_idx))
+            .and_then(|binder| binder.get_symbol(sym_id))
+            .filter(|symbol| symbol.escaped_name == expected_name);
+        let authoritative_symbol_exists = authoritative_symbol.is_some();
         let cached_def_id = self.symbol_to_def.borrow().get(&sym_id).copied();
         if let Some(def_id) = cached_def_id {
-            if self
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+            let cached_matches_authoritative_decl = if let (Some(file_idx), Some(symbol)) =
+                (authoritative_file_idx, authoritative_symbol)
             {
+                self.definition_store.get(def_id).is_some_and(|info| {
+                    self.def_info_matches_symbol_declaration(
+                        &info,
+                        sym_id,
+                        symbol,
+                        file_idx as u32,
+                        expected_name,
+                    )
+                })
+            } else {
+                self.definition_store.get(def_id).is_some_and(|info| {
+                    self.types.resolve_atom(info.name) == expected_name
+                        && authoritative_file_idx.is_none_or(|file_idx| {
+                            let file_idx = file_idx as u32;
+                            self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
+                                == Some(def_id)
+                                || info.file_id == Some(file_idx)
+                        })
+                })
+            };
+            if cached_matches_authoritative_decl {
                 return def_id;
             }
 
-            if let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
-                lib_ctx
-                    .binder
-                    .file_locals
-                    .get(expected_name)
-                    .filter(|&candidate| candidate != sym_id)
-                    .filter(|&candidate| {
-                        lib_ctx
-                            .binder
-                            .get_symbol(candidate)
-                            .is_some_and(|symbol| symbol.escaped_name == expected_name)
-                    })
-            }) {
+            if !authoritative_symbol_exists
+                && let Some(lib_sym_id) = self.lib_contexts.iter().find_map(|lib_ctx| {
+                    lib_ctx
+                        .binder
+                        .file_locals
+                        .get(expected_name)
+                        .filter(|&candidate| candidate != sym_id)
+                        .filter(|&candidate| {
+                            lib_ctx
+                                .binder
+                                .get_symbol(candidate)
+                                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+                        })
+                })
+            {
                 return self.get_canonical_lib_def_id(expected_name, lib_sym_id);
             }
         }
 
-        let matching_symbol = self
-            .binder
-            .symbols
-            .get(sym_id)
-            .filter(|symbol| symbol.escaped_name == expected_name)
-            .or_else(|| {
-                self.lib_contexts.iter().find_map(|lib_ctx| {
-                    lib_ctx
-                        .binder
-                        .symbols
-                        .get(sym_id)
-                        .filter(|symbol| symbol.escaped_name == expected_name)
-                })
-            })
-            .or_else(|| {
-                self.all_binders.as_ref().and_then(|binders| {
-                    binders.iter().find_map(|binder| {
-                        binder
+        let matching_symbol = authoritative_symbol.or_else(|| {
+            self.binder
+                .symbols
+                .get(sym_id)
+                .filter(|symbol| symbol.escaped_name == expected_name)
+                .or_else(|| {
+                    self.lib_contexts.iter().find_map(|lib_ctx| {
+                        lib_ctx
+                            .binder
                             .symbols
                             .get(sym_id)
                             .filter(|symbol| symbol.escaped_name == expected_name)
                     })
                 })
-            });
+                .or_else(|| {
+                    self.all_binders.as_ref().and_then(|binders| {
+                        binders.iter().find_map(|binder| {
+                            binder
+                                .symbols
+                                .get(sym_id)
+                                .filter(|symbol| symbol.escaped_name == expected_name)
+                        })
+                    })
+                })
+        });
 
         let Some(symbol) = matching_symbol else {
             return self.get_or_create_def_id(sym_id);
@@ -478,10 +506,15 @@ impl CheckerContext<'_> {
             symbol.decl_file_idx
         };
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
-            && self
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+            && self.definition_store.get(def_id).is_some_and(|info| {
+                self.def_info_matches_symbol_declaration(
+                    &info,
+                    sym_id,
+                    symbol,
+                    file_idx,
+                    expected_name,
+                )
+            })
         {
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);

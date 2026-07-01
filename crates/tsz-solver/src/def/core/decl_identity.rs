@@ -33,6 +33,20 @@ impl DefinitionStore {
         DeclSiteKey::from_info(info)
     }
 
+    pub(super) fn find_decl_site_def_for_info(&self, info: &DefinitionInfo) -> Option<DefId> {
+        DeclSiteKey::from_info(info)
+            .and_then(|key| self.decl_site_to_def.get(&key).map(|entry| *entry))
+    }
+
+    pub(super) fn infos_have_same_decl_site(
+        existing: &DefinitionInfo,
+        incoming: &DefinitionInfo,
+    ) -> bool {
+        DeclSiteKey::from_info(existing)
+            .zip(DeclSiteKey::from_info(incoming))
+            .is_some_and(|(existing, incoming)| existing == incoming)
+    }
+
     pub(super) fn register_decl_site_identity(&self, def_id: DefId, info: &DefinitionInfo) {
         if let Some(key) = DeclSiteKey::from_info(info) {
             self.decl_site_to_def.entry(key).or_insert(def_id);
