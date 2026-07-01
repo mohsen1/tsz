@@ -144,6 +144,156 @@ fn plain_async_generator_does_not_register_delegate_helpers() {
     );
 }
 
+/// Assert the four async-iteration helper definitions emit in the order used
+/// when a plain `yield`/`await` is reached before the delegating `yield*`:
+/// `__await`, `__asyncValues`, `__asyncDelegator`, `__asyncGenerator`.
+fn assert_delegate_helpers_await_first(output: &str) {
+    for def in [
+        ASYNC_VALUES_DEF,
+        ASYNC_DELEGATOR_DEF,
+        AWAIT_DEF,
+        ASYNC_GENERATOR_DEF,
+    ] {
+        assert!(
+            output.contains(def),
+            "missing helper definition `{def}`.\nOutput:\n{output}"
+        );
+    }
+    let i_await = output.find(AWAIT_DEF).unwrap();
+    let i_values = output.find(ASYNC_VALUES_DEF).unwrap();
+    let i_delegator = output.find(ASYNC_DELEGATOR_DEF).unwrap();
+    let i_async_gen = output.find(ASYNC_GENERATOR_DEF).unwrap();
+    assert!(
+        i_await < i_values && i_values < i_delegator && i_delegator < i_async_gen,
+        "when a plain yield/await precedes the delegating yield*, async-iteration \
+         helpers must emit in tsc order (__await, __asyncValues, __asyncDelegator, \
+         __asyncGenerator).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn plain_yield_before_delegating_yield_star_puts_await_first_es2015() {
+    // `yield 1` is lowered to `yield yield __await(1)`, which requests `__await`
+    // before the later `yield* g` requests `__asyncValues`, so `tsc` emits
+    // `__await` first. (Mirror of the `yield*`-first case, which is __asyncValues
+    // first.) The decision is source-order structural, not identifier-based.
+    let output = emit(
+        "export async function* f(g: AsyncIterable<number>) { yield 1; yield* g; }",
+        ScriptTarget::ES2015,
+    );
+    assert_delegate_helpers_await_first(&output);
+}
+
+#[test]
+fn plain_yield_before_delegating_yield_star_puts_await_first_es2017() {
+    let output = emit(
+        "export async function* f(g: AsyncIterable<number>) { yield 1; yield* g; }",
+        ScriptTarget::ES2017,
+    );
+    assert_delegate_helpers_await_first(&output);
+}
+
+#[test]
+fn plain_yield_before_delegating_yield_star_puts_await_first_es5() {
+    let output = emit(
+        "export async function* f(g: AsyncIterable<number>) { yield 1; yield* g; }",
+        ScriptTarget::ES5,
+    );
+    assert_delegate_helpers_await_first(&output);
+}
+
+#[test]
+fn await_nested_in_delegate_operand_puts_await_first() {
+    // `yield* wrap(await x)`: the `await` inside the delegate operand evaluates
+    // before the delegation, so `tsc` requests `__await` before `__asyncValues`
+    // even though the `yield*` token appears first in source.
+    let output = emit(
+        "declare function wrap(x: number): AsyncIterable<number>;\n\
+         export async function* f() { yield* wrap(await Promise.resolve(1)); }",
+        ScriptTarget::ES2015,
+    );
+    assert_delegate_helpers_await_first(&output);
+}
+
+#[test]
+fn bare_delegating_yield_star_puts_async_values_first() {
+    // No plain yield/await before the delegating `yield*`: `__asyncValues` leads.
+    let output = emit(
+        "export async function* f(g: AsyncIterable<number>) { yield* g; }",
+        ScriptTarget::ES2015,
+    );
+    assert_delegate_helpers_in_order(&output);
+}
+
+/// Assert `__asyncValues` is registered (needed for a `for await…of`) and, when
+/// present, ordered before `__asyncGenerator` — `tsc` emits its no-priority
+/// async-iteration helpers ahead of the generator wrapper in request order.
+fn assert_async_values_before_generator(output: &str) {
+    for def in [ASYNC_VALUES_DEF, AWAIT_DEF, ASYNC_GENERATOR_DEF] {
+        assert!(
+            output.contains(def),
+            "missing helper definition `{def}`.\nOutput:\n{output}"
+        );
+    }
+    let i_values = output.find(ASYNC_VALUES_DEF).unwrap();
+    let i_async_gen = output.find(ASYNC_GENERATOR_DEF).unwrap();
+    assert!(
+        i_values < i_async_gen,
+        "`for await…of` in an async generator must register __asyncValues before \
+         __asyncGenerator, not after it.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_of_in_async_generator_puts_async_values_first_es2017() {
+    // `for await` requests `__asyncValues` at loop setup, before the inner
+    // `yield` requests `__await`, so `tsc` leads with `__asyncValues`. (No
+    // `yield*`, so no `__asyncDelegator`.)
+    let output = emit(
+        "export async function* f(s: AsyncIterable<number>) { for await (const x of s) { yield x; } }",
+        ScriptTarget::ES2017,
+    );
+    assert_async_values_before_generator(&output);
+    let i_values = output.find(ASYNC_VALUES_DEF).unwrap();
+    let i_await = output.find(AWAIT_DEF).unwrap();
+    assert!(
+        i_values < i_await,
+        "for-await-of before any plain yield/await must lead with __asyncValues.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(ASYNC_DELEGATOR_DEF),
+        "for-await-of without a delegating yield* must not emit __asyncDelegator.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn plain_yield_before_for_await_of_puts_await_first_es2017() {
+    // A plain `yield` precedes the `for await`, so `__await` leads, but
+    // `__asyncValues` must still precede `__asyncGenerator`.
+    let output = emit(
+        "export async function* f(s: AsyncIterable<number>) { yield 0; for await (const x of s) { yield x; } }",
+        ScriptTarget::ES2017,
+    );
+    assert_async_values_before_generator(&output);
+    let i_await = output.find(AWAIT_DEF).unwrap();
+    let i_values = output.find(ASYNC_VALUES_DEF).unwrap();
+    assert!(
+        i_await < i_values,
+        "a plain yield before the for-await-of must lead with __await.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_of_before_delegating_yield_star_orders_all_four_helpers_es2017() {
+    // `for await` (asyncValues) reached first, then a delegating `yield*`
+    // (asyncDelegator): __asyncValues, __await, __asyncDelegator, __asyncGenerator.
+    let output = emit(
+        "export async function* f(s: AsyncIterable<number>) { for await (const x of s) { yield x; } yield* s; }",
+        ScriptTarget::ES2017,
+    );
+    assert_delegate_helpers_in_order(&output);
+}
+
 #[test]
 fn nested_sync_generators_yield_star_does_not_pull_async_delegate_helpers() {
     // The delegating `yield*` belongs to the inner *sync* generator, which uses
