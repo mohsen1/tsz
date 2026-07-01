@@ -406,6 +406,9 @@ mod local_type_alias_shadowing_tests;
 #[path = "tests/logical_assignment_member_narrowing_tests.rs"]
 mod logical_assignment_member_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/loop_self_referential_property_read_tests.rs"]
+mod loop_self_referential_property_read_tests;
+#[cfg(test)]
 #[path = "tests/member_assignment_narrowing_join_tests.rs"]
 mod member_assignment_narrowing_join_tests;
 #[cfg(test)]
