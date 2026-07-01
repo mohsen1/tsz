@@ -59,6 +59,11 @@ Hard rules:
 - Never run full conformance, emit, or fourslash locally. Use narrow filters;
   ready-review CI owns broad suites.
 - Use `cargo nextest run`, not `cargo test`.
+- Iterate on compile errors with `./tools/tszd/ra diag` (~1-2s warm
+  rust-analyzer, no cargo) and run the real `cargo check`/nextest once
+  `ra diag` is clean. A PreToolUse gate auto-answers cargo runs that would
+  fail; `RA_SKIP=1 cargo ...` bypasses it. `ra def/hover/refs/symbols`
+  navigate symbols without grepping. See the `tsz-fast-loop` skill.
 - Wrap long or memory-heavy commands with `scripts/safe-run.sh`.
 - Prefer not to checkout the full TypeScript submodule unless the specific
   task needs it.

@@ -56,7 +56,9 @@
       "Bash(env *)",
       "Bash(which *)",
       "Bash(rm *)",
-      "Task(**)"
+      "Task(**)",
+      "Bash(./tools/tszd/*)",
+      "Bash(tools/tszd/*)"
     ],
     "deny": [
       "Bash(rm -rf /)",
@@ -79,6 +81,15 @@
           {
             "type": "command",
             "command": "echo 'TSZ startup: run tsz-worktree-intake; read docs/plan/ROADMAP.md for the four goals (green, fast, grow, hold).'"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c '[ \"${TSZ_FAST_LOOP:-1}\" = 0 ] || ./tools/tszd/ra up >/dev/null 2>&1 || true'",
+            "async": true
           }
         ]
       }
@@ -105,7 +116,17 @@
         ]
       }
     ],
-    "PreToolUse": []
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 tools/tszd/cargo_gate.py"
+          }
+        ]
+      }
+    ]
   },
   "enabledPlugins": {
     "explanatory-output-style@claude-plugins-official": true,

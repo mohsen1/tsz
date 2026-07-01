@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""ra -- instant rust-analyzer diagnostics for tsz (client for tszd).
+
+Commands:
+  ra up               start the per-worktree daemon (idempotent, detached)
+  ra diag [--json]    numbered workspace diagnostics (~1-2s when warm)
+  ra explain <n>      diagnostic n with surrounding code
+  ra def <file> <line> <col>    jump to definition (1-based, from ra diag/grep -n)
+  ra hover <file> <line> <col>  type / signature / docs at a position
+  ra refs <file> <line> <col>   who uses this symbol (capped at 30)
+  ra symbols <query>  find a type/function by name across the workspace
+  ra scope [crate]    show / extend the analyzed crate set
+  ra stats            daemon + cargo-gate session stats
+  ra down             stop the daemon
+
+The daemon analyzes the crates you have CHANGED (vs origin/main) plus any
+`ra scope <crate>` additions. It never runs cargo: answers are rust-analyzer's
+native diagnostics -- the same errors `cargo check` would print, seconds sooner.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+STATE = ".tsz-ra"
+
+
+def find_ws() -> Path:
+    out = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit("ra: not inside a git worktree")
+    return Path(out.stdout.strip())
+
+
+def request(ws: Path, payload: dict, timeout: float = 90.0) -> dict | None:
+    addr = ws / STATE / "daemon.json"
+    if not addr.exists():
+        return None
+    try:
+        meta = json.loads(addr.read_text())
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        s.connect(meta["socket"])
+        s.sendall((json.dumps(payload) + "\n").encode())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = s.recv(1 << 16)
+            if not chunk:
+                break
+            buf += chunk
+        s.close()
+        return json.loads(buf.split(b"\n", 1)[0]) if buf else None
+    except (OSError, json.JSONDecodeError, KeyError):
+        return None
+
+
+def up(ws: Path, quiet: bool = False) -> bool:
+    if request(ws, {"cmd": "ping"}, timeout=3):
+        if not quiet:
+            print("ra: daemon already running")
+        return True
+    (ws / STATE).mkdir(exist_ok=True)
+    # Startup guard: warming takes 10-60s and the addr file only appears at the
+    # end, so "not answering" does NOT mean "not running" -- without this check
+    # every retry would spawn another daemon (observed: 7 racing daemons).
+    starting = ws / STATE / "starting.pid"
+    if starting.exists():
+        try:
+            os.kill(int(starting.read_text().strip()), 0)
+            if not quiet:
+                print("ra: daemon already starting (warm in ~10-60s)")
+            return True
+        except (ValueError, ProcessLookupError, PermissionError, OSError):
+            pass  # stale marker -> spawn
+    tszd = Path(__file__).resolve().parent / "tszd.py"
+    # Fully detached: no inherited pipes (a hook/agent-spawned daemon must
+    # never tie its parent's stdout open), own session.
+    proc = subprocess.Popen(
+        [sys.executable, str(tszd), "--workspace", str(ws)],
+        cwd=ws, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, start_new_session=True,
+    )
+    try:
+        starting.write_text(str(proc.pid))
+    except OSError:
+        pass
+    if not quiet:
+        print("ra: daemon starting in the background (warm in ~10-60s); "
+              "`ra diag` will answer once ready")
+    return True
+
+
+def render(diags: list[dict], cap: int = 40) -> str:
+    errors = sum(1 for d in diags if d["severity"] == "error")
+    warnings = sum(1 for d in diags if d["severity"] == "warning")
+    lines = [f"Diagnostics ({len(diags)}): {errors} error(s), {warnings} warning(s)"]
+    if not diags:
+        lines.append("(clean -- a real `cargo check` should pass; run it to confirm)")
+    for i, d in enumerate(diags[:cap]):
+        code = f" {d['code']}" if d.get("code") else ""
+        lines.append(f"[{i}] {d['file']}:{d['line']}:{d['col']} {d['severity']}{code}")
+        lines.append(f"    {d['message']}")
+    if len(diags) > cap:
+        lines.append(f"... and {len(diags) - cap} more")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    ws = find_ws()
+    args = sys.argv[1:]
+    cmd = args[0] if args else "diag"
+
+    if cmd == "up":
+        return 0 if up(ws) else 1
+    if cmd == "down":
+        request(ws, {"cmd": "shutdown"}, timeout=5)
+        print("ra: daemon stopped")
+        return 0
+    if cmd == "stats":
+        resp = request(ws, {"cmd": "stats"}, timeout=5) or {}
+        ev = ws / STATE / "events.jsonl"
+        gate = {"checks_intercepted": 0, "checks_denied": 0}
+        if ev.exists():
+            for line in ev.read_text().splitlines():
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                gate["checks_intercepted"] += 1
+                gate["checks_denied"] += e.get("decision") == "deny"
+        print(json.dumps({**resp, **gate}, indent=2))
+        return 0
+    if cmd == "scope":
+        payload = {"cmd": "scope"}
+        if len(args) > 1:
+            payload["add"] = args[1]
+        resp = request(ws, payload) or {}
+        print("analyzed crates:", ", ".join(resp.get("scope", [])) or "(none yet)")
+        return 0
+    if cmd in ("diag", "explain"):
+        resp = request(ws, {"cmd": "diag"})
+        if resp is None:
+            up(ws, quiet=True)
+            print("ra: daemon warming up -- retry `ra diag` in ~30s, or just run "
+                  "`cargo check` (it will not be blocked while the daemon is cold)")
+            return 1
+        diags = resp.get("diagnostics", [])
+        if cmd == "diag":
+            if "--json" in args:
+                print(json.dumps(diags))
+            else:
+                print(render(diags))
+            return 0 if not any(d["severity"] == "error" for d in diags) else 1
+        # explain <n>
+        try:
+            n = int(args[1])
+            d = diags[n]
+        except (IndexError, ValueError):
+            sys.exit("usage: ra explain <n>   (n from `ra diag`)")
+        print(f"{d['file']}:{d['line']}:{d['col']} {d['severity']} {d.get('code','')}")
+        print(d["message"])
+        try:
+            src = (ws / d["file"]).read_text(encoding="utf-8",
+                                             errors="replace").splitlines()
+            lo, hi = max(0, d["line"] - 6), min(len(src), d["line"] + 5)
+            for i in range(lo, hi):
+                marker = ">" if i + 1 == d["line"] else " "
+                print(f"{marker} {i + 1:5d} | {src[i]}")
+        except OSError:
+            pass
+        return 0
+    if cmd in ("def", "refs", "hover"):
+        try:
+            rel, line, col = args[1], int(args[2]), int(args[3])
+        except (IndexError, ValueError):
+            sys.exit(f"usage: ra {cmd} <file> <line> <col>   (1-based)")
+        resp = request(ws, {"cmd": cmd, "file": rel, "line": line, "col": col})
+        if resp is None or not resp.get("ok"):
+            up(ws, quiet=True)
+            sys.exit("ra: daemon not ready -- retry in ~30s")
+        if cmd == "hover":
+            print(resp.get("hover") or "(no hover info)")
+            return 0
+        locs = resp.get("locations", [])
+        if not locs:
+            print("(no results)")
+            return 0
+        for i, loc in enumerate(locs):
+            print(f"[{i}] {loc['file']}:{loc['line']}:{loc['col']}")
+        return 0
+    if cmd == "symbols":
+        if len(args) < 2:
+            sys.exit("usage: ra symbols <query>")
+        resp = request(ws, {"cmd": "symbols", "query": args[1]})
+        if resp is None or not resp.get("ok"):
+            up(ws, quiet=True)
+            sys.exit("ra: daemon not ready -- retry in ~30s")
+        for i, s in enumerate(resp.get("symbols", [])):
+            print(f"[{i}] {s['name']}  {s['file']}:{s['line']}")
+        return 0
+    sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
