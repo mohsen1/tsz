@@ -135,7 +135,18 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn write_system_export_call_chain_end(&mut self, names: &[String]) {
-        for _ in names {
+        self.write_system_export_call_chain_close(Some(names.len()));
+    }
+
+    /// Close a System live-export call-wrap opened by
+    /// [`Self::system_live_export_downlevel_write_wrap_open`]: writes `depth`
+    /// closing parens, or nothing when the target was not a System export
+    /// (`None`). Pairs the open/close so down-leveled write sites stay one-liners.
+    pub(in crate::emitter) fn write_system_export_call_chain_close(
+        &mut self,
+        depth: Option<usize>,
+    ) {
+        for _ in 0..depth.unwrap_or(0) {
             self.write(")");
         }
     }

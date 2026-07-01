@@ -162,13 +162,17 @@ impl<'a> Printer<'a> {
         }
 
         if !is_element_access && !is_property_access {
-            // Simple identifier: `x **= y` → `x = Math.pow(x, y)`
+            // Simple identifier: `x **= y` → `x = Math.pow(x, y)`.
+            // Under `--module system`, an exported target threads the write
+            // through the live named export: `exports_1("x", x = Math.pow(x, y))`.
+            let wrap = self.system_live_export_downlevel_write_wrap_open(original_left);
             self.emit(original_left);
             self.write(" = Math.pow(");
             self.emit(unwrapped_left);
             self.write(", ");
             self.emit(right);
             self.write(")");
+            self.write_system_export_call_chain_close(wrap);
             return;
         }
 
@@ -365,23 +369,17 @@ impl<'a> Printer<'a> {
         if is_and {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" && (");
-            self.emit_expression_for_logical_assignment(binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_inner_write(left, binary.right);
             self.write(")");
         } else if binary.operator_token == SyntaxKind::BarBarEqualsToken as u16 {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" || (");
-            self.emit_expression_for_logical_assignment(binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_inner_write(left, binary.right);
             self.write(")");
         } else if self.ctx.options.target.supports_es2020() {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" ?? (");
-            self.emit_expression_for_logical_assignment(binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_inner_write(left, binary.right);
             self.write(")");
         } else {
             self.emit_expression_for_logical_assignment(binary.left);
@@ -390,11 +388,23 @@ impl<'a> Printer<'a> {
             self.write(" !== void 0 ? ");
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" : (");
-            self.emit_expression_for_logical_assignment(binary.left);
-            self.write(" = ");
-            self.emit_expression_for_logical_assignment(binary.right);
+            self.emit_logical_assignment_inner_write(left, binary.right);
             self.write(")");
         }
+    }
+
+    /// Emit the inner value-producing write `<target> = <right>` of a
+    /// down-leveled logical assignment (`&&=`/`||=`/`??=`), wrapping it in the
+    /// System live named-export call (`exports_1("x", target = <right>)`) when
+    /// `target` is a System-exported binding. The wrap is invisible for plain and
+    /// CommonJS output — [`Self::system_live_export_downlevel_write_wrap_open`]
+    /// returns `None` there, leaving the bare write unchanged.
+    fn emit_logical_assignment_inner_write(&mut self, target: NodeIndex, right: NodeIndex) {
+        let wrap = self.system_live_export_downlevel_write_wrap_open(target);
+        self.emit_expression_for_logical_assignment(target);
+        self.write(" = ");
+        self.emit_expression_for_logical_assignment(right);
+        self.write_system_export_call_chain_close(wrap);
     }
 
     /// Whether lowering a non-es2020 `??=` with target `left` consumes a hoisted
