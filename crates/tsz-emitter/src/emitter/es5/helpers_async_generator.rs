@@ -237,7 +237,7 @@ impl<'a> Printer<'a> {
                 let saved_await = self.ctx.emit_await_as_yield_await;
                 self.ctx.emit_await_as_yield_await = true;
                 self.function_scope_depth += 1;
-                if !self.pending_object_rest_params.is_empty() {
+                if !self.pending_param_prologue.is_empty() {
                     self.write(" ");
                     self.emit_pending_object_rest_param_preamble(true);
                 }
@@ -292,7 +292,7 @@ impl<'a> Printer<'a> {
         self.ctx.emit_await_as_yield_await = true;
         self.function_scope_depth += 1;
 
-        if !self.pending_object_rest_params.is_empty() {
+        if !self.pending_param_prologue.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
         }
 

@@ -241,7 +241,7 @@ impl<'a> Printer<'a> {
         self.insert_param_binding_hoisted_temps(hoisted_start, hoist_anchor);
     }
 
-    fn insert_param_binding_hoisted_temps(
+    pub(in crate::emitter) fn insert_param_binding_hoisted_temps(
         &mut self,
         hoisted_start: usize,
         anchor: super::super::hoist_anchor::HoistAnchor,

@@ -1299,10 +1299,8 @@ impl<'a> Printer<'a> {
             self.emit_function_body_hoisted_temps();
         }
 
-        if !self.pending_object_rest_params.is_empty() {
+        if !self.pending_param_prologue.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
-        } else if !self.pending_object_rest_param_defaults.is_empty() {
-            self.emit_pending_object_rest_param_defaults(false);
         }
 
         // Capture anchor for inserting hoisted temps created during statement

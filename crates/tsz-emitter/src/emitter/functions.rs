@@ -1,4 +1,4 @@
-use super::{ParamTransformPlan, Printer};
+use super::{ParamPrologueEntry, ParamTransformPlan, Printer};
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -635,9 +635,8 @@ impl<'a> Printer<'a> {
             && !self.ctx.target_es5
             && self.any_param_has_object_rest(params);
 
-        // Clear any previous pending rest params
-        self.pending_object_rest_params.clear();
-        self.pending_object_rest_param_defaults.clear();
+        // Clear any previous pending prologue entries
+        self.pending_param_prologue.clear();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
@@ -776,28 +775,19 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_recovered_root_js_declaration_modifiers(&param.modifiers, true);
 
-                // ES2018 object rest lowering: replace destructuring param with a temp
-                if needs_rest_lowering && self.param_has_object_rest(param_idx) {
-                    lowered_object_rest_param_seen = true;
-                    let temp = self.next_object_rest_param_temp_name(
+                // ES2018 object-rest parameter lowering (the leading object-rest
+                // param and every binding-pattern param after it). See
+                // `emit_es2018_object_rest_param_placeholder`.
+                if needs_rest_lowering
+                    && self.emit_es2018_object_rest_param_placeholder(
+                        param,
+                        param_idx,
+                        param_node.pos,
+                        &mut lowered_object_rest_param_seen,
                         &mut object_rest_temp_counter,
                         &mut object_rest_temp_names,
-                    );
-                    if param.dot_dot_dot_token {
-                        self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
-                    }
-                    self.write(&temp);
-                    // Skip type annotation comments
-                    if param.type_annotation.is_some()
-                        && let Some(type_node) = self.arena.get(param.type_annotation)
-                    {
-                        self.skip_comments_in_range(type_node.pos, type_node.end);
-                    }
-                    if param.initializer.is_some() {
-                        self.write(" = ");
-                        self.emit(param.initializer);
-                    }
-                    self.pending_object_rest_params.push((temp, param.name));
+                    )
+                {
                     continue;
                 }
 
@@ -899,8 +889,11 @@ impl<'a> Printer<'a> {
                     && param.initializer.is_some()
                     && let Some(param_name) = simple_param_name
                 {
-                    self.pending_object_rest_param_defaults
-                        .push((param_name, param.initializer));
+                    self.pending_param_prologue
+                        .push(ParamPrologueEntry::Default {
+                            name: param_name,
+                            initializer: param.initializer,
+                        });
                 } else if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
@@ -1092,7 +1085,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn next_object_rest_param_temp_name(
+    pub(in crate::emitter) fn next_object_rest_param_temp_name(
         &self,
         counter: &mut u32,
         used: &mut Vec<String>,
