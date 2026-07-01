@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 11;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 12;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -387,6 +387,17 @@ pub struct IdentityCounters {
     pub relation_lazy_ref_accessor_resolved: u64,
     /// #14351 denominator: heritage-reachable cross-base pairs (lever candidates).
     pub relation_lazy_ref_heritage_reachable: u64,
+    /// #14345/#14351 inference split gauge: inferred result types whose
+    /// higher-order source placeholders were erased to `unknown`.
+    pub inference_source_placeholder_unknown_fallback_types: u64,
+    /// Source placeholders erased across those fallback types.
+    pub inference_source_placeholder_unknown_fallback_placeholders: u64,
+    /// Fallback types that still contained a deferred indexed access at erasure.
+    pub inference_source_placeholder_unknown_fallback_index_access_types: u64,
+    /// #14345/#14351 relation split gauge: raw deferred indexed-access pairs.
+    pub relation_deferred_index_access_pair_total: u64,
+    /// Deferred indexed-access pairs accepted by the existing raw relation path.
+    pub relation_deferred_index_access_pair_accepted: u64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -761,6 +772,21 @@ impl PerfCounters {
                 ),
                 relation_lazy_ref_heritage_reachable: load(
                     &c.relation_lazy_ref_heritage_reachable,
+                ),
+                inference_source_placeholder_unknown_fallback_types: load(
+                    &c.inference_source_placeholder_unknown_fallback_types,
+                ),
+                inference_source_placeholder_unknown_fallback_placeholders: load(
+                    &c.inference_source_placeholder_unknown_fallback_placeholders,
+                ),
+                inference_source_placeholder_unknown_fallback_index_access_types: load(
+                    &c.inference_source_placeholder_unknown_fallback_index_access_types,
+                ),
+                relation_deferred_index_access_pair_total: load(
+                    &c.relation_deferred_index_access_pair_total,
+                ),
+                relation_deferred_index_access_pair_accepted: load(
+                    &c.relation_deferred_index_access_pair_accepted,
                 ),
             },
             lib_bootstrap: LibBootstrapCounters {
