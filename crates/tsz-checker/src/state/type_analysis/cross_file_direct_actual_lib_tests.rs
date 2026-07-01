@@ -560,16 +560,18 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
         .get(&html_div_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("HTMLDivElement should have a delegate arena");
+    let (html_div, html_div_params) = state
+        .direct_value_merged_builtin_lib_interface_symbol_type(
+            html_div_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            Some(html_div_arena),
+            false,
+        )
+        .expect("lazy-safe value/interface DOM types may still use local Lazy identities");
+    assert!(html_div_params.is_empty());
     assert!(
-        state
-            .direct_value_merged_builtin_lib_interface_symbol_type(
-                html_div_sym_id,
-                CrossArenaSymbolMissSource::SymbolArena,
-                Some(html_div_arena),
-                false,
-            )
-            .is_none(),
-        "heritage-bearing value/interface DOM types stay on the child/interface path",
+        crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div).is_some(),
+        "HTMLDivElement should return a local type-position Lazy ref",
     );
     let inner_html = state
         .resolve_simple_lib_interface_own_property("HTMLDivElement", "innerHTML")

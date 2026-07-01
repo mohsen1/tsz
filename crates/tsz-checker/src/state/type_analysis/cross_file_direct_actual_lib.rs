@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let name = symbol.escaped_name;
-        if self.lib_name_requires_checker_local_resolution(&name) {
+        if self.lib_name_requires_parallel_local_resolution(&name) {
             return None;
         }
 
@@ -205,7 +205,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let name = symbol.escaped_name.clone();
-        if self.lib_name_requires_checker_local_resolution(&name) {
+        if self.lib_name_requires_parallel_local_resolution(&name) {
             return None;
         }
         // DOM value/interface pairs used in type position can stay as lazy lib
@@ -233,6 +233,10 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .lib_delegation_cache
             .insert_symbol_type(sym_id, (lazy_type, params.clone()));
+        // Shared publication stays gated for heritage-bearing names inside
+        // `cache_shared_actual_lib_delegation`; sequential local Lazy refs
+        // preserve type-display and member-laziness parity for safe DOM
+        // interfaces.
         self.cache_shared_actual_lib_delegation(&name, lazy_type);
         Some((lazy_type, params))
     }

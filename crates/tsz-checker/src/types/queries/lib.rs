@@ -125,6 +125,17 @@ impl<'a> CheckerState<'a> {
         self.lib_name_locally_augmented(name) || self.lib_name_declares_heritage(name)
     }
 
+    /// True when the current checker may race sibling file checkers on a
+    /// heritage-bearing lib shape. Sequential shared-owner checkers can keep
+    /// local lazy identities for these names; the DOM/webworker forced-parallel
+    /// diagnosis lane must fall back to checker-local materialization.
+    pub(crate) fn lib_name_requires_parallel_local_resolution(&self, name: &str) -> bool {
+        self.lib_name_locally_augmented(name)
+            || (self.ctx.share_owner_symbol_type_results
+                && std::env::var_os("TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK").is_some()
+                && self.lib_name_declares_heritage(name))
+    }
+
     fn lib_name_declares_heritage(&self, name: &str) -> bool {
         for lib_ctx in self.ctx.lib_contexts.iter() {
             let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
@@ -138,6 +149,11 @@ impl<'a> CheckerState<'a> {
             }
             let fallback_arena =
                 resolve_lib_context_fallback_arena(&lib_ctx.binder, sym_id, lib_ctx.arena.as_ref());
+            if !crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                fallback_arena,
+            ) {
+                continue;
+            }
             let decls_with_arenas = super::lib_resolution::collect_lib_decls_with_arenas(
                 &lib_ctx.binder,
                 sym_id,
@@ -145,10 +161,11 @@ impl<'a> CheckerState<'a> {
                 fallback_arena,
                 None,
             );
-            if decls_with_arenas
-                .iter()
-                .any(|(decl_idx, decl_arena)| lib_decl_has_heritage(*decl_idx, decl_arena))
-            {
+            if decls_with_arenas.iter().any(|(decl_idx, decl_arena)| {
+                crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                    decl_arena,
+                ) && lib_decl_has_heritage(*decl_idx, decl_arena)
+            }) {
                 return true;
             }
         }
@@ -179,9 +196,9 @@ impl<'a> CheckerState<'a> {
 
         // Short-circuit via shared cache only for names whose completed shape
         // is independent of the checker that resolved them first.
-        let requires_checker_local_resolution =
-            self.lib_name_requires_checker_local_resolution(name);
-        if !requires_checker_local_resolution
+        let requires_parallel_local_resolution =
+            self.lib_name_requires_parallel_local_resolution(name);
+        if !requires_parallel_local_resolution
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(name)
             && let Some(ty) = *entry
@@ -408,7 +425,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Mirror into shared cache when safe (no local augmentations).
-        if !requires_checker_local_resolution
+        if !requires_parallel_local_resolution
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
         {
             shared.insert(name.to_string(), lib_type_id);
