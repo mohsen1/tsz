@@ -6,12 +6,10 @@ use super::*;
 /// Guard: solver `SymbolRef` to binder `SymbolId` reinterpretation should stay
 /// behind `query_boundaries::definition_identity::symbol_ref_to_symbol_id`.
 ///
-/// Existing legacy callsites are a migration budget, not a pattern for new
-/// code. Lower this budget whenever a PR moves another callsite behind the
-/// bridge.
+/// Raw casts are no longer allowed outside the bridge.
 #[test]
 fn test_symbol_ref_to_symbol_id_cast_budget() {
-    const RAW_SYMBOL_REF_CAST_BUDGET: usize = 21;
+    const RAW_SYMBOL_REF_CAST_BUDGET: usize = 0;
     const BRIDGE_PATH: &str = "src/query_boundaries/definition_identity.rs";
 
     fn is_raw_symbol_ref_cast(line: &str) -> bool {
@@ -46,8 +44,9 @@ fn test_symbol_ref_to_symbol_id_cast_budget() {
         }
     }
 
-    assert!(
-        hits.len() <= RAW_SYMBOL_REF_CAST_BUDGET,
+    assert_eq!(
+        hits.len(),
+        RAW_SYMBOL_REF_CAST_BUDGET,
         "raw SymbolRef -> SymbolId casts must go through \
          query_boundaries::definition_identity::symbol_ref_to_symbol_id; \
          found {} casts, budget {}:\n{}",

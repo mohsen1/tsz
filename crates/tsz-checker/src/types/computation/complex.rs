@@ -1129,8 +1129,6 @@ impl<'a> CheckerState<'a> {
                         inferred_new_type_args = Some(type_args);
                     }
                     if let Some(contextual) = contextual_type {
-                        use tsz_binder::SymbolId;
-
                         // When the contextual type is a union containing a Promise member
                         // (e.g., from async function return context), use the Promise
                         // member for application-matching against the constructor return type.
@@ -1155,7 +1153,7 @@ impl<'a> CheckerState<'a> {
                                             |sym_ref| {
                                                 self.ctx
                                                     .binder
-                                                    .get_symbol(SymbolId(sym_ref.0))
+                                                    .get_symbol(crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref))
                                                     .map(|symbol| symbol.escaped_name.as_str())
                                             },
                                         )

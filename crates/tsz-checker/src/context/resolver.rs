@@ -734,7 +734,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// `TypeData::Ref` is removed, but we keep this for compatibility.
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(&self, symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        let sym_id = tsz_binder::SymbolId(symbol.0);
+        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol);
         self.symbol_types.get(&sym_id)
     }
 
@@ -772,7 +772,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // value (kysely #10663 `typeof` family; the residual inverse of the
         // #10661 instance-resolution fix). So consult the constructor body
         // directly for a class symbol before trusting `resolve_ref`.
-        let sym_id = tsz_binder::SymbolId(symbol.0);
+        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol);
         if let Some(def_id) = self.get_existing_def_id(sym_id)
             && matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))
             && let Some(ctor_def_id) = self.definition_store.get_constructor_def(def_id)
@@ -1499,10 +1499,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ///
     /// Returns None if the `SymbolRef` doesn't have a corresponding `DefId`.
     fn symbol_to_def_id(&self, symbol: SymbolRef) -> Option<DefId> {
-        use tsz_binder::SymbolId;
-
-        // Convert SymbolRef to SymbolId
-        let sym_id = SymbolId(symbol.0);
+        // Convert through the checker-owned identity bridge.
+        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol);
 
         // Look up via get_existing_def_id (checks local cache + authoritative index)
         self.get_existing_def_id(sym_id)

@@ -1389,7 +1389,9 @@ impl CheckerContext<'_> {
         if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
             crate::query_boundaries::common::classify_type_query(self.types, type_id)
         {
-            return Some(SymbolId(sym_ref.0));
+            return Some(
+                crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref),
+            );
         }
 
         // 1. Try to get DefId from Lazy type - Phase 4.2+

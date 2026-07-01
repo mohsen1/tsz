@@ -974,7 +974,9 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let ctx = self.checker_context?;
-        let def_id = ctx.get_or_create_def_id(tsz_binder::SymbolId(symbol_ref.0));
+        let def_id = ctx.get_or_create_def_id(
+            crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref),
+        );
         if def_id.is_valid() {
             Some(self.interner.lazy(def_id))
         } else {
