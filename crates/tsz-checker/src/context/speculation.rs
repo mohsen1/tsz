@@ -148,14 +148,14 @@ pub(crate) struct CacheSnapshot {
     /// Clone of the stable-flow confirmation cache. Confirmations recorded
     /// during a speculative pass describe rolled-back flow analysis results.
     pub symbol_flow_confirmed: CowCache<FxHashMap<(SymbolId, TypeId), FlowNodeId>>,
-    /// Thread-local global resolution fuel counter at snapshot time. Speculative
+    /// Lazy-resolution session fuel counter at snapshot time. Speculative
     /// sites (return-type inference) shouldn't bill their work against the
     /// global budget when rolled back — the work will be redone non-
     /// speculatively. Without this, a speculative pass that consumes the full
     /// 50k global budget on lib-property walks silences every subsequent
     /// `consume_fuel` caller in the same file (e.g. the post-rollback property
     /// access check that should emit TS2339).
-    pub global_resolution_fuel: u32,
+    pub session_resolution_fuel: u32,
 }
 
 /// Complete speculation snapshot (full + cache).
@@ -250,8 +250,7 @@ impl<'a> CheckerContext<'a> {
                 flow_narrowed_nodes: self.flow_narrowed_nodes.clone(),
                 daa_error_nodes: self.daa_error_nodes.clone(),
                 symbol_flow_confirmed: self.symbol_flow_confirmed.borrow().clone(),
-                global_resolution_fuel:
-                    crate::state_domain::type_environment::lazy::global_resolution_fuel_value(),
+                session_resolution_fuel: self.eval_session.lazy_resolution_fuel_value(),
             },
         }
     }
@@ -357,8 +356,7 @@ impl<'a> CheckerContext<'a> {
                 .symbol_flow_confirmed
                 .borrow()
                 .ptr_eq(&snap.cache.symbol_flow_confirmed)
-            && crate::state_domain::type_environment::lazy::global_resolution_fuel_value()
-                == snap.cache.global_resolution_fuel
+            && self.eval_session.lazy_resolution_fuel_value() == snap.cache.session_resolution_fuel
     }
 
     /// Roll back to a diagnostic-only snapshot, discarding all speculative
@@ -453,9 +451,8 @@ impl<'a> CheckerContext<'a> {
         self.symbol_flow_confirmed
             .borrow_mut()
             .clone_from(&snap.cache.symbol_flow_confirmed);
-        crate::state_domain::type_environment::lazy::restore_global_resolution_fuel(
-            snap.cache.global_resolution_fuel,
-        );
+        self.eval_session
+            .restore_lazy_resolution_fuel(snap.cache.session_resolution_fuel);
     }
 
     // -----------------------------------------------------------------------

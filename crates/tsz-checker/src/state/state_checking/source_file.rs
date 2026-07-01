@@ -42,7 +42,7 @@ impl CheckerState<'_> {
         self.ctx.application_symbols_resolved.clear();
         self.ctx.application_symbols_resolution_set.clear();
         // Reset global resolution fuel for the new file.
-        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_resolution_fuel();
 
         // Register Function DefIds in the interner BEFORE building the environment.
         // This ensures `T extends Function` constraint checks during type alias
@@ -132,7 +132,7 @@ impl CheckerState<'_> {
             .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
         self.ctx.eval_session.reset_instantiation_fuel();
         self.ctx.depth_exceeded.set(false);
-        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_resolution_fuel();
         crate::checkers_domain::reset_stack_overflow_flag();
         // Defensive backstop for the solver's RAII-balanced cross-operation
         // frame breaker (issue #7574): clear any residue left by a panic that
@@ -248,7 +248,7 @@ impl CheckerState<'_> {
                         self.ctx
                             .type_resolution_fuel
                             .set(crate::state::MAX_TYPE_RESOLUTION_OPS);
-                        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+                        self.ctx.eval_session.reset_lazy_resolution_fuel();
                         let check_extension_compatibility = match extension_filter {
                             Some(filter) => {
                                 interface_name.is_some_and(|name| filter.contains(name))
@@ -1463,7 +1463,7 @@ impl CheckerState<'_> {
     /// statement inside a method body cannot starve a later callback in the same
     /// body.
     pub(crate) fn reset_per_statement_fuel_budgets(&mut self) {
-        crate::state_domain::type_environment::lazy::reset_global_resolution_fuel();
+        self.ctx.eval_session.reset_lazy_resolution_fuel();
         self.ctx.eval_session.reset_instantiation_fuel();
         self.ctx.depth_exceeded.set(false);
     }
