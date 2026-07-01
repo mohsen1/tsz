@@ -35,14 +35,21 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn target_prefers_outer_assignment_diagnostic(&mut self, target: TypeId) -> bool {
-        let candidates = vec![
+    /// The normalized target surfaces (self, contextual, property-access, and
+    /// assignability evaluations) that the assignment-diagnostic query boundary
+    /// inspects. Shared by `target_prefers_outer_assignment_diagnostic` and
+    /// `target_has_deferred_evaluation_surface` so both look at the same set.
+    fn target_evaluation_candidates(&mut self, target: TypeId) -> Vec<TypeId> {
+        vec![
             target,
             self.evaluate_contextual_type(target),
             self.resolve_type_for_property_access(target),
             self.evaluate_type_for_assignability(target),
-        ];
+        ]
+    }
 
+    fn target_prefers_outer_assignment_diagnostic(&mut self, target: TypeId) -> bool {
+        let candidates = self.target_evaluation_candidates(target);
         crate::query_boundaries::assignability::target_prefers_outer_assignment_diagnostic(
             self.ctx.types,
             &self.ctx,
@@ -73,6 +80,35 @@ impl<'a> CheckerState<'a> {
             Some(RelationFailure::MissingProperty { .. })
                 | Some(RelationFailure::MissingProperties { .. })
                 | Some(RelationFailure::IncompatiblePropertyValue { .. })
+        )
+    }
+
+    /// Whether the assignment/return source expression is (after stripping
+    /// parentheses and type assertions) a bare object- or array-literal — the
+    /// only source shape `tsc`'s `elaborateObjectLiteral`/`elaborateArrayLiteral`
+    /// drills into. Used to keep per-property source elaboration scoped to fresh
+    /// literals so non-literal sources (identifiers, call results) keep the outer
+    /// diagnostic and its relation-reason chain intact.
+    fn assignment_source_is_object_or_array_literal(&self, source_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        self.ctx.arena.get(expr_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        })
+    }
+
+    /// Whether the target carries a deferred evaluation surface (generic indexed
+    /// access / mapped / conditional-with-type-params). See
+    /// `query_boundaries::assignability::target_has_deferred_evaluation_surface`.
+    /// Fresh-literal per-property elaboration is skipped on such targets because
+    /// `tsc` cannot resolve their members concretely and keeps the outer
+    /// whole-object diagnostic.
+    fn target_has_deferred_evaluation_surface(&mut self, target: TypeId) -> bool {
+        let candidates = self.target_evaluation_candidates(target);
+        crate::query_boundaries::assignability::target_has_deferred_evaluation_surface(
+            self.ctx.types,
+            &self.ctx,
+            &candidates,
         )
     }
 
@@ -1024,12 +1060,34 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if !self.target_prefers_outer_assignment_diagnostic(target)
+        // `tsc`'s `elaborateObjectLiteral` drills a **fresh object/array-literal**
+        // source into per-property errors whenever the failure is a genuine
+        // member mismatch against a target whose members resolve concretely —
+        // including a *plain* generic interface/object application like `A<T>`.
+        // The coarse `target_prefers_outer_assignment_diagnostic` gate lumps such
+        // plain applications in with the genuinely-deferred surfaces
+        // (generic indexed access, generic mapped, conditional-with-type-params),
+        // where `tsc` cannot resolve a member type and so keeps the outer
+        // whole-object diagnostic and its nested relation-reason chain. Re-enable
+        // the literal-source elaboration only for the plain-application case: the
+        // source is a fresh object/array literal, the relation failed at a
+        // concrete member (`should_preserve_structural_property_diagnostic`), and
+        // the target has no deferred evaluation surface. A non-literal source
+        // (e.g. `X[K1]` vs `X[K2]` type-parameter drift) and any deferred target
+        // (e.g. `Pick<C<T>, 'k'> & …`) keep the outer diagnostic + chain
+        // unchanged, and `try_elaborate_assignment_source_error` still no-ops when
+        // no per-property mismatch is present.
+        let source_is_fresh_literal_with_member_failure = self
+            .assignment_source_is_object_or_array_literal(source_idx)
+            && self.should_preserve_structural_property_diagnostic(&outcome)
+            && !self.target_has_deferred_evaluation_surface(target);
+        let target_prefers_outer = self.target_prefers_outer_assignment_diagnostic(target);
+        if (!target_prefers_outer || source_is_fresh_literal_with_member_failure)
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
             return false;
         }
-        if self.target_prefers_outer_assignment_diagnostic(target)
+        if target_prefers_outer
             && !self.should_preserve_structural_property_diagnostic(&outcome)
             && self
                 .missing_required_properties_from_index_signature_source(source, target)

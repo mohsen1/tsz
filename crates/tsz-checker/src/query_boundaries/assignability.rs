@@ -160,13 +160,45 @@ pub(crate) fn target_prefers_outer_assignment_diagnostic<R: TypeResolver>(
     expanded.into_iter().any(|candidate| {
         candidate != TypeId::ERROR
             && candidate != TypeId::ANY
-            && (super::common::contains_generic_indexed_access_surface(type_db, candidate)
-                || super::common::is_generic_mapped_type(type_db, candidate)
-                || super::common::is_generic_mapped_application(db, resolver, candidate)
-                || (super::common::contains_conditional_type(type_db, candidate)
-                    && super::common::contains_type_parameters(type_db, candidate))
+            && (candidate_has_deferred_evaluation_surface(db, resolver, candidate)
                 || super::common::is_generic_application_with_type_params(type_db, candidate))
     })
+}
+
+/// Whether a target carries a **deferred** evaluation surface — a generic
+/// indexed access, a generic mapped type/application, or a conditional that
+/// still mentions type parameters. These are the surfaces where a property type
+/// cannot be resolved to a concrete member, so `tsc` keeps the outer
+/// whole-object diagnostic (with its nested relation-reason chain) instead of
+/// drilling a fresh object literal per-property. Distinguished from a *plain*
+/// generic application like `A<T>` (a simple interface/object instantiation),
+/// whose members resolve concretely and which `tsc`'s `elaborateObjectLiteral`
+/// does drill.
+pub(crate) fn target_has_deferred_evaluation_surface<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidates: &[TypeId],
+) -> bool {
+    let expanded = alias_application_surface_candidates(db, resolver, candidates);
+    expanded
+        .into_iter()
+        .any(|candidate| candidate_has_deferred_evaluation_surface(db, resolver, candidate))
+}
+
+fn candidate_has_deferred_evaluation_surface<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    candidate: TypeId,
+) -> bool {
+    if candidate == TypeId::ERROR || candidate == TypeId::ANY {
+        return false;
+    }
+    let type_db = db.as_type_database();
+    super::common::contains_generic_indexed_access_surface(type_db, candidate)
+        || super::common::is_generic_mapped_type(type_db, candidate)
+        || super::common::is_generic_mapped_application(db, resolver, candidate)
+        || (super::common::contains_conditional_type(type_db, candidate)
+            && super::common::contains_type_parameters(type_db, candidate))
 }
 
 /// Expand checker-facing type surfaces through display aliases and instantiated
