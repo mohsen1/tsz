@@ -2,7 +2,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
-impl<'a> CheckerState<'a> {
+impl CheckerState<'_> {
     pub(crate) fn optional_chain_invalid_assignment_target_context(&self, idx: NodeIndex) -> bool {
         if !super::optional_chain::is_optional_chain(self.ctx.arena, idx) {
             return false;
