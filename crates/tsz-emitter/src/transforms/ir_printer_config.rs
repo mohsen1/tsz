@@ -35,6 +35,7 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            pending_esm_class_export_name: None,
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
@@ -72,6 +73,7 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            pending_esm_class_export_name: None,
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
@@ -109,6 +111,7 @@ impl<'a> IRPrinter<'a> {
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
             pending_commonjs_class_export_name: None,
+            pending_esm_class_export_name: None,
             mappings: Vec::new(),
             source_index: 0,
             capture_mappings: false,
@@ -133,6 +136,14 @@ impl<'a> IRPrinter<'a> {
         &mut self,
     ) -> Option<(String, Vec<String>)> {
         self.pending_commonjs_class_export_name.take()
+    }
+
+    pub fn set_pending_esm_class_export_name(&mut self, name: Option<String>) {
+        self.pending_esm_class_export_name = name;
+    }
+
+    pub(super) const fn take_pending_esm_class_export_name(&mut self) -> Option<String> {
+        self.pending_esm_class_export_name.take()
     }
 
     pub fn set_transforms(&mut self, transforms: TransformContext) {

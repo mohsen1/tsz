@@ -1018,13 +1018,27 @@ impl<'a> Printer<'a> {
             && let Some(class) = self.arena.get_class(clause_node)
             && let Some(name) = self.get_identifier_text_opt(class.name)
         {
-            self.emit(export.export_clause);
-            self.write_line();
             if export.is_default_export {
+                // `tsc` emits `export default C;` *after* the class's deferred
+                // `WeakMap` storage init, so keep it on this trailing path.
+                self.emit(export.export_clause);
+                self.write_line();
                 self.write("export default ");
                 self.write(&name);
                 self.write(";");
-            } else {
+                return;
+            }
+            // Named export: `tsc` emits `export { C };` between the class IIFE and
+            // the class's deferred private/accessor `WeakMap` storage inits, so
+            // stage it in the pending slot the ES5 class emitter consumes at that
+            // boundary (the same spot the CommonJS path uses for `exports.X = X;`).
+            self.pending_esm_class_export_name = Some((export.export_clause, name.clone()));
+            self.emit(export.export_clause);
+            // Fallback: an unusual class shape that never reached the consumption
+            // point (e.g. a simple-decorated class emitted as raw text) leaves the
+            // slot set — emit the re-export on this trailing path instead.
+            if self.pending_esm_class_export_name.take().is_some() {
+                self.write_line();
                 self.write("export { ");
                 self.write(&name);
                 self.write(" };");

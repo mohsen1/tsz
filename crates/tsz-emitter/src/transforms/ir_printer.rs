@@ -100,6 +100,12 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    /// ESM named export (`export { C };`) for a top-level `export class` lowered
+    /// to this IIFE. Emitted right after the class IIFE and before the deferred
+    /// `WeakMap` storage inits, matching `tsc` and the CommonJS `exports.X = X;`
+    /// placement above. `export default` never sets this (it is emitted after the
+    /// storage init by the module-emission path).
+    pending_esm_class_export_name: Option<String>,
     /// Source-map mappings recorded for re-emitted `ASTRef` nodes while
     /// `capture_mappings` is set. Generated positions are relative to the start
     /// of this printer's own output, so a caller splices them with a base
