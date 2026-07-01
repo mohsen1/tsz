@@ -6,14 +6,13 @@
 //! `Return type 'X' is not assignable to 'Y'.` phrasing (which appears in zero
 //! `tsc` baselines):
 //!
-//! * Method syntax (`f(): T`) — the member relation runs through signature
-//!   comparison, so the failure heads with TS2201
-//!   (`The types returned by 'f()' are incompatible between these types.`) and
-//!   drills straight into the inner relation.
-//! * Property syntax (`f: () => T`) — the member relation runs through the
-//!   property's function *type*, so it keeps the `Types of property 'f' are
-//!   incompatible.` header, shows the `() => S` / `() => T` function-type line,
-//!   then the inner relation.
+//! Both method syntax (`f(): T`) and function-typed-property syntax
+//! (`f: () => T`) collapse to the same TS2201 frame
+//! (`The types returned by 'f()' are incompatible between these types.`) and
+//! drill straight into the inner relation — the member relation reduces to a
+//! call-signature comparison in either case. The name suffix is `()` when both
+//! signatures take zero parameters and `(...)` when either carries parameters
+//! (tsc `reportIncompatibleCallSignatureReturn`).
 //!
 //! Owner: the shared `relation -> reason -> diagnostic` render path
 //! (`render_property_type_mismatch` -> `render_member_return_type_mismatch`),
@@ -92,10 +91,12 @@ const c: Consumer = p;
     );
 }
 
-/// Property syntax (function-typed property) keeps the `Types of property`
-/// header and the intermediate function-type line, then the inner leaf.
+/// Property syntax (function-typed property) collapses to the SAME TS2201 head
+/// as method syntax — tsc drills straight into the return relation and never
+/// keeps the `Types of property` header or the `() => S` / `() => T`
+/// function-type line for a return-only mismatch.
 #[test]
-fn property_function_return_mismatch_keeps_function_type_line() {
+fn property_function_return_mismatch_uses_types_returned_by_head() {
     let text = elaboration(
         r#"
 interface Source { compute: () => string; }
@@ -108,9 +109,88 @@ const tgt: Target = src;
     assert_eq!(
         text,
         "Type 'Source' is not assignable to type 'Target'.\n\
-         Types of property 'compute' are incompatible.\n\
-         Type '() => string' is not assignable to type '() => number'.\n\
+         The types returned by 'compute()' are incompatible between these types.\n\
          Type 'string' is not assignable to type 'number'.",
+    );
+}
+
+/// When either signature carries parameters the name suffix is `(...)`, for both
+/// method and function-typed-property syntax (tsc
+/// `reportIncompatibleCallSignatureReturn`). Params are compatible; only the
+/// return differs.
+#[test]
+fn method_with_parameters_return_mismatch_uses_ellipsis_suffix() {
+    let text = elaboration(
+        r#"
+interface Source { compute(flag: boolean): string; }
+interface Target { compute(flag: boolean): number; }
+declare const src: Source;
+const tgt: Target = src;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type 'Source' is not assignable to type 'Target'.\n\
+         The types returned by 'compute(...)' are incompatible between these types.\n\
+         Type 'string' is not assignable to type 'number'.",
+    );
+}
+
+#[test]
+fn property_function_with_parameters_return_mismatch_uses_ellipsis_suffix() {
+    let text = elaboration(
+        r#"
+interface Source { compute: (flag: boolean) => string; }
+interface Target { compute: (flag: boolean) => number; }
+declare const src: Source;
+const tgt: Target = src;
+"#,
+        2322,
+    );
+    assert_eq!(
+        text,
+        "Type 'Source' is not assignable to type 'Target'.\n\
+         The types returned by 'compute(...)' are incompatible between these types.\n\
+         Type 'string' is not assignable to type 'number'.",
+    );
+}
+
+/// A parameter mismatch (not a return mismatch) must NOT collapse — it keeps the
+/// `Types of property` / function-type elaboration, matching tsc. Guards against
+/// over-broadening the return-type collapse.
+#[test]
+fn property_function_parameter_mismatch_keeps_generic_elaboration() {
+    let diags = check_with_options(
+        r#"
+interface Source { consume: (x: string) => void; }
+interface Target { consume: (x: number) => void; }
+declare const src: Source;
+const tgt: Target = src;
+"#,
+        strict_checker_options(),
+    );
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    let lines: Vec<&str> = std::iter::once(ts2322.message_text.as_str())
+        .chain(
+            ts2322
+                .related_information
+                .iter()
+                .map(|i| i.message_text.as_str()),
+        )
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("Types of property 'consume' are incompatible")),
+        "parameter mismatch keeps the property header, got: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|l| !l.contains("The types returned by")),
+        "parameter mismatch must not collapse to the returns frame, got: {lines:?}"
     );
 }
 

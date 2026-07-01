@@ -296,18 +296,17 @@ impl<'a> CheckerState<'a> {
             target_property_type
         };
 
-        // A member whose two signatures differ in their RETURN type is elaborated
-        // by tsc distinctly from the generic `PropertyTypeMismatch` shape, and
-        // never with the `Return type 'X' is not assignable to 'Y'.` phrasing
-        // (tsc emits zero such lines). Route those to the dedicated renderer,
-        // which reproduces tsc's two forms:
-        //   * method syntax (`f(): T`):   `The types returned by 'f()' are
-        //     incompatible between these types.` (TS2201), then the inner leaf.
-        //   * property syntax (`f: () => T`): `Types of property 'f' are
-        //     incompatible.`, the `() => S`/`() => T` function-type line, then
-        //     the inner leaf.
-        // Same-generic applications keep their type-argument elaboration, so this
-        // only fires for the plain structural-member surface.
+        // A member whose two call signatures differ only in their RETURN type is
+        // elaborated by tsc as the single TS2201 frame `The types returned by
+        // '<name>(...)' are incompatible between these types.`, drilling straight
+        // into the return relation and never using the historical `Return type
+        // 'X' is not assignable to 'Y'.` phrasing (tsc emits zero such lines).
+        // tsc collapses this way for BOTH method syntax (`f(): T`) and
+        // function-typed-property syntax (`f: () => T`) — the member relation
+        // reduces to a call-signature comparison in either case
+        // (`reportIncompatibleCallSignatureReturn`). Route both to the dedicated
+        // renderer. Same-generic applications keep their type-argument
+        // elaboration, so this only fires for the plain structural-member surface.
         if let Some(tsz_solver::SubtypeFailureReason::ReturnTypeMismatch {
             source_return,
             target_return,
@@ -316,7 +315,6 @@ impl<'a> CheckerState<'a> {
             && !self.should_render_nested_application_property_mismatch(source, target)
         {
             return self.render_member_return_type_mismatch(
-                reason,
                 ctx,
                 property_name,
                 (source_property_type, target_property_type),
@@ -531,32 +529,26 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
-    /// Render a member whose two signatures differ in their RETURN type.
+    /// Render a member whose two call signatures differ only in their RETURN
+    /// type.
     ///
-    /// tsc has two distinct shapes here and never uses tsz's historical
-    /// `Return type 'X' is not assignable to 'Y'.` phrasing:
-    ///
-    /// Method syntax (`f(): T`) — the member relation runs through signature
-    /// comparison, so the return failure heads with TS2201 and drills straight
-    /// into the inner relation:
+    /// tsc collapses this to a single TS2201 frame and never uses tsz's
+    /// historical `Return type 'X' is not assignable to 'Y'.` phrasing. The same
+    /// shape serves method syntax (`f(): T`) and function-typed-property syntax
+    /// (`f: () => T`) — both reduce to a call-signature comparison:
     /// ```text
     /// Type 'A' is not assignable to type 'B'.
     ///   The types returned by 'f()' are incompatible between these types.
     ///     Type 'string' is not assignable to type 'number'.
     /// ```
     ///
-    /// Property syntax (`f: () => T`) — the member relation runs through the
-    /// property's function *type*, so it keeps the `Types of property` header,
-    /// shows the function-type line, then the inner relation:
-    /// ```text
-    /// Type 'X' is not assignable to type 'Y'.
-    ///   Types of property 'f' are incompatible.
-    ///     Type '() => string' is not assignable to type '() => number'.
-    ///       Type 'string' is not assignable to type 'number'.
-    /// ```
+    /// The name suffix is `()` only when both signatures take zero parameters,
+    /// otherwise `(...)` — mirroring tsc's `reportIncompatibleCallSignatureReturn`
+    /// (`Call_signatures_with_no_arguments_have_incompatible_return_types` when
+    /// both parameter lists are empty, `Call_signature_return_types_are_incompatible`
+    /// otherwise).
     pub(super) fn render_member_return_type_mismatch(
         &mut self,
-        reason: &tsz_solver::SubtypeFailureReason,
         ctx: &RenderContext,
         property_name: tsz_common::interner::Atom,
         property_types: (TypeId, TypeId),
@@ -571,9 +563,15 @@ impl<'a> CheckerState<'a> {
         let start = ctx.start;
         let length = ctx.length;
         let file_name = ctx.file_name.clone();
-        let is_method = self.member_is_method_on_both_sides(source, target, property_name);
         let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-        let (header, header_code) = Self::member_return_header(is_method, &prop_name, reason);
+        let suffix =
+            self.member_return_signature_suffix(source_property_type, target_property_type);
+        let header = format_message(
+            diagnostic_messages::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
+            &[&format!("{prop_name}{suffix}")],
+        );
+        let header_code =
+            diagnostic_codes::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES;
 
         // The header sits at `header_depth`: at the top level it is an
         // elaboration under the base `Type 'S' is not assignable to type 'T'.`
@@ -602,79 +600,48 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // Property syntax keeps the intermediate `() => S` / `() => T`
-        // function-type line; method syntax drills straight into the return
-        // relation.
-        let leaf_depth = if is_method {
-            header_depth + 1
-        } else {
-            diag.push_elaboration_in_span(
-                start,
-                length,
-                self.member_function_type_line(source_property_type, target_property_type),
-                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                header_depth + 1,
-            );
-            header_depth + 2
-        };
+        // The return relation drills straight in beneath the TS2201 header, with
+        // no intermediate function-type line (tsc omits it for both member forms).
         self.push_member_return_inner(
             &mut diag,
             source_return,
             target_return,
             return_inner,
             idx,
-            leaf_depth,
+            header_depth + 1,
         );
         diag
     }
 
-    /// The member-mismatch header line and its diagnostic code: TS2201
-    /// (`The types returned by 'f()' ...`) for method syntax, or
-    /// `Types of property 'f' are incompatible.` for a function-typed property.
-    fn member_return_header(
-        is_method: bool,
-        prop_name: &str,
-        reason: &tsz_solver::SubtypeFailureReason,
-    ) -> (String, u32) {
-        if is_method {
-            (
-                format_message(
-                    diagnostic_messages::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
-                    &[&format!("{prop_name}()")],
-                ),
-                diagnostic_codes::THE_TYPES_RETURNED_BY_ARE_INCOMPATIBLE_BETWEEN_THESE_TYPES,
-            )
-        } else {
-            (
-                format_message(
-                    diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
-                    &[prop_name],
-                ),
-                reason.diagnostic_code(),
-            )
-        }
-    }
-
-    /// `Type '<src-fn>' is not assignable to type '<tgt-fn>'.` line shown for a
-    /// function-typed property whose signatures differ. Disambiguates identical
-    /// renderings via the shared pair finalizer.
-    fn member_function_type_line(
+    /// The `()` / `(...)` suffix for the TS2201 `The types returned by '<name>...'`
+    /// header. tsc uses `()` only when *both* the source and target call
+    /// signatures take zero parameters, and `(...)` when either carries
+    /// parameters (`reportIncompatibleCallSignatureReturn`).
+    fn member_return_signature_suffix(
         &mut self,
         source_property_type: TypeId,
         target_property_type: TypeId,
-    ) -> String {
-        let source_str = self.format_type_diagnostic(source_property_type);
-        let target_str = self.format_type_diagnostic(target_property_type);
-        let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-            source_property_type,
-            target_property_type,
-            source_str,
-            target_str,
-        );
-        format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        )
+    ) -> &'static str {
+        if self.call_signature_param_count(source_property_type) == 0
+            && self.call_signature_param_count(target_property_type) == 0
+        {
+            "()"
+        } else {
+            "(...)"
+        }
+    }
+
+    /// Number of parameters on the first signature of `type_id`'s evaluated
+    /// form. A function-typed member reaches here as either a bare `Function`
+    /// shape (arrow-property syntax, `f: () => T`) or a `Callable` shape (method
+    /// syntax, `f(): T`); `callable_shape_for_type_extended` normalizes both.
+    /// Zero when the type carries no signature — the safe fallback that keeps the
+    /// historical `<name>()` suffix.
+    fn call_signature_param_count(&mut self, type_id: TypeId) -> usize {
+        let evaluated = self.evaluate_type_for_assignability(type_id);
+        crate::query_boundaries::common::callable_shape_for_type_extended(self.ctx.types, evaluated)
+            .and_then(|shape| shape.call_signatures.first().map(|sig| sig.params.len()))
+            .unwrap_or(0)
     }
 
     /// Append the inner return-type relation beneath the member header at
@@ -715,35 +682,6 @@ impl<'a> CheckerState<'a> {
                 leaf_depth,
             );
         }
-    }
-
-    /// Whether the named member is declared as a *method* (`f(): T`) on both
-    /// the source and target object shapes — the distinction tsc uses to choose
-    /// between the TS2201 return-type elaboration and the function-typed
-    /// `Types of property` elaboration. Falls back to `false` (the property
-    /// form) when either shape is unavailable or the member is property-typed.
-    fn member_is_method_on_both_sides(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-        property_name: tsz_common::interner::Atom,
-    ) -> bool {
-        self.property_declared_as_method(source, property_name)
-            && self.property_declared_as_method(target, property_name)
-    }
-
-    fn property_declared_as_method(
-        &mut self,
-        type_id: TypeId,
-        property_name: tsz_common::interner::Atom,
-    ) -> bool {
-        let evaluated = self.evaluate_type_for_assignability(type_id);
-        crate::query_boundaries::common::find_property_in_object(
-            self.ctx.types,
-            evaluated,
-            property_name,
-        )
-        .is_some_and(|prop| prop.is_method)
     }
 
     /// Render a tuple element type mismatch.
