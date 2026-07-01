@@ -785,8 +785,18 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // --- Static member preamble ---
 
-        // Check if class has non-block static members (properties, accessors, methods with bodies)
-        // This determines whether static blocks go inline or deferred
+        // Check if the class has an initialized static field. This determines
+        // whether static blocks are interleaved inside the class IIFE or
+        // deferred to run after it. tsc keeps a static block inside the IIFE
+        // exactly when the class has a static field initializer (public
+        // `static x = ...` OR private `static #x = ...`): those inits are
+        // emitted inside the IIFE, and a static block sequenced with them —
+        // and, for a private static field, the block's `_C_x` storage temp is
+        // IIFE-local — must run inside too. A private static field is therefore
+        // counted here just like a public one; excluding it left the block
+        // outside the IIFE where `_C_x` is out of scope (a runtime
+        // `ReferenceError`). Static methods and static accessors do not count
+        // (tsc keeps the block outside for those).
         let has_static_props = class_data.members.nodes.iter().any(|&m_idx| {
             let Some(m_node) = self.arena.get(m_idx) else {
                 return false;
@@ -800,7 +810,6 @@ impl<'a> ES5ClassTransformer<'a> {
                             self.arena,
                             &prop_data.modifiers,
                         )
-                        && !is_private_identifier(self.arena, prop_data.name)
                         && self.property_initializer_has_equals(m_node, prop_data);
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR

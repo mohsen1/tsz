@@ -1389,3 +1389,108 @@ fn deferred_static_block_and_fields_follow_private_storage_in_source_order() {
         "Static field inits and static blocks must follow private storage in source order.\nOutput:\n{output}"
     );
 }
+
+// A static initialization block that runs alongside a private static field
+// must be emitted INSIDE the class IIFE, not after it. The private field's
+// storage temp (`_Registry_seq`) is declared IIFE-local, so a block deferred
+// after the IIFE referenced an out-of-scope binding and threw a runtime
+// `ReferenceError` at ES5. tsc keeps the block inside the IIFE (interleaved
+// with the field initializers) whenever the class has a static field
+// initializer, public or private. Binder names vary across these cases so the
+// guard follows the structural shape, not any identifier (anti-hardcoding).
+#[test]
+fn static_block_with_private_static_field_stays_inside_iife() {
+    let output =
+        transform_class("class Registry { static #seq = 0; static { Registry.#seq = 5; } }")
+            .unwrap();
+    let ret = output
+        .find("return Registry;")
+        .expect("class IIFE must return the class");
+    let storage_init = output
+        .find("_Registry_seq = ")
+        .expect("private static storage must be initialized");
+    let block = output
+        .find("__classPrivateFieldSet")
+        .expect("the static block body must be emitted");
+    assert!(
+        storage_init < block && block < ret,
+        "the static block must run inside the IIFE, after the private storage init and before the return.\nOutput:\n{output}"
+    );
+    // No trailing block IIFE after the class expression: everything is inside.
+    let tail = &output[ret..];
+    assert!(
+        !tail.contains("__classPrivateFieldSet"),
+        "no static-block access may be emitted after the class IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_block_with_multiple_private_static_fields_stays_inside_iife() {
+    let output = transform_class(
+        "class Config { static #first = 1; static #second = 2; static { Config.#first = 9; Config.#second = 8; } }",
+    )
+    .unwrap();
+    let ret = output
+        .find("return Config;")
+        .expect("class IIFE must return");
+    let first = output.find("_Config_first = ").expect("first storage init");
+    let second = output
+        .find("_Config_second = ")
+        .expect("second storage init");
+    let block = output
+        .find("__classPrivateFieldSet")
+        .expect("static block body");
+    assert!(
+        first < block && second < block && block < ret,
+        "both private storage inits and the static block must be inside the IIFE.\nOutput:\n{output}"
+    );
+}
+
+// Control: a class with a public static field already kept its block inside;
+// adding a private static field beside it must not change that. Public and
+// private field inits and the block all land inside the IIFE in source order.
+#[test]
+fn static_block_with_mixed_public_and_private_static_fields_stays_inside_iife() {
+    let output = transform_class(
+        "class Store { static count = 0; static #token = 1; static { Store.count = 2; Store.#token = 3; } }",
+    )
+    .unwrap();
+    let ret = output
+        .find("return Store;")
+        .expect("class IIFE must return");
+    let public_init = output.find("Store.count = ").expect("public field init");
+    let block = output
+        .find("__classPrivateFieldSet")
+        .expect("static block body");
+    assert!(
+        public_init < ret && block < ret,
+        "public field init and the private-accessing static block must both be inside the IIFE.\nOutput:\n{output}"
+    );
+}
+
+// Control: with NO static field initializer, tsc keeps a static block AFTER
+// the class IIFE (it only needs the assigned class binding, which is in scope
+// there). A no-initializer private static field does not count as a static
+// field initializer, so the block stays outside.
+#[test]
+fn static_block_without_static_field_stays_after_iife() {
+    for (source, class_name) in [
+        ("class Logger { static { globalThis.x = 1; } }", "Logger"),
+        (
+            "class Marker { static #tag; static { globalThis.y = 1; } }",
+            "Marker",
+        ),
+    ] {
+        let output = transform_class(source).unwrap();
+        let ret = output
+            .find(&format!("return {class_name};"))
+            .expect("class IIFE must return");
+        let block = output
+            .find("globalThis.")
+            .expect("the static block body must be emitted");
+        assert!(
+            block > ret,
+            "a static block with no static field initializer must run after the class IIFE.\nSource: {source}\nOutput:\n{output}"
+        );
+    }
+}
