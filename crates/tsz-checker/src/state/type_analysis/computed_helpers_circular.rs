@@ -540,87 +540,54 @@ impl<'a> CheckerState<'a> {
         in_union_or_intersection: bool,
     ) -> bool {
         // Check if resolved_type is Lazy(DefId) pointing to a type alias in the
-        // current resolution chain.
+        // current resolution chain. `resolution_chain_alias_symbol` returns an
+        // owned SymbolId (releasing the `def_to_symbol` borrow) only for an alias
+        // that is mid-resolution, so the `&mut self` marking call below is safe.
         if let Some(def_id) = lazy_def_id(self.ctx.types, resolved_type)
-            && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
+            && let Some(target_sym_id) = self.resolution_chain_alias_symbol(def_id)
         {
-            // Check if the target is in the resolution set (detecting cycles).
-            let is_in_resolution_chain = self.ctx.symbol_resolution_set.contains(&target_sym_id);
-
-            // Only flag type alias symbols to avoid false positives for
-            // interfaces/classes which can have valid structural recursion.
-            let is_type_alias = self
-                .ctx
-                .binder
-                .get_symbol(target_sym_id)
-                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
-
-            if is_in_resolution_chain && is_type_alias {
-                if target_sym_id == sym_id
-                    && self.type_node_contains_value_type_query_for_alias(type_node, sym_id)
-                {
-                    return false;
-                }
-                let is_direct = if in_union_or_intersection {
-                    if target_sym_id == sym_id {
-                        !self
-                            .ctx
-                            .symbol_resolution_stack
-                            .iter()
-                            .skip_while(|&&stack_sym| stack_sym != target_sym_id)
-                            .skip(1)
-                            .any(|&stack_sym| {
-                                self.ctx.binder.get_symbol(stack_sym).is_some_and(|symbol| {
-                                    symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
-                                }) && self.alias_ast_is_deferred(stack_sym)
-                            })
-                    } else {
-                        let body = self
-                            .ctx
-                            .definition_store
-                            .get_body(def_id)
-                            .filter(|&b| lazy_def_id(self.ctx.types, b).is_none());
-                        if let Some(b) = body {
-                            !crate::query_boundaries::common::is_structurally_deferred_type(
-                                self.ctx.types,
-                                b,
-                            )
-                        } else {
-                            !self.alias_ast_is_deferred(target_sym_id)
-                        }
-                    }
-                } else {
-                    self.is_simple_type_reference(type_node)
-                };
-
-                if is_direct {
-                    // Mark all aliases on stack between target and current as circular.
-                    let mut found_target = false;
-                    for &stack_sym in &self.ctx.symbol_resolution_stack {
-                        if stack_sym == target_sym_id {
-                            found_target = true;
-                        }
-                        if found_target {
-                            let is_alias = self.ctx.binder.get_symbol(stack_sym).is_some_and(|s| {
-                                s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
-                            });
-                            if is_alias {
-                                self.ctx.circular_type_aliases.insert(stack_sym);
-                                if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
-                                    self.ctx.definition_store.mark_circular_def(did);
-                                }
-                            }
-                        }
-                    }
-                    // Always mark the target itself as circular (handles cross-file cycles).
-                    self.ctx.circular_type_aliases.insert(target_sym_id);
-                    if let Some(did) = self.ctx.get_existing_def_id(target_sym_id) {
-                        self.ctx.definition_store.mark_circular_def(did);
-                    }
-                }
-
-                return is_direct;
+            if target_sym_id == sym_id
+                && self.type_node_contains_value_type_query_for_alias(type_node, sym_id)
+            {
+                return false;
             }
+            let is_direct = if in_union_or_intersection {
+                if target_sym_id == sym_id {
+                    !self
+                        .ctx
+                        .symbol_resolution_stack
+                        .iter()
+                        .skip_while(|&&stack_sym| stack_sym != target_sym_id)
+                        .skip(1)
+                        .any(|&stack_sym| {
+                            self.ctx.binder.get_symbol(stack_sym).is_some_and(|symbol| {
+                                symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
+                            }) && self.alias_ast_is_deferred(stack_sym)
+                        })
+                } else {
+                    let body = self
+                        .ctx
+                        .definition_store
+                        .get_body(def_id)
+                        .filter(|&b| lazy_def_id(self.ctx.types, b).is_none());
+                    if let Some(b) = body {
+                        !crate::query_boundaries::common::is_structurally_deferred_type(
+                            self.ctx.types,
+                            b,
+                        )
+                    } else {
+                        !self.alias_ast_is_deferred(target_sym_id)
+                    }
+                }
+            } else {
+                self.is_simple_type_reference(type_node)
+            };
+
+            if is_direct {
+                self.mark_resolution_chain_circular(target_sym_id);
+            }
+
+            return is_direct;
         }
 
         // For mapped types, check if the constraint references the alias being
@@ -638,39 +605,28 @@ impl<'a> CheckerState<'a> {
             };
             for ref_type in refs_to_check {
                 if let Some(def_id) = lazy_def_id(self.ctx.types, ref_type)
-                    && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                    && self.ctx.symbol_resolution_set.contains(&target_sym_id)
-                    && self
-                        .ctx
-                        .binder
-                        .get_symbol(target_sym_id)
-                        .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+                    && let Some(target_sym_id) = self.resolution_chain_alias_symbol(def_id)
                 {
-                    // Mark all aliases on stack between target and current as circular.
-                    let mut found_target = false;
-                    for &stack_sym in &self.ctx.symbol_resolution_stack {
-                        if stack_sym == target_sym_id {
-                            found_target = true;
-                        }
-                        if found_target {
-                            let is_alias = self.ctx.binder.get_symbol(stack_sym).is_some_and(|s| {
-                                s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0
-                            });
-                            if is_alias {
-                                self.ctx.circular_type_aliases.insert(stack_sym);
-                                if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
-                                    self.ctx.definition_store.mark_circular_def(did);
-                                }
-                            }
-                        }
-                    }
-                    self.ctx.circular_type_aliases.insert(target_sym_id);
-                    if let Some(did) = self.ctx.get_existing_def_id(target_sym_id) {
-                        self.ctx.definition_store.mark_circular_def(did);
-                    }
+                    self.mark_resolution_chain_circular(target_sym_id);
                     return true;
                 }
             }
+        }
+
+        // `keyof` forces its operand's apparent type, so a self-reference reached
+        // through `keyof` re-enters the alias mid-resolution — an eager position,
+        // unlike a deferred array element (`type N = N[]`) or object property
+        // (`type A = keyof { a: A }`). tsc reports TS2456 for `type A = keyof A`,
+        // `keyof A[]`, `keyof Array<A>`, `keyof (x | A)`, and `keyof A["k"]`. The
+        // `has_deferred_resolution_chain_ref` guard below would otherwise excuse
+        // these as legitimate deferred recursion, so detect them here first, using
+        // the same precise resolution-chain condition as the mapped-constraint
+        // block above (only a `Lazy(DefId)` for an alias already on the stack).
+        if let Some(target_sym_id) =
+            self.keyof_operand_reaches_resolution_chain_alias(resolved_type)
+        {
+            self.mark_resolution_chain_circular(target_sym_id);
+            return true;
         }
 
         // Type query (typeof X): per the TS spec, "a type query directly depends
@@ -867,6 +823,125 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Mark every type alias on the resolution stack from `target_sym_id`
+    /// through the current alias — plus `target_sym_id` itself — as circular,
+    /// so the TS2456 collapse is observed at every use site (including
+    /// cross-file cycles where the target is not otherwise on this file's
+    /// stack). Shared by every direct-circularity detection arm.
+    fn mark_resolution_chain_circular(&mut self, target_sym_id: SymbolId) {
+        // Clone the stack (a small Vec) so its immutable borrow does not conflict
+        // with the `&mut self.ctx` field writes in the loop body. Only reached
+        // when a circular alias is actually detected, so the clone is off the
+        // hot path.
+        let stack = self.ctx.symbol_resolution_stack.clone();
+        let mut found_target = false;
+        for stack_sym in stack {
+            if stack_sym == target_sym_id {
+                found_target = true;
+            }
+            if found_target
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(stack_sym)
+                    .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0)
+            {
+                self.ctx.circular_type_aliases.insert(stack_sym);
+                if let Some(did) = self.ctx.get_existing_def_id(stack_sym) {
+                    self.ctx.definition_store.mark_circular_def(did);
+                }
+            }
+        }
+        self.ctx.circular_type_aliases.insert(target_sym_id);
+        if let Some(did) = self.ctx.get_existing_def_id(target_sym_id) {
+            self.ctx.definition_store.mark_circular_def(did);
+        }
+    }
+
+    /// When `resolved_type` is a `keyof`, follow its operand through the
+    /// positions `keyof` resolves eagerly to a type alias currently on the
+    /// resolution stack. `keyof` forces its operand's apparent type, so such a
+    /// self-reference re-enters the alias mid-resolution and is circular
+    /// (TS2456) — mirroring tsc, which flags `type A = keyof A`, `keyof A[]`,
+    /// `keyof Array<A>`, `keyof (x | A)`, and `keyof A["k"]`. Returns the
+    /// offending alias symbol.
+    pub(crate) fn keyof_operand_reaches_resolution_chain_alias(
+        &self,
+        resolved_type: TypeId,
+    ) -> Option<SymbolId> {
+        let operand = keyof_inner_type(self.ctx.types, resolved_type)?;
+        let mut visited = FxHashSet::default();
+        self.keyof_eager_operand_chain_alias(operand, &mut visited)
+    }
+
+    /// Walk the eagerly-resolved positions under a `keyof` operand — nested
+    /// `keyof`, array/tuple elements, generic type arguments,
+    /// union/intersection members, and indexed-access object/index — looking
+    /// for a `Lazy(DefId)` that resolves to a type alias currently on the
+    /// resolution stack. Object-literal property, mapped, function, and
+    /// conditional positions stay deferred and are not followed, so
+    /// `type A = keyof { a: A }` is not circular.
+    fn keyof_eager_operand_chain_alias(
+        &self,
+        ty: TypeId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> Option<SymbolId> {
+        if !visited.insert(ty) {
+            return None;
+        }
+        if let Some(def_id) = lazy_def_id(self.ctx.types, ty)
+            && let Some(sym) = self.resolution_chain_alias_symbol(def_id)
+        {
+            return Some(sym);
+        }
+        if let Some(inner) = keyof_inner_type(self.ctx.types, ty) {
+            return self.keyof_eager_operand_chain_alias(inner, visited);
+        }
+        if let Some(elem) = common::array_element_type(self.ctx.types, ty) {
+            return self.keyof_eager_operand_chain_alias(elem, visited);
+        }
+        if let Some(elems) = common::tuple_elements(self.ctx.types, ty) {
+            return elems
+                .iter()
+                .find_map(|e| self.keyof_eager_operand_chain_alias(e.type_id, visited));
+        }
+        if let Some((base, args)) = common::application_info(self.ctx.types, ty) {
+            return std::iter::once(base)
+                .chain(args)
+                .find_map(|t| self.keyof_eager_operand_chain_alias(t, visited));
+        }
+        if let Some(members) = union_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .find_map(|&m| self.keyof_eager_operand_chain_alias(m, visited));
+        }
+        if let Some(members) = intersection_members(self.ctx.types, ty) {
+            return members
+                .iter()
+                .find_map(|&m| self.keyof_eager_operand_chain_alias(m, visited));
+        }
+        if let Some((obj, idx)) = index_access_types(self.ctx.types, ty) {
+            return self
+                .keyof_eager_operand_chain_alias(obj, visited)
+                .or_else(|| self.keyof_eager_operand_chain_alias(idx, visited));
+        }
+        None
+    }
+
+    /// The type-alias `SymbolId` for `def_id` when it is currently on the
+    /// resolution stack (an in-progress alias resolution). Confines
+    /// circularity detection to genuine mid-resolution re-entry.
+    fn resolution_chain_alias_symbol(&self, def_id: tsz_solver::def::DefId) -> Option<SymbolId> {
+        let target = self.ctx.def_to_symbol.borrow().get(&def_id).copied()?;
+        (self.ctx.symbol_resolution_set.contains(&target)
+            && self
+                .ctx
+                .binder
+                .get_symbol(target)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0))
+        .then_some(target)
     }
 
     /// Walk the AST node tree under `root_idx` and return the SymbolId of any
