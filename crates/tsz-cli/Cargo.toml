@@ -176,6 +176,9 @@ name = "imported_infer_readonly_alias_cli_tests"
 path = "tests/imported_infer_readonly_alias_cli_tests.rs"
 
 [[test]]
+name = "cross_module_ambient_class_method_constraint_cli_tests"
+path = "tests/cross_module_ambient_class_method_constraint_cli_tests.rs"
+[[test]]
 name = "cross_module_conditional_constraint_union_param_cli_tests"
 path = "tests/cross_module_conditional_constraint_union_param_cli_tests.rs"
 
