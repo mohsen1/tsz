@@ -21,11 +21,6 @@ use crate::query_boundaries::state::type_environment::{
     CacheEntryCollection, EvaluateTypeWithCacheOptions, for_each_direct_referenced_type,
 };
 
-pub(crate) use super::lazy_fuel::{
-    global_resolution_fuel_exhausted, global_resolution_fuel_value,
-    increment_global_resolution_fuel, reset_global_resolution_fuel, restore_global_resolution_fuel,
-};
-
 // Thread-local counters survive cross-arena child `CheckerContext`s, where
 // per-context counters would reset and defeat these recursion/fuel guards.
 thread_local! {
@@ -48,7 +43,6 @@ pub(crate) fn reset_all_thread_local_state() {
     REFS_RESOLUTION_FUEL.set(0);
     REFS_RESOLUTION_ACTIVE.set(false);
     EVAL_ENV_DEPTH.set(0);
-    reset_global_resolution_fuel();
 }
 
 // Maximum depth for nested `ensure_application_symbols_resolved` calls.
@@ -1686,9 +1680,10 @@ impl CheckerState<'_> {
 
                 // Consume fuel for each DefId resolution (the expensive part)
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                increment_global_resolution_fuel();
-                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
-                {
+                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                match application_resolution_post_consume_state(
+                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
                     | ApplicationResolutionWorkState::LocalFuelExhausted => {
@@ -1731,9 +1726,10 @@ impl CheckerState<'_> {
 
                 // Consume fuel for enum resolution too
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                increment_global_resolution_fuel();
-                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
-                {
+                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                match application_resolution_post_consume_state(
+                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
                     | ApplicationResolutionWorkState::LocalFuelExhausted => {
@@ -1779,9 +1775,10 @@ impl CheckerState<'_> {
 
                 // Consume fuel for type query resolution
                 APP_SYMBOL_RESOLUTION_FUEL.set(APP_SYMBOL_RESOLUTION_FUEL.get() + 1);
-                increment_global_resolution_fuel();
-                match application_resolution_post_consume_state(global_resolution_fuel_exhausted())
-                {
+                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                match application_resolution_post_consume_state(
+                    self.ctx.eval_session.lazy_resolution_fuel_exhausted(),
+                ) {
                     ApplicationResolutionWorkState::Continue => {}
                     ApplicationResolutionWorkState::GlobalFuelExhausted
                     | ApplicationResolutionWorkState::LocalFuelExhausted => {

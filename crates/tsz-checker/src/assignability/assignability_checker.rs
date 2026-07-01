@@ -544,7 +544,7 @@ impl<'a> CheckerState<'a> {
         if type_id.is_intrinsic() {
             return;
         }
-        // Do NOT gate on global_resolution_fuel_exhausted() here.  The inner
+        // Do NOT gate on lazy-resolution session fuel here. The inner
         // guards inside ensure_refs_resolved (and ensure_application_symbols_resolved)
         // already exit the materialization worklist when global fuel is exhausted,
         // bounding total work per call to O(1).  Gating the entire readiness step
@@ -699,7 +699,6 @@ impl<'a> CheckerState<'a> {
         use crate::state_checking::lazy_lib_member::on_demand_forcing_disabled;
         use crate::state_domain::type_environment::lazy::{
             enter_refs_resolution_scope, exit_refs_resolution_scope,
-            global_resolution_fuel_exhausted, increment_global_resolution_fuel,
             increment_refs_resolution_fuel, refs_resolution_fuel_exhausted,
         };
         use crate::state_domain::type_environment::lazy_guard_state::{
@@ -760,8 +759,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 increment_refs_resolution_fuel();
-                increment_global_resolution_fuel();
-                let at_fuel_limit = global_resolution_fuel_exhausted();
+                self.ctx.eval_session.increment_lazy_resolution_fuel();
+                let at_fuel_limit = self.ctx.eval_session.lazy_resolution_fuel_exhausted();
                 // Always call resolve_and_insert_def_type even when global fuel is
                 // exhausted: the call is typically a fast cache hit for lib types that
                 // were computed during type-environment building, and the resolver needs
@@ -839,9 +838,7 @@ impl<'a> CheckerState<'a> {
     /// issue #13243). The active recursion stack still wins over the memo, so
     /// re-entered types still evaluate to themselves.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        use crate::state_domain::type_environment::lazy::{
-            global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
-        };
+        use crate::state_domain::type_environment::lazy::refs_resolution_fuel_exhausted;
 
         if type_id.is_intrinsic() {
             return type_id;
@@ -896,7 +893,7 @@ impl<'a> CheckerState<'a> {
         // state; the lookup-time stamp would file the entry as already stale.
         if result != TypeId::ERROR
             && !refs_resolution_fuel_exhausted()
-            && !global_resolution_fuel_exhausted()
+            && !self.ctx.eval_session.lazy_resolution_fuel_exhausted()
             && !self.ctx.depth_exceeded.get()
             && let Some(stamp) = self.assignability_eval_memo_stamp()
         {

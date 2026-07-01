@@ -25,6 +25,10 @@ const MAX_GLOBAL_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_GLOBAL_INSTANTIAT
 /// Canonical definition in [`crate::limits`].
 const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATION_FUEL;
 
+/// Maximum checker lazy-resolution fuel across all top-level calls in one
+/// shared evaluation session.
+const MAX_LAZY_RESOLUTION_FUEL: u32 = 50_000;
+
 /// Maximum re-entrant conditional-subtype relation depth.
 const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = crate::limits::MAX_CONDITIONAL_SUBTYPE_DEPTH;
 
@@ -64,6 +68,8 @@ pub struct EvaluationSession {
     global_instantiation_depth: Cell<u32>,
     /// Cross-context instantiation fuel (total non-cached evaluations per file).
     global_instantiation_fuel: Cell<u32>,
+    /// Cross-context checker lazy-resolution fuel.
+    lazy_resolution_fuel: Cell<u32>,
     /// Re-entrant conditional-subtype depth for
     /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chains.
     conditional_subtype_depth: Cell<u32>,
@@ -142,6 +148,7 @@ impl EvaluationSession {
         Self {
             global_instantiation_depth: Cell::new(0),
             global_instantiation_fuel: Cell::new(0),
+            lazy_resolution_fuel: Cell::new(0),
             conditional_subtype_depth: Cell::new(0),
             infer_match_expansion_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
@@ -201,6 +208,37 @@ impl EvaluationSession {
     #[inline]
     pub const fn global_instantiation_fuel(&self) -> u32 {
         self.global_instantiation_fuel.get()
+    }
+
+    /// Check if checker lazy-resolution fuel is exhausted.
+    #[inline]
+    pub const fn lazy_resolution_fuel_exhausted(&self) -> bool {
+        self.lazy_resolution_fuel.get() >= MAX_LAZY_RESOLUTION_FUEL
+    }
+
+    /// Increment checker lazy-resolution fuel.
+    #[inline]
+    pub fn increment_lazy_resolution_fuel(&self) {
+        self.lazy_resolution_fuel
+            .set(self.lazy_resolution_fuel.get() + 1);
+    }
+
+    /// Reset checker lazy-resolution fuel for a new file, statement, or retry boundary.
+    #[inline]
+    pub fn reset_lazy_resolution_fuel(&self) {
+        self.lazy_resolution_fuel.set(0);
+    }
+
+    /// Read checker lazy-resolution fuel for snapshot/restore.
+    #[inline]
+    pub const fn lazy_resolution_fuel_value(&self) -> u32 {
+        self.lazy_resolution_fuel.get()
+    }
+
+    /// Restore checker lazy-resolution fuel to a previously captured value.
+    #[inline]
+    pub fn restore_lazy_resolution_fuel(&self, value: u32) {
+        self.lazy_resolution_fuel.set(value);
     }
 
     /// Enter a conditional-subtype probe and return the observed prior depth.
@@ -360,6 +398,23 @@ mod tests {
             EvaluationSessionLimitState::WithinLimits
         );
         assert!(!session.instantiation_limits_exceeded());
+    }
+
+    #[test]
+    fn test_lazy_resolution_fuel_snapshot_restore_and_limit() {
+        let session = EvaluationSession::new();
+        assert_eq!(session.lazy_resolution_fuel_value(), 0);
+        assert!(!session.lazy_resolution_fuel_exhausted());
+
+        session.increment_lazy_resolution_fuel();
+        assert_eq!(session.lazy_resolution_fuel_value(), 1);
+
+        session.restore_lazy_resolution_fuel(MAX_LAZY_RESOLUTION_FUEL);
+        assert!(session.lazy_resolution_fuel_exhausted());
+
+        session.reset_lazy_resolution_fuel();
+        assert_eq!(session.lazy_resolution_fuel_value(), 0);
+        assert!(!session.lazy_resolution_fuel_exhausted());
     }
 
     #[test]

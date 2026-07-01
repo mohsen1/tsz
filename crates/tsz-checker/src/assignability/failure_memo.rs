@@ -67,14 +67,12 @@ impl CheckerState<'_> {
         analysis: CachedAssignabilityAnalysis,
         lazy_failures_at_entry: u64,
     ) {
-        use crate::state_domain::type_environment::lazy::{
-            global_resolution_fuel_exhausted, refs_resolution_fuel_exhausted,
-        };
+        use crate::state_domain::type_environment::lazy::refs_resolution_fuel_exhausted;
 
         if analysis.depth_exceeded
             || analysis.iteration_exceeded
             || refs_resolution_fuel_exhausted()
-            || global_resolution_fuel_exhausted()
+            || self.ctx.eval_session.lazy_resolution_fuel_exhausted()
             || self.ctx.depth_exceeded.get()
             || crate::query_boundaries::common::lazy_resolve_failure_count()
                 != lazy_failures_at_entry

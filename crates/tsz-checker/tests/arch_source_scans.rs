@@ -35,6 +35,8 @@ mod common_boundary_export_ratchets;
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
+#[path = "arch_source_scans/lazy_resolution_session_scans.rs"]
+mod lazy_resolution_session_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]
