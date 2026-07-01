@@ -688,7 +688,28 @@ impl CheckerState<'_> {
                 let atom = self.ctx.types.intern_string(&name);
 
                 let constraint = if data.constraint != NodeIndex::NONE {
-                    let constraint_type = self.get_type_from_type_node(data.constraint);
+                    let mut constraint_type = self.get_type_from_type_node(data.constraint);
+                    // #15256: A method type-parameter constraint that references a
+                    // type alias imported from a THIRD module can transiently fail
+                    // to resolve inside a cross-arena class delegation: the child
+                    // checker that rebuilds the imported class attempts to resolve
+                    // the alias and yields `ERROR`, even though the alias's own
+                    // declaring file resolves it correctly. Committing that `ERROR`
+                    // as the constraint poisons generic inference — a literal
+                    // argument widens to its constraint base (e.g. kysely's
+                    // `bareC('sys.tables')` widening to `string`), cascading into
+                    // false TS2345/TS2322 diagnostics. Recover a stable deferred
+                    // reference (`Lazy(DefId)` of the alias, preserving type
+                    // arguments) so the constraint resolves through the global
+                    // `DefId -> TypeId` map at use time, order-independently,
+                    // instead of collapsing to `ERROR`.
+                    if constraint_type == TypeId::ERROR
+                        && Self::is_in_cross_arena_delegation()
+                        && let Some(deferred) =
+                            self.recover_cross_arena_deferred_constraint(data.constraint)
+                    {
+                        constraint_type = deferred;
+                    }
                     let is_typeof_constraint =
                         self.ctx.arena.get(data.constraint).is_some_and(|n| {
                             n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
@@ -791,6 +812,64 @@ impl CheckerState<'_> {
 
         self.ctx.leave_recursion();
         (params, updates)
+    }
+
+    /// #15256: Rebuild a type-parameter constraint that resolved to `ERROR`
+    /// inside a cross-arena class delegation as a stable deferred `Lazy(DefId)`
+    /// reference (preserving type arguments as an `Application`).
+    ///
+    /// The transient child checker that materializes an imported class's
+    /// instance type can fail to eagerly resolve a constraint whose alias is
+    /// declared in a different module than the class; the eager resolution
+    /// yields `ERROR` even though the alias resolves correctly through the
+    /// global `DefId -> TypeId` map. Deferring to `Lazy(DefId)` — the same way
+    /// member annotations reached through the class boundary defer — makes the
+    /// constraint resolve consistently at use time regardless of the order in
+    /// which files are checked, rather than being poisoned to `ERROR`.
+    ///
+    /// Returns `None` (leaving the caller's `ERROR` in place) when the
+    /// constraint is not a plain type reference or its symbol cannot be
+    /// resolved, so this never invents a constraint that was genuinely invalid.
+    fn recover_cross_arena_deferred_constraint(
+        &mut self,
+        constraint_node: NodeIndex,
+    ) -> Option<TypeId> {
+        let (type_name, type_arg_nodes) = {
+            let node = self.ctx.arena.get(constraint_node)?;
+            if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                return None;
+            }
+            let type_ref = self.ctx.arena.get_type_ref(node)?;
+            let type_arg_nodes = type_ref
+                .type_arguments
+                .as_ref()
+                .map(|args| args.nodes.clone())
+                .unwrap_or_default();
+            (type_ref.type_name, type_arg_nodes)
+        };
+
+        // Resolve the referenced name to a stable symbol. Bare symbol
+        // resolution succeeds in the delegated context even when full type
+        // materialization did not, and `create_lazy_type_ref` mints a
+        // `Lazy(DefId)` that the global `DefId -> TypeId` map resolves
+        // (following import aliases) at use time.
+        let TypeSymbolResolution::Type(target_sym) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_name)
+        else {
+            return None;
+        };
+        let lazy = self.ctx.create_lazy_type_ref(target_sym);
+        if lazy == TypeId::ERROR {
+            return None;
+        }
+        if type_arg_nodes.is_empty() {
+            return Some(lazy);
+        }
+        let args: Vec<TypeId> = type_arg_nodes
+            .iter()
+            .map(|&arg| self.get_type_from_type_node(arg))
+            .collect();
+        Some(self.ctx.types.application(lazy, args))
     }
 
     /// Allocate (or reuse) the canonical `TypeId` for one type-parameter
