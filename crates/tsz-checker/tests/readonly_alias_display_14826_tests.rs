@@ -3,13 +3,12 @@
 //! *target* the diagnostic names the outer alias (`R`, `RA`, `RT`), not the
 //! structural `readonly [...]` / `readonly T[]` form.
 //!
-//! Before the fix, tsz's diagnostic formatter omitted the `readonly`-wrapper
-//! node from the reverse alias lookup (`key_is_composite_for_def_lookup`), so a
-//! `readonly` type fell through to structural formatting and dropped the outer
-//! alias. Worse, when a *mutable* tuple alias of the same element shape existed
-//! anywhere in scope, the recursive format of the inner tuple resolved that
-//! coincidentally-shaped alias (tuples/arrays are content-interned), yielding
-//! the syntactically-invalid `readonly M`.
+//! Before the fix, tsz's TS2322 target-display path had no provenance-aware
+//! recovery for `readonly` aliases, so it fell through to structural formatting
+//! and dropped the outer alias. Worse, when a *mutable* tuple alias of the same
+//! element shape existed anywhere in scope, the recursive format of the inner
+//! tuple resolved that coincidentally-shaped alias (tuples/arrays are
+//! content-interned), yielding the syntactically-invalid `readonly M`.
 //!
 //! The fix (1) recovers the outer `readonly` alias by name and (2) renders the
 //! synthetic inner array/tuple structurally — `readonly` applies only to

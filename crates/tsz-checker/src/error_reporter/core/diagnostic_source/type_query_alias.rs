@@ -89,6 +89,50 @@ impl<'a> CheckerState<'a> {
         Some(self.format_declared_annotation_for_diagnostic(&annotation_text))
     }
 
+    /// Recover a non-generic `readonly` array / tuple type-alias name from a
+    /// TS2322 assignment target's declared annotation.
+    ///
+    /// `ReadonlyType` ids are structurally interned, so the solver formatter's
+    /// reverse type-to-def lookup cannot distinguish `const x: R` from an inline
+    /// `const x: readonly T[]`. The target annotation is the provenance that
+    /// proves `tsc` would have an `aliasSymbol`; without it, callers must keep
+    /// the structural `readonly ...` display.
+    pub(in crate::error_reporter) fn readonly_array_alias_target_display(
+        &mut self,
+        target_expr_idx: NodeIndex,
+        target_type: TypeId,
+    ) -> Option<String> {
+        crate::query_boundaries::common::readonly_inner_type(self.ctx.types, target_type)?;
+
+        let (arena, annotation_idx) =
+            self.declared_type_annotation_node_for_expression(target_expr_idx)?;
+        let type_ref = arena.get_type_ref(arena.get(annotation_idx)?)?;
+        if type_ref.type_arguments.is_some() {
+            return None;
+        }
+        let def_id = self.annotation_type_reference_alias_def_id(arena, annotation_idx)?;
+        if self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .is_none_or(|def| !def.type_params.is_empty())
+        {
+            return None;
+        }
+        if crate::query_boundaries::assignability_alias_display::type_alias_displayed_as_underlying(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            def_id,
+        )
+        .is_some()
+        {
+            return None;
+        }
+
+        let annotation_text = self.declared_type_annotation_text_for_expression(target_expr_idx)?;
+        Some(self.format_declared_annotation_for_diagnostic(&annotation_text))
+    }
+
     pub(in crate::error_reporter) fn declared_source_annotation_names_type_query_alias(
         &self,
         expr_idx: NodeIndex,

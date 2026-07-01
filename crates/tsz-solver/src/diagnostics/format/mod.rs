@@ -1509,17 +1509,10 @@ impl<'a> TypeFormatter<'a> {
                     if self.interner.object_shape(*shape_id).symbol.is_none()
             );
 
-        // For composite types that might be named (interfaces, type aliases, classes),
-        // check if this TypeId maps to a definition name. This handles:
-        // - Interfaces: `interface Foo { a: string }` displays as "Foo"
-        // - Cross-file scenarios where ObjectShape's symbol can't be resolved
-        //
-        // NOTE: We deliberately do NOT use `find_type_alias_by_body` here because
-        // tsc only shows alias names when the type was directly referenced through
-        // that alias, not when a computed type happens to match an alias body.
-        // The `display_alias` mechanism (below) handles the cases where tsc does
-        // show alias names for evaluated types.
-        //
+        // Named composite types can display by definition when the TypeId itself
+        // carries enough provenance (interfaces, classes, referenced aliases).
+        // Do not use body-shape lookup: tsc only shows aliases that were directly
+        // referenced, while `display_alias` handles evaluated-type provenance.
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
         // Object types are content-interned, so a hand-written literal annotation
@@ -1545,11 +1538,6 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Mapped(_)
                 | TypeData::Conditional(_)
                 | TypeData::IndexAccess(_, _)
-                // A `readonly` tuple/array through a non-generic alias keeps its
-                // `aliasSymbol` in tsc; recover the outer name (`R`) here. Its
-                // synthetic inner is rendered via `format_key` (which skips this
-                // lookup), so a coincidental mutable twin never leaks as `readonly M`.
-                | TypeData::ReadonlyType(_)
         );
         if !skip_object_def_lookup
             && key_is_composite_for_def_lookup

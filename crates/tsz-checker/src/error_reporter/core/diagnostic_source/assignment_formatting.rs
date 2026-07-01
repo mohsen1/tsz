@@ -990,6 +990,12 @@ impl<'a> CheckerState<'a> {
         {
             return self.format_type_for_assignability_message(display_target);
         }
+        if display_target == target
+            && let Some(display) =
+                self.readonly_array_alias_target_display(target_expr, display_target)
+        {
+            return display;
+        }
         if let Some(display) = self.keyof_type_alias_body_display(display_target) {
             return display;
         }

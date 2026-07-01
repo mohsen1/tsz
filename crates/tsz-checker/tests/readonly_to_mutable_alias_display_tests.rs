@@ -128,6 +128,22 @@ fn inline_readonly_array_source_keeps_structural_display() {
 }
 
 #[test]
+fn inline_readonly_array_source_ignores_coincidental_alias_body() {
+    let source = r#"
+        type RStrings = readonly string[];
+        function f(value: readonly string[]) {
+            const mutable: string[] = value;
+        }
+    "#;
+    let msg = ts4104_message(&check(source));
+    assert_eq!(
+        msg,
+        "The type 'readonly string[]' is 'readonly' and cannot be assigned to the mutable type 'string[]'.",
+        "inline readonly array must not borrow a coincidental alias, got: {msg}"
+    );
+}
+
+#[test]
 fn inline_readonly_tuple_source_keeps_structural_display() {
     let source = r#"
         const pair: readonly [number, string] = [1, "x"];
