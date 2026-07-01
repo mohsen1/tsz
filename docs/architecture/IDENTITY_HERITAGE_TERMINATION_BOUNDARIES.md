@@ -22,9 +22,11 @@ boundaries are the parity floor that proves it did not regress the class.
   - `crates/tsz-cli/tests/cross_file_imported_const_computed_key_identity_tests.rs`
 - **Measurement layer** (the quantified witness, trends to zero as the flip
   lands): the `identity_collision_wrong_decl_suppressed` perf counter (#14520),
-  with `symbol_def_index_lookup_hits`/`_misses` as the denominator, plus the
-  end-to-end flip validation harness `scripts/bench/canonical-defid-harness/`
-  (#14548 — counter + md5 stability baseline).
+  with `symbol_def_index_lookup_hits`/`_misses` as the denominator. The composed
+  flag stack is exercised by the committed gauge
+  `scripts/bench/campaign-gauge/` and the `campaign-flag-lane` CI lane (#15317),
+  which superseded the dormant `canonical-defid-harness` (it measured
+  `TSZ_CANONICAL_DEFID`, a flag no crate reads post-#14558).
 - **Triage a new identity witness here:** add a both-orders case to a floor
   test above; do not open a `green/*` branch.
 

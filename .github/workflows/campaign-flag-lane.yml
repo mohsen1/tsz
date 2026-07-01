@@ -1,0 +1,58 @@
+name: Campaign Flag Lane
+
+# Exercises the #14344/#14345 identity + materialize-once campaign's default-OFF
+# flag stack (issue #15317). The campaign's asset is almost entirely flag-ON
+# behavior that nothing exercised; this lane runs the committed gauge so flag-ON
+# parity and run-to-run determinism are re-proven as solver/checker main moves.
+#
+# Inert on normal PRs: it runs on a nightly schedule, on manual dispatch, and on
+# PRs only when labeled `campaign-flag-lane`, so it never burdens default PR CI.
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Gauge mode to run
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - flag-tests
+          - determinism
+          - census
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: campaign-flag-lane-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gauge:
+    name: campaign gauge
+    # Schedule / manual dispatch always; PRs only when opted in via label.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'campaign-flag-lane')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@ace6ebe54a6a0c86dfb5f7764b17f793b6925bc3 # v2
+        with:
+          tool: cargo-nextest
+      - name: Run campaign gauge
+        shell: bash
+        run: scripts/bench/campaign-gauge/run.sh "${{ github.event.inputs.mode || 'all' }}"
