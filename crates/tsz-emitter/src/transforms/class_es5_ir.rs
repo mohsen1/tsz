@@ -1779,6 +1779,24 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(instances) = self.private_instances_weakset_name.as_ref() {
             weakmap_inits.push(format!("{instances} = new WeakSet()"));
         }
+        // Auto-accessor storage WeakMaps are allocated together with the rest of
+        // the private-name storage — after the private-field WeakMaps and the
+        // private-method WeakSet, but BEFORE the private method/accessor function
+        // definitions — matching tsc's "allocations first, function defs second"
+        // initialization order (e.g.
+        // `_C_instances = new WeakSet(), _C_a_accessor_storage = new WeakMap(), _C_run = function ...`).
+        // The standalone (no private-name lowering) case is unaffected: with no
+        // fields/methods/instances ahead of it, the accessor storage still leads.
+        let auto_accessor_instance_inits_in_computed_key =
+            self.first_computed_instance_auto_accessor().is_some();
+        for accessor in &self.auto_accessors {
+            if !accessor.is_static
+                && !auto_accessor_decls_in_iife
+                && !auto_accessor_instance_inits_in_computed_key
+            {
+                weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
+            }
+        }
         weakmap_inits.extend(self.private_method_and_accessor_init_strings());
         // Static private field initializers are no longer emitted as a grouped
         // block here; they are interleaved with the public static field inits and
@@ -1802,16 +1820,6 @@ impl<'a> ES5ClassTransformer<'a> {
             weakmap_inits = Vec::new();
         } else {
             weakmap_decls.extend(private_storage_decls);
-        }
-        let auto_accessor_instance_inits_in_computed_key =
-            self.first_computed_instance_auto_accessor().is_some();
-        for accessor in &self.auto_accessors {
-            if !accessor.is_static
-                && !auto_accessor_decls_in_iife
-                && !auto_accessor_instance_inits_in_computed_key
-            {
-                weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
-            }
         }
         let post_weakmap_statements = Vec::new();
 

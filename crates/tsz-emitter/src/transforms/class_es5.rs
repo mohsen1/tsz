@@ -838,7 +838,13 @@ impl<'a> ClassES5Emitter<'a> {
             .collect();
 
         body.drain(decl_pos..return_pos);
-        weakmap_decls.extend(decl_names);
+        // The lifted names are the private-field/method/instances storage vars,
+        // which `tsc` declares BEFORE any public auto-accessor storage vars that
+        // were already seeded into `weakmap_decls`. Prepend them (mirroring the
+        // init prepend below) so the combined `var` reads
+        // `_C_field, _C_x_accessor_storage;` — private-name storage first, then
+        // accessor storage — instead of the reversed append order.
+        weakmap_decls.splice(0..0, decl_names);
 
         if let Some((first_init, trailing_statements)) = init_texts.split_first() {
             let existing_inits = std::mem::take(weakmap_inits);

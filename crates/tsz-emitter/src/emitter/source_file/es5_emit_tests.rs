@@ -1229,6 +1229,96 @@ class C2 {\n\
     );
 }
 
+// Down-leveling a class to the ES5 IIFE lifts its private-name storage out of
+// the generated function. `tsc` keeps that storage in one combined
+// declaration/initialization with a fixed order: the private-field/method
+// (`WeakMap`/`WeakSet`) storage first — in source order — and any public
+// auto-accessor storage `WeakMap`s last. The pre-fix lifter appended the
+// private storage *after* the accessor storage in the `var` declaration (while
+// prepending it in the initializer), so a class mixing `#field`/`#method` with
+// a public `accessor` emitted a reversed `var` list. These tests lock the
+// tsc-parity order at ES5; binder names are varied so the assertions track
+// structure, not a spelling. (ES2015+ parity is covered by
+// `private_field_helper_order_tests`.)
+fn emit_es5(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn es5_private_field_precedes_public_accessor_storage() {
+    let output = emit_es5(
+        "class Wrapper {\n    #value = 1;\n    accessor label = 2;\n    get peek() { return this.#value; }\n}\n",
+    );
+
+    assert!(
+        output.contains("var _Wrapper_value, _Wrapper_label_accessor_storage;"),
+        "es5 var declaration must list the private field before the accessor storage.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_Wrapper_value = new WeakMap(), _Wrapper_label_accessor_storage = new WeakMap();"
+        ),
+        "es5 storage init must allocate the private field before the accessor storage.\nOutput:\n{output}"
+    );
+    // The reversed pre-fix order must not reappear.
+    assert!(
+        !output.contains("var _Wrapper_label_accessor_storage, _Wrapper_value;"),
+        "accessor storage must not precede the private field in the var declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_public_accessor_storage_allocates_before_private_method_def() {
+    // Allocations (`new WeakSet()` / `new WeakMap()`) come before the private
+    // method's function definition, so the accessor storage sits between the
+    // instances `WeakSet` and the `_Kit_run = function` assignment — while the
+    // declaration lists the method helper var before the accessor storage.
+    let output = emit_es5(
+        "class Kit {\n    accessor a = 1;\n    #run() { return 2; }\n    call() { return this.#run(); }\n}\n",
+    );
+
+    assert!(
+        output.contains("var _Kit_instances, _Kit_run, _Kit_a_accessor_storage;"),
+        "es5 var declaration order must be instances, method helper, then accessor storage.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_Kit_instances = new WeakSet(), _Kit_a_accessor_storage = new WeakMap(), _Kit_run = function"
+        ),
+        "accessor storage must be allocated after the instances WeakSet but before the private-method def.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_multiple_fields_and_accessors_preserve_grouped_source_order() {
+    let output = emit_es5(
+        "class Grid {\n    #m = 1;\n    accessor p = 2;\n    #n = 3;\n    accessor q = 4;\n    get sum() { return this.#m + this.#n; }\n}\n",
+    );
+
+    assert!(
+        output
+            .contains("var _Grid_m, _Grid_n, _Grid_p_accessor_storage, _Grid_q_accessor_storage;"),
+        "es5 var declaration must list both private fields (source order) then both accessor storages (source order).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_Grid_m = new WeakMap(), _Grid_n = new WeakMap(), _Grid_p_accessor_storage = new WeakMap(), _Grid_q_accessor_storage = new WeakMap();"
+        ),
+        "es5 storage init must allocate both private fields then both accessor storages, in one statement.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn es2015_private_field_destructuring_assignment_uses_setter_target() {
     let source = "class C {\n    #value: string;\n    m(arg: { key: string }) {\n        ({ key: this.#value } = arg);\n    }\n}\n";
