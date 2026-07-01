@@ -11,6 +11,25 @@ use tsz_binder::SymbolId;
 const LONG_PROPERTY_RECEIVER_APPLICATION_ARG_DEPTH_LIMIT: u32 = 64;
 
 impl<'a> TypeFormatter<'a> {
+    /// Render `type_id` structurally via [`Self::format_key`], guarding recursion
+    /// with `format_visiting` exactly as the [`Self::format`] entry point does.
+    /// Use this to format a node structurally while bypassing the reverse alias
+    /// lookup that `format` performs — e.g. the synthetic inner of a `readonly`
+    /// wrapper, which carries no `aliasSymbol` and must not be repainted as a
+    /// coincidentally-shaped mutable alias.
+    pub(super) fn format_key_guarded(
+        &mut self,
+        type_id: TypeId,
+        key: &TypeData,
+    ) -> Cow<'static, str> {
+        let inserted_visiting = self.format_visiting.insert(type_id);
+        let rendered = self.format_key(type_id, key);
+        if inserted_visiting {
+            self.format_visiting.remove(&type_id);
+        }
+        rendered
+    }
+
     pub(super) fn format_key(&mut self, type_id: TypeId, key: &TypeData) -> Cow<'static, str> {
         // The synthetic `typeof globalThis` surface object has no nominal symbol;
         // render it with its source name instead of its full member body to match
@@ -777,7 +796,21 @@ impl<'a> TypeFormatter<'a> {
                     format!("keyof {operand_str}").into()
                 }
             }
-            TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)).into(),
+            TypeData::ReadonlyType(inner) => {
+                // Render the inner array/tuple structurally: `readonly` wraps only
+                // array/tuple literals, so the inner node is synthetic and carries
+                // no `aliasSymbol` in tsc, yet it is content-interned with any
+                // coincidentally-shaped mutable alias body (`type M = [number,
+                // string]`). `format_key_guarded` skips the reverse alias lookup for
+                // this node, preserving tsc's `readonly [number, string]` so
+                // `readonly M` can never leak; elements still resolve their own
+                // aliases via `format`.
+                let inner_str = match self.interner.lookup(*inner) {
+                    Some(inner_key) => self.format_key_guarded(*inner, &inner_key),
+                    None => self.format(*inner),
+                };
+                format!("readonly {inner_str}").into()
+            }
             // NoInfer<T> is transparent at the outermost layer of the
             // displayed type — matching tsc, which strips a single outer
             // `NoInfer<>` wrapper but preserves nested `NoInfer<>` markers
