@@ -27,6 +27,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [[test]]
+name = "esm_export_star_as_downlevel_tests"
+path = "tests/esm_export_star_as_downlevel_tests.rs"
+
+[[test]]
 name = "async_lowered_single_line_hoist_tests"
 path = "tests/async_lowered_single_line_hoist_tests.rs"
 
