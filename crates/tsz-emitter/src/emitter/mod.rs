@@ -34,6 +34,7 @@ mod class_temp_reservations;
 mod comments;
 mod core;
 mod core_setup;
+mod core_types;
 pub(crate) mod declarations;
 mod decorator_static_super_hoist;
 mod es5;

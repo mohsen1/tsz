@@ -366,6 +366,7 @@ impl<'a> Printer<'a> {
             completed_file_level_class_temp_reservations: FxHashSet::default(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
+            commonjs_default_import_local_names: FxHashSet::default(),
             wrapped_export_module_substitutions: FxHashMap::default(),
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,

@@ -247,3 +247,96 @@ fn type_only_marked_mixed_reexport_elides_only_type_only_specifiers() {
     );
     let _ = (parser, root, all_spec_indices); // unused from first parse
 }
+
+// ── Plain assignment for default import re-exports ──────────────────────────
+//
+// A **default import clause** binding (`import x from "mod"`) is not a live
+// binding the way a named import specifier is: tsc re-exports it with a plain
+// `exports.x = mod_1.default;` assignment, not an `Object.defineProperty`
+// getter. These tests pin that distinction (getter vs assignment) so the two
+// import forms do not converge on one emit shape.
+
+/// `import data from "./mod"; export { data }` must emit a plain assignment
+/// `exports.data = mod_1.default;`, never a live-binding getter.
+#[test]
+fn default_import_reexport_emits_plain_assignment() {
+    let source = r#"import data from "./mod";
+export { data };
+"#;
+    let output = emit_commonjs(source);
+    assert!(
+        output.contains("exports.data = mod_1.default;"),
+        "Default import re-export should emit a plain assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get: function () { return mod_1.default; }"),
+        "Default import re-export must NOT emit a live-binding getter.\nOutput:\n{output}"
+    );
+}
+
+/// A renamed default re-export (`export { data as renamed }`) still assigns.
+/// Binder name varied (`payload`) to keep the decision structural, not literal.
+#[test]
+fn default_import_reexport_renamed_emits_plain_assignment() {
+    let source = r#"import payload from "./mod";
+export { payload as renamed };
+"#;
+    let output = emit_commonjs(source);
+    assert!(
+        output.contains("exports.renamed = mod_1.default;"),
+        "Renamed default import re-export should assign the default.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("get: function"),
+        "Renamed default import re-export must NOT emit a getter.\nOutput:\n{output}"
+    );
+}
+
+/// A combined `import def, { a, b as bb }` re-exported as `export { def, a, bb as cc }`
+/// mixes both forms: the default binding `def` assigns, while the named
+/// specifiers `a`/`cc` keep their live-binding getters.
+#[test]
+fn combined_default_and_named_reexport_mixes_assignment_and_getter() {
+    let source = r#"import def, { a, b as bb } from "./mod";
+export { def, a, bb as cc };
+"#;
+    let output = emit_commonjs(source);
+    assert!(
+        output.contains("exports.def = mod_1.default;"),
+        "Default binding of a combined import should assign.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            r#"Object.defineProperty(exports, "a", { enumerable: true, get: function () { return mod_1.a; } });"#
+        ),
+        "Named specifier `a` should keep its live-binding getter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            r#"Object.defineProperty(exports, "cc", { enumerable: true, get: function () { return mod_1.b; } });"#
+        ),
+        "Renamed named specifier `cc` should keep its live-binding getter.\nOutput:\n{output}"
+    );
+}
+
+/// A `default`-named specifier (`import { default as d }`) is a named import,
+/// not a default-clause binding: it must keep the live-binding getter even
+/// though it also resolves to `mod_1.default`. This is the boundary case that
+/// separates the two forms.
+#[test]
+fn default_named_specifier_reexport_keeps_getter() {
+    let source = r#"import { default as d } from "./mod";
+export { d };
+"#;
+    let output = emit_commonjs(source);
+    assert!(
+        output.contains(
+            r#"Object.defineProperty(exports, "d", { enumerable: true, get: function () { return mod_1.default; } });"#
+        ),
+        "A default-named specifier is a named import and keeps its getter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.d = mod_1.default;"),
+        "A `default`-named specifier must not collapse to a plain assignment.\nOutput:\n{output}"
+    );
+}

@@ -1286,25 +1286,42 @@ impl<'a> Printer<'a> {
                                     continue;
                                 }
 
-                                // When the local name is a named-import binding, emit a
-                                // live-binding Object.defineProperty getter using the CJS
-                                // substitution (`t1_1.v1`). This covers the pattern:
-                                //   import { v1 as v } from "./t1"; export { v };
-                                // which must emit:
-                                //   Object.defineProperty(exports, "v",
-                                //     { enumerable: true, get: function () { return t1_1.v1; } });
+                                // When the local name is an import binding, re-export it
+                                // through the CJS substitution (`t1_1.v1`). tsc distinguishes
+                                // two forms:
+                                //   - A **named import specifier** (`import { v1 as v }`) is a
+                                //     live binding, re-exported with an `Object.defineProperty`
+                                //     getter:
+                                //       Object.defineProperty(exports, "v",
+                                //         { enumerable: true, get: function () { return t1_1.v1; } });
+                                //   - A **default import clause** binding (`import v from "./t1"`)
+                                //     is re-exported with a plain assignment (mirroring a local
+                                //     value binding), matching tsc:
+                                //       exports.v = t1_1.default;
+                                //     Namespace imports (`import * as v`) are not in the
+                                //     substitution map; they fall through to the local-binding
+                                //     assignment below.
                                 if let Some(substitution) = self
                                     .commonjs_named_import_substitutions
                                     .get(&local_name)
                                     .cloned()
                                 {
-                                    self.write("Object.defineProperty(exports, \"");
-                                    self.write(&export_name);
-                                    self.write(
-                                        "\", { enumerable: true, get: function () { return ",
-                                    );
-                                    self.write(&substitution);
-                                    self.write("; } });");
+                                    if self
+                                        .commonjs_default_import_local_names
+                                        .contains(&local_name)
+                                    {
+                                        self.write_export_binding_start(&export_name);
+                                        self.write(&substitution);
+                                        self.write_export_binding_end();
+                                    } else {
+                                        self.write("Object.defineProperty(exports, \"");
+                                        self.write(&export_name);
+                                        self.write(
+                                            "\", { enumerable: true, get: function () { return ",
+                                        );
+                                        self.write(&substitution);
+                                        self.write("; } });");
+                                    }
                                     self.write_line();
                                     continue;
                                 }
