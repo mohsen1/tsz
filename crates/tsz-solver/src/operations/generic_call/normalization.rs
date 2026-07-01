@@ -482,7 +482,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
 
         let mut source_placeholder_subst = TypeSubstitution::new();
+        let mut contains_index_access = false;
         for ty in crate::visitor::collect_all_types(self.interner.as_type_database(), current) {
+            contains_index_access |=
+                matches!(self.interner.lookup(ty), Some(TypeData::IndexAccess(_, _)));
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
                 && info.is_infer_source()
                 && !preserved_source_placeholders.contains(&info.name)
@@ -491,6 +494,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
         if !source_placeholder_subst.is_empty() {
+            tsz_common::perf_counters::record_inference_source_placeholder_unknown_fallback(
+                source_placeholder_subst.len() as u64,
+                contains_index_access,
+            );
             current = instantiate_type(self.interner, current, &source_placeholder_subst);
         }
 

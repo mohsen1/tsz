@@ -21,6 +21,7 @@ ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
 PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE_ROOT/project-compatibility.jsonl}"
 PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
 RESULT_CACHE_DIR="${TSZ_PROJECT_COMPILE_RESULT_CACHE_DIR:-$FIXTURE_ROOT/.result-cache}"
+PROJECT_PERF_COUNTERS="${TSZ_PROJECT_COMPILE_PERF_COUNTERS:-0}"
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
 LAST_TIMEOUT_CPU_SECONDS=""
@@ -795,7 +796,7 @@ check_project() {
   # per-project; the stored fingerprint is validated on read so stale entries are
   # overwritten rather than accumulated. Disable with TSZ_PROJECT_COMPILE_RESULT_CACHE=0.
   local _fp="" _cache_file=""
-  if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-1}" == "1" ]]; then
+  if [[ "${TSZ_PROJECT_COMPILE_RESULT_CACHE:-1}" == "1" && "$PROJECT_PERF_COUNTERS" != "1" ]]; then
     _fp="$(compute_compile_fingerprint "$name" "$tsconfig" "$src_dir" 2>/dev/null || true)"
     [[ -n "$_fp" ]] && _cache_file="$RESULT_CACHE_DIR/${name}"
   fi
@@ -850,13 +851,31 @@ check_project() {
   file_count="$(count_ts_files "$src_dir")"
 
   echo "::group::${name}"
-  echo "Running: $TSZ_RUN_BIN --noEmit -p $tsconfig"
+  if [[ "$PROJECT_PERF_COUNTERS" == "1" ]]; then
+    mkdir -p "$FIXTURE_ROOT/perf-counters"
+    echo "Running: $TSZ_RUN_BIN --extendedDiagnostics --perf-counters-json $FIXTURE_ROOT/perf-counters/${name}.perf.json --noEmit -p $tsconfig"
+  else
+    echo "Running: $TSZ_RUN_BIN --noEmit -p $tsconfig"
+  fi
   local rc=0 exit_class="" diagnostic_delta="" timeout_unmeasured=0
-  run_with_timeout "$PROJECT_TIMEOUT" \
-    env \
-      TSZ_USE_EMBEDDED_LIBS=1 \
-      RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}" \
-      "$TSZ_RUN_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  if [[ "$PROJECT_PERF_COUNTERS" == "1" ]]; then
+    run_with_timeout "$PROJECT_TIMEOUT" \
+      env \
+        TSZ_USE_EMBEDDED_LIBS=1 \
+        RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}" \
+        TSZ_PERF_COUNTERS=1 \
+        "$TSZ_RUN_BIN" \
+        --extendedDiagnostics \
+        --perf-counters-json "$FIXTURE_ROOT/perf-counters/${name}.perf.json" \
+        --noEmit \
+        -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  else
+    run_with_timeout "$PROJECT_TIMEOUT" \
+      env \
+        TSZ_USE_EMBEDDED_LIBS=1 \
+        RUST_MIN_STACK="${TSZ_RUST_MIN_STACK:-536870912}" \
+        "$TSZ_RUN_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  fi
 
   if [[ "$rc" -ne 0 ]]; then
     exit_class="$(project_failure_class "$([[ "$rc" -eq 124 ]] && echo "timeout" || echo "nonzero exit")" "$rc")"

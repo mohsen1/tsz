@@ -989,6 +989,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .check_decl_stripped_lazy_application_index_access_pair(self.source, self.target)
                 && result.is_true()
             {
+                tsz_common::perf_counters::record_relation_deferred_index_access_pair(true);
                 return result;
             }
 
@@ -996,8 +997,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             if self.checker.check_subtype(object_type, t_obj).is_true()
                 && self.checker.check_subtype(key_type, t_idx).is_true()
             {
+                tsz_common::perf_counters::record_relation_deferred_index_access_pair(true);
                 return SubtypeResult::True;
             }
+
+            tsz_common::perf_counters::record_relation_deferred_index_access_pair(false);
 
             // CRITICAL FIX: Check if both keys are type parameters with different names.
             // Even if they have the same constraint, different type parameters should not

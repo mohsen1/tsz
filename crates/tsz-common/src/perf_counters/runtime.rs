@@ -107,6 +107,24 @@ pub struct PerfCounters {
     pub relation_lazy_ref_accessor_resolved: AtomicU64,
     /// #14351 denominator: cross-base pairs that are nominal-heritage reachable.
     pub relation_lazy_ref_heritage_reachable: AtomicU64,
+    /// #14345/#14351 inference split gauge: normalized inferred types whose
+    /// higher-order source placeholders survived substitution and were erased to
+    /// `unknown`. This is the "poisoned at inference fallback" seat.
+    pub inference_source_placeholder_unknown_fallback_types: AtomicU64,
+    /// Source placeholders erased across those fallback types. This gives the
+    /// fallback population size, not just the number of normalized result types.
+    pub inference_source_placeholder_unknown_fallback_placeholders: AtomicU64,
+    /// Of [`Self::inference_source_placeholder_unknown_fallback_types`], how many
+    /// still contained a deferred indexed access when the source placeholders
+    /// were erased. This is the fp-ts/HKT-specific inference poison signal.
+    pub inference_source_placeholder_unknown_fallback_index_access_types: AtomicU64,
+    /// #14345/#14351 relation split gauge: raw `IndexAccess`<->`IndexAccess`
+    /// subtype pairs that reached the relation visitor before eager evaluation.
+    /// This is the "both-deferred pairs reached relation" seat.
+    pub relation_deferred_index_access_pair_total: AtomicU64,
+    /// Of [`Self::relation_deferred_index_access_pair_total`], pairs accepted by
+    /// the existing raw/declaration-stripped deferred relation path.
+    pub relation_deferred_index_access_pair_accepted: AtomicU64,
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -460,6 +478,11 @@ impl PerfCounters {
             relation_app_pair_variance_fallthrough_cross_base: AtomicU64::new(0),
             relation_lazy_ref_accessor_resolved: AtomicU64::new(0),
             relation_lazy_ref_heritage_reachable: AtomicU64::new(0),
+            inference_source_placeholder_unknown_fallback_types: AtomicU64::new(0),
+            inference_source_placeholder_unknown_fallback_placeholders: AtomicU64::new(0),
+            inference_source_placeholder_unknown_fallback_index_access_types: AtomicU64::new(0),
+            relation_deferred_index_access_pair_total: AtomicU64::new(0),
+            relation_deferred_index_access_pair_accepted: AtomicU64::new(0),
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
