@@ -77,3 +77,5 @@ mod es5_param_nested_default_temp_tests;
 mod es5_super_recovery_tests;
 #[cfg(test)]
 mod labeled_for_await_tests;
+#[cfg(test)]
+mod logical_assignment_value_temp_order_tests;

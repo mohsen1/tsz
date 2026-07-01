@@ -204,7 +204,6 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_temp_names: VecDeque<String>,
     pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
-    pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
     pub(crate) block_scoped_private_temps: Vec<String>,
@@ -669,13 +668,11 @@ pub struct Printer<'a> {
     /// TypeScript keeps this sequence file-scoped for ES2015+ class emit.
     pub(crate) next_auto_accessor_name_index: u32,
 
-    /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
-    /// These are emitted on a separate declaration list before reference temps.
+    /// Temp names for logical-assignment (`??=`) read-cache values. Tracked as a
+    /// distinct bucket only so a value temp minted inside a nested function body
+    /// is declared in that body; at emission the bucket is merged, in allocation
+    /// order, into the single hoisted `var` alongside the reference temps.
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
-
-    /// Temp names for assignment target values that must be reserved before references.
-    /// These are used by `make_unique_name_hoisted_value`.
-    pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
 
     /// Temp names for assignment target values that must be reserved before references.
     /// These are used by `make_unique_name_hoisted_assignment`.
