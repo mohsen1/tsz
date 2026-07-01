@@ -1484,7 +1484,10 @@ impl CheckerState<'_> {
         }
 
         // Use try_borrow_mut to avoid panic if type_env is already borrowed.
-        // This can happen during recursive type resolution.
+        // This can happen during recursive type resolution. On contention,
+        // queue the writes through the context authority but report the
+        // traversal as incomplete so callers do not memoize a fully-resolved
+        // walk before the evaluator env has replayed the deferred write.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
             if type_params.is_empty() {
                 self.ctx
@@ -1507,6 +1510,12 @@ impl CheckerState<'_> {
             self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
+            self.ctx
+                .register_symbol_type_in_envs(symbol_ref, resolved, type_params.clone());
+            if let Some(def_id) = def_id {
+                self.ctx
+                    .register_def_auto_params_in_envs(def_id, resolved, type_params);
+            }
             false
         }
     }
@@ -1896,20 +1905,14 @@ impl CheckerState<'_> {
             // registers under the CLASS symbol's DefId, not the original DefId from
             // the Lazy type. Register under the original def_id so Lazy(DefId)
             // resolves correctly during property access.
-            if was_alias_resolved && let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+            if was_alias_resolved {
                 if is_class {
-                    env.insert_class_instance_type(def_id, resolved);
+                    self.ctx.register_class_instance_in_envs(def_id, resolved);
                 }
-                env.insert_def(def_id, resolved);
-                // Mirror both writes into the flow-analyzer env so it does not
-                // retain a stale `def_types`/`class_instance_types` entry for this
-                // remapped def (see `mirror_def_in_type_environment`; #13086 / #13942).
-                if is_class {
-                    self.ctx
-                        .mirror_class_instance_in_type_environment(def_id, resolved);
-                }
-                self.ctx
-                    .mirror_def_in_type_environment(def_id, resolved, &[]);
+                // Register the original alias `DefId` through the same
+                // evaluator/flow authority so a recursive borrow queues the
+                // write instead of dropping it (#14348).
+                self.ctx.register_def_in_envs(def_id, resolved);
             }
 
             Some((inserted, resolved))

@@ -59,8 +59,12 @@ fn test_symbol_ref_to_symbol_id_cast_budget() {
 
 #[test]
 fn test_module_augmentation_publishes_merged_defs_through_context_authority() {
-    let source = fs::read_to_string("src/types/module_augmentation.rs")
+    let mut source = fs::read_to_string("src/types/module_augmentation.rs")
         .expect("failed to read module_augmentation.rs");
+    source.push_str(
+        &fs::read_to_string("src/types/module_augmentation_redirect.rs")
+            .expect("failed to read module_augmentation_redirect.rs"),
+    );
     let non_comment_source = source
         .lines()
         .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
@@ -79,6 +83,10 @@ fn test_module_augmentation_publishes_merged_defs_through_context_authority() {
         compact_source.contains("register_augmented_def_in_envs(aug_def_id,merged_type,false)"),
         "augmentation-local self-reference bodies must publish through CheckerContext"
     );
+    assert!(
+        compact_source.contains("register_def_in_envs(home_def_id,merged_type)"),
+        "augmented base-body redirects must publish through CheckerContext"
+    );
     let raw_type_env_mut_borrows = non_comment_source.lines().filter(|line| {
         line.contains("type_env")
             && (line.contains("try_borrow_mut()") || line.contains("borrow_mut()"))
@@ -91,6 +99,28 @@ fn test_module_augmentation_publishes_merged_defs_through_context_authority() {
     assert!(
         !non_comment_source.contains("env.insert_def("),
         "module augmentation must not publish DefId bodies with raw env.insert_def"
+    );
+}
+
+#[test]
+fn test_lazy_type_env_symbol_publication_uses_context_authority_on_contention() {
+    let source =
+        fs::read_to_string("src/state/type_environment/lazy.rs").expect("failed to read lazy.rs");
+    let insert_type_env_symbol_src = source
+        .split("pub(crate) fn insert_type_env_symbol")
+        .nth(1)
+        .and_then(|tail| tail.split("/// Resolve a `DefId`").next())
+        .expect("failed to isolate insert_type_env_symbol");
+
+    assert!(
+        insert_type_env_symbol_src.contains("register_symbol_type_in_envs(")
+            && insert_type_env_symbol_src.contains("register_def_auto_params_in_envs("),
+        "insert_type_env_symbol must queue symbol/def writes through CheckerContext on evaluator-env borrow contention"
+    );
+    assert!(
+        source.contains("register_class_instance_in_envs(def_id, resolved)")
+            && source.contains("register_def_in_envs(def_id, resolved)"),
+        "lazy import-alias def remaps must publish through CheckerContext instead of raw env writes"
     );
 }
 
