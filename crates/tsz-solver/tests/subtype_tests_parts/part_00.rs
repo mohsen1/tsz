@@ -81,6 +81,48 @@ fn subtype_checker_eval_cache_keys_on_exact_optional_property_types() {
 }
 
 #[test]
+fn subtype_checker_does_not_cache_unstable_relation_evaluations() {
+    let interner = TypeInterner::new();
+    let def = DefId(77);
+    let lazy_mapped = interner.lazy(def);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("P"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        },
+        constraint: interner.keyof(lazy_mapped),
+        name_type: None,
+        template: TypeId::NUMBER,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def, mapped);
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    let result = checker.evaluate_type_with_stability(mapped);
+
+    assert_eq!(result.type_id(), mapped);
+    assert!(
+        !result.is_stable_for_depth_agnostic_cache(),
+        "self-recursive mapped evaluation is a guard-truncated partial"
+    );
+    assert_eq!(
+        checker.cache_statistics().eval_entries,
+        0,
+        "relation-local eval cache must not publish guard-truncated partials"
+    );
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let stable = checker.evaluate_type_with_stability(union);
+    assert!(stable.is_stable_for_depth_agnostic_cache());
+    assert_eq!(checker.cache_statistics().eval_entries, 1);
+}
+
+#[test]
 fn test_any_top_bottom_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
