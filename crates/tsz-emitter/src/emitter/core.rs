@@ -293,6 +293,27 @@ pub(crate) struct ParamTransformPlan {
     pub(crate) rest: Option<RestParamTransform>,
 }
 
+/// A parameter that follows the first object-rest binding parameter in an
+/// ES2018 "preceding object rest/spread" lowering (targets es2015–es2017).
+/// Once a parameter's binding contains an object rest, that parameter and every
+/// parameter after it are rewritten to a generated temp (or kept in the list, for
+/// a plain identifier) and their destructuring / default is hoisted into the
+/// function body prologue in parameter order.
+pub(crate) enum ObjectRestFollowingParam {
+    /// A following binding pattern (array/object, with or without its own rest):
+    /// the parameter becomes a generated temp and the pattern is fully flattened
+    /// into the body (`var c = _b[0], d = _b[2]`; `var b = _b.b`; own rest
+    /// `var b = _b.b, r2 = __rest(_b, ["b"])`), matching `tsc`'s ES2015
+    /// destructuring transform for the following parameters.
+    Binding { temp: String, pattern: NodeIndex },
+    /// A following plain-identifier parameter with a default: hoisted as an
+    /// `if (name === void 0) { name = init; }` guard.
+    Default {
+        name: String,
+        initializer: NodeIndex,
+    },
+}
+
 #[derive(Default)]
 pub(crate) struct TempScopeState {
     pub(crate) temp_var_counter: u32,
@@ -814,7 +835,11 @@ pub struct Printer<'a> {
     /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
-    pub(crate) pending_object_rest_param_defaults: Vec<(String, NodeIndex)>,
+    /// Parameters that follow the first object-rest binding parameter under the
+    /// ES2018 "preceding object rest/spread" rule (targets es2015–es2017). Their
+    /// destructuring / default is hoisted into the function body prologue, in
+    /// parameter order, after the leading object-rest preamble.
+    pub(crate) pending_object_rest_param_following: Vec<ObjectRestFollowingParam>,
 
     /// Source span of a parser-recovery expression statement already folded into
     /// the previous variable statement's emitted initializer.

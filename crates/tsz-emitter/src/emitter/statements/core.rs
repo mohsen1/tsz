@@ -1,3 +1,4 @@
+use super::super::ObjectRestFollowingParam;
 use super::super::Printer;
 use super::super::get_trailing_comment_ranges;
 use super::super::hoist_anchor::HoistAnchor;
@@ -46,7 +47,7 @@ impl<'a> Printer<'a> {
             && !self.has_pending_new_target_capture()
             && is_function_body_block
             && !self.pending_object_rest_params.is_empty()
-            && self.pending_object_rest_param_defaults.is_empty()
+            && !self.pending_object_rest_following_forces_multiline()
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
@@ -65,7 +66,7 @@ impl<'a> Printer<'a> {
             && !needs_this_capture
             && !self.has_pending_new_target_capture()
             && self.pending_object_rest_params.is_empty()
-            && self.pending_object_rest_param_defaults.is_empty()
+            && self.pending_object_rest_param_following.is_empty()
         {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
@@ -202,7 +203,8 @@ impl<'a> Printer<'a> {
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
-            && !block_using_lowered;
+            && !block_using_lowered
+            && !self.pending_object_rest_following_forces_multiline();
 
         if should_emit_single_line {
             let private_static_shadow = self.block_shadows_private_static_class_alias(
@@ -882,11 +884,13 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit the pending ES2018 object-rest parameter prologue for a function
-    /// body block: the `var { a } = _a, rest = __rest(_a, [...])` preamble, or
-    /// — when only destructuring defaults are pending — the default guards.
-    /// `inline` selects single-line vs multi-line formatting. Returns whether
-    /// anything was emitted so a single-line caller can add the separating space
-    /// before the first body statement.
+    /// body block: the `var { a } = _a, rest = __rest(_a, [...])` leading
+    /// preamble followed by the flattened destructuring / default guards of any
+    /// parameters that follow the first object-rest parameter (the "preceding
+    /// object rest/spread" rule), in parameter order. `inline` selects
+    /// single-line vs multi-line formatting. Returns whether anything was
+    /// emitted so a single-line caller can add the separating space before the
+    /// first body statement.
     pub(in crate::emitter) fn emit_object_rest_param_prologue(
         &mut self,
         is_function_body_block: bool,
@@ -895,11 +899,33 @@ impl<'a> Printer<'a> {
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(inline);
             true
-        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
-            self.emit_pending_object_rest_param_defaults(inline);
+        } else if is_function_body_block && !self.pending_object_rest_param_following.is_empty() {
+            self.emit_pending_object_rest_param_following(inline);
             true
         } else {
             false
+        }
+    }
+
+    /// Whether any pending following parameter is a plain-identifier default,
+    /// which lowers to an `if (name === void 0) { … }` guard. Such a guard is a
+    /// `startOnNewLine` statement in `tsc`, so its presence forces a single-line
+    /// source body multi-line. Flattened-binding `var` statements do not.
+    pub(in crate::emitter) fn pending_object_rest_following_forces_multiline(&self) -> bool {
+        self.pending_object_rest_param_following
+            .iter()
+            .any(|entry| matches!(entry, ObjectRestFollowingParam::Default { .. }))
+    }
+
+    /// Register every parameter-level temp (the leading object-rest temps and the
+    /// following-binding temps) as a generated name before any flattening runs,
+    /// so nested destructuring temps continue past the parameter temps — matching
+    /// `tsc`'s print-order name numbering (`_a`, `_b` in the list, then `_c`…).
+    pub(in crate::emitter) fn register_pending_object_rest_following_temps(&mut self) {
+        for entry in &self.pending_object_rest_param_following {
+            if let ObjectRestFollowingParam::Binding { temp, .. } = entry {
+                self.generated_temp_names.insert(temp.clone());
+            }
         }
     }
 
@@ -909,36 +935,78 @@ impl<'a> Printer<'a> {
         for (temp_name, _) in &rest_params {
             self.generated_temp_names.insert(temp_name.clone());
         }
-        for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
-            if inline && i > 0 {
+        self.register_pending_object_rest_following_temps();
+        let mut wrote_any = false;
+        for (temp_name, pattern_idx) in &rest_params {
+            if inline && wrote_any {
                 self.write(" ");
             }
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
-            if !inline {
+            if inline {
+                wrote_any = true;
+            } else {
                 self.write_line();
             }
         }
-        self.emit_pending_object_rest_param_defaults(inline);
+        self.emit_pending_object_rest_param_following_entries(inline, &mut wrote_any);
     }
 
-    pub(in crate::emitter) fn emit_pending_object_rest_param_defaults(&mut self, inline: bool) {
-        let defaults: Vec<(String, NodeIndex)> =
-            std::mem::take(&mut self.pending_object_rest_param_defaults);
-        for (i, (name, initializer)) in defaults.iter().enumerate() {
-            if inline && i > 0 {
-                self.write(" ");
-            }
-            self.write("if (");
-            self.write(name);
-            self.write(" === void 0) { ");
-            self.write(name);
-            self.write(" = ");
-            self.emit_expression(*initializer);
-            self.write("; }");
-            if !inline {
-                self.write_line();
+    /// Emit the following-parameter prologue on its own (no leading object-rest
+    /// preamble). Used only via the `emit_object_rest_param_prologue` fallback;
+    /// in the non-ES5 path the region always begins with a leading object-rest
+    /// preamble, so this normally runs through the preamble emitter above.
+    pub(in crate::emitter) fn emit_pending_object_rest_param_following(&mut self, inline: bool) {
+        self.register_pending_object_rest_following_temps();
+        let mut wrote_any = false;
+        self.emit_pending_object_rest_param_following_entries(inline, &mut wrote_any);
+    }
+
+    /// Emit each following-parameter prologue entry in parameter order. `wrote_any`
+    /// threads the inline-separator state through from an already-emitted leading
+    /// preamble so a single space separates every inline statement.
+    pub(in crate::emitter) fn emit_pending_object_rest_param_following_entries(
+        &mut self,
+        inline: bool,
+        wrote_any: &mut bool,
+    ) {
+        let following: Vec<ObjectRestFollowingParam> =
+            std::mem::take(&mut self.pending_object_rest_param_following);
+        for entry in &following {
+            match entry {
+                ObjectRestFollowingParam::Binding { temp, pattern } => {
+                    if inline && *wrote_any {
+                        self.write(" ");
+                    }
+                    let mut started = false;
+                    self.emit_param_binding_assignments(*pattern, temp, &mut started);
+                    if started {
+                        self.write(";");
+                        if inline {
+                            *wrote_any = true;
+                        } else {
+                            self.write_line();
+                        }
+                    }
+                }
+                ObjectRestFollowingParam::Default { name, initializer } => {
+                    if inline && *wrote_any {
+                        self.write(" ");
+                    }
+                    self.write("if (");
+                    self.write(name);
+                    self.write(" === void 0) { ");
+                    self.write(name);
+                    self.write(" = ");
+                    self.emit_expression(*initializer);
+                    self.write("; }");
+                    if inline {
+                        *wrote_any = true;
+                    } else {
+                        self.write_line();
+                    }
+                }
             }
         }
     }

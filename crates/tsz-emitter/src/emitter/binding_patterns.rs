@@ -3,7 +3,7 @@
 //! This module handles emission of destructuring binding patterns.
 //! Includes object binding patterns, array binding patterns, and binding elements.
 
-use super::Printer;
+use super::{ObjectRestFollowingParam, Printer};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -308,6 +308,127 @@ impl<'a> Printer<'a> {
             return false;
         };
         self.pattern_has_object_rest(param.name)
+    }
+
+    /// Allocate the next `_a`, `_b`, … temp name for an ES2018 object-rest
+    /// parameter, skipping `_i`/`_n` (reserved by `tsc`) and any name already in
+    /// the file or the local `used` set. The local counter mirrors the global
+    /// destructuring counter's first names, so downstream nested temps (minted
+    /// through the global counter after these are registered) continue past them.
+    fn next_object_rest_param_temp_name(
+        &self,
+        counter: &mut u32,
+        used: &mut Vec<String>,
+    ) -> String {
+        loop {
+            let current = *counter;
+            *counter += 1;
+
+            if current < 26 && (current == 8 || current == 13) {
+                continue;
+            }
+
+            let name = if current < 26 {
+                format!("_{}", (b'a' + current as u8) as char)
+            } else {
+                format!("_{}", current - 26)
+            };
+
+            if !self.file_identifiers.contains(&name) && !used.contains(&name) {
+                used.push(name.clone());
+                return name;
+            }
+        }
+    }
+
+    /// Apply the ES2018 "preceding object rest/spread" rule to a single function
+    /// parameter (targets es2015–es2017). Once a parameter's binding contains an
+    /// object rest, that parameter and every parameter after it are rewritten:
+    ///
+    /// - the leading object-rest parameter (and any rest parameter carrying an
+    ///   object rest) becomes a temp with a native-binding `__rest` preamble;
+    /// - every following binding parameter becomes a temp whose destructuring is
+    ///   fully flattened into the body (`c = _b[0]`, `b = _b.b`).
+    ///
+    /// Parameters before the first object-rest parameter, and plain-identifier /
+    /// `...rest` parameters, are left for the caller to emit natively. Returns
+    /// `true` when the parameter's temp name was written to the parameter list
+    /// (the caller should then `continue`).
+    pub(super) fn try_emit_object_rest_region_param(
+        &mut self,
+        param_idx: NodeIndex,
+        param_pos: usize,
+        needs_rest_lowering: bool,
+        first_object_rest_param_pos: Option<usize>,
+        counter: &mut u32,
+        used: &mut Vec<String>,
+    ) -> bool {
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return false;
+        };
+
+        // A rest (`...x`) parameter that itself carries an object rest
+        // (e.g. `...[{ a, ...r }]`) keeps the legacy preamble lowering
+        // (`...temp` + native-binding body decl) — it is never subject to the
+        // following-parameter flattening.
+        if needs_rest_lowering && param.dot_dot_dot_token && self.param_has_object_rest(param_idx) {
+            let temp = self.next_object_rest_param_temp_name(counter, used);
+            self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
+            self.write(&temp);
+            if param.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(param.type_annotation)
+            {
+                self.skip_comments_in_range(type_node.pos, type_node.end);
+            }
+            if param.initializer.is_some() {
+                self.write(" = ");
+                self.emit(param.initializer);
+            }
+            self.pending_object_rest_params.push((temp, param.name));
+            return true;
+        }
+
+        // Only non-rest parameters at or after the first object-rest parameter
+        // are rewritten by the region rule.
+        let in_region = first_object_rest_param_pos.is_some_and(|first| param_pos >= first);
+        if !in_region || param.dot_dot_dot_token {
+            return false;
+        }
+        let is_leading_object_rest = first_object_rest_param_pos == Some(param_pos);
+        if !is_leading_object_rest && !self.is_binding_pattern(param.name) {
+            return false;
+        }
+
+        let temp = self.next_object_rest_param_temp_name(counter, used);
+        self.write(&temp);
+        // Skip type annotation comments.
+        if param.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(param.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
+        if is_leading_object_rest {
+            // The leading object-rest parameter keeps a native binding for its
+            // non-rest elements (`{ a } = _a, rest = __rest(_a, …)`).
+            if param.initializer.is_some() {
+                self.write(" = ");
+                self.emit(param.initializer);
+            }
+            self.pending_object_rest_params.push((temp, param.name));
+        } else {
+            // A following binding parameter's initializer/type is stripped from
+            // the signature; its destructuring (default included) is fully
+            // flattened into the body prologue, matching `tsc`'s ES2015 transform.
+            self.pending_object_rest_param_following
+                .push(ObjectRestFollowingParam::Binding {
+                    temp,
+                    pattern: param.name,
+                });
+        }
+        true
     }
 
     /// Emit a variable declaration that has been identified as having object rest

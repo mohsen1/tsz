@@ -1221,6 +1221,7 @@ impl<'a> Printer<'a> {
             && !has_prologue
             && !has_function_temps
             && !has_using_region
+            && !self.pending_object_rest_following_forces_multiline()
             && self.is_single_line(block_node)
         {
             self.map_opening_brace(block_node);
@@ -1301,8 +1302,8 @@ impl<'a> Printer<'a> {
 
         if !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
-        } else if !self.pending_object_rest_param_defaults.is_empty() {
-            self.emit_pending_object_rest_param_defaults(false);
+        } else if !self.pending_object_rest_param_following.is_empty() {
+            self.emit_pending_object_rest_param_following(false);
         }
 
         // Capture anchor for inserting hoisted temps created during statement

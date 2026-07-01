@@ -1,4 +1,4 @@
-use super::{ParamTransformPlan, Printer};
+use super::{ObjectRestFollowingParam, ParamTransformPlan, Printer};
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -637,14 +637,22 @@ impl<'a> Printer<'a> {
 
         // Clear any previous pending rest params
         self.pending_object_rest_params.clear();
-        self.pending_object_rest_param_defaults.clear();
+        self.pending_object_rest_param_following.clear();
+
+        // ES2018 "preceding object rest/spread" rule: once a parameter's binding
+        // contains an object rest, that parameter and *every parameter after it*
+        // is rewritten. Parameters before it stay native in the list. `tsc` keys
+        // the whole region on the position of the first object-rest parameter.
+        let first_object_rest_param_pos = needs_rest_lowering
+            .then(|| params.iter().position(|&p| self.param_has_object_rest(p)))
+            .flatten();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
         let mut object_rest_temp_counter = 0u32;
         let mut object_rest_temp_names = Vec::<String>::new();
         let mut lowered_object_rest_param_seen = false;
-        for &param_idx in params {
+        for (param_pos, &param_idx) in params.iter().enumerate() {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
             {
@@ -776,28 +784,19 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_recovered_root_js_declaration_modifiers(&param.modifiers, true);
 
-                // ES2018 object rest lowering: replace destructuring param with a temp
-                if needs_rest_lowering && self.param_has_object_rest(param_idx) {
+                // ES2018 "preceding object rest/spread" lowering: the leading
+                // object-rest preamble plus the flattening of every binding
+                // parameter that follows it. Owned by `binding_patterns.rs`;
+                // returns true when it rewrote the parameter to a temp.
+                if self.try_emit_object_rest_region_param(
+                    param_idx,
+                    param_pos,
+                    needs_rest_lowering,
+                    first_object_rest_param_pos,
+                    &mut object_rest_temp_counter,
+                    &mut object_rest_temp_names,
+                ) {
                     lowered_object_rest_param_seen = true;
-                    let temp = self.next_object_rest_param_temp_name(
-                        &mut object_rest_temp_counter,
-                        &mut object_rest_temp_names,
-                    );
-                    if param.dot_dot_dot_token {
-                        self.emit_rest_parameter_spread_prefix(param_node.pos, param.name);
-                    }
-                    self.write(&temp);
-                    // Skip type annotation comments
-                    if param.type_annotation.is_some()
-                        && let Some(type_node) = self.arena.get(param.type_annotation)
-                    {
-                        self.skip_comments_in_range(type_node.pos, type_node.end);
-                    }
-                    if param.initializer.is_some() {
-                        self.write(" = ");
-                        self.emit(param.initializer);
-                    }
-                    self.pending_object_rest_params.push((temp, param.name));
                     continue;
                 }
 
@@ -899,8 +898,12 @@ impl<'a> Printer<'a> {
                     && param.initializer.is_some()
                     && let Some(param_name) = simple_param_name
                 {
-                    self.pending_object_rest_param_defaults
-                        .push((param_name, param.initializer));
+                    self.pending_object_rest_param_following.push(
+                        ObjectRestFollowingParam::Default {
+                            name: param_name,
+                            initializer: param.initializer,
+                        },
+                    );
                 } else if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
@@ -1088,32 +1091,6 @@ impl<'a> Printer<'a> {
                 {
                     self.register_function_parameter_binding_name(elem.name);
                 }
-            }
-        }
-    }
-
-    fn next_object_rest_param_temp_name(
-        &self,
-        counter: &mut u32,
-        used: &mut Vec<String>,
-    ) -> String {
-        loop {
-            let current = *counter;
-            *counter += 1;
-
-            if current < 26 && (current == 8 || current == 13) {
-                continue;
-            }
-
-            let name = if current < 26 {
-                format!("_{}", (b'a' + current as u8) as char)
-            } else {
-                format!("_{}", current - 26)
-            };
-
-            if !self.file_identifiers.contains(&name) && !used.contains(&name) {
-                used.push(name.clone());
-                return name;
             }
         }
     }

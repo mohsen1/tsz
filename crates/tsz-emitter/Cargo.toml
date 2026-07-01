@@ -39,6 +39,10 @@ name = "es5_object_rest_param_ordering_tests"
 path = "tests/es5_object_rest_param_ordering_tests.rs"
 
 [[test]]
+name = "object_rest_preceding_param_tests"
+path = "tests/object_rest_preceding_param_tests.rs"
+
+[[test]]
 name = "es5_optional_chain_call_receiver_tests"
 path = "tests/es5_optional_chain_call_receiver_tests.rs"
 

@@ -1642,13 +1642,17 @@ impl<'a> Printer<'a> {
         for (temp_name, _) in entries {
             self.generated_temp_names.insert(temp_name.clone());
         }
+        // Reserve the following-parameter temps before emitting the leading
+        // preamble so its nested destructuring temps are numbered past them.
+        self.register_pending_object_rest_following_temps();
         for (temp_name, pattern_idx) in entries {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
             self.write_line();
         }
-        self.emit_pending_object_rest_param_defaults(false);
+        let mut wrote_any = false;
+        self.emit_pending_object_rest_param_following_entries(false, &mut wrote_any);
     }
 
     /// Issue #3758: lower `async (x = init()) => body` so the default

@@ -280,7 +280,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
-            pending_object_rest_param_defaults: Vec::new(),
+            pending_object_rest_param_following: Vec::new(),
             consumed_recovered_expression_statement_span: None,
             suppress_next_anonymous_enum_var_after_recovered_array_binding: false,
             pending_lowered_async_arrow_super_capture: None,
