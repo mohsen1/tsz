@@ -94,3 +94,68 @@ derivation guards against.
 4. **Record the flip verdict and blocker in this ledger** when one is
    established, with links to the deciding #14344 / #14345 comments — do not leave
    it only in thread archaeology.
+
+
+## Full `TSZ_` env-flag registry (non-campaign)
+
+The campaign tables above cover the `#14344`/`#14345` substrate. Every OTHER
+`TSZ_*` env flag read anywhere in `crates/*/src` is registered here so the
+`flag_ledger_guard` scan (tsz-solver test target) can enforce the #15317
+policy repo-wide: a new env flag does not land without a registry entry. One
+line per flag is enough; promote a flag into the campaign tables above when it
+joins the substrate.
+
+### Adjacent opt-in experiments (default OFF)
+
+`TSZ_DECL_ORIGIN_REDUCTION` (#15334 WAVE-1 sound register-through-reduction
+co-walk for cross-arena HKT alpha-equivalence; relation-layer, composes with
+`TSZ_ALPHA_NAME_PAIR` — candidate for promotion into the campaign table if it
+proves to perturb store election),
+
+`TSZ_SHARE_INSTANTIATION_CACHES` (#13284/#9507 cross-file instantiation-cache
+sharing, safety unproven), `TSZ_EAGER_WARM_LOCAL_CACHES` (rollback hatch for
+lazy local-cache warming), `TSZ_ENABLE_LIB_DEF_FREEZE` /
+`TSZ_ENABLE_LIB_DEF_DEFER_PUBLISH` (lib-def freeze/defer-publish experiments),
+`TSZ_LAZY_OWN_MEMBERS` / `TSZ_LAZY_OWN_MEMBERS_VARPOS` (#14957 lazy lib-member
+family; VARPOS is the known opt-in regression), `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK`
+/ `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` / `TSZ_EXPERIMENT_NO_SHARED_QC`
+(parallel-check experiments), `TSZ_FILE_SESSION_REUSE` (paired with its kill
+switch below), `TSZ_CROSS_FILE_TYPE_PARAMS_CACHE` (cross-file type-param cache
+experiment), `TSZ_PROMOTE_FIRST` (interner promotion-order probe),
+`TSZ_EVAL_MEMO_PURITY_PANIC` (debug: panic on eval-memo purity violation,
+#14347 tooling), `TSZ_RECORD_FILE_SESSION_RESET_CACHE_STATS` (stats channel).
+
+### Kill switches (default ON semantics; `TSZ_DISABLE_*` turns the mechanism off)
+
+`TSZ_DISABLE_APP_CANON_ARG_IDENTITY`, `TSZ_DISABLE_CALLBACK_MISMATCH_MEMO`,
+`TSZ_DISABLE_CHECKER_POOL`, `TSZ_DISABLE_CLOSED_EVAL_CACHE`,
+`TSZ_DISABLE_CONDITIONAL_BRANCH_CACHE`,
+`TSZ_DISABLE_CONTEXTUAL_RETRY_CYCLE_GUARD`, `TSZ_DISABLE_DECL_LAZY_LIB`,
+`TSZ_DISABLE_DEFER_LAZY_DEFAULT_CONDITIONAL`,
+`TSZ_DISABLE_ENCLOSING_SCOPE_CACHE`, `TSZ_DISABLE_ENV_EVAL_SEED_CAP`,
+`TSZ_DISABLE_EXPORT_EQUALS_FAST_PATH`, `TSZ_DISABLE_FILE_SESSION_REUSE`,
+`TSZ_DISABLE_GENUINE_UNKNOWN_ALIAS_REDUCTION`,
+`TSZ_DISABLE_GLOBAL_LAZY_RECV_PRESERVE`,
+`TSZ_DISABLE_HERITAGE_BASE_MEMBER_INCORP`, `TSZ_DISABLE_INSTANTIATION_CACHE`,
+`TSZ_DISABLE_LAZY_MEMBER_ACCESS`, `TSZ_DISABLE_LAZY_OWN_MEMBERS`,
+`TSZ_DISABLE_LIB_DEF_FREEZE`, `TSZ_DISABLE_LIB_DEF_MONOTONE`,
+`TSZ_DISABLE_LIB_GENERIC_PREWARM_DEFER`, `TSZ_DISABLE_LIMIT_RESULT_CACHE`,
+`TSZ_DISABLE_NATIVE_TS`,
+`TSZ_DISABLE_NESTED_INDEXED_ACCESS_CONSTRAINT_REDUCTION`,
+`TSZ_DISABLE_ON_DEMAND_FORCING`, `TSZ_DISABLE_ORDER_INDEP_RESOLUTION`,
+`TSZ_DISABLE_REEXPORT_TYPE_ONLY_CACHE`,
+`TSZ_DISABLE_RELATION_CONDITIONAL_REDUCTION`,
+`TSZ_DISABLE_SOURCE_POSITION_CYCLE_GUARD`,
+`TSZ_DISABLE_TYPE_POSITION_RESOLUTION_CACHE`,
+`TSZ_DISABLE_UNRESOLVED_DEF_CACHE_BACKSTOP`, `TSZ_DISABLE_VARIANCE_CACHE`.
+
+### Infra / config / tracing / debug (not graduation candidates)
+
+Config: `TSZ_CHECKER_POOL`, `TSZ_LIB_DIR`, `TSZ_TESTS_LIB_DIR`,
+`TSZ_USE_EMBEDDED_LIBS`, `TSZ_MAX_EVAL_OPS`, `TSZ_LSP_MEMORY_BUDGET_BYTES`,
+`TSZ_QUERY_RUN_ID`, `TSZ_FILE_SIZE_RATCHET_UPDATE`, `TSZ_TIMEOUT_SECS`,
+`TSZ_TYPESCRIPT_PACKAGE_JSON`, `TSZ_WORKER_CONFIG_DEPRECATION` (+ its
+`TSZ_WORKER_CONFIG_DEPRECATION_ENV_KEY` constant).
+Perf/tracing: `TSZ_PERF`, `TSZ_PERF_COUNTERS`, `TSZ_LOG`, `TSZ_LOG_FORMAT`.
+Debug dumps: `TSZ_DAA_DEBUG`, `TSZ_DEBUG_CONFORMANCE_OUTPUT`,
+`TSZ_DEBUG_EMIT`, `TSZ_DEBUG_PREPARE_DIR`, `TSZ_DEBUG_RESOLVE`.
