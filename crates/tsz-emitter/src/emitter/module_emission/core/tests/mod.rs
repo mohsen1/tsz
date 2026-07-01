@@ -6,6 +6,7 @@ use tsz_common::ScriptTarget;
 mod cjs_module_exports;
 mod cjs_named_import_reexport_tests;
 mod cjs_namespace_alias;
+mod esm_class_es5_export_order_tests;
 mod esm_class_namespace;
 
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
@@ -18,6 +19,21 @@ fn emit_commonjs_with_target(source: &str, target: ScriptTarget) -> String {
     let (parser, root) = parse_test_source(source);
     let options = PrinterOptions {
         module: ModuleKind::CommonJS,
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+fn emit_with_module_and_target(source: &str, module: ModuleKind, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module,
         target,
         ..Default::default()
     };

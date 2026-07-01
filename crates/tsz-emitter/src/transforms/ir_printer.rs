@@ -100,6 +100,7 @@ pub struct IRPrinter<'a> {
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    pending_esm_class_export_name: Option<String>,
     /// Source-map mappings recorded for re-emitted `ASTRef` nodes while
     /// `capture_mappings` is set. Generated positions are relative to the start
     /// of this printer's own output, so a caller splices them with a base

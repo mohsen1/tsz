@@ -80,6 +80,18 @@ impl<'a> IRPrinter<'a> {
             }
         }
 
+        // A top-level ESM `export class` lowered to this IIFE carries a deferred
+        // `export { X };` re-export. tsc emits it immediately after the class
+        // statement and BEFORE the deferred private/accessor `WeakMap` storage
+        // init below — the same placement as the CommonJS assignment above.
+        if let Some(export_name) = self.take_pending_esm_class_export_name() {
+            self.write_line();
+            self.write_indent();
+            self.write("export { ");
+            self.write(&export_name);
+            self.write(" };");
+        }
+
         for init in computed_prop_temp_inits {
             self.write_line();
             self.write_indent();

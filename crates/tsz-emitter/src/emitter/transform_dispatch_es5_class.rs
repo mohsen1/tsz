@@ -57,6 +57,21 @@ impl<'a> Printer<'a> {
             );
         }
 
+        // Hand off a deferred ESM `export { X };` for a top-level `export class`
+        // lowered to an ES5 IIFE so the class emitter places it immediately after
+        // the IIFE and before the deferred private/accessor `WeakMap` storage init
+        // (matching the CommonJS `exports.X = X;` slot and tsc). Keyed by the class
+        // node; only ever set for the ESM named-export path, so it never affects
+        // CommonJS output.
+        if self
+            .pending_esm_class_export_name
+            .as_ref()
+            .is_some_and(|(pending_idx, _)| *pending_idx == class_node)
+            && let Some((_, name)) = self.pending_esm_class_export_name.take()
+        {
+            es5_emitter.set_pending_esm_class_export_name(Some(name));
+        }
+
         if self.ctx.target_es5
             && !self.ctx.options.legacy_decorators
             && let Some(class_node_ref) = self.arena.get(class_node)

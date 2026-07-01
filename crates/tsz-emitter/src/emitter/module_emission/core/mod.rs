@@ -1018,16 +1018,30 @@ impl<'a> Printer<'a> {
             && let Some(class) = self.arena.get_class(clause_node)
             && let Some(name) = self.get_identifier_text_opt(class.name)
         {
-            self.emit(export.export_clause);
-            self.write_line();
             if export.is_default_export {
+                // `export default C;` is emitted AFTER the deferred storage init
+                // (tsc's deliberate exception), matching the trailing placement.
+                self.emit(export.export_clause);
+                self.write_line();
                 self.write("export default ");
                 self.write(&name);
                 self.write(";");
             } else {
-                self.write("export { ");
-                self.write(&name);
-                self.write(" };");
+                // A named `export { C };` is emitted at the class IIFE / WeakMap-init
+                // boundary — the same slot the CommonJS `exports.C = C;` assignment
+                // uses — so it precedes any deferred private/accessor storage init,
+                // matching tsc. Stage it and let the ES5 class IIFE emitter place it;
+                // fall back to the trailing form if it was not consumed.
+                self.pending_esm_class_export_name = Some((export.export_clause, name.clone()));
+                self.emit(export.export_clause);
+                if let Some((_, pending_name)) = self.pending_esm_class_export_name.take() {
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
+                    self.write("export { ");
+                    self.write(&pending_name);
+                    self.write(" };");
+                }
             }
             return;
         }

@@ -648,6 +648,12 @@ pub struct Printer<'a> {
     /// declaration and before post-class lowered statements (static fields/blocks).
     pub(crate) pending_commonjs_class_export_name: Option<(NodeIndex, String, Vec<String>)>,
 
+    /// For ESM class exports of an ES5-lowered class, emit `export { X };`
+    /// immediately after the class IIFE and before any deferred private/accessor
+    /// `WeakMap` storage init — the same boundary the CommonJS
+    /// `exports.X = X;` assignment uses. Keyed by the class declaration node.
+    pub(crate) pending_esm_class_export_name: Option<(NodeIndex, String)>,
+
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(crate) declared_namespace_names: FxHashSet<String>,
 
