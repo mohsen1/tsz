@@ -1020,77 +1020,56 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::BINARY_EXPRESSION =>
             {
                 // For expression-bodied arrows with simple literal/expression bodies,
-                // check if the return expression type is assignable to the expected
-                // return type. tsc reports TS2322 on the return expression when the
-                // type violates the expected return type (e.g., returning a string
-                // where Function is expected in a property assignment context).
-                //
-                // Skip void expected return types: void-returning callbacks accept any
-                // return value, so elaborating would produce false positives.
-                if expected_return_type == TypeId::VOID {
-                    return false;
-                }
-                // Skip elaboration when the callback has explicit parameter type
-                // annotations. tsc only elaborates return types for fully contextually-
-                // typed callbacks (no explicit param annotations). When a developer
-                // explicitly annotates parameter types, the error is reported at the
-                // argument level (TS2345) rather than drilling into the return expression.
-                if self.function_value_has_explicit_param_annotation(arg_idx) {
-                    return false;
-                }
-                let body_type = self.get_type_of_node(func.body);
-                if body_type == TypeId::ERROR
-                    || body_type == TypeId::ANY
-                    || expected_return_type == TypeId::ERROR
-                    || expected_return_type == TypeId::ANY
-                    || self
-                        .return_relation_outcome(body_type, expected_return_type)
-                        .related
-                {
-                    return false;
-                }
-                // Skip elaboration when the body type is itself callable (a function type).
-                // When the return type is a function but the expected type is not (or vice
-                // versa), tsc reports TS2345 on the whole callback rather than TS2322 on
-                // the body expression.
-                if self.first_callable_return_type(body_type).is_some()
-                    && self
-                        .first_callable_return_type(expected_return_type)
-                        .is_none()
-                {
-                    return false;
-                }
-                // Report the error at the return expression with return types.
-                // tsc anchors expression-body arrow return mismatches at the body
-                // expression (col of the literal/expression), not the arrow function.
-                // E.g.: `const f: (a: number) => string = (a) => a + 1`
-                // → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
-                let display_target = self.evaluate_type_with_env(expected_return_type);
-                if self.array_elaboration_widening_required_for_display(body_type, display_target) {
-                    self.error_type_not_assignable_at_with_widened_source_display(
-                        body_type,
-                        display_target,
-                        func.body,
-                    );
-                } else {
-                    self.error_type_not_assignable_at_with_anchor(
-                        body_type,
-                        display_target,
-                        func.body,
-                    );
-                }
-                true
+                // report TS2322 on the return expression when its type violates the
+                // expected return type (e.g., returning a string where Function is
+                // expected in a property assignment context).
+                self.elaborate_expression_body_return_mismatch(
+                    arg_idx,
+                    func.body,
+                    expected_return_type,
+                )
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                // Conditionals need branch-level elaboration. Let the caller
-                // handle these at the argument/assignment level.
-                false
+                // Expression-bodied arrow whose body is a conditional
+                // (`() => cond ? a : b`). `tsc`'s `elaborateArrowFunction`
+                // elaborates the body expression; for a conditional it does not
+                // recurse per-branch but anchors the single TS2322 at the whole
+                // conditional (source = the conditional's union type). Mirror the
+                // simple-expression path so a call-argument callback drills to the
+                // conditional instead of the coarse whole-argument TS2345.
+                self.elaborate_expression_body_return_mismatch(
+                    arg_idx,
+                    func.body,
+                    expected_return_type,
+                )
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                // Drill through the parenthesis and route the inner expression
+                // the same way an unparenthesized body would. An object/array
+                // literal keeps its per-property/element elaboration anchored at
+                // the inner literal (`tsc`'s `elaborateError` skips the parens for
+                // those). Any other body (conditional, simple return expression)
+                // anchors the mismatch at the whole parenthesized expression —
+                // `tsc` reports there, so pass the paren node (its type is
+                // transparent to the inner) rather than the inner expression.
                 let Some(paren) = self.ctx.arena.get_parenthesized(body_node) else {
                     return false;
                 };
-                self.try_elaborate_object_literal_arg_error(paren.expression, expected_return_type)
+                let inner = paren.expression;
+                let inner_kind = self.ctx.arena.get(inner).map(|node| node.kind);
+                match inner_kind {
+                    Some(k)
+                        if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+                    {
+                        self.try_elaborate_object_literal_arg_error(inner, expected_return_type)
+                    }
+                    _ => self.elaborate_expression_body_return_mismatch(
+                        arg_idx,
+                        func.body,
+                        expected_return_type,
+                    ),
+                }
             }
             k if k == syntax_kind_ext::BLOCK => {
                 // Pass param_type for proper error message display
@@ -1137,6 +1116,65 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Anchor a return-type mismatch at an expression-bodied arrow's body
+    /// expression (`body_idx`) as `tsc`'s `elaborateArrowFunction` does, rather
+    /// than reporting the coarse whole-argument TS2345. Shared by the
+    /// simple-expression and conditional-expression body arms.
+    ///
+    /// Returns `true` (suppressing the caller's TS2345) only when a genuine
+    /// mismatch is emitted; returns `false` — deferring to the argument-level
+    /// diagnostic — for `void` expected returns, explicitly-annotated callback
+    /// parameters (the `elaborateArrowFunction` gate keys on parameters), an
+    /// `error`/`any` on either side, an already-related pair, or a
+    /// callable-vs-non-callable body/return shape (where `tsc` keeps the
+    /// whole-callback TS2345).
+    fn elaborate_expression_body_return_mismatch(
+        &mut self,
+        arg_idx: NodeIndex,
+        body_idx: NodeIndex,
+        expected_return_type: TypeId,
+    ) -> bool {
+        if expected_return_type == TypeId::VOID {
+            return false;
+        }
+        if self.function_value_has_explicit_param_annotation(arg_idx) {
+            return false;
+        }
+        let body_type = self.get_type_of_node(body_idx);
+        if body_type == TypeId::ERROR
+            || body_type == TypeId::ANY
+            || expected_return_type == TypeId::ERROR
+            || expected_return_type == TypeId::ANY
+            || self
+                .return_relation_outcome(body_type, expected_return_type)
+                .related
+        {
+            return false;
+        }
+        if self.first_callable_return_type(body_type).is_some()
+            && self
+                .first_callable_return_type(expected_return_type)
+                .is_none()
+        {
+            return false;
+        }
+        // tsc anchors expression-body arrow return mismatches at the body
+        // expression, not the arrow function. E.g.:
+        //   `const f: (a: number) => string = (a) => a + 1`
+        //   → TS2322 at `a + 1` with "Type 'number' is not assignable to type 'string'."
+        let display_target = self.evaluate_type_with_env(expected_return_type);
+        if self.array_elaboration_widening_required_for_display(body_type, display_target) {
+            self.error_type_not_assignable_at_with_widened_source_display(
+                body_type,
+                display_target,
+                body_idx,
+            );
+        } else {
+            self.error_type_not_assignable_at_with_anchor(body_type, display_target, body_idx);
+        }
+        true
     }
 
     fn try_elaborate_function_block_returns_with_param_type(

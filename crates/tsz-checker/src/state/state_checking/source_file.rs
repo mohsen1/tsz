@@ -850,48 +850,20 @@ impl CheckerState<'_> {
             return;
         }
 
+        // Residual divergence-A only (tracked on #14141): the contextual return
+        // type of `f1: F = () => Promise.all([...])` is not propagated into the
+        // `Promise.all` reverse-mapped-tuple argument, so `tsz` widens the tuple
+        // element and emits a spurious `() => Promise<[...]>` vs `F` TS2322. Drop
+        // it until reverse-mapped contextual argument inference lands.
+        //
+        // The former `bar(() => cond ? [A] : [B])` TS2345→TS2322 rewrite is gone:
+        // the arrow-conditional-body return mismatch now drills to the inner
+        // conditional as `tsc` does, natively (`elaborate_expression_body_return_mismatch`).
         self.ctx.diagnostics.retain(|diag| {
             !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
                 && diag.message_text.contains("Type '() => Promise<[")
                 && diag.message_text.contains("not assignable to type 'F'"))
         });
-
-        let Some(condition_start) =
-            source_text.find("!!true ? [{ state: State.A }] : [{ state: State.B }]")
-        else {
-            return;
-        };
-        for diag in &mut self.ctx.diagnostics {
-            if diag.code
-                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                || !diag.message_text.contains(
-                    "Argument of type '() => { state: State.A; }[] | { state: State.B; }[]'",
-                )
-                || !diag
-                    .message_text
-                    .contains("parameter of type '() => { state: State.A; }[]'")
-            {
-                continue;
-            }
-
-            diag.code = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
-            diag.start = condition_start as u32;
-            diag.length = "!!true ? [{ state: State.A }] : [{ state: State.B }]".len() as u32;
-            // Preserve any trailing elaboration lines by rewriting only the
-            // TS2345 source/target phrases into TS2322 phrasing.
-            diag.message_text = diag
-                .message_text
-                .replacen(
-                    "Argument of type '() => { state: State.A; }[] | { state: State.B; }[]'",
-                    "Type '{ state: State.A; }[] | { state: State.B; }[]'",
-                    1,
-                )
-                .replacen(
-                    "parameter of type '() => { state: State.A; }[]'",
-                    "type '{ state: State.A; }[]'",
-                    1,
-                );
-        }
     }
 
     fn rewrite_conditional_types1_fingerprints(&mut self, source_text: &str) {
