@@ -626,7 +626,7 @@ impl<'a> LoweringPass<'a> {
             if func.is_async {
                 self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
-                    self.mark_async_generator_helpers();
+                    self.mark_async_generator_helpers_for_body(func.body);
                 } else {
                     self.mark_async_helpers();
                 }
@@ -644,7 +644,7 @@ impl<'a> LoweringPass<'a> {
                 || (!func.asterisk_token && self.ctx.needs_async_lowering))
         {
             if func.asterisk_token {
-                self.mark_async_generator_helpers();
+                self.mark_async_generator_helpers_for_body(func.body);
             } else {
                 // ES2015/ES2016: async functions need __awaiter (generators are native)
                 self.mark_async_helpers();
@@ -1008,7 +1008,7 @@ impl<'a> LoweringPass<'a> {
                 || (!func.asterisk_token && self.ctx.needs_async_lowering))
         {
             if func.asterisk_token {
-                self.mark_async_generator_helpers();
+                self.mark_async_generator_helpers_for_body(func.body);
             } else {
                 self.mark_async_helpers();
             }
@@ -1698,7 +1698,7 @@ impl<'a> LoweringPass<'a> {
             if func.is_async {
                 self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
-                    self.mark_async_generator_helpers();
+                    self.mark_async_generator_helpers_for_body(func.body);
                 } else {
                     self.mark_async_helpers();
                 }
@@ -1726,7 +1726,7 @@ impl<'a> LoweringPass<'a> {
         {
             if func.asterisk_token {
                 // ES2015+: async generators need __asyncGenerator + __await helpers
-                self.mark_async_generator_helpers();
+                self.mark_async_generator_helpers_for_body(func.body);
             } else {
                 // ES2015/ES2016: non-generator async functions need __awaiter
                 self.mark_async_helpers();

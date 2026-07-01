@@ -47,6 +47,10 @@ name = "es5_private_in_brand_check_tests"
 path = "tests/es5_private_in_brand_check_tests.rs"
 
 [[test]]
+name = "async_generator_yield_star_delegate_helpers_tests"
+path = "tests/async_generator_yield_star_delegate_helpers_tests.rs"
+
+[[test]]
 name = "es5_object_rest_param_ordering_tests"
 path = "tests/es5_object_rest_param_ordering_tests.rs"
 
