@@ -4,6 +4,7 @@
 //! all property access type resolution including optional chaining, enum/namespace
 //! fast paths, class member access, and diagnostic emission.
 use crate::context::TypingRequest;
+use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -57,14 +58,15 @@ impl<'a> CheckerState<'a> {
         }
         let optional_property_chain_cache_key =
             self.optional_property_chain_cache_key(idx, request);
+        let optional_property_chain_cache_generation = TypeResolver::resolver_generation(&self.ctx);
         if let Some(key) = optional_property_chain_cache_key.as_ref()
-            && let Some(&cached) = self
+            && let Some(cached) = self
                 .ctx
                 .flow_shared
                 .narrowing_cache
                 .optional_property_chain_cache
                 .borrow()
-                .get(key)
+                .get(key, optional_property_chain_cache_generation)
         {
             return cached;
         }
