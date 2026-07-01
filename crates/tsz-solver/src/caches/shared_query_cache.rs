@@ -49,7 +49,9 @@ pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]
 /// `Awaited<T>`), producing a stale result that is then returned to sibling
 /// files. Keeping those caches per-file eliminates the ordering-sensitive
 /// correctness risk. See issue #9507. `TSZ_SHARE_INSTANTIATION_CACHES=1`
-/// enables the experimental #13240 witness path.
+/// enables the experimental #13240 witness path, but instantiation entries are
+/// promoted only when the instantiation result boundary reports stable ambient
+/// request state.
 pub struct SharedQueryCache {
     pub(super) eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
     pub(super) subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,

@@ -537,6 +537,53 @@ fn opt_in_shared_instantiation_cache_reuses_across_file_caches() {
     }
 }
 
+#[test]
+fn opt_in_shared_instantiation_cache_keeps_unstable_results_file_local() {
+    // Structural rule: even when the experimental shared instantiation family
+    // is enabled, results produced under tainted ambient request state are
+    // local-cache facts only. The writer can reuse them in the same
+    // `QueryCache`, but a sibling file-local cache must miss and recompute.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new_for_instantiation_family_test(true);
+    let key = InstantiationCacheKey::new(TypeId::OBJECT, CanonicalSubst::empty(), 0, None);
+    let result = TypeId::BOOLEAN;
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(db_a.lookup_instantiation_cache(&key), None);
+        db_a.insert_instantiation_cache_with_project_stability(key.clone(), result, false);
+        assert_eq!(db_a.lookup_instantiation_cache(&key), Some(result));
+
+        let stats = db_a.statistics();
+        assert_eq!(stats.instantiation_cache_entries, 1);
+        assert_eq!(stats.instantiation_cache_hits, 1);
+        assert_eq!(stats.instantiation_cache_misses, 1);
+        assert_eq!(stats.instantiation_cache_shared_inserts, 0);
+        assert_eq!(stats.instantiation_cache_shared_misses, 1);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_b.lookup_instantiation_cache(&key),
+            None,
+            "unstable instantiation results must not be promoted to the shared cache"
+        );
+        let stats = db_b.statistics();
+        assert_eq!(stats.instantiation_cache_entries, 0);
+        assert_eq!(stats.instantiation_cache_hits, 0);
+        assert_eq!(stats.instantiation_cache_misses, 1);
+        assert_eq!(stats.instantiation_cache_shared_hits, 0);
+        assert_eq!(stats.instantiation_cache_shared_misses, 1);
+    }
+
+    assert_eq!(
+        shared.total_entries(),
+        0,
+        "shared cache should remain empty when only unstable instantiation results were inserted"
+    );
+}
+
 // Inner relation cache inserts driven by the `SubtypeChecker`'s recursive
 // descent must also populate `SharedQueryCache`, otherwise sibling per-file
 // checkers re-derive the same mapped/conditional subtree relations (#10921).
