@@ -701,7 +701,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // never be published to the cross-evaluator cache (it would permanently
         // shadow the full answer a deeper-budget run derives). Carry that as a
         // typed publication verdict and consult it at the write site.
-        let probe = crate::evaluation::session::with_current_session(|session| {
+        let run_probe = |session: &crate::evaluation::session::EvaluationSession| {
             let depth_entry = session.enter_conditional_subtype_depth();
             let mut cache_stability = ConditionalBranchCacheStability::DepthAgnostic;
             // Classify against the unresolved-`Lazy` sentinel: a `false` produced
@@ -760,7 +760,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             });
             ConditionalBranchProbeResult::new(relation, cache_stability)
-        });
+        };
+        let probe = if let Some(session) = self.evaluation_session() {
+            run_probe(session)
+        } else {
+            crate::evaluation::session::with_current_session(run_probe)
+        };
         // An `Undetermined` false consumed an unregistered `Lazy` body: do not
         // cache it and do not let it take the false branch — defer so a later
         // resolved pass decides the conditional (issue #14238). Definitive

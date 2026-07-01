@@ -2,79 +2,14 @@
 
 use crate::def::DefId;
 use crate::evaluation::result::EvaluationMemoResult;
+use crate::evaluation::session::EvaluationSession;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{TypeApplication, TypeData, TypeId};
 use rustc_hash::FxHashMap;
-use std::cell::Cell;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 use super::infer_pattern::InferPatternVisited;
-
-thread_local! {
-    /// Cross-evaluator nesting depth for infer-pattern matching that expands an
-    /// `Application`/`Mapped` source or pattern in a fresh sub-evaluator.
-    ///
-    /// Infer matching cannot call `evaluate` on the current `&self` evaluator
-    /// (those methods take `&self`), so it spins up a brand-new `TypeEvaluator`
-    /// whose per-instance recursion guard, depth counter, and fuel all start at
-    /// zero. A recursive generic-wrapper application makes that expansion
-    /// re-enter conditional/infer evaluation at a deeper nesting through a new
-    /// evaluator each level, so no per-evaluator guard ever fires. This
-    /// thread-global counter bounds that cross-evaluator nesting.
-    static INFER_MATCH_EXPANSION_DEPTH: Cell<u32> = const { Cell::new(0) };
-}
-
-/// Maximum cross-evaluator nesting for infer-match sub-evaluator expansions.
-///
-/// Mirrors tsc's `instantiationDepth` cutoff (100): beyond this nesting, tsc
-/// abandons the instantiation, so tsz stops expanding too rather than recurse
-/// forever.
-pub(crate) const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum InferMatchExpansionState {
-    Continue,
-    LimitExceeded,
-}
-
-pub(crate) const fn infer_match_expansion_state(depth: u32) -> InferMatchExpansionState {
-    if depth >= MAX_INFER_MATCH_EXPANSION_DEPTH {
-        InferMatchExpansionState::LimitExceeded
-    } else {
-        InferMatchExpansionState::Continue
-    }
-}
-
-/// RAII guard for [`INFER_MATCH_EXPANSION_DEPTH`].
-///
-/// `enter` returns `LimitExceeded` when the budget is exhausted (the caller must
-/// skip the expansion); otherwise it increments the counter and decrements it on
-/// drop, so the bound is restored even if evaluation unwinds via panic.
-struct InferMatchExpansionGuard;
-
-impl InferMatchExpansionGuard {
-    fn enter() -> Result<Self, InferMatchExpansionState> {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| {
-            let current = depth.get();
-            match infer_match_expansion_state(current) {
-                InferMatchExpansionState::Continue => {
-                    depth.set(current + 1);
-                    Ok(Self)
-                }
-                InferMatchExpansionState::LimitExceeded => {
-                    Err(InferMatchExpansionState::LimitExceeded)
-                }
-            }
-        })
-    }
-}
-
-impl Drop for InferMatchExpansionGuard {
-    fn drop(&mut self) {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
-    }
-}
 
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// Maximum iterations for alias-application reduction loops.
@@ -351,22 +286,35 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     }
 
     /// Evaluate `type_id` in a fresh sub-evaluator during infer-pattern
-    /// matching, bounded by a thread-global cross-evaluator recursion budget.
+    /// matching, bounded by the owning evaluation session's cross-evaluator
+    /// expansion depth.
     pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
-        let nuia = self.no_unchecked_indexed_access();
+        if let Some(session) = self.evaluation_session() {
+            return self.evaluate_for_infer_match_with_session(type_id, session);
+        }
         crate::evaluation::session::with_current_session(|session| {
-            crate::evaluation::cross_eval_guard::memoized_eval(session, type_id, nuia, || {
-                let Ok(_guard) = InferMatchExpansionGuard::enter() else {
-                    return EvaluationMemoResult::unstable_complete(type_id);
-                };
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-                if let Some(query_db) = self.query_db() {
-                    evaluator = evaluator.with_query_db(query_db);
-                }
-                let request = crate::evaluation::request::EvaluationRequest::new(type_id)
-                    .with_no_unchecked_indexed_access(nuia);
-                evaluator.evaluate_request_memo_result(request)
-            })
+            self.evaluate_for_infer_match_with_session(type_id, session)
+        })
+    }
+
+    fn evaluate_for_infer_match_with_session(
+        &self,
+        type_id: TypeId,
+        session: &EvaluationSession,
+    ) -> TypeId {
+        let nuia = self.no_unchecked_indexed_access();
+        crate::evaluation::cross_eval_guard::memoized_eval(session, type_id, nuia, || {
+            let Ok(_entry) = session.enter_infer_match_expansion_depth() else {
+                return EvaluationMemoResult::unstable_complete(type_id);
+            };
+            let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver())
+                .with_evaluation_session(session);
+            if let Some(query_db) = self.query_db() {
+                evaluator = evaluator.with_query_db(query_db);
+            }
+            let request = crate::evaluation::request::EvaluationRequest::new(type_id)
+                .with_no_unchecked_indexed_access(nuia);
+            evaluator.evaluate_request_memo_result(request)
         })
         .unwrap_or(type_id)
     }
@@ -374,60 +322,59 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        INFER_MATCH_EXPANSION_DEPTH, InferMatchExpansionGuard, InferMatchExpansionState,
-        MAX_INFER_MATCH_EXPANSION_DEPTH, infer_match_expansion_state,
+    use crate::evaluation::session::{
+        EvaluationSession, InferMatchExpansionDepthEntry, InferMatchExpansionDepthState,
     };
 
     #[test]
-    fn infer_match_expansion_state_allows_below_budget() {
-        assert_eq!(
-            infer_match_expansion_state(MAX_INFER_MATCH_EXPANSION_DEPTH - 1),
-            InferMatchExpansionState::Continue
-        );
-    }
-
-    #[test]
     fn infer_match_expansion_state_limits_at_budget() {
-        assert_eq!(
-            infer_match_expansion_state(MAX_INFER_MATCH_EXPANSION_DEPTH),
-            InferMatchExpansionState::LimitExceeded
-        );
-        assert_eq!(
-            infer_match_expansion_state(MAX_INFER_MATCH_EXPANSION_DEPTH + 1),
-            InferMatchExpansionState::LimitExceeded
-        );
-    }
-
-    #[test]
-    fn guard_bounds_cross_evaluator_expansion_depth() {
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
-
+        let session = EvaluationSession::new();
         let mut held = Vec::new();
-        for expected_prev in 0..MAX_INFER_MATCH_EXPANSION_DEPTH {
-            let guard =
-                InferMatchExpansionGuard::enter().expect("enter within budget must succeed");
-            held.push(guard);
-            assert_eq!(
-                INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get),
-                expected_prev + 1
-            );
+        for expected_prev in 0..InferMatchExpansionDepthEntry::limit() {
+            let entry = session
+                .enter_infer_match_expansion_depth()
+                .expect("enter within budget must succeed");
+            assert_eq!(entry.prior_depth(), expected_prev);
+            held.push(entry);
+            assert_eq!(session.infer_match_expansion_depth(), expected_prev + 1);
         }
 
         assert!(
             matches!(
-                InferMatchExpansionGuard::enter(),
-                Err(InferMatchExpansionState::LimitExceeded)
+                session.enter_infer_match_expansion_depth(),
+                Err(InferMatchExpansionDepthState::LimitExceeded)
             ),
             "enter at the budget must be denied so the caller stops expanding"
         );
 
         held.clear();
-        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(std::cell::Cell::get), 0);
+        assert_eq!(session.infer_match_expansion_depth(), 0);
         assert!(
-            InferMatchExpansionGuard::enter().is_ok(),
+            session.enter_infer_match_expansion_depth().is_ok(),
             "after unwinding, a fresh expansion must be allowed again"
         );
-        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
+    }
+
+    #[test]
+    fn infer_match_expansion_depth_is_session_local() {
+        let saturated = EvaluationSession::new();
+        let separate = EvaluationSession::new();
+        let mut held = Vec::new();
+        for _ in 0..InferMatchExpansionDepthEntry::limit() {
+            held.push(
+                saturated
+                    .enter_infer_match_expansion_depth()
+                    .expect("saturating session enters"),
+            );
+        }
+
+        assert!(matches!(
+            saturated.enter_infer_match_expansion_depth(),
+            Err(InferMatchExpansionDepthState::LimitExceeded)
+        ));
+        assert!(
+            separate.enter_infer_match_expansion_depth().is_ok(),
+            "a saturated infer-match depth in one session must not block another session"
+        );
     }
 }

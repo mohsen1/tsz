@@ -27,6 +27,9 @@ const MAX_GLOBAL_INSTANTIATION_FUEL: u32 = crate::limits::MAX_GLOBAL_INSTANTIATI
 /// Maximum re-entrant conditional-subtype relation depth.
 const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = crate::limits::MAX_CONDITIONAL_SUBTYPE_DEPTH;
 
+/// Maximum infer-match fresh-evaluator expansion depth.
+const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = crate::limits::MAX_INFER_MATCH_EXPANSION_DEPTH;
+
 /// Whether the shared evaluation session can enter another instantiation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvaluationSessionLimitState {
@@ -39,6 +42,12 @@ impl EvaluationSessionLimitState {
     pub const fn is_exceeded(self) -> bool {
         !matches!(self, Self::WithinLimits)
     }
+}
+
+/// Whether infer-pattern matching may enter another fresh-evaluator expansion.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InferMatchExpansionDepthState {
+    LimitExceeded,
 }
 
 /// Explicit evaluation session state.
@@ -57,6 +66,8 @@ pub struct EvaluationSession {
     /// Re-entrant conditional-subtype depth for
     /// `Evaluator -> SubtypeChecker -> Evaluator -> ...` chains.
     conditional_subtype_depth: Cell<u32>,
+    /// Cross-evaluator nesting depth for infer-pattern matching expansion.
+    infer_match_expansion_depth: Cell<u32>,
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
@@ -92,6 +103,38 @@ impl Drop for ConditionalSubtypeDepthEntry<'_> {
     }
 }
 
+/// RAII entry for one infer-pattern fresh-evaluator expansion in an
+/// [`EvaluationSession`].
+#[must_use]
+pub(crate) struct InferMatchExpansionDepthEntry<'a> {
+    session: &'a EvaluationSession,
+    #[cfg(test)]
+    prior_depth: u32,
+}
+
+impl InferMatchExpansionDepthEntry<'_> {
+    #[cfg(test)]
+    pub(crate) const fn prior_depth(&self) -> u32 {
+        self.prior_depth
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn limit() -> u32 {
+        MAX_INFER_MATCH_EXPANSION_DEPTH
+    }
+}
+
+impl Drop for InferMatchExpansionDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session.infer_match_expansion_depth.set(
+            self.session
+                .infer_match_expansion_depth
+                .get()
+                .saturating_sub(1),
+        );
+    }
+}
+
 impl EvaluationSession {
     /// Create a new session with all counters at zero.
     pub fn new() -> Self {
@@ -99,6 +142,7 @@ impl EvaluationSession {
             global_instantiation_depth: Cell::new(0),
             global_instantiation_fuel: Cell::new(0),
             conditional_subtype_depth: Cell::new(0),
+            infer_match_expansion_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
         }
@@ -174,6 +218,30 @@ impl EvaluationSession {
     #[inline]
     pub(crate) const fn conditional_subtype_depth(&self) -> u32 {
         self.conditional_subtype_depth.get()
+    }
+
+    /// Enter one infer-match fresh-evaluator expansion.
+    #[inline]
+    pub(crate) fn enter_infer_match_expansion_depth(
+        &self,
+    ) -> Result<InferMatchExpansionDepthEntry<'_>, InferMatchExpansionDepthState> {
+        let prior_depth = self.infer_match_expansion_depth.get();
+        if prior_depth >= MAX_INFER_MATCH_EXPANSION_DEPTH {
+            return Err(InferMatchExpansionDepthState::LimitExceeded);
+        }
+        self.infer_match_expansion_depth.set(prior_depth + 1);
+        Ok(InferMatchExpansionDepthEntry {
+            session: self,
+            #[cfg(test)]
+            prior_depth,
+        })
+    }
+
+    /// Current infer-match fresh-evaluator expansion depth.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn infer_match_expansion_depth(&self) -> u32 {
+        self.infer_match_expansion_depth.get()
     }
 
     /// Enter cross-evaluator expansion of `type_id`.

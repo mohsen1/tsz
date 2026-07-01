@@ -152,6 +152,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(query_db) = self.query_db() {
             checker = checker.with_query_db(query_db);
         }
+        if let Some(session) = self.evaluation_session() {
+            checker = checker.with_evaluation_session(session);
+        }
         checker
     }
 

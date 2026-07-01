@@ -30,6 +30,7 @@ use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationRequestStability;
 use crate::evaluation::result::EvaluationResult;
 use crate::evaluation::result::TerminationKind;
+use crate::evaluation::session::EvaluationSession;
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::instantiation::instantiate::instantiate_generic;
@@ -70,6 +71,8 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     interner: &'a dyn TypeDatabase,
     /// Optional query database for Salsa-backed memoization.
     query_db: Option<&'a dyn QueryDatabase>,
+    /// Optional owning session for cross-evaluator depth and memo state.
+    eval_session: Option<&'a EvaluationSession>,
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
     cache: FxHashMap<TypeId, TypeId>,
@@ -298,6 +301,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         TypeEvaluator {
             interner,
             query_db: None,
+            eval_session: None,
             resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
@@ -453,6 +457,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Set the query database for Salsa-backed memoization.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
+        self
+    }
+
+    /// Set the owning evaluation session for fresh evaluator recursion state.
+    #[must_use]
+    pub const fn with_evaluation_session(mut self, session: &'a EvaluationSession) -> Self {
+        self.eval_session = Some(session);
         self
     }
 
@@ -702,6 +713,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn query_db(&self) -> Option<&'a dyn QueryDatabase> {
         self.query_db
+    }
+
+    /// Get the owning evaluation session when one is available.
+    #[inline]
+    pub(crate) const fn evaluation_session(&self) -> Option<&'a EvaluationSession> {
+        self.eval_session
     }
 
     /// PERF: Look up a cached subtype result from conditional type evaluation.
