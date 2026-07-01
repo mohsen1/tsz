@@ -17,6 +17,7 @@ use super::erase_type_params_to_constraints;
 
 mod call_signatures;
 mod context_instantiation;
+mod cowalk;
 mod evaluation;
 mod generic_constraints;
 mod name_pairing;
@@ -447,6 +448,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &target_to_source_substitution,
                 );
 
+                // #14345 WAVE-1 register-through-reduction co-walk (flag-gated,
+                // byte-parity-inert OFF). Registers the DEEPER corresponding leaf
+                // origin-pairs the top-level registration misses; must run before
+                // the strip below (which erases `DeclScoped`). See `cowalk` module.
+                self.register_cowalk_leaf_origins(&source_instantiated, &target_instantiated);
                 // #14345 scoped structural-strip (flag-gated, byte-parity-inert
                 // OFF). The construction stamp gives every user-written type
                 // parameter a `DeclScoped { file, node }` origin so two distinct

@@ -1433,6 +1433,13 @@ pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: Typ
 #[path = "../../../tests/subtype_tests.rs"]
 mod tests;
 
+// #14345 WAVE-1 adversarial soundness gate for the decl-origin-through-reduction
+// consult (branch `green/wave1-cowalk`). Proves the origin-keyed match rejects a
+// false `T ≡ U` while accepting the genuine same-decl `B ≡ A`.
+#[cfg(test)]
+#[path = "../../../tests/decl_origin_reduction_soundness_tests.rs"]
+mod decl_origin_reduction_soundness_tests;
+
 #[cfg(test)]
 #[path = "../../../tests/index_signature_tests.rs"]
 mod index_signature_tests;
