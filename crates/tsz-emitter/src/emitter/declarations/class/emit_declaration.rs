@@ -1067,13 +1067,13 @@ impl<'a> Printer<'a> {
         // additionally relocate the `var _C_x;` declaration to module scope, or
         // it would be declared twice (once at module scope, once inside the
         // IIFE). Static methods/getters/blocks and declare-only static fields do
-        // not carry a runtime initializer, so those still externalize.
-        let keeps_private_storage_inside_iife =
-            self.class_has_es5_static_field_initializer(class_data);
+        // not carry a runtime initializer, so those still externalize. The
+        // member scan is the last conjunct so it is skipped unless the cheap
+        // CommonJS-export guards already passed.
         let can_externalize_private_storage = self.ctx.outer_module_kind().is_commonjs()
             && is_commonjs_exported_class
             && !self.ctx.module_state.has_export_assignment
-            && !keeps_private_storage_inside_iife;
+            && !self.class_has_es5_static_field_initializer(class_data);
         let mut decls = if can_externalize_private_storage {
             self.es5_class_private_storage_decls(class_idx, class_name, class_data)
         } else {
