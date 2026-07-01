@@ -159,6 +159,10 @@ name = "cjs_hoisted_var_position_tests"
 path = "tests/cjs_hoisted_var_position_tests.rs"
 
 [[test]]
+name = "es5_cjs_private_storage_static_field_tests"
+path = "tests/es5_cjs_private_storage_static_field_tests.rs"
+
+[[test]]
 name = "object_literal_recovery_tests"
 path = "tests/object_literal_recovery_tests.rs"
 

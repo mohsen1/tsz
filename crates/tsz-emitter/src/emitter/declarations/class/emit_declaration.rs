@@ -1060,9 +1060,20 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
+        // A static property with a runtime initializer (e.g. `static s = 3`)
+        // forces the class's private-field WeakMap storage to stay INSIDE the
+        // generated IIFE, co-located with the `C.s = ...` static assignments,
+        // exactly as `tsc` does. In that case the CommonJS-export lift must NOT
+        // additionally relocate the `var _C_x;` declaration to module scope, or
+        // it would be declared twice (once at module scope, once inside the
+        // IIFE). Static methods/getters/blocks and declare-only static fields do
+        // not carry a runtime initializer, so those still externalize.
+        let keeps_private_storage_inside_iife =
+            self.class_has_es5_static_field_initializer(class_data);
         let can_externalize_private_storage = self.ctx.outer_module_kind().is_commonjs()
             && is_commonjs_exported_class
-            && !self.ctx.module_state.has_export_assignment;
+            && !self.ctx.module_state.has_export_assignment
+            && !keeps_private_storage_inside_iife;
         let mut decls = if can_externalize_private_storage {
             self.es5_class_private_storage_decls(class_idx, class_name, class_data)
         } else {
@@ -1196,6 +1207,36 @@ impl<'a> Printer<'a> {
         }
 
         decls
+    }
+
+    /// A class has an ES5 static field initializer when it declares at least
+    /// one non-abstract, non-ambient `static` property carrying a runtime
+    /// initializer (`static s = 3`). Such a field emits a `C.s = ...` statement
+    /// inside the class-wrapping IIFE, which keeps the class's private-field
+    /// `WeakMap` storage inside the IIFE too (matching `tsc`), rather than
+    /// lifting it to module scope. Static methods, accessors declared with a
+    /// method body, static blocks, and declare-only static fields do not
+    /// qualify.
+    fn class_has_es5_static_field_initializer(&self, class_data: &ClassData) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.arena.is_static(&prop.modifiers)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                && self.es5_property_initializer_has_equals(member_node, prop)
+        })
     }
 
     fn es5_class_property_has_runtime_effect(
