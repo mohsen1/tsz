@@ -580,11 +580,9 @@ mod tests {
         state::set_cross_arena_bailout_epoch_for_test(0);
 
         // Below the cap: delegation is allowed and does not record a bailout.
-        assert!(
-            CheckerState::<'_>::enter_cross_arena_delegation(),
-            "delegation below the depth cap must be allowed"
-        );
-        CheckerState::<'_>::leave_cross_arena_delegation();
+        let guard = CheckerState::<'_>::enter_cross_arena_delegation()
+            .expect("delegation below the depth cap must be allowed");
+        drop(guard);
         assert_eq!(
             state::cross_arena_bailout_epoch_for_test(),
             0,
@@ -596,7 +594,7 @@ mod tests {
         state::set_cross_arena_depth_for_test(5);
         let before = state::cross_arena_bailout_epoch_for_test();
         assert!(
-            !CheckerState::<'_>::enter_cross_arena_delegation(),
+            CheckerState::<'_>::enter_cross_arena_delegation().is_none(),
             "delegation at the depth cap must be refused"
         );
         assert_ne!(
@@ -608,5 +606,40 @@ mod tests {
         // Leave the thread-locals clean for sibling tests on this worker.
         state::set_cross_arena_depth_for_test(0);
         state::set_cross_arena_bailout_epoch_for_test(0);
+    }
+
+    /// The cross-arena depth guard is RAII-owned: early returns and unwinds drop
+    /// the guard instead of relying on every caller to remember a matching
+    /// manual leave.
+    #[test]
+    fn cross_arena_delegation_guard_restores_depth_on_drop() {
+        use crate::CheckerState;
+        use crate::state_domain::state;
+
+        state::set_cross_arena_depth_for_test(0);
+        state::set_cross_arena_bailout_epoch_for_test(0);
+
+        {
+            let _outer = CheckerState::<'_>::enter_cross_arena_delegation()
+                .expect("outer delegation should enter");
+            assert_eq!(state::cross_arena_depth_for_test(), 1);
+            {
+                let _inner = CheckerState::<'_>::enter_cross_arena_delegation()
+                    .expect("nested delegation should enter");
+                assert_eq!(state::cross_arena_depth_for_test(), 2);
+            }
+            assert_eq!(state::cross_arena_depth_for_test(), 1);
+        }
+
+        assert_eq!(
+            state::cross_arena_depth_for_test(),
+            0,
+            "dropping the guards must restore the shared depth"
+        );
+        assert_eq!(
+            state::cross_arena_bailout_epoch_for_test(),
+            0,
+            "successful guard scopes must not record a bailout"
+        );
     }
 }

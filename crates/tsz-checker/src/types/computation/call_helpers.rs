@@ -784,9 +784,9 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        if !Self::enter_cross_arena_delegation() {
+        let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
             return TypeId::ERROR;
-        }
+        };
 
         let delegate_file_name = target_arena
             .source_files
@@ -844,7 +844,6 @@ impl<'a> CheckerState<'a> {
             result = checker.get_type_of_node(var_decl.initializer);
         }
         let _ = sym_id;
-        Self::leave_cross_arena_delegation();
         if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
             self.ctx.lib_delegation_cache.insert_declaration_node_type(
                 target_arena,
@@ -984,9 +983,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Guard against deep cross-arena recursion (shared with all delegation points)
-        if !Self::enter_cross_arena_delegation() {
+        let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
             return TypeId::ERROR;
-        }
+        };
 
         let delegate_file_name = decl_arena
             .source_files
@@ -1049,7 +1048,6 @@ impl<'a> CheckerState<'a> {
         // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
         // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
-        Self::leave_cross_arena_delegation();
         let cacheable_result = result != TypeId::ERROR
             && (result != TypeId::UNKNOWN
                 || decl_arena
@@ -1135,9 +1133,9 @@ impl<'a> CheckerState<'a> {
                 {
                     cached
                 } else {
-                    if !Self::enter_cross_arena_delegation() {
+                    let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                         continue;
-                    }
+                    };
 
                     let delegate_file_name = decl_arena
                         .source_files
@@ -1169,7 +1167,6 @@ impl<'a> CheckerState<'a> {
                         .symbol_resolution_depth
                         .set(self.ctx.symbol_resolution_depth.get());
                     let result = checker.get_type_of_node(decl_idx);
-                    Self::leave_cross_arena_delegation();
                     if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
                         self.ctx
                             .lib_delegation_cache

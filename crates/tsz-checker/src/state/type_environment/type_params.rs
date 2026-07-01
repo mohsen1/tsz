@@ -601,7 +601,9 @@ impl<'a> CheckerState<'a> {
                         let params = if let Some(memo) = cached {
                             tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
                             Some(memo)
-                        } else if Self::enter_cross_arena_delegation() {
+                        } else if let Some(_cross_arena_guard) =
+                            Self::enter_cross_arena_delegation()
+                        {
                             tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
                             let decl_binder = self
                                 .ctx
@@ -630,7 +632,6 @@ impl<'a> CheckerState<'a> {
                                 decl_idx,
                                 &sym_escaped_name,
                             );
-                            Self::leave_cross_arena_delegation();
                             if let Some(ref params) = result
                                 && let (Some(file_idx), Some(cache)) = (
                                     cache_file_idx,
@@ -731,7 +732,7 @@ impl<'a> CheckerState<'a> {
                     let params = if let Some(memo) = cached {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
                         Some(memo)
-                    } else if Self::enter_cross_arena_delegation() {
+                    } else if let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
                         let decl_binder = self
                             .ctx
@@ -758,7 +759,6 @@ impl<'a> CheckerState<'a> {
                             decl_idx,
                             &sym_escaped_name,
                         );
-                        Self::leave_cross_arena_delegation();
                         if let Some(ref params) = result
                             && let Some(ref cache) = self.ctx.cross_file_type_params_cache
                         {
