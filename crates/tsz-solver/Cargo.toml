@@ -58,3 +58,11 @@ path = "tests/conditional_infer_tuple_numeric_key_tests.rs"
 [[test]]
 name = "evaluation_cache_agreement_tests"
 path = "tests/evaluation_cache_agreement_tests.rs"
+
+[[test]]
+name = "flag_ledger_guard"
+path = "tests/flag_ledger_guard.rs"
+
+[[test]]
+name = "deterministic_election_env_gate"
+path = "tests/deterministic_election_env_gate.rs"
