@@ -697,10 +697,6 @@ impl<'a> CheckerState<'a> {
     /// forced", not "transitively walked".
     pub(crate) fn ensure_refs_resolved(&mut self, type_id: TypeId) {
         use crate::state_checking::lazy_lib_member::on_demand_forcing_disabled;
-        use crate::state_domain::type_environment::lazy::{
-            enter_refs_resolution_scope, exit_refs_resolution_scope,
-            increment_refs_resolution_fuel, refs_resolution_fuel_exhausted,
-        };
         use crate::state_domain::type_environment::lazy_guard_state::{
             RefsResolutionWorkState, refs_resolution_work_state,
         };
@@ -713,14 +709,15 @@ impl<'a> CheckerState<'a> {
         // only used when the kill-switch is set, for byte-parity comparison.
         let transitive = on_demand_forcing_disabled();
 
-        let is_outermost = enter_refs_resolution_scope();
+        let eval_session = std::rc::Rc::clone(&self.ctx.eval_session);
+        let _refs_scope = eval_session.enter_refs_resolution_scope();
 
         let mut visited_types = FxHashSet::default();
         let mut visited_def_ids = FxHashSet::default();
         let mut worklist = vec![type_id];
 
         while let Some(current) = worklist.pop() {
-            match refs_resolution_work_state(refs_resolution_fuel_exhausted(), false) {
+            match refs_resolution_work_state(eval_session.refs_resolution_fuel_exhausted(), false) {
                 RefsResolutionWorkState::Continue => {}
                 RefsResolutionWorkState::RefsFuelExhausted
                 | RefsResolutionWorkState::GlobalFuelExhausted => break,
@@ -750,7 +747,10 @@ impl<'a> CheckerState<'a> {
             }
 
             for &def_id in self.ctx.collect_lazy_def_ids_cached(current).iter() {
-                match refs_resolution_work_state(refs_resolution_fuel_exhausted(), false) {
+                match refs_resolution_work_state(
+                    eval_session.refs_resolution_fuel_exhausted(),
+                    false,
+                ) {
                     RefsResolutionWorkState::Continue => {}
                     RefsResolutionWorkState::RefsFuelExhausted
                     | RefsResolutionWorkState::GlobalFuelExhausted => break,
@@ -758,9 +758,9 @@ impl<'a> CheckerState<'a> {
                 if !visited_def_ids.insert(def_id) {
                     continue;
                 }
-                increment_refs_resolution_fuel();
-                self.ctx.eval_session.increment_lazy_resolution_fuel();
-                let at_fuel_limit = self.ctx.eval_session.lazy_resolution_fuel_exhausted();
+                eval_session.increment_refs_resolution_fuel();
+                eval_session.increment_lazy_resolution_fuel();
+                let at_fuel_limit = eval_session.lazy_resolution_fuel_exhausted();
                 // Always call resolve_and_insert_def_type even when global fuel is
                 // exhausted: the call is typically a fast cache hit for lib types that
                 // were computed during type-environment building, and the resolver needs
@@ -801,10 +801,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         self.ctx.refs_resolved.insert(type_id);
-
-        if is_outermost {
-            exit_refs_resolution_scope();
-        }
     }
 
     /// Session-state stamp for the [`crate::context::AssignabilityEvalMemo`]
@@ -838,8 +834,6 @@ impl<'a> CheckerState<'a> {
     /// issue #13243). The active recursion stack still wins over the memo, so
     /// re-entered types still evaluate to themselves.
     pub(crate) fn evaluate_type_for_assignability(&mut self, type_id: TypeId) -> TypeId {
-        use crate::state_domain::type_environment::lazy::refs_resolution_fuel_exhausted;
-
         if type_id.is_intrinsic() {
             return type_id;
         }
@@ -892,7 +886,7 @@ impl<'a> CheckerState<'a> {
         // environments, and the result is valid for that *post*-evaluation
         // state; the lookup-time stamp would file the entry as already stale.
         if result != TypeId::ERROR
-            && !refs_resolution_fuel_exhausted()
+            && !self.ctx.eval_session.refs_resolution_fuel_exhausted()
             && !self.ctx.eval_session.lazy_resolution_fuel_exhausted()
             && !self.ctx.depth_exceeded.get()
             && let Some(stamp) = self.assignability_eval_memo_stamp()
