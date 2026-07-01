@@ -847,6 +847,15 @@ pub struct Printer<'a> {
     /// Used to match tsc emit where named imports are referenced via module temps.
     pub(crate) commonjs_named_import_substitutions: FxHashMap<String, String>,
 
+    /// Local names bound by a **default import clause** (`import x from "mod"`),
+    /// as opposed to a named import specifier (`import { x }` / `import { d as x }`)
+    /// or a namespace import (`import * as x`). tsc re-exports a default-import
+    /// binding with a plain `exports.y = mod.default;` assignment, whereas a named
+    /// import specifier is re-exported through a live-binding getter. Both share
+    /// `commonjs_named_import_substitutions` for reference rewriting, so this set
+    /// is what distinguishes the two at the re-export site.
+    pub(crate) commonjs_default_import_local_names: FxHashSet<String>,
+
     /// Module expressions for wrapped AMD re-export declarations, keyed by node start.
     /// AMD binds dependencies as factory parameters instead of body-local `require()` calls.
     pub(crate) wrapped_export_module_substitutions: FxHashMap<u32, String>,

@@ -1054,6 +1054,11 @@ impl<'a> Printer<'a> {
                 default_ident.escaped_text.to_string(),
                 format!("{module_var}.default"),
             );
+            // Record that this local name is a default-import-clause binding so the
+            // re-export site emits a plain assignment (`exports.y = mod.default;`)
+            // rather than a named-specifier live-binding getter.
+            self.commonjs_default_import_local_names
+                .insert(default_ident.escaped_text.to_string());
         }
         if !clause.named_bindings.is_some() {
             return;

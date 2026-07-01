@@ -49,6 +49,7 @@ impl<'a> Printer<'a> {
         }
         if !self.ctx.is_inside_module_wrapper_body() {
             self.commonjs_named_import_substitutions.clear();
+            self.commonjs_default_import_local_names.clear();
         }
         if !matches!(self.ctx.original_module_kind, Some(ModuleKind::AMD)) {
             self.wrapped_export_module_substitutions.clear();

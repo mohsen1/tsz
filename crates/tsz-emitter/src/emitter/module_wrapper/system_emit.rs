@@ -175,6 +175,7 @@ impl<'a> Printer<'a> {
         system_plan: &SystemDependencyPlan,
     ) {
         self.commonjs_named_import_substitutions.clear();
+        self.commonjs_default_import_local_names.clear();
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
