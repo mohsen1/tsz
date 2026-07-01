@@ -14,7 +14,7 @@
 //! > finalizing with the un-narrowed declared type.
 //!
 //! Before the fix `condition_antecedent_requires_defer` recognized CALL,
-//! ASSIGNMENT, LABEL and ARRAY_MUTATION antecedents as deferrable but not
+//! ASSIGNMENT, LABEL and `ARRAY_MUTATION` antecedents as deferrable but not
 //! `AWAIT_POINT`/`YIELD_POINT`, so `x = f(); await p; if (c) { x }` re-widened
 //! `x` back to its declared type and emitted a false `TS18048` (and, when the
 //! reference was the function's returned value, a cascading false `TS2322` on
