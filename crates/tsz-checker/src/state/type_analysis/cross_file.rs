@@ -1346,11 +1346,23 @@ impl CheckerState<'_> {
             .get_symbol(sym_id)
             .and_then(tsz_binder::Symbol::primary_declaration)
             .is_some_and(|decl_idx| checker.is_ambient_class_declaration(decl_idx));
+        // The cross-file resolution state (all arenas/binders, resolved modules,
+        // and the global name indices) is what lets the delegated child follow
+        // import references that appear in the class's members — e.g. a generic
+        // method whose type-parameter constraint references a type alias imported
+        // into the declaring module (`bareC<TE extends AnyTable>` where `AnyTable`
+        // is `import`ed). Ambient (`declare class`) user classes need this just as
+        // much as concrete ones: without it the constraint alias resolves to
+        // `Error`, which downstream widens inferred literal arguments (a spurious
+        // `TS2322`/`TS2345` cascade) and drops the constraint's own enforcement
+        // (#15256). Declaration/lib files bail out earlier (see the
+        // `query_file_is_declaration_file` guard above), so this only broadens
+        // resolution for ambient classes in real modules. `current_file_idx` is
+        // already set above and `copy_cross_file_state_from` does not touch it;
+        // the symbol-cache invalidation stays gated on the concrete path to
+        // preserve ambient classes' cached-type reuse.
+        checker.ctx.copy_cross_file_state_from(&self.ctx);
         if !delegated_class_is_ambient {
-            checker.ctx.copy_cross_file_state_from(&self.ctx);
-            checker.ctx.current_file_idx = query_file_idx
-                .or(delegate_file_idx)
-                .unwrap_or(self.ctx.current_file_idx);
             checker.ctx.symbol_types.remove(&sym_id);
             checker.ctx.symbol_instance_types.remove(&sym_id);
             checker.ctx.symbol_to_def.borrow_mut().remove(&sym_id);
