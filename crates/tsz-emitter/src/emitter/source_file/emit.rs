@@ -926,8 +926,59 @@ impl<'a> Printer<'a> {
             // Merge default and named function exports, preserving source order.
             // tsc emits function exports in declaration order, not default-first.
             {
-                // Build a merged list of (source_position, export_name, local_name)
-                let mut all_func_exports: Vec<(u32, String, String)> = Vec::new();
+                // Merged list of (group_pos, within_group_rank, export_name,
+                // local_name). `group_pos` is the function declaration's source
+                // position, grouping every export of one hoisted function
+                // together; `within_group_rank` orders exports inside that group
+                // (see the sort below).
+                let mut all_func_exports: Vec<(u32, u32, String, String)> = Vec::new();
+                // Map each `export {}` clause alias's exported name to its
+                // specifier's source position, used as `within_group_rank` so
+                // aliases emit in specifier source order. An exported name that
+                // is absent (the declaration's own `export`/`export default`
+                // modifier never appears in a clause) ranks 0 and sorts first.
+                // INVARIANT: each exported name is unique across the module
+                // (TypeScript rejects duplicate exports; `func_exports` is also
+                // deduped by exported name), so one name maps to one rank.
+                let mut alias_specifier_pos: rustc_hash::FxHashMap<String, u32> =
+                    rustc_hash::FxHashMap::default();
+                for &idx in &source.statements.nodes {
+                    let Some(node) = self.arena.get(idx) else {
+                        continue;
+                    };
+                    if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                        continue;
+                    }
+                    let Some(export) = self.arena.get_export_decl(node) else {
+                        continue;
+                    };
+                    if export.is_type_only
+                        || export.is_default_export
+                        || export.module_specifier.is_some()
+                    {
+                        continue;
+                    }
+                    let Some(clause_node) = self.arena.get(export.export_clause) else {
+                        continue;
+                    };
+                    let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                        continue;
+                    };
+                    for &spec_idx in &named_exports.elements.nodes {
+                        let Some(spec_node) = self.arena.get(spec_idx) else {
+                            continue;
+                        };
+                        let Some(spec) = self.arena.get_specifier_at(spec_idx) else {
+                            continue;
+                        };
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        if let Some(exported) = self.get_specifier_name_text(spec.name) {
+                            alias_specifier_pos.entry(exported).or_insert(spec_node.pos);
+                        }
+                    }
+                }
                 // Walk anonymous-default functions in source order so the Nth
                 // synthesized name (`default_1`, `default_2`, ...) matches the
                 // Nth occurrence. Without this, the position lookup below
@@ -1002,7 +1053,9 @@ impl<'a> Printer<'a> {
                             })
                             .unwrap_or(0)
                     };
-                    all_func_exports.push((pos, "default".to_string(), name.clone()));
+                    // A `export default function` is the declaration's own
+                    // export, so it ranks first within its group.
+                    all_func_exports.push((pos, 0, "default".to_string(), name.clone()));
                 }
                 for (exported_name, local_name) in &func_exports {
                     let pos = source
@@ -1040,17 +1093,32 @@ impl<'a> Printer<'a> {
                             }
                         })
                         .unwrap_or(0);
-                    all_func_exports.push((pos, exported_name.clone(), local_name.clone()));
+                    // Own named export (`export function foo`) is absent from
+                    // the specifier map and ranks 0; a clause alias takes its
+                    // specifier's source position.
+                    let rank = alias_specifier_pos.get(exported_name).copied().unwrap_or(0);
+                    all_func_exports.push((pos, rank, exported_name.clone(), local_name.clone()));
                 }
-                // Sort by source position, with alphabetical tiebreaker for
-                // exports referencing the same function (same position).
-                // This matches tsc: `exports.j = j;` before `exports.jj = j;`
-                // and `exports.default = f;` before `exports.f = f;`.
-                all_func_exports.sort_by(|(pos_a, name_a, _), (pos_b, name_b, _)| {
-                    pos_a.cmp(pos_b).then_with(|| name_a.cmp(name_b))
-                });
-                // Emit in source order
-                for (_, exported_name, local_name) in &all_func_exports {
+                // Emit each hoisted function's exports grouped by declaration
+                // position, and within a group the declaration's own export
+                // first (rank 0) followed by each `export {}` clause alias in
+                // specifier source order. This matches tsc's
+                // `appendExportsOfHoistedDeclaration`: `exports.default = f;`
+                // before `exports.f = f;`, `exports.j = j;` before
+                // `exports.jj = j;`, and `export { f as z, f as m }` staying in
+                // written order (`z` before `m`) rather than alphabetical. The
+                // exported-name comparison is only a final deterministic
+                // tiebreaker; distinct exports never collide on the first two
+                // keys.
+                all_func_exports.sort_by(
+                    |(pos_a, rank_a, name_a, _), (pos_b, rank_b, name_b, _)| {
+                        pos_a
+                            .cmp(pos_b)
+                            .then_with(|| rank_a.cmp(rank_b))
+                            .then_with(|| name_a.cmp(name_b))
+                    },
+                );
+                for (_, _, exported_name, local_name) in &all_func_exports {
                     self.write("exports.");
                     self.write(exported_name);
                     self.write(" = ");
