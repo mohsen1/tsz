@@ -941,7 +941,7 @@ fn base_construct_zero_args_instantiates_default_bearing_generic() {
     // return type is instantiated with the default — the base is `string`.
     let interner = TypeInterner::new();
     let t = type_param(&interner, "T", Some(TypeId::STRING));
-    let ret_t = interner.type_param(t.clone());
+    let ret_t = interner.type_param(t);
     let sig = CallSignature {
         type_params: vec![t],
         ..CallSignature::new(vec![], ret_t)
