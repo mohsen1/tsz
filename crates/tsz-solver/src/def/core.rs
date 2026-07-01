@@ -15,6 +15,7 @@
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 mod augmentation_symbols;
 mod body_dependencies;
+mod campaign_channels;
 mod content_addressed;
 mod cross_file_cache;
 mod decl_identity;
