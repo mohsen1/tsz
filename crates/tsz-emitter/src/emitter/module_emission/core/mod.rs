@@ -1032,7 +1032,7 @@ impl<'a> Printer<'a> {
                 // uses — so it precedes any deferred private/accessor storage init,
                 // matching tsc. Stage it and let the ES5 class IIFE emitter place it;
                 // fall back to the trailing form if it was not consumed.
-                self.pending_esm_class_export_name = Some((export.export_clause, name.clone()));
+                self.pending_esm_class_export_name = Some((export.export_clause, name));
                 self.emit(export.export_clause);
                 if let Some((_, pending_name)) = self.pending_esm_class_export_name.take() {
                     if !self.writer.is_at_line_start() {
