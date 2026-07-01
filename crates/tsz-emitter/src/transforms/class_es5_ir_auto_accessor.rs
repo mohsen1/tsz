@@ -382,6 +382,12 @@ impl<'a> ES5ClassTransformer<'a> {
             .set(async_transformer.dynamic_import_promise_counter.get());
         let hoisted_var_groups =
             AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+        // Preserve the prior behavior for async auto-accessor arrows: hoisted
+        // `var` groups keep the callback body multi-line. Known divergence from
+        // `tsc` (which keeps a single-line source body inline even with hoisted
+        // vars); moving to the source-line rule is a follow-up kept out of this
+        // zero-regression change.
+        let callback_multiline = !hoisted_var_groups.is_empty();
 
         Some(IRNode::FunctionExpr {
             name: None,
@@ -396,7 +402,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 generator_body: Box::new(generator_body),
                 hoisted_var_groups,
                 promise_constructor: self.async_method_promise_constructor(arrow.type_annotation),
-                multiline_callback: false,
+                multiline_callback: callback_multiline,
                 directives: Vec::new(),
             }],
             is_expression_body: true,

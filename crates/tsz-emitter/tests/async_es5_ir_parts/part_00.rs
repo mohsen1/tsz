@@ -206,7 +206,7 @@ fn array_literal_prefix_before_await_is_captured_before_yield() {
         "A prefix temp should be hoisted before the generator body.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("_a = [head];\n                    return [4 /*yield*/, tail];"),
+        output.contains("_a = [head];\n                return [4 /*yield*/, tail];"),
         "Array elements before the suspending element must be evaluated before yielding.\nOutput:\n{output}"
     );
     assert!(
@@ -222,7 +222,7 @@ fn array_literal_multiple_awaits_accumulates_prefix_between_yields() {
 
     assert!(
         output
-            .contains("_a = [_b.sent(), middle];\n                    return [4 /*yield*/, last];"),
+            .contains("_a = [_b.sent(), middle];\n                return [4 /*yield*/, last];"),
         "The resumed first await and intervening elements should be captured before the second yield.\nOutput:\n{output}"
     );
     assert!(
@@ -236,7 +236,7 @@ fn spread_array_literal_with_suspending_spread_uses_spread_array_apply() {
     let output = transform_and_print("async function f() { x = [...(await values), z]; }");
 
     assert!(
-        output.contains("_a = [[]];\n                    return [4 /*yield*/, values];"),
+        output.contains("_a = [[]];\n                return [4 /*yield*/, values];"),
         "A suspending first spread still needs a captured spread-argument prefix.\nOutput:\n{output}"
     );
     assert!(
@@ -450,7 +450,7 @@ fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
         transform_and_print("async function foo() { class C extends B { static { await; } } }");
 
     assert!(
-        output.contains("var C;\n        return __generator"),
+        output.contains("var C; return __generator"),
         "Class declarations inside async bodies should hoist the class binding to the awaiter scope.\nOutput:\n{output}"
     );
     assert!(
@@ -1269,7 +1269,7 @@ fn test_await_assignment_captures_property_target_before_yield() {
         "Object temp should be hoisted with local declarations: {output}"
     );
     assert!(
-        output.contains("_a = o;\n                    return [4 /*yield*/, p];"),
+        output.contains("_a = o;\n                return [4 /*yield*/, p];"),
         "Property assignment target should be captured before yielding: {output}"
     );
     assert!(
@@ -1288,7 +1288,7 @@ fn test_await_call_argument_captures_identifier_callee_before_yield() {
         "Callee temp should be hoisted with local declarations: {output}"
     );
     assert!(
-        output.contains("_a = fn;\n                    return [4 /*yield*/, p];"),
+        output.contains("_a = fn;\n                return [4 /*yield*/, p];"),
         "Call callee should be captured before yielding: {output}"
     );
     assert!(
@@ -1303,7 +1303,7 @@ fn test_computed_object_after_await_uses_separate_temp_var_statement() {
         transform_and_print("async function foo(): Promise<void> { var v = { [await]: foo } }");
 
     assert!(
-        output.contains("var v;\n        var _a;"),
+        output.contains("var v; var _a;"),
         "Computed-object temp should be emitted in a separate hoisted var statement: {output}"
     );
 }
@@ -1317,7 +1317,7 @@ fn test_return_await_call_argument_captures_identifier_callee_before_yield() {
         "Callee temp should be hoisted for suspended return calls: {output}"
     );
     assert!(
-        output.contains("_a = fn;\n                    return [4 /*yield*/, p];"),
+        output.contains("_a = fn;\n                return [4 /*yield*/, p];"),
         "Return call callee should be captured before yielding: {output}"
     );
     assert!(
@@ -1381,7 +1381,7 @@ fn test_await_call_argument_preserves_prefix_arguments() {
     );
     assert!(
         output.contains(
-            "_a = fn;\n                    _b = [a];\n                    return [4 /*yield*/, p];"
+            "_a = fn;\n                _b = [a];\n                return [4 /*yield*/, p];"
         ),
         "Callee and prefix arguments should be captured before yielding: {output}"
     );
@@ -1401,7 +1401,7 @@ fn test_await_method_call_argument_captures_receiver_before_yield() {
         "Receiver and method temps should be hoisted: {output}"
     );
     assert!(
-        output.contains("_b = (_a = o).fn;\n                    return [4 /*yield*/, p];"),
+        output.contains("_b = (_a = o).fn;\n                return [4 /*yield*/, p];"),
         "Method receiver and function should be captured before yielding: {output}"
     );
     assert!(
@@ -1742,7 +1742,7 @@ fn labeled_for_await_continue_targets_iteration_case() {
     );
 
     assert!(
-        output.contains("x = _d;\n                    return [3 /*break*/, 3];"),
+        output.contains("x = _d;\n                return [3 /*break*/, 3];"),
         "A labeled continue targeting the for-await loop should jump to the loop iteration case.\nOutput:\n{output}"
     );
     assert!(

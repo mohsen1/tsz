@@ -394,8 +394,11 @@ impl<'a> AsyncES5Emitter<'a> {
     /// multi-line callback format, directive prologues, hoisted `var` groups,
     /// the `var _this = this;` lexical capture, and generator state naming.
     ///
-    /// `force_multiline` mirrors tsc's rule that a multi-line source body
-    /// keeps the multi-line callback format even when nothing is hoisted.
+    /// `force_multiline` mirrors `tsc`'s rule that a **multi-line source body**
+    /// keeps the multi-line callback format. Hoisted `var` groups do NOT force
+    /// the multi-line form on their own — with a single-line source body they
+    /// stay inline (`function () { var a; return __generator(...) })`), matching
+    /// `tsc`.
     pub fn emit_awaiter_call(
         &mut self,
         body_idx: NodeIndex,

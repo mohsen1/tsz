@@ -463,14 +463,24 @@ impl<'a> IRPrinter<'a> {
         } else {
             self.write(", void 0, void 0, function () {");
         }
-        let needs_multiline = !hoisted_var_groups.is_empty()
-            || *multiline_callback
-            || *needs_lexical_this_capture
-            || !directives.is_empty();
+        // The printer stays policy-agnostic: it breaks the callback body across
+        // lines only for `multiline_callback` (set by the construction site), a
+        // directive prologue, or a `var _this = this;` lexical capture. It no
+        // longer forces multi-line merely because a `var` group was hoisted —
+        // `tsc` keeps `function () { var a; return __generator(...) })` inline
+        // for a single-line source body — so hoisted groups render inline unless
+        // one of the above triggers fires.
+        let needs_multiline =
+            *multiline_callback || *needs_lexical_this_capture || !directives.is_empty();
         if !needs_multiline {
-            // TSC keeps the generator call on the awaiter callback's
-            // opening line when no hoisted variables are needed.
+            // Inline: hoisted `var` groups (if any) precede `return __generator`
+            // on the callback's opening line, matching tsc.
             self.write(" ");
+            for group in hoisted_var_groups {
+                self.write("var ");
+                self.write(&group.join(", "));
+                self.write("; ");
+            }
             self.emit_node(generator_body);
             self.write(" });");
         } else {

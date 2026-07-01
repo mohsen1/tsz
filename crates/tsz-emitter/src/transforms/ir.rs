@@ -424,9 +424,14 @@ pub enum IRNode {
         hoisted_var_groups: Vec<Vec<String>>,
         /// Custom promise constructor for the third `__awaiter` arg.
         promise_constructor: Option<String>,
-        /// Force the awaiter callback body onto multiple lines even when no
-        /// generator-local vars were hoisted. `tsc` does this when the async
-        /// function captures `arguments` in the wrapper scope.
+        /// Force the awaiter callback body onto multiple lines. This is a
+        /// generic "break the callback body" flag whose trigger is chosen by the
+        /// construction site — the printer stays construction-agnostic. The
+        /// async function/expression path sets it from the source-body line span
+        /// (`tsc` keeps a single-line source body inline, incl. hoisted `var`
+        /// groups), while some class-member paths set it to preserve their prior
+        /// hoist-forces-multiline behavior. It is orthogonal to `directives` and
+        /// `needs_lexical_this_capture`, which independently force multi-line.
         multiline_callback: bool,
         /// Directive prologues (e.g. `"use strict"`) extracted from the start of
         /// the generator body. `tsc` places these inside the `__awaiter` callback

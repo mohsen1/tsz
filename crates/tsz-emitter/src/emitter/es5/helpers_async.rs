@@ -266,10 +266,11 @@ impl<'a> Printer<'a> {
                 // deeper inside the hand-written callback).
                 async_emitter.set_indent_level(self.writer.indent_level());
                 async_emitter.set_helper_import_aliases(self.helper_import_aliases.clone());
-                // tsc keeps the multi-line callback format whenever the
-                // source body spans multiple lines, even if nothing is
-                // hoisted; the IR printer owns the remaining multi-line
-                // triggers (hoists, directives, lexical-this capture).
+                // The IR printer owns the inline-vs-multi-line callback
+                // decision. `tsc` keeps the callback body multi-line when the
+                // source body spans multiple lines (`force_multiline`), for a
+                // directive prologue, or for a `var _this = this;` lexical
+                // capture — but NOT merely because a `var` group was hoisted.
                 let rendered = async_emitter.emit_awaiter_call(
                     body,
                     body_has_await,

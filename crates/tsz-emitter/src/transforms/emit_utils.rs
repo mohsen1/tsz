@@ -187,6 +187,41 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Whether the `{ … }` block spanning `[pos, end)` of `source` fits on a single
+/// line — the structural signal `tsc` uses to decide whether a synthesized
+/// wrapper body (e.g. the ES5 `__awaiter` callback) hugs its opening brace or
+/// breaks across lines. Scans from the first `{` to its matching `}` (brace
+/// depth) and reports whether that span contains a newline; a range with no
+/// `{ … }` block falls back to whether the whole span is newline-free. An empty
+/// or out-of-bounds range is treated as multi-line (`false`), matching the
+/// emitter's `is_body_source_single_line` default.
+///
+/// Shared by the transform-phase (`AsyncES5Transformer`) and print-phase
+/// (`IRPrinter`) so the two cannot drift.
+pub(crate) fn source_block_is_single_line(source: &str, pos: usize, end: usize) -> bool {
+    let end = end.min(source.len());
+    if pos >= end {
+        return false;
+    }
+    let slice = &source[pos..end];
+    if let Some(open) = slice.find('{') {
+        let mut depth = 1u32;
+        for (i, ch) in slice[open + 1..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return !slice[open..open + 1 + i + 1].contains('\n');
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    !slice.contains('\n')
+}
+
 /// Maximum alias-target recursion depth for decorator-metadata serialization, so
 /// a cyclic alias (`type A = B; type B = A`) cannot loop forever; past the cap a
 /// metadata type reference yields `Object`.

@@ -30,13 +30,20 @@ impl AsyncES5Transformer<'_> {
     ) -> Vec<IRNode> {
         let mut body = Vec::new();
         self.emit_arguments_capture_decl(&mut body);
+        // Preserve the prior behavior for class-member async arrows: hoisted
+        // `var` groups keep the callback body multi-line. Known divergence from
+        // `tsc` (which keeps a single-line source body inline even with hoisted
+        // vars); this path does not receive the body block index, so applying
+        // the source-line rule here needs a signature change — a follow-up kept
+        // out of this zero-regression change.
+        let callback_multiline = !hoisted_var_groups.is_empty();
         body.push(IRNode::AwaiterCall {
             this_arg: Box::new(this_arg),
             needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
             generator_body: Box::new(generator_body),
             hoisted_var_groups,
             promise_constructor: None,
-            multiline_callback: false,
+            multiline_callback: callback_multiline,
             directives: Vec::new(),
         });
         body
