@@ -984,6 +984,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // S[I] <: T[J]  <=>  S <: T  AND  I <: J
         // This handles deferred index access types (usually involving type parameters).
         if let Some((t_obj, t_idx)) = index_access_parts(self.checker.interner, self.target) {
+            if let Some(result) = self
+                .checker
+                .check_decl_stripped_lazy_application_index_access_pair(self.source, self.target)
+                && result.is_true()
+            {
+                return result;
+            }
+
             // Coinductive check: delegate back to check_subtype for both parts
             if self.checker.check_subtype(object_type, t_obj).is_true()
                 && self.checker.check_subtype(key_type, t_idx).is_true()

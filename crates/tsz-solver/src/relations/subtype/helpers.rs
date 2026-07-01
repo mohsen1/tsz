@@ -5,23 +5,122 @@
 //! (Object contract, generic index access).
 
 use crate::def::resolver::TypeResolver;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::PropertyCollectionResult;
 use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::{
     AnyPropagationMode, INTERSECTION_OBJECT_FAST_PATH_THRESHOLD, SubtypeChecker, SubtypeResult,
 };
 use crate::types::{
-    CachedAnyMode, ObjectFlags, ObjectShape, RelationCacheKey, RelationFlags, TypeId, Visibility,
+    CachedAnyMode, ObjectFlags, ObjectShape, RelationCacheKey, RelationFlags, TypeData, TypeId,
+    TypeParamInfo, TypeParamOrigin, Visibility,
 };
 use crate::visitor::{
     callable_shape_id, function_shape_id, index_access_parts, keyof_inner_type, literal_string,
     mapped_type_id, object_shape_id, object_with_index_shape_id, type_param_info, union_list_id,
 };
+use rustc_hash::FxHashMap;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) const fn allows_bivariant_param_count(&self, is_method_like: bool) -> bool {
         self.allow_bivariant_param_count
             && (!self.strict_function_types || (is_method_like && !self.disable_method_bivariance))
+    }
+
+    /// Build a name-keyed substitution that erases `DeclScoped` construction
+    /// stamps for genuinely alpha-equivalent free type parameters in `roots`.
+    ///
+    /// Only same-name, same-surface (`constraint`/`default`/`is_const`) params
+    /// collapse to the same `User`-canonical id. If the same name appears with
+    /// conflicting surfaces, that name is poisoned and left unstripped.
+    pub(crate) fn build_decl_param_structural_strip_for_roots(
+        &self,
+        roots: impl IntoIterator<Item = TypeId>,
+    ) -> TypeSubstitution {
+        let free_ids =
+            crate::visitors::visitor_predicates::free_type_parameter_ids_in(self.interner, roots);
+
+        let mut by_name: FxHashMap<tsz_common::interner::Atom, Option<TypeId>> =
+            FxHashMap::default();
+        for id in free_ids {
+            let Some(info) = type_param_info(self.interner, id) else {
+                continue;
+            };
+            if !matches!(info.origin, TypeParamOrigin::DeclScoped { .. }) {
+                continue;
+            }
+
+            let canonical = self.interner.type_param(TypeParamInfo {
+                origin: TypeParamOrigin::User,
+                ..info
+            });
+            match by_name.get_mut(&info.name) {
+                None => {
+                    by_name.insert(info.name, Some(canonical));
+                }
+                Some(slot @ Some(_)) if *slot == Some(canonical) => {}
+                Some(slot) => {
+                    *slot = None;
+                }
+            }
+        }
+
+        let mut strip = TypeSubstitution::new();
+        for (name, canonical) in by_name {
+            if let Some(canonical) = canonical {
+                strip.insert(name, canonical);
+            }
+        }
+        strip
+    }
+
+    pub(crate) fn check_decl_stripped_lazy_application_index_access_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        let (source_object, _source_key) = index_access_parts(self.interner, source)?;
+        let (target_object, _target_key) = index_access_parts(self.interner, target)?;
+        if !self.same_lazy_application_base(source_object, target_object) {
+            return None;
+        }
+
+        let strip = self.build_decl_param_structural_strip_for_roots([source, target]);
+        if strip.is_empty() {
+            return None;
+        }
+
+        let stripped_source = instantiate_type(self.interner, source, &strip);
+        let stripped_target = instantiate_type(self.interner, target, &strip);
+        if stripped_source == source && stripped_target == target {
+            return None;
+        }
+
+        Some(self.check_subtype(stripped_source, stripped_target))
+    }
+
+    fn same_lazy_application_base(&self, source_object: TypeId, target_object: TypeId) -> bool {
+        let Some(TypeData::Application(source_app_id)) = self.interner.lookup(source_object) else {
+            return false;
+        };
+        let Some(TypeData::Application(target_app_id)) = self.interner.lookup(target_object) else {
+            return false;
+        };
+
+        let source_app = self.interner.type_application(source_app_id);
+        let target_app = self.interner.type_application(target_app_id);
+        if source_app.args.len() != target_app.args.len() {
+            return false;
+        }
+
+        matches!(
+            (
+                self.interner.lookup(source_app.base),
+                self.interner.lookup(target_app.base),
+            ),
+            (Some(TypeData::Lazy(source_def)), Some(TypeData::Lazy(target_def)))
+                if source_def == target_def
+        )
     }
 
     pub(crate) fn resolved_type_param_info(

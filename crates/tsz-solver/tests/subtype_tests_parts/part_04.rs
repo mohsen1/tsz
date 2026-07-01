@@ -411,6 +411,64 @@ fn test_deferred_index_access_distinct_key_guard_respects_alpha_equivalence() {
 }
 
 #[test]
+fn test_deferred_hkt_index_access_relates_decl_scoped_alpha_equivalent_binders() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let registry_def = DefId(4700);
+
+    let scoped = |name: &str, file: &str, node: u32, constraint: Option<TypeId>| {
+        interner.type_param(TypeParamInfo {
+            name: interner.intern_string(name),
+            constraint,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::DeclScoped {
+                file: interner.intern_string(file),
+                node,
+            },
+        })
+    };
+
+    let left_f = scoped("F", "left.ts", 10, None);
+    let left_a = scoped("A", "left.ts", 20, None);
+    let right_f = scoped("F", "right.ts", 10, None);
+    let right_a = scoped("A", "right.ts", 20, None);
+    let right_b = scoped("B", "right.ts", 30, None);
+    let constrained_right_a = scoped("A", "right.ts", 40, Some(TypeId::STRING));
+
+    let left_kind = interner.index_access(
+        interner.application(interner.lazy(registry_def), vec![left_a]),
+        left_f,
+    );
+    let right_kind = interner.index_access(
+        interner.application(interner.lazy(registry_def), vec![right_a]),
+        right_f,
+    );
+    let different_name_kind = interner.index_access(
+        interner.application(interner.lazy(registry_def), vec![right_b]),
+        right_f,
+    );
+    let different_surface_kind = interner.index_access(
+        interner.application(interner.lazy(registry_def), vec![constrained_right_a]),
+        right_f,
+    );
+
+    assert!(
+        checker.is_subtype_of(left_kind, right_kind),
+        "same-name same-surface DeclScoped HKT binders should relate structurally"
+    );
+    assert!(
+        !checker.is_subtype_of(left_kind, different_name_kind),
+        "differently named object-side binders must not be collapsed"
+    );
+    assert!(
+        !checker.is_subtype_of(left_kind, different_surface_kind),
+        "same-name binders with different constraints must not be collapsed"
+    );
+}
+
+#[test]
 fn test_generic_covariant_return_position() {
     // Producer<T> = { get(): T } - T is in covariant position
     // Producer<string> <: Producer<string | number> (covariant)
