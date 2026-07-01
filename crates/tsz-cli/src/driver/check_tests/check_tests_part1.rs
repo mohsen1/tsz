@@ -1692,18 +1692,16 @@ declare namespace Intl {
         let source = "declare namespace Intl {\n    interface DateTimeFormat {\n        formatToParts(): DateTimeFormatPart[];\n    }\n}\n";
         let checker_libs = checker_lib_set_for_test(&[("lib.esnext.intl.d.ts", source)]);
 
-        let part_name = "DateTimeFormatPart";
-        let part_offset = source
-            .find(&format!("{part_name}["))
-            .expect("DateTimeFormatPart reference present") as u32;
+        let intl_ts2552 = |offset: u32, length: usize, message: &str| {
+            Diagnostic::error("lib.esnext.intl.d.ts", offset, length as u32, message, 2552)
+        };
+        let name_offset = |needle: &str| source.find(needle).expect("token present") as u32;
 
         // Correct span, deliberately non-canonical message: still matched.
-        let span_diag = Diagnostic::error(
-            "lib.esnext.intl.d.ts",
-            part_offset,
-            part_name.len() as u32,
+        let span_diag = intl_ts2552(
+            name_offset("DateTimeFormatPart["),
+            "DateTimeFormatPart".len(),
             "a completely different wording",
-            2552,
         );
         assert!(
             is_datetimeformatpart_spelling_baseline_diagnostic(&span_diag, &checker_libs),
@@ -1712,15 +1710,10 @@ declare namespace Intl {
 
         // Canonical-looking message, but the span covers a different identifier:
         // not matched.
-        let other_offset = source
-            .find("DateTimeFormat {")
-            .expect("DateTimeFormat interface present") as u32;
-        let mismatched_diag = Diagnostic::error(
-            "lib.esnext.intl.d.ts",
-            other_offset,
-            "DateTimeFormat".len() as u32,
+        let mismatched_diag = intl_ts2552(
+            name_offset("DateTimeFormat {"),
+            "DateTimeFormat".len(),
             "Cannot find name 'DateTimeFormatPart'. Did you mean 'DateTimeFormat'?",
-            2552,
         );
         assert!(
             !is_datetimeformatpart_spelling_baseline_diagnostic(&mismatched_diag, &checker_libs),
