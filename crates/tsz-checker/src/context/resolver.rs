@@ -183,7 +183,7 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Register the flattened body under this def in both environments
+        // Register the flattened body under this def in the environment
         // (non-generic: no params). Then drop any evaluation-cache entries that
         // were computed while the def was still an unresolved `Lazy`, so a later
         // re-evaluation observes the freshly-registered body (#13981).

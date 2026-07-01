@@ -1714,7 +1714,7 @@ impl CheckerState<'_> {
                                     body,
                                 );
                                 if augmented != body {
-                                    // Update both envs so evaluator and flow
+                                    // Publish so evaluator and flow
                                     // analyzer see the augmented type.
                                     self.ctx.register_augmented_def_in_env(
                                         base_def_id,

@@ -1214,7 +1214,7 @@ impl<'a> CheckerState<'a> {
                 factory.union(member_types)
             };
 
-            // Cache the structural type in both environments for compatibility.
+            // Cache the structural type in the environment for compatibility.
             // Note: Enum types now use TypeData::Enum(def_id, member_type) directly.
             self.ctx.register_def_in_env(def_id, structural_type);
 

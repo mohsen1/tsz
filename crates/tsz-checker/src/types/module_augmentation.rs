@@ -1740,7 +1740,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Update `symbol_types` and both environments for augmentation-local interface symbols
+    /// Update `symbol_types` and the type environment for augmentation-local interface symbols
     /// so self-referential type references resolve to the merged type.
     /// Searches both the current binder and `all_binders` since the augmentation
     /// may be declared in a different file than the one being checked.

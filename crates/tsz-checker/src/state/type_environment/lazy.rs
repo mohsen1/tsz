@@ -1481,18 +1481,26 @@ impl CheckerState<'_> {
         // This can happen during recursive type resolution. On contention,
         // queue the writes through the context authority but report the
         // traversal as incomplete so callers do not memoize a fully-resolved
-        // walk before the evaluator env has replayed the deferred write.
+        // walk before the env has replayed the deferred write.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            if type_params.is_empty() {
-                env.insert(symbol_ref, resolved);
-                if let Some(def_id) = def_id {
-                    env.insert_def(def_id, resolved);
-                }
-            } else {
-                env.insert_with_params(symbol_ref, resolved, type_params.clone());
-                if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params.clone());
-                }
+            self.ctx.apply_env_write_to_borrowed(
+                &mut env,
+                crate::context::DeferredEnvWrite::InsertSymbolType {
+                    symbol: symbol_ref,
+                    ty: resolved,
+                    params: type_params.clone(),
+                },
+            );
+            if let Some(def_id) = def_id {
+                self.ctx.apply_env_write_to_borrowed(
+                    &mut env,
+                    crate::context::DeferredEnvWrite::insert_def_choosing_params(
+                        def_id,
+                        resolved,
+                        type_params,
+                        None,
+                    ),
+                );
             }
             true
         } else {

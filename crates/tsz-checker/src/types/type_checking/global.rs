@@ -442,7 +442,7 @@ impl<'a> CheckerState<'a> {
                 .register_array_base_type_in_env(ty, array_type_params);
         }
 
-        // Register DefId mappings for non-generic boxed types in both envs too.
+        // Register DefId mappings for non-generic boxed types too.
         // When user code writes `a: Function`, the type annotation creates a
         // Lazy(DefId) referencing the global Function symbol. The CallEvaluator
         // uses TypeEnvironment as its resolver, which resolves Lazy types via

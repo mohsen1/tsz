@@ -805,11 +805,26 @@ impl CheckerContext<'_> {
     ) {
         let op = DeferredEnvWrite::insert_def_choosing_params(def_id, body, params, None);
         if let Some(env) = eval_env {
-            drain_env_write_queue_into(&self.deferred_env_writes, env);
-            op.apply(env);
+            self.apply_env_write_to_borrowed(env, op);
         } else {
             self.register_in_env(op);
         }
+    }
+
+    /// Apply one registration to an already mutably-borrowed env, draining any
+    /// queued writes first so replay order matches the deferral discipline of
+    /// [`Self::register_in_env`].
+    ///
+    /// Use this when a caller legitimately holds the `type_env` borrow across
+    /// several writes (shared-store warm-up, symbol-type publication) and
+    /// routing through `register_in_env` would fail its own `try_borrow_mut`.
+    pub(crate) fn apply_env_write_to_borrowed(
+        &self,
+        env: &mut TypeEnvironment,
+        op: DeferredEnvWrite,
+    ) {
+        drain_env_write_queue_into(&self.deferred_env_writes, env);
+        op.apply(env);
     }
 
     /// Replay any deferred `type_env` writes that lost the borrow race during
