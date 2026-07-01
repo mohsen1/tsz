@@ -5,7 +5,11 @@
 //! `tsc` emits at sub-ES2022 targets. Owns the read/write slot model consumed
 //! by the expression converter.
 
-use super::{AstToIr, PrivateMemberSlot};
+use super::{AstToIr, IRNode, PrivateMemberSlot};
+use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::BinaryExprData;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 /// Build the read/write slot for a private accessor. An instance accessor
 /// brands against `_C_instances` and threads `func_var` (the getter/setter) as
@@ -126,5 +130,72 @@ impl AstToIr<'_> {
             return Some((slot.state_var.clone(), slot.kind, slot.member_ref.clone()));
         }
         None
+    }
+
+    /// Decompose a `recv.#name` property access into `(receiver_idx,
+    /// clean_name)`, or `None` when `idx` is not a private-identifier property
+    /// access. Pure AST shape — it does not consult the storage maps.
+    pub(super) fn private_access_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(node)?;
+        let name_node = self.arena.get(access.name_or_argument)?;
+        if name_node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+        let ident = self.arena.get_identifier(name_node)?;
+        let raw = &ident.escaped_text;
+        let clean = raw.strip_prefix('#').unwrap_or(raw.as_str()).to_string();
+        Some((access.expression, clean))
+    }
+
+    /// Clean name of a bare `PrivateIdentifier` operand (`#x` → `"x"`), or
+    /// `None` when `idx` is not a private identifier. The `#name in obj` brand
+    /// check's left operand is the private identifier itself, not a
+    /// `recv.#name` property access, so it needs its own decomposition. Pure
+    /// AST shape — it does not consult the storage maps.
+    fn bare_private_identifier_name(&self, idx: NodeIndex) -> Option<&str> {
+        let node = self.arena.get(idx)?;
+        if node.kind != SyntaxKind::PrivateIdentifier as u16 {
+            return None;
+        }
+        let raw = &self.arena.get_identifier(node)?.escaped_text;
+        Some(raw.strip_prefix('#').unwrap_or(raw.as_str()))
+    }
+
+    /// Brand var (the `__classPrivateFieldIn` "state" argument) for a private
+    /// member: `_C_x` for a field, `_C_instances` for an instance method or
+    /// accessor. A setter-only accessor has no read slot, so its brand is taken
+    /// from the write slot; both slots carry the same brand for a given member.
+    /// `None` when the name has no storage slot at all (e.g. a static private
+    /// method, which the ES5 converter leaves on the existing fallthrough).
+    fn private_brand_var(&self, clean_name: &str) -> Option<String> {
+        self.private_read_info(clean_name)
+            .or_else(|| self.private_write_info(clean_name))
+            .map(|(brand_var, _, _)| brand_var)
+    }
+
+    /// Lower a private-in brand check `#name in obj` to
+    /// `__classPrivateFieldIn(<brand>, obj)`, or `None` when `bin` is not an
+    /// `in` expression with a bare private-identifier left operand that resolves
+    /// to a storage slot.
+    ///
+    /// `tsc` downlevels this operator at every sub-ES2022 target; once the
+    /// private member is lowered to a `WeakMap`/`WeakSet` the raw `#name in obj`
+    /// form is invalid JavaScript. The rule keys on the operand being a
+    /// `PrivateIdentifier` with a known storage slot, never on its spelling.
+    pub(super) fn private_brand_in_ir(&self, bin: &BinaryExprData) -> Option<IRNode> {
+        if bin.operator_token != SyntaxKind::InKeyword as u16 {
+            return None;
+        }
+        let clean = self.bare_private_identifier_name(bin.left)?;
+        let brand_var = self.private_brand_var(clean)?;
+        let obj = self.convert_expression(bin.right);
+        Some(IRNode::PrivateFieldIn {
+            weakmap_name: std::borrow::Cow::Owned(brand_var),
+            obj: Box::new(obj),
+        })
     }
 }

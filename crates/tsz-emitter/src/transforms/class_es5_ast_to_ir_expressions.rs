@@ -645,25 +645,6 @@ impl<'a> AstToIr<'a> {
         }
     }
 
-    /// Decompose a `recv.#name` property access into `(receiver_idx,
-    /// clean_name)`, or `None` when `idx` is not a private-identifier property
-    /// access. Pure AST shape — it does not consult the storage maps.
-    fn private_access_target(&self, idx: NodeIndex) -> Option<(NodeIndex, String)> {
-        let node = self.arena.get(idx)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-        let access = self.arena.get_access_expr(node)?;
-        let name_node = self.arena.get(access.name_or_argument)?;
-        if name_node.kind != SyntaxKind::PrivateIdentifier as u16 {
-            return None;
-        }
-        let ident = self.arena.get_identifier(name_node)?;
-        let raw = &ident.escaped_text;
-        let clean = raw.strip_prefix('#').unwrap_or(raw.as_str()).to_string();
-        Some((access.expression, clean))
-    }
-
     /// If `idx` is a `recv.#name` property access whose member is a private
     /// field or accessor with **both** a read and a write slot, and whose
     /// receiver is a simple, side-effect-free expression safe to evaluate more
@@ -1276,6 +1257,11 @@ impl<'a> AstToIr<'a> {
             .get(idx)
             .expect("NodeIndex must be valid in arena");
         if let Some(bin) = self.arena.get_binary_expr(node) {
+            // Private-in brand check (`#x in obj`); see `private_brand_in_ir`.
+            if let Some(brand_in) = self.private_brand_in_ir(bin) {
+                return brand_in;
+            }
+
             // Private field write: `this.#x = value` → `__classPrivateFieldSet(this, _C_x, value, "f")`
             if bin.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16 {
                 if let Some(lhs_node) = self.arena.get(bin.left)
