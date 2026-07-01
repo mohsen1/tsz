@@ -108,6 +108,77 @@ impl TypeNodeSurfaceCaches {
     }
 }
 
+/// Typed key for checker-owned TS2344 constraint-proof memos.
+///
+/// These proofs are more than a raw `(source, target)` relation: they can
+/// observe relation policy through the packed checker flags and sound-mode bit.
+/// The local memo that stores this key is additionally guarded by
+/// [`AssignabilityEvalStamp`] so resolver/type-env generation changes never
+/// reuse a proof produced for an older program graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GenericConstraintProofKey {
+    pub source: TypeId,
+    pub target: TypeId,
+    pub relation_flags: u16,
+    pub sound_mode: bool,
+}
+
+impl GenericConstraintProofKey {
+    pub const fn new(
+        source: TypeId,
+        target: TypeId,
+        relation_flags: u16,
+        sound_mode: bool,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            relation_flags,
+            sound_mode,
+        }
+    }
+}
+
+/// Stamp-guarded boolean memo for TS2344 branch proof helpers.
+#[derive(Debug, Default)]
+pub struct GenericConstraintProofMemo {
+    stamp: Option<AssignabilityEvalStamp>,
+    entries: FxHashMap<GenericConstraintProofKey, bool>,
+}
+
+impl GenericConstraintProofMemo {
+    fn roll_to(&mut self, stamp: AssignabilityEvalStamp) {
+        if self.stamp != Some(stamp) {
+            self.entries.clear();
+            self.stamp = Some(stamp);
+        }
+    }
+
+    pub fn get(
+        &mut self,
+        stamp: AssignabilityEvalStamp,
+        key: GenericConstraintProofKey,
+    ) -> Option<bool> {
+        self.roll_to(stamp);
+        self.entries.get(&key).copied()
+    }
+
+    pub fn insert(
+        &mut self,
+        stamp: AssignabilityEvalStamp,
+        key: GenericConstraintProofKey,
+        result: bool,
+    ) {
+        self.roll_to(stamp);
+        self.entries.insert(key, result);
+    }
+
+    pub fn clear(&mut self) {
+        self.stamp = None;
+        self.entries.clear();
+    }
+}
+
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]
 pub struct TypeReferenceValidationCaches {
@@ -145,11 +216,11 @@ pub struct TypeReferenceValidationCaches {
     /// Results for conditional-branch constraint proofs. These checks can be
     /// reached repeatedly while extracting generic parameter lists from aliases
     /// imported or re-exported through several files.
-    pub conditional_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    pub conditional_branch_constraint: GenericConstraintProofMemo,
     /// Results for indexed-object-map branch constraint proofs. This memo sits
     /// underneath `conditional_branch_constraint` because different conditional
     /// aliases can expose the same mapped-object branch/value constraint pair.
-    pub indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>,
+    pub indexed_object_map_branch_constraint: GenericConstraintProofMemo,
     /// Successful conditional true-branch constraint relations for prepared
     /// source/target types in the current file session.
     pub conditional_true_branch_relation_successes: FxHashSet<(TypeId, TypeId, u16, bool)>,
@@ -199,10 +270,6 @@ pub struct SharedConstraintProofCache {
     /// constraint relations keyed by prepared source/target plus the packed
     /// relation flags and sound-mode bit.
     pub type_arg_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
-    /// Mirror of `conditional_branch_constraint`, `true` results only.
-    pub conditional_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
-    /// Mirror of `indexed_object_map_branch_constraint`, `true` results only.
-    pub indexed_object_map_branch_successes: dashmap::DashSet<(TypeId, TypeId)>,
     /// Mirror of `conditional_true_branch_relation_successes`.
     pub conditional_true_branch_relation_successes: dashmap::DashSet<(TypeId, TypeId, u16, bool)>,
 }
@@ -899,6 +966,44 @@ impl AssignabilityFailureMemo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generic_constraint_proof_key_partitions_relation_policy() {
+        let base = GenericConstraintProofKey::new(TypeId::STRING, TypeId::NUMBER, 0b01, false);
+        assert_ne!(
+            base,
+            GenericConstraintProofKey::new(TypeId::STRING, TypeId::NUMBER, 0b10, false),
+            "relation flags must be part of the constraint proof key"
+        );
+        assert_ne!(
+            base,
+            GenericConstraintProofKey::new(TypeId::STRING, TypeId::NUMBER, 0b01, true),
+            "sound-mode policy must be part of the constraint proof key"
+        );
+    }
+
+    #[test]
+    fn generic_constraint_proof_memo_rolls_on_stamp_change() {
+        let key = GenericConstraintProofKey::new(TypeId::STRING, TypeId::NUMBER, 0, false);
+        let stamp_a = (1, 2, 3, 4);
+        let stamp_b = (1, 2, 3, 5);
+        let mut memo = GenericConstraintProofMemo::default();
+
+        memo.insert(stamp_a, key, true);
+        assert_eq!(memo.get(stamp_a, key), Some(true));
+        assert_eq!(
+            memo.get(stamp_b, key),
+            None,
+            "a new resolver/env stamp must drop stale branch proofs"
+        );
+        memo.insert(stamp_b, key, false);
+        assert_eq!(memo.get(stamp_b, key), Some(false));
+        assert_eq!(
+            memo.get(stamp_a, key),
+            None,
+            "rolling back to an old numeric stamp starts a fresh memo epoch"
+        );
+    }
 
     #[test]
     fn cow_cache_clone_is_shared_until_first_write() {

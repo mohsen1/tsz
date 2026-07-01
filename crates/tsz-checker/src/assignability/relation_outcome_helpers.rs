@@ -1,3 +1,4 @@
+use crate::context::GenericConstraintProofKey;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -530,6 +531,36 @@ impl<'a> CheckerState<'a> {
             && !contains_file_relative_content(db, target)
     }
 
+    /// Typed checker-cache key for TS2344 constraint proof helpers that run
+    /// relation/evaluation work under the current checker policy.
+    pub(crate) const fn generic_constraint_proof_key(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> GenericConstraintProofKey {
+        GenericConstraintProofKey::new(
+            source,
+            target,
+            self.ctx.pack_relation_flags(),
+            self.ctx.sound_mode(),
+        )
+    }
+
+    /// Whether a branch proof completed cleanly enough to memoize.
+    ///
+    /// Degraded proofs are valid for the current stack frame, but caching them
+    /// would make a later, cleaner attempt inherit a lazy-resolution miss,
+    /// exhausted evaluation fuel, or relation overflow fallback.
+    pub(crate) fn generic_constraint_proof_completed_clean(
+        &self,
+        lazy_failures_at_entry: u64,
+    ) -> bool {
+        crate::query_boundaries::common::lazy_resolve_failure_count() == lazy_failures_at_entry
+            && !self.ctx.types.is_evaluation_fuel_exhausted()
+            && !self.ctx.depth_exceeded.get()
+            && !self.ctx.relation_overflow.get().has_overflow()
+    }
+
     /// Probe the program-wide
     /// [`crate::context::SharedConstraintProofCache`], if installed.
     ///
@@ -567,6 +598,8 @@ impl<'a> CheckerState<'a> {
         };
         if crate::query_boundaries::common::lazy_resolve_failure_count() == lazy_failures_at_entry
             && !self.ctx.types.is_evaluation_fuel_exhausted()
+            && !self.ctx.depth_exceeded.get()
+            && !self.ctx.relation_overflow.get().has_overflow()
             && self.constraint_proof_is_program_shareable(source, target)
         {
             publish(shared);

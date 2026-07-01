@@ -80,6 +80,54 @@ fn successful_type_arg_constraint_relations_are_file_local_cached() {
 }
 
 #[test]
+fn conditional_branch_constraint_proofs_use_stamped_typed_cache_keys() {
+    let helper_source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/checkers/generic_checker/conditional_constraint_helpers.rs"),
+    )
+    .expect("failed to read conditional_constraint_helpers.rs");
+    let caches_source =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/caches.rs"))
+            .expect("failed to read caches.rs");
+    let reset_source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context/file_session_reset.rs"),
+    )
+    .expect("failed to read file_session_reset.rs");
+
+    assert!(
+        caches_source.contains("GenericConstraintProofKey")
+            && caches_source.contains("GenericConstraintProofMemo")
+            && caches_source
+                .contains("pub conditional_branch_constraint: GenericConstraintProofMemo")
+            && caches_source
+                .contains("pub indexed_object_map_branch_constraint: GenericConstraintProofMemo"),
+        "conditional and indexed-object branch proof caches should use the typed, stamped TS2344 proof memo"
+    );
+    assert!(
+        helper_source.contains("generic_constraint_proof_key(")
+            && helper_source.contains("assignability_eval_memo_stamp()")
+            && helper_source.contains("generic_constraint_proof_completed_clean(")
+            && helper_source.contains(".conditional_branch_constraint")
+            && helper_source.contains(".indexed_object_map_branch_constraint"),
+        "branch proof helpers should key lookups by relation policy and stamp, then cache only clean results"
+    );
+    assert!(
+        !caches_source.contains("conditional_branch_constraint: FxHashMap<(TypeId, TypeId), bool>")
+            && !caches_source.contains(
+                "indexed_object_map_branch_constraint: FxHashMap<(TypeId, TypeId), bool>"
+            )
+            && !helper_source
+                .contains("conditional_branch_constraint\n                .get(&cache_key)")
+            && !helper_source
+                .contains("indexed_object_map_branch_constraint\n                .get(&cache_key)")
+            && reset_source.contains("conditional_branch_constraint")
+            && reset_source.contains("indexed_object_map_branch_constraint")
+            && reset_source.contains(".clear()"),
+        "branch proof caches must not regress to raw TypeId-pair maps and must keep the file-session reset boundary"
+    );
+}
+
+#[test]
 fn generic_constraint_validation_infer_result_checks_use_named_request() {
     let source = fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -14,8 +14,9 @@ pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
     AssignabilityEvalMemo, AssignabilityEvalStamp, AssignabilityFailureKey,
     AssignabilityFailureMemo, AwaitedAssignabilityEvalMemo, CachedAssignabilityAnalysis, CowCache,
-    NarrowableIdentifierCache, NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache,
-    TypeNodeSurfaceCaches, TypeReferenceValidationCaches,
+    GenericConstraintProofKey, GenericConstraintProofMemo, NarrowableIdentifierCache,
+    NodeTypeCache, SharedConstraintProofCache, SymbolTypeCache, TypeNodeSurfaceCaches,
+    TypeReferenceValidationCaches,
 };
 pub use canonical_app_key::CanonicalAppKey;
 pub(crate) use compiler_options::is_declaration_file_name;
