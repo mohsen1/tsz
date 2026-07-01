@@ -592,8 +592,11 @@ pub(super) fn collect_private_auto_accessor_accessors(
             set_var_name: Some(set_var),
             has_getter: true,
             has_setter: true,
-            getter_body: Some(member_idx),
-            setter_body: Some(member_idx),
+            // A synthetic auto-accessor has no source getter/setter body to lower
+            // — its get/set are generated from `synthetic_storage`, so these stay
+            // `None`. Emission is driven by `synthetic_storage`, never by these.
+            getter_body: None,
+            setter_body: None,
             setter_param: None,
             getter_is_async: false,
             setter_is_async: false,
