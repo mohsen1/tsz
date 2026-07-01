@@ -4,7 +4,6 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
-use crate::state_domain::type_resolution::symbol_types_depth::TypeReferenceResolutionDepthGuard;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
@@ -1162,7 +1161,8 @@ impl<'a> CheckerState<'a> {
         // raw-`SymbolId` cross-file collision) would recurse until the stack
         // overflows. Once nesting passes the depth cap, return the symbol's own
         // lazy reference instead of crashing. Refs #13212.
-        let Some(_depth_guard) = TypeReferenceResolutionDepthGuard::enter() else {
+        let eval_session = std::rc::Rc::clone(&self.ctx.eval_session);
+        let Some(_depth_guard) = eval_session.enter_type_reference_resolution_depth() else {
             return (self.ctx.create_lazy_type_ref(sym_id), Vec::new());
         };
 

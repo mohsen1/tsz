@@ -1546,3 +1546,48 @@ fn non_async_arrow_initializer_return_unchanged() {
         "non-async arrow return must stay unwrapped: {output}"
     );
 }
+
+// Mapped-type constraints and `as` name-types are re-printed through the shared
+// type printer, not copied from the author's source slice. `tsc`'s declaration
+// printer canonicalizes operator spacing (`"a" | "b"`, `K & string`) regardless
+// of how the source was written, so a source that omitted the spaces must still
+// emit the canonical form.
+
+#[test]
+fn mapped_type_constraint_union_canonicalizes_spacing() {
+    // Source omits spaces around `|`; tsc emits `"a" | "b" | "c"`.
+    let output = emit_dts(r#"export type T = { [K in "a"|"b"|"c"]: K };"#);
+    assert!(
+        output.contains(r#"[K in "a" | "b" | "c"]"#),
+        "mapped constraint union must be canonically spaced: {output}"
+    );
+    assert!(
+        !output.contains(r#""a"|"b""#),
+        "raw source spacing must not leak into the constraint: {output}"
+    );
+}
+
+#[test]
+fn mapped_type_as_clause_intersection_canonicalizes_spacing() {
+    // Source omits spaces around `&`; tsc emits `K & string`.
+    let output = emit_dts("export type T = { [K in keyof any as K&string]: 1 };");
+    assert!(
+        output.contains("as K & string]"),
+        "mapped as-clause intersection must be canonically spaced: {output}"
+    );
+    assert!(
+        !output.contains("K&string"),
+        "raw source spacing must not leak into the as-clause: {output}"
+    );
+}
+
+#[test]
+fn mapped_type_constraint_binder_name_agnostic() {
+    // The canonical re-print keys on type structure, not the binder spelling:
+    // a renamed key parameter emits the same canonically-spaced constraint.
+    let output = emit_dts(r#"export type T = { [Prop in "x"|"y"]?: Prop };"#);
+    assert!(
+        output.contains(r#"[Prop in "x" | "y"]?"#),
+        "renamed mapped binder must still canonicalize spacing: {output}"
+    );
+}

@@ -20,7 +20,6 @@ pub(crate) mod shadowed_lib_heritage;
 mod symbol_shadowing;
 pub(crate) mod symbol_types;
 pub(crate) mod symbol_types_class;
-mod symbol_types_depth;
 pub(crate) mod symbol_types_dynamic_alias;
 pub(crate) mod symbol_types_lazy;
 #[cfg(test)]

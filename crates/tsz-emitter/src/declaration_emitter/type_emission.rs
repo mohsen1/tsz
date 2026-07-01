@@ -9,7 +9,7 @@ use super::helpers::{escape_string_for_double_quote, escape_string_for_single_qu
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
+use tsz_scanner::SyntaxKind;
 
 /// Re-escape a cooked template literal string so it can be placed back
 /// between backticks.  The parser stores the *cooked* (processed) value in
@@ -1608,56 +1608,44 @@ impl<'a> DeclarationEmitter<'a> {
         self.expand_portable_mapped_object_text(self.arena, inner)
     }
 
+    /// Emit `type_idx` through the shared canonical type printer, forcing it
+    /// onto a single line (`indent_level` = 0) unless `keep_indent` is set.
+    /// `tsc` keeps mapped-type constraint/name-type expressions inline, so the
+    /// multi-line tuple/type-literal formatting is suppressed except where a
+    /// nested shape needs its own indentation.
+    fn emit_type_inline_unless(&mut self, type_idx: NodeIndex, keep_indent: bool) {
+        let saved_indent = self.indent_level;
+        if !keep_indent {
+            self.indent_level = 0;
+        }
+        self.emit_type(type_idx);
+        self.indent_level = saved_indent;
+    }
+
     pub(in crate::declaration_emitter) fn emit_mapped_type_constraint(
         &mut self,
         constraint_idx: NodeIndex,
     ) {
-        let contains_type_literal = self.type_node_contains_type_literal(constraint_idx, 0);
-        if let Some(node) = self.arena.get(constraint_idx)
-            && let Some(text) = self.get_source_slice(node.pos, node.end)
-            && !contains_type_literal
-        {
-            let text = Self::mapped_type_constraint_source_text(&text);
-            if !text.is_empty() {
-                self.write(text);
-                return;
-            }
-        }
-
-        // tsc keeps mapped-type constraint expressions on a single line; suppress multiline tuple formatting.
-        let saved_indent = self.indent_level;
-        if !contains_type_literal {
-            self.indent_level = 0;
-        }
-        self.emit_type(constraint_idx);
-        self.indent_level = saved_indent;
+        // Re-print the constraint through the shared type printer rather than
+        // echoing its source slice. `tsc`'s declaration printer canonicalizes
+        // type syntax (`"a" | "b"`, `K & string`, ...) and never preserves the
+        // author's operator spacing, so a raw source copy diverges whenever the
+        // source omitted the spaces. The AST already separates the constraint
+        // from the `as` name-type into distinct nodes, so the printer is also
+        // correctly bounded — no source-span splitting is required.
+        let keep_indent = self.type_node_contains_type_literal(constraint_idx, 0);
+        self.emit_type_inline_unless(constraint_idx, keep_indent);
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_name_type(
         &mut self,
         name_type_idx: NodeIndex,
     ) {
-        if let Some(node) = self.arena.get(name_type_idx)
-            && let Some(text) = self.get_source_slice(node.pos, node.end)
-            && !self.type_node_contains_mapped_type(name_type_idx, 0)
-        {
-            let text = Self::mapped_type_name_source_text(&text);
-            if !text.is_empty() {
-                self.write(text);
-                return;
-            }
-        }
-
-        // tsc keeps mapped-type name-type expressions on a single line; suppress multiline tuple
-        // formatting. When the as-clause itself contains a nested mapped type, preserve indentation.
-        if self.type_node_contains_mapped_type(name_type_idx, 0) {
-            self.emit_type(name_type_idx);
-        } else {
-            let saved_indent = self.indent_level;
-            self.indent_level = 0;
-            self.emit_type(name_type_idx);
-            self.indent_level = saved_indent;
-        }
+        // Canonically re-print the `as` name-type (see
+        // `emit_mapped_type_constraint`), keeping the current indentation only
+        // when the name-type nests a mapped type of its own.
+        let keep_indent = self.type_node_contains_mapped_type(name_type_idx, 0);
+        self.emit_type_inline_unless(name_type_idx, keep_indent);
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(
@@ -1665,27 +1653,7 @@ impl<'a> DeclarationEmitter<'a> {
         name_type_idx: NodeIndex,
     ) {
         self.write(" as ");
-
-        if let Some(node) = self.arena.get(name_type_idx)
-            && let Some(text) = self.get_source_slice(node.pos, node.end)
-            && !self.type_node_contains_mapped_type(name_type_idx, 0)
-        {
-            let text = Self::mapped_type_name_source_text(&text);
-            if !text.is_empty() {
-                self.write(text);
-                return;
-            }
-        }
-
-        let start = self.writer.len();
         self.emit_mapped_type_name_type(name_type_idx);
-        let emitted = self.writer.get_output()[start..].to_string();
-        let normalized = Self::mapped_type_name_source_text(&emitted);
-        if normalized != emitted.trim() {
-            let normalized = normalized.to_string();
-            self.writer.truncate(start);
-            self.write(&normalized);
-        }
     }
 
     fn type_node_contains_mapped_type(&self, type_idx: NodeIndex, depth: usize) -> bool {
@@ -1718,206 +1686,5 @@ impl<'a> DeclarationEmitter<'a> {
             .get_children(type_idx)
             .into_iter()
             .any(|child_idx| self.type_node_contains_type_literal(child_idx, depth + 1))
-    }
-
-    fn mapped_type_constraint_source_text(text: &str) -> &str {
-        let text = text.trim();
-        let text = Self::split_mapped_as_clause(text)
-            .map(|(before, _)| before.trim_end())
-            .unwrap_or_else(|| Self::trim_trailing_mapped_as_keyword(text));
-        Self::trim_unbalanced_closing_bracket(text)
-    }
-
-    fn mapped_type_name_source_text(text: &str) -> &str {
-        let text = text.trim();
-        let text = Self::split_mapped_as_clause(text)
-            .map(|(_, after)| after.trim_start())
-            .unwrap_or_else(|| Self::trim_leading_mapped_as_keyword(text));
-        Self::trim_unbalanced_closing_bracket(text)
-    }
-
-    fn trim_leading_mapped_as_keyword(text: &str) -> &str {
-        let mut trimmed = text.trim_start();
-        while let Some(after_as) = trimmed.strip_prefix("as") {
-            let has_boundary = after_as
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
-            if !has_boundary {
-                break;
-            }
-            trimmed = after_as.trim_start();
-        }
-        trimmed
-    }
-
-    fn split_mapped_as_clause(text: &str) -> Option<(&str, &str)> {
-        let mut string_quote: Option<char> = None;
-        let mut escaped = false;
-        let mut angle_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut bracket_depth = 0u32;
-        let mut paren_depth = 0u32;
-
-        for (idx, ch) in text.char_indices() {
-            if let Some(quote) = string_quote {
-                if escaped {
-                    escaped = false;
-                } else if ch == '\\' {
-                    escaped = true;
-                } else if ch == quote {
-                    string_quote = None;
-                }
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' | '`' => {
-                    string_quote = Some(ch);
-                    continue;
-                }
-                '<' => {
-                    angle_depth += 1;
-                    continue;
-                }
-                '>' => {
-                    angle_depth = angle_depth.saturating_sub(1);
-                    continue;
-                }
-                '{' => {
-                    brace_depth += 1;
-                    continue;
-                }
-                '}' => {
-                    brace_depth = brace_depth.saturating_sub(1);
-                    continue;
-                }
-                '[' => {
-                    bracket_depth += 1;
-                    continue;
-                }
-                ']' => {
-                    bracket_depth = bracket_depth.saturating_sub(1);
-                    continue;
-                }
-                '(' => {
-                    paren_depth += 1;
-                    continue;
-                }
-                ')' => {
-                    paren_depth = paren_depth.saturating_sub(1);
-                    continue;
-                }
-                _ => {}
-            }
-
-            if ch != 'a'
-                || !text[idx..].starts_with("as")
-                || angle_depth != 0
-                || brace_depth != 0
-                || bracket_depth != 0
-                || paren_depth != 0
-            {
-                continue;
-            }
-
-            let before = &text[..idx];
-            let after = &text[idx + 2..];
-            let before_boundary = before
-                .chars()
-                .next_back()
-                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
-            let after_boundary = after
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
-            if before_boundary && after_boundary {
-                return Some((before, after));
-            }
-        }
-        None
-    }
-
-    fn trim_trailing_mapped_as_keyword(text: &str) -> &str {
-        let trimmed = text.trim_end();
-        let Some(before_as) = trimmed.strip_suffix("as") else {
-            return trimmed;
-        };
-        let had_separator = before_as
-            .chars()
-            .next_back()
-            .is_some_and(char::is_whitespace);
-        let before_as = before_as.trim_end();
-        let has_boundary = before_as
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_whitespace() || !Self::is_identifier_part(ch));
-        if had_separator || has_boundary {
-            before_as
-        } else {
-            trimmed
-        }
-    }
-
-    fn trim_unbalanced_closing_bracket(text: &str) -> &str {
-        let trimmed = text.trim_end();
-        if !trimmed.ends_with(']') {
-            return trimmed;
-        }
-
-        let opens = trimmed.chars().filter(|&ch| ch == '[').count();
-        let closes = trimmed.chars().filter(|&ch| ch == ']').count();
-        if closes > opens {
-            trimmed[..trimmed.len() - 1].trim_end()
-        } else {
-            trimmed
-        }
-    }
-
-    fn is_identifier_part(ch: char) -> bool {
-        is_ecmascript_identifier_part(ch)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::DeclarationEmitter;
-
-    #[test]
-    fn mapped_type_source_text_splits_compact_as_clause_after_indexed_access() {
-        assert_eq!(
-            DeclarationEmitter::mapped_type_constraint_source_text("T[number]as Item[Attr]"),
-            "T[number]"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_constraint_source_text("T[number] as"),
-            "T[number]"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_constraint_source_text("keyof T as"),
-            "keyof T"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_name_source_text("T[number]as Item[Attr]"),
-            "Item[Attr]"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_name_source_text("as `get${Capitalize<string & K>}`"),
-            "`get${Capitalize<string & K>}`"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_name_source_text(
-                "as as `get${Capitalize<string & K>}`"
-            ),
-            "`get${Capitalize<string & K>}`"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_name_source_text("asserts T"),
-            "asserts T"
-        );
-        assert_eq!(
-            DeclarationEmitter::mapped_type_constraint_source_text("keyof T]"),
-            "keyof T"
-        );
     }
 }

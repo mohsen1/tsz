@@ -43,6 +43,7 @@
 //! | Infer-match fresh-evaluator expansion depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_INFER_MATCH_EXPANSION_DEPTH`] = 100 nested expansions | `instantiationDepth` | leave source/pattern opaque and skip infer expansion | recursive conditional/`infer` wrappers |
 //! | Checker lazy-resolution fuel, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_LAZY_RESOLUTION_FUEL`] = 50k forced lazy/enum/type-query resolutions | no direct analogue (checker readiness artifact) | stop publishing degraded memo/failure results and leave remaining refs lazy | `lazy_lib_fuel_determinism`, DOM fuel exhaustion tests |
 //! | Checker lazy-readiness guards, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH`] = 1, [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL`] = 200, [`MAX_CHECKER_REFS_RESOLUTION_FUEL`] = 2000, [`MAX_CHECKER_EVAL_ENV_DEPTH`] = 5 | no direct analogue (checker eager-readiness artifact) | stop the local readiness prewalk or leave env-eval root opaque | `lazy_guard_state`, `lazy_resolution_session_scans` |
+//! | Type-reference alias-forwarding depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_TYPE_REFERENCE_RESOLUTION_DEPTH`] = 350 nested alias forwards | none (checker alias-resolution artifact) | checker leaves the symbol as its own `Lazy(DefId)` reference | #13212 raw-`SymbolId` alias ping-pong witness, `symbol_types_tests::type_reference_depth_cap_falls_back_to_own_lazy_reference` |
 //! | Per-query eval op budget, thread-local (this module) | [`DEFAULT_MAX_EVAL_OPS_PER_QUERY`] = 2M ops per top-level query (`TSZ_MAX_EVAL_OPS` override) | `instantiationCount` (5M) per checked element | silent opaque bail | `Unbox`/`Awaited` runaway tests (`query_budget`) |
 //! | Per-file evaluation fuel, thread-local (this module) | [`MAX_EVALUATION_FUEL`] = 2M, sampled every [`EVAL_FUEL_CHECK_INTERVAL`] = 128 guard iterations | `instantiationCount` (5M; tsz lower because eager expansion is heavier) | `TS2589`-style `ERROR` bail | ts-toolbelt corpus, #13172/#13181 |
 //! | `TypeInstantiator.depth` per-instance (`instantiation/instantiate.rs`) | [`MAX_TYPE_SUBSTITUTION_DEPTH`] = 50 | `instantiateType` recursion (tsc `instantiationDepth` = 100; see note below) | sticky `depth_exceeded`, returns input type opaque | recursive generic instantiation tests |
@@ -191,6 +192,16 @@ pub(crate) const MAX_CHECKER_REFS_RESOLUTION_FUEL: u32 = 2000;
 
 /// Maximum recursive `evaluate_type_with_env_impl` depth.
 pub(crate) const MAX_CHECKER_EVAL_ENV_DEPTH: u32 = 5;
+
+/// Maximum nesting depth for checker type-reference alias-forwarding.
+///
+/// A mutually-aliasing pair produced by a raw-`SymbolId` cross-file collision
+/// (`Dataset` <-> `OutputDataset`, #13212) would otherwise ping-pong through
+/// `CheckerState::type_reference_symbol_type_with_params` until the stack
+/// overflows. The cap is far above legitimate alias chains and far below
+/// stack exhaustion; on hit, checker leaves the symbol as its own
+/// `Lazy(DefId)` reference.
+pub(crate) const MAX_TYPE_REFERENCE_RESOLUTION_DEPTH: u32 = 350;
 
 /// Total `evaluate` operations permitted for a single top-level evaluation
 /// query (the outermost `evaluate` call on the thread, before it returns).
