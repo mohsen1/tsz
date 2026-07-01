@@ -709,6 +709,26 @@ impl<'a> CheckerContext<'a> {
 /// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
 /// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
 impl<'a> TypeResolver for CheckerContext<'a> {
+    /// Monotone stamp for resolver-visible checker state.
+    ///
+    /// Optional-chain and property caches need to distinguish results computed
+    /// before and after lazy definitions or symbol-type caches materialize. The
+    /// checker owns two resolver environments plus value/type symbol caches, so
+    /// fold the same components used by assignability memo stamps into the
+    /// solver-facing generation.
+    fn resolver_generation(&self) -> u64 {
+        let env_generation = self.type_env.try_borrow().map_or(0, |env| env.generation());
+        let environment_generation = self
+            .type_environment
+            .try_borrow()
+            .map_or(0, |env| env.generation());
+
+        env_generation
+            .saturating_add(environment_generation)
+            .saturating_add(self.symbol_types.version())
+            .saturating_add(self.symbol_instance_types.version())
+    }
+
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
     /// `TypeData::Ref` is removed, but we keep this for compatibility.

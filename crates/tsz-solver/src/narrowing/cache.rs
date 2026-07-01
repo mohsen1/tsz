@@ -12,6 +12,8 @@ type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
 type PropertyCacheKey = (TypeId, Atom);
 type NarrowedPropertyCache = GenerationMemo<PropertyCacheKey, Option<CachedPropertyType>>;
 type RequiredPropertyCache = GenerationMemo<PropertyCacheKey, bool>;
+type OptionalChainCache = GenerationMemo<PropertyCacheKey, TypeId>;
+type OptionalPropertyChainCache = GenerationMemo<OptionalPropertyChainKey, TypeId>;
 
 /// Cache key for a successful identifier-rooted optional property chain.
 ///
@@ -115,19 +117,21 @@ pub struct NarrowingCache {
     /// Cache for "type contains type parameters" checks.
     pub contains_type_parameters_cache: RefCell<FxHashMap<TypeId, bool>>,
     /// Cache for optional chain property access results.
-    /// Keyed by `(object_type_with_nullish, property_atom)` -> final result `TypeId`.
+    /// Keyed by `(object_type_with_nullish, property_atom, resolver_generation)`
+    /// -> final result `TypeId`.
     /// Unlike `property_cache` which is keyed by resolved (non-nullish) base type,
     /// this caches the COMPLETE result including nullish union and undefined addition.
     /// This skips `split_nullish`, `resolve_type`, `contains_type_params`, and property
     /// lookup on cache hits, eliminating 4+ `RefCell` borrows per repeated access.
-    pub optional_chain_cache: RefCell<FxHashMap<(TypeId, Atom), TypeId>>,
+    pub optional_chain_cache: RefCell<OptionalChainCache>,
     /// Cache for full optional property chains such as
     /// `options?.nested?.transport?.backoff?.base`.
     ///
-    /// This is keyed by semantic root type and atomized path rather than by AST
-    /// node, so repeated textual chains in generated code can reuse the final
-    /// successful read result without re-walking every segment.
-    pub optional_property_chain_cache: RefCell<FxHashMap<OptionalPropertyChainKey, TypeId>>,
+    /// This is keyed by semantic root type, atomized path, and resolver
+    /// generation rather than by AST node, so repeated textual chains in
+    /// generated code can reuse the final successful read result without
+    /// re-walking every segment while still observing lazy resolver changes.
+    pub optional_property_chain_cache: RefCell<OptionalPropertyChainCache>,
     /// Cache for contextual type resolution in object literal property typing.
     /// Maps raw contextual `TypeId` -> fully resolved `TypeId` after the
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
@@ -260,14 +264,8 @@ impl NarrowingCache {
                 1024,
                 FxBuildHasher,
             )),
-            optional_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
-            optional_property_chain_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
-                512,
-                FxBuildHasher,
-            )),
+            optional_chain_cache: RefCell::new(GenerationMemo::default()),
+            optional_property_chain_cache: RefCell::new(GenerationMemo::default()),
             contextual_resolve_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 256,
                 FxBuildHasher,
@@ -294,6 +292,8 @@ impl NarrowingCache {
         let narrow_subtype_cache = self.narrow_subtype_cache.borrow();
         let generation_stamped_cache_keys = property_cache.key_count()
             + required_property_cache.key_count()
+            + self.optional_chain_cache.borrow().key_count()
+            + self.optional_property_chain_cache.borrow().key_count()
             + narrow_type_cache.key_count()
             + narrow_excluding_cache.key_count()
             + narrow_assignable_cache.key_count()
@@ -301,6 +301,10 @@ impl NarrowingCache {
         let max_generation_slots_per_cache_key = [
             property_cache.max_slots_per_key(),
             required_property_cache.max_slots_per_key(),
+            self.optional_chain_cache.borrow().max_slots_per_key(),
+            self.optional_property_chain_cache
+                .borrow()
+                .max_slots_per_key(),
             narrow_type_cache.max_slots_per_key(),
             narrow_excluding_cache.max_slots_per_key(),
             narrow_assignable_cache.max_slots_per_key(),
@@ -371,21 +375,14 @@ impl NarrowingCache {
         }
         {
             let map = self.optional_chain_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<(TypeId, Atom)>()
-                    + std::mem::size_of::<TypeId>());
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
             let map = self.optional_property_chain_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<OptionalPropertyChainKey>()
-                    + std::mem::size_of::<TypeId>());
-            size += map
-                .keys()
-                .map(|key| key.properties.capacity() * std::mem::size_of::<Atom>())
-                .sum::<usize>();
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
+            size += map.key_extra_size_bytes(|key| {
+                key.properties.capacity() * std::mem::size_of::<Atom>()
+            });
         }
         {
             let map = self.contextual_resolve_cache.borrow();

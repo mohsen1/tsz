@@ -5,7 +5,7 @@ use super::super::{CheckerContext, CheckerOptions};
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::computation::TypeEnvironment;
+use tsz_solver::computation::{TypeEnvironment, TypeResolver};
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefinitionInfo;
 
@@ -129,6 +129,56 @@ fn ensure_both_envs_is_generation_idempotent_on_repeated_calls() {
         ctx.type_environment.borrow().generation(),
         gen_flow,
         "type_environment generation must not change on idempotent reinstall"
+    );
+}
+
+#[test]
+fn checker_context_resolver_generation_tracks_env_and_symbol_cache_state() {
+    use tsz_binder::SymbolId;
+    use tsz_solver::{SymbolRef, TypeId};
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let initial = TypeResolver::resolver_generation(&ctx);
+
+    ctx.type_env
+        .borrow_mut()
+        .insert(SymbolRef(1), TypeId::STRING);
+    let after_eval_env = TypeResolver::resolver_generation(&ctx);
+    assert!(
+        after_eval_env > initial,
+        "authoritative env mutations must move the resolver generation"
+    );
+
+    ctx.type_environment
+        .borrow_mut()
+        .insert(SymbolRef(2), TypeId::NUMBER);
+    let after_flow_env = TypeResolver::resolver_generation(&ctx);
+    assert!(
+        after_flow_env > after_eval_env,
+        "flow env mutations must move the resolver generation"
+    );
+
+    ctx.symbol_types.insert(SymbolId(1), TypeId::BOOLEAN);
+    let after_symbol_type = TypeResolver::resolver_generation(&ctx);
+    assert!(
+        after_symbol_type > after_flow_env,
+        "`symbol_types` mutations must move the resolver generation"
+    );
+
+    ctx.symbol_instance_types
+        .insert(SymbolId(2), TypeId::BIGINT);
+    let after_symbol_instance = TypeResolver::resolver_generation(&ctx);
+    assert!(
+        after_symbol_instance > after_symbol_type,
+        "`symbol_instance_types` mutations must move the resolver generation"
     );
 }
 

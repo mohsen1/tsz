@@ -80,6 +80,10 @@ where
         }
         size
     }
+
+    pub fn key_extra_size_bytes(&self, extra_size: impl FnMut(&K) -> usize) -> usize {
+        self.entries.keys().map(extra_size).sum()
+    }
 }
 
 #[cfg(test)]
