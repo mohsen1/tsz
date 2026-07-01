@@ -946,6 +946,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Async callback bodies are checked through the async-return path, where
+        // the body expression is awaited before comparing against the contextual
+        // return. This call-argument elaborator only sees the callable return
+        // type; drilling into an async expression body here can turn valid
+        // `T | PromiseLike<T>` contexts into false synchronous TS2322s.
+        if func.is_async {
+            return false;
+        }
+
         // Skip elaboration when the expected return type contains unresolved
         // type parameters or inference placeholders. During generic call
         // inference, the expected callback return type may still reference
