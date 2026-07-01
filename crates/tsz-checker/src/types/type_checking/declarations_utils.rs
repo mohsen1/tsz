@@ -5,7 +5,7 @@ use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, Property
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, TypeParamInfo, TypeParamOrigin};
 
 /// Per-position record for a declaration's type parameter list.
 ///
@@ -145,29 +145,60 @@ impl<'a> CheckerState<'a> {
         };
         let list = &list;
 
-        let mut profile = Vec::with_capacity(list.nodes.len());
+        let mut param_syntax = Vec::with_capacity(list.nodes.len());
         for &param_idx in &list.nodes {
             let param_node = self.ctx.arena.get(param_idx)?;
             let type_param = self.ctx.arena.get_type_parameter(param_node)?;
             let param_name_node = self.ctx.arena.get(type_param.name)?;
             let param_name = self.ctx.arena.get_identifier(param_name_node)?;
-
-            let constraint = if type_param.constraint != NodeIndex::NONE {
-                Some(self.get_type_from_type_node(type_param.constraint))
-            } else {
-                None
-            };
-
-            let default = if type_param.default != NodeIndex::NONE {
-                Some(self.get_type_from_type_node(type_param.default))
-            } else {
-                None
-            };
-
-            let name_atom = self
+            let name = self
                 .ctx
-                .types
-                .intern_string(self.ctx.arena.resolve_identifier_text(param_name));
+                .arena
+                .resolve_identifier_text(param_name)
+                .to_string();
+            let name_atom = self.ctx.types.intern_string(&name);
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&type_param.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
+
+            param_syntax.push((
+                type_param.name,
+                type_param.constraint,
+                type_param.default,
+                name,
+                name_atom,
+                is_const,
+            ));
+        }
+
+        let mut updates = Vec::with_capacity(param_syntax.len());
+        for &(name_node, _, _, ref name, name_atom, is_const) in &param_syntax {
+            let info = TypeParamInfo {
+                name: name_atom,
+                constraint: None,
+                default: None,
+                is_const,
+                origin: TypeParamOrigin::User,
+            };
+            let type_id = self.intern_type_param_for_decl(name_node, info);
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name.clone(), previous, false));
+        }
+
+        let mut profile = Vec::with_capacity(param_syntax.len());
+        for &(_, constraint_idx, default_idx, _, name_atom, _) in &param_syntax {
+            let constraint = if constraint_idx != NodeIndex::NONE {
+                Some(self.get_type_from_type_node(constraint_idx))
+            } else {
+                None
+            };
+
+            let default = if default_idx != NodeIndex::NONE {
+                Some(self.get_type_from_type_node(default_idx))
+            } else {
+                None
+            };
 
             profile.push(TypeParamProfileEntry {
                 name: name_atom,
@@ -175,6 +206,7 @@ impl<'a> CheckerState<'a> {
                 default,
             });
         }
+        self.pop_type_parameters(updates);
 
         Some(profile)
     }

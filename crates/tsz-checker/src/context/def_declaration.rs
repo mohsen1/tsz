@@ -6,11 +6,29 @@
 //! a generic's body to the declaration rather than an intermediate hop.
 
 use tsz_binder::SymbolId;
-use tsz_solver::def::DefId;
+use tsz_solver::def::{DefId, DefinitionInfo};
 
 use crate::context::CheckerContext;
 
 impl CheckerContext<'_> {
+    pub(crate) fn def_info_matches_symbol_declaration(
+        &self,
+        info: &DefinitionInfo,
+        sym_id: SymbolId,
+        _symbol: &tsz_binder::Symbol,
+        file_idx: u32,
+        expected_name: &str,
+    ) -> bool {
+        if self.types.resolve_atom(info.name) != expected_name
+            || info.symbol_id != Some(sym_id.0)
+            || info.file_id != Some(file_idx)
+        {
+            return false;
+        }
+
+        true
+    }
+
     /// Resolve-or-mint the canonical `DefId` for a declaration identified by its
     /// declaring `(SymbolId, file_idx)`, requiring the declaration's name to
     /// match `expected_name`.

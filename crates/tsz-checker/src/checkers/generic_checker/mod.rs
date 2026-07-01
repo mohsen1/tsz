@@ -69,6 +69,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn well_known_lib_constraint_def_name(&self, def_id: tsz_solver::DefId) -> Option<String> {
+        if !self.ctx.definition_store.def_is_non_program(def_id) {
+            return None;
+        }
         let name = self.ctx.definition_store.get_name(def_id)?;
         let name = self.ctx.types.resolve_atom_ref(name).to_string();
         self.is_well_known_lib_type_name(&name).then_some(name)

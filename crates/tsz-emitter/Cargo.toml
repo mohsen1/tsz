@@ -31,6 +31,10 @@ name = "esm_export_star_as_downlevel_tests"
 path = "tests/esm_export_star_as_downlevel_tests.rs"
 
 [[test]]
+name = "es2018_object_rest_following_param_tests"
+path = "tests/es2018_object_rest_following_param_tests.rs"
+
+[[test]]
 name = "async_lowered_single_line_hoist_tests"
 path = "tests/async_lowered_single_line_hoist_tests.rs"
 

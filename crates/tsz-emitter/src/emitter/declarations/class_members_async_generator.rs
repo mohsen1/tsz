@@ -175,7 +175,7 @@ impl<'a> Printer<'a> {
                         super_capture.needs_writable_element_index;
                 }
                 self.function_scope_depth += 1;
-                if !self.pending_object_rest_params.is_empty() {
+                if !self.pending_param_prologue.is_empty() {
                     self.write(" ");
                     self.emit_pending_object_rest_param_preamble(true);
                 }
@@ -289,7 +289,7 @@ impl<'a> Printer<'a> {
         }
         self.function_scope_depth += 1;
 
-        if !self.pending_object_rest_params.is_empty() {
+        if !self.pending_param_prologue.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
         }
 
