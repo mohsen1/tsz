@@ -39,7 +39,13 @@ impl<'a> TypeInstantiator<'a> {
             // base) instead of returning the deferred `IndexAccess`. The OFF
             // path below is the literal pre-existing deferred return.
             if super::flags::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
-                return self.evaluate_index_access(inst_obj, inst_idx);
+                // #14346 global re-reduce depth budget: hold the guard for the
+                // whole recursive re-reduce; bail to the deferred index-access
+                // when the shared native-depth budget is exhausted.
+                if let Some(_g) = super::flags::rereduce_depth_try_enter() {
+                    return self.evaluate_index_access(inst_obj, inst_idx);
+                }
+                return self.interner.index_access(inst_obj, inst_idx);
             }
             return self.interner.index_access(inst_obj, inst_idx);
         }
@@ -79,7 +85,12 @@ impl<'a> TypeInstantiator<'a> {
         }
         if keyof_operand_needs_resolver(self.interner, inst_operand) {
             if super::flags::inst_resolver_rereduce_enabled() && self.query_db.is_some() {
-                return self.evaluate_keyof(inst_operand);
+                // #14346 global re-reduce depth budget: bail to the deferred
+                // `keyof` when the shared native-depth budget is exhausted.
+                if let Some(_g) = super::flags::rereduce_depth_try_enter() {
+                    return self.evaluate_keyof(inst_operand);
+                }
+                return self.interner.keyof(inst_operand);
             }
             return self.interner.keyof(inst_operand);
         }
