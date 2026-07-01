@@ -55,6 +55,10 @@ name = "es5_optional_chain_call_receiver_tests"
 path = "tests/es5_optional_chain_call_receiver_tests.rs"
 
 [[test]]
+name = "es5_private_auto_accessor_tests"
+path = "tests/es5_private_auto_accessor_tests.rs"
+
+[[test]]
 name = "es5_super_object_literal_accessor_tests"
 path = "tests/es5_super_object_literal_accessor_tests.rs"
 

@@ -4,7 +4,11 @@ use crate::transforms::emit_utils::{
     METADATA_ALIAS_MAX_DEPTH, MetadataEntityKind, classify_metadata_entity, identifier_text,
     metadata_global_constructor_with_fallback,
 };
+use crate::transforms::private_fields_es5::{
+    PrivateAccessorInfo, get_private_field_name, make_unique_private_name, private_helper_base,
+};
 use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -478,28 +482,41 @@ pub(super) fn collect_auto_accessor_fields(
         if arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword) {
             continue;
         }
-        if is_private_identifier(arena, prop_data.name) {
-            continue;
-        }
         let has_accessor = arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword);
         if !has_accessor {
             continue;
         }
-        let Some(name_node) = arena.get(prop_data.name) else {
+        let is_static = arena.is_static(&prop_data.modifiers);
+        let is_private = is_private_identifier(arena, prop_data.name);
+        // Static private auto-accessors follow the broader (still-incomplete)
+        // static-private-member ES5 lowering and are left on the existing path;
+        // only instance private auto-accessors are lowered here alongside the
+        // public ones.
+        if is_private && is_static {
             continue;
-        };
-        let name = if name_node.kind == SyntaxKind::Identifier as u16 {
-            let Some(name) = arena
-                .get_identifier(name_node)
-                .map(|id| id.escaped_text.clone())
-            else {
+        }
+        let name = if is_private {
+            let Some(raw) = get_private_field_name(arena, prop_data.name) else {
                 continue;
             };
-            name
+            raw.strip_prefix('#').unwrap_or(&raw).to_string()
         } else {
-            let name = generated_auto_accessor_name(generated_name_index);
-            generated_name_index += 1;
-            name
+            let Some(name_node) = arena.get(prop_data.name) else {
+                continue;
+            };
+            if name_node.kind == SyntaxKind::Identifier as u16 {
+                let Some(name) = arena
+                    .get_identifier(name_node)
+                    .map(|id| id.escaped_text.clone())
+                else {
+                    continue;
+                };
+                name
+            } else {
+                let name = generated_auto_accessor_name(generated_name_index);
+                generated_name_index += 1;
+                name
+            }
         };
 
         accessors.push(AutoAccessorFieldInfo {
@@ -509,7 +526,82 @@ pub(super) fn collect_auto_accessor_fields(
                 .initializer
                 .is_some()
                 .then_some(prop_data.initializer),
-            is_static: arena.is_static(&prop_data.modifiers),
+            is_static,
+        });
+    }
+
+    accessors
+}
+
+/// Synthesize the branded get/set accessor pair for every instance private
+/// auto-accessor (`accessor #y = ...`). tsc lowers a private auto-accessor to a
+/// backing-storage `WeakMap` (collected by `collect_auto_accessor_fields`) plus a
+/// private accessor pair whose bodies read/write that storage; access to `this.#y`
+/// routes through the instance brand exactly like an ordinary private accessor.
+/// The returned entries carry `synthetic_storage`, marking their get/set bodies as
+/// generated rather than lowered from source. Names are reserved in `used_names`
+/// in source order so they compose with the other private helper names.
+pub(super) fn collect_private_auto_accessor_accessors(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+    used_names: &mut FxHashSet<String>,
+) -> Vec<PrivateAccessorInfo> {
+    let mut accessors = Vec::new();
+    let Some(class_node) = arena.get(class_idx) else {
+        return accessors;
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return accessors;
+    };
+
+    for &member_idx in &class_data.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            continue;
+        }
+        let Some(prop_data) = arena.get_property_decl(member_node) else {
+            continue;
+        };
+        if !arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+            || !is_private_identifier(arena, prop_data.name)
+            || arena.is_static(&prop_data.modifiers)
+            || arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+            || arena.has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            continue;
+        }
+        let Some(raw) = get_private_field_name(arena, prop_data.name) else {
+            continue;
+        };
+        let clean_name = raw.strip_prefix('#').unwrap_or(&raw).to_string();
+        let base = private_helper_base(class_name, &clean_name);
+        // Reserve get/set/storage in source order. The storage name must equal the
+        // one `collect_auto_accessor_fields` derives (`<base>_accessor_storage`);
+        // both use the same formula, so absent a collision they agree.
+        let get_var = make_unique_private_name(&format!("{base}_get"), used_names);
+        let set_var = make_unique_private_name(&format!("{base}_set"), used_names);
+        let storage = make_unique_private_name(&format!("{base}_accessor_storage"), used_names);
+
+        accessors.push(PrivateAccessorInfo {
+            member_indices: vec![member_idx],
+            name: clean_name,
+            get_var_name: Some(get_var),
+            set_var_name: Some(set_var),
+            has_getter: true,
+            has_setter: true,
+            // A synthetic auto-accessor has no source getter/setter body to lower
+            // — its get/set are generated from `synthetic_storage`, so these stay
+            // `None`. Emission is driven by `synthetic_storage`, never by these.
+            getter_body: None,
+            setter_body: None,
+            setter_param: None,
+            getter_is_async: false,
+            setter_is_async: false,
+            is_static: false,
+            synthetic_storage: Some(storage),
         });
     }
 

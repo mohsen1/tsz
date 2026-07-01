@@ -471,6 +471,17 @@ impl<'a> ES5ClassTransformer<'a> {
                         .find(|field| field.member_idx == member_idx)
                     {
                         decls.push(field.weakmap_name.clone());
+                    } else if let Some(accessor) = self.synthetic_auto_accessor_for(member_idx) {
+                        // A private auto-accessor declares its branded get/set
+                        // helpers at its source position; the backing storage
+                        // `WeakMap` is declared later with the other auto-accessor
+                        // storages (via `weakmap_decls`), matching tsc.
+                        if let Some(get_var) = accessor.get_var_name.as_ref() {
+                            decls.push(get_var.clone());
+                        }
+                        if let Some(set_var) = accessor.set_var_name.as_ref() {
+                            decls.push(set_var.clone());
+                        }
                     }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -508,30 +519,93 @@ impl<'a> ES5ClassTransformer<'a> {
         decls
     }
 
-    pub(super) fn private_method_and_accessor_init_strings(&self) -> Vec<String> {
+    /// Build the trailing `_C_m = function ..., _C_g_get = function ...` helper
+    /// assignment chain for the class's private methods and accessors.
+    ///
+    /// The chain is emitted in **source member order** by walking the class body
+    /// once — a private accessor declared before a private method assigns its
+    /// helper first, matching tsc (which walks the members once). A private
+    /// auto-accessor contributes a synthesized branded get/set pair that reads and
+    /// writes its backing-storage `WeakMap`.
+    pub(super) fn private_method_and_accessor_init_strings(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
         let mut inits = Vec::new();
-        for method in &self.private_methods {
-            if let Some(function) = self.build_private_method_function_ir(method.member_idx) {
-                inits.push(self.private_assignment_string(&method.fn_var_name, function));
+        for &member_idx in &class_data.members.nodes {
+            let Some(node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self
+                        .private_methods
+                        .iter()
+                        .find(|method| method.member_idx == member_idx)
+                        && let Some(function) =
+                            self.build_private_method_function_ir(method.member_idx)
+                    {
+                        inits.push(self.private_assignment_string(&method.fn_var_name, function));
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(accessor) = self.private_accessors.iter().find(|accessor| {
+                        accessor.synthetic_storage.is_none()
+                            && accessor.member_indices.contains(&member_idx)
+                    }) {
+                        let is_getter = k == syntax_kind_ext::GET_ACCESSOR;
+                        inits.extend(
+                            self.private_accessor_init_string(accessor, member_idx, is_getter),
+                        );
+                    }
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(accessor) = self.synthetic_auto_accessor_for(member_idx) {
+                        inits.extend(self.synthetic_auto_accessor_init_strings(accessor));
+                    }
+                }
+                _ => {}
             }
         }
-        for accessor in &self.private_accessors {
-            // Initialize each accessor's helper at its own source position by
-            // walking the members in source order, so a `set`-before-`get` pair
-            // assigns `_set` first, matching `tsc`.
-            for &member_idx in &accessor.member_indices {
-                let Some(node) = self.arena.get(member_idx) else {
-                    continue;
-                };
-                let init = if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                    self.private_accessor_init_string(accessor, member_idx, true)
-                } else if node.kind == syntax_kind_ext::SET_ACCESSOR {
-                    self.private_accessor_init_string(accessor, member_idx, false)
-                } else {
-                    None
-                };
-                inits.extend(init);
+        inits
+    }
+
+    /// Find the synthesized private-accessor entry (get/set pair) that a private
+    /// auto-accessor property declaration owns, if any.
+    pub(super) fn synthetic_auto_accessor_for(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<&crate::transforms::private_fields_es5::PrivateAccessorInfo> {
+        self.private_accessors.iter().find(|accessor| {
+            accessor.synthetic_storage.is_some() && accessor.member_indices.contains(&member_idx)
+        })
+    }
+
+    /// Build the `_C_y_get = function _C_y_get() { ... }, _C_y_set = function ...`
+    /// helper assignments for a private auto-accessor. The bodies read and write
+    /// the backing-storage `WeakMap` (`synthetic_storage`) through the private
+    /// field helpers, exactly as tsc emits them.
+    fn synthetic_auto_accessor_init_strings(
+        &self,
+        accessor: &crate::transforms::private_fields_es5::PrivateAccessorInfo,
+    ) -> Vec<String> {
+        let Some(storage) = accessor.synthetic_storage.as_ref() else {
+            return Vec::new();
+        };
+        let mut inits = Vec::new();
+        if let Some(get_var) = accessor.get_var_name.as_ref() {
+            let mut function = self.build_auto_accessor_getter_function(storage);
+            if let IRNode::FunctionExpr { name, .. } = &mut function {
+                *name = Some(get_var.clone().into());
             }
+            inits.push(self.private_assignment_string(get_var, function));
+        }
+        if let Some(set_var) = accessor.set_var_name.as_ref() {
+            let mut function = self.build_auto_accessor_setter_function(storage);
+            if let IRNode::FunctionExpr { name, .. } = &mut function {
+                *name = Some(set_var.clone().into());
+            }
+            inits.push(self.private_assignment_string(set_var, function));
         }
         inits
     }
