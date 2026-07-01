@@ -720,6 +720,100 @@ fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
     );
 }
 
+#[test]
+fn index_access_productive_lazy_chain_bails_to_deferred_root() {
+    use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(14351);
+    let lazy = interner.lazy(def_id);
+    let key = interner.literal_string("member");
+    let root = interner.index_access(lazy, key);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def_id, root);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(root);
+
+    assert_eq!(
+        result, root,
+        "productive Lazy(D) -> Lazy(D)[K] chains should keep the indexed access deferred"
+    );
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "recursion-identity containment should not collapse the deferred chain to ERROR"
+    );
+}
+
+#[test]
+fn keyof_productive_lazy_chain_bails_to_deferred_root() {
+    use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(14352);
+    let lazy = interner.lazy(def_id);
+    let root = interner.keyof(lazy);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def_id, root);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(root);
+
+    assert_eq!(
+        result, root,
+        "productive Lazy(D) -> keyof Lazy(D) chains should keep keyof deferred"
+    );
+    assert_ne!(
+        result,
+        TypeId::ERROR,
+        "keyof recursion-identity containment should not collapse the deferred chain to ERROR"
+    );
+}
+
+#[test]
+fn same_identity_containment_keeps_finite_lazy_resolution() {
+    use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(14353);
+    let lazy = interner.lazy(def_id);
+    let key = interner.literal_string("renamed");
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("renamed"),
+        TypeId::STRING,
+    )]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(def_id, object);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    assert_eq!(
+        evaluator.evaluate(interner.index_access(lazy, key)),
+        TypeId::STRING,
+        "ordinary Lazy(D) -> object resolution must still reduce indexed access"
+    );
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let keyof_result = evaluator.evaluate(interner.keyof(lazy));
+    assert!(
+        matches!(
+            interner.lookup(keyof_result),
+            Some(TypeData::Literal(crate::types::LiteralValue::String(_)))
+        ),
+        "ordinary Lazy(D) -> object resolution must still reduce keyof, got {:?}",
+        interner.lookup(keyof_result)
+    );
+}
+
 // =============================================================================
 // Mapped Type Indexing Tests
 // =============================================================================

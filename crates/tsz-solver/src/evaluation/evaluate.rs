@@ -58,6 +58,7 @@ use tsz_common::interner::Atom;
 mod application;
 mod closed_eval;
 mod display_alias;
+mod meta_recursion_identity;
 mod query_budget;
 mod support;
 

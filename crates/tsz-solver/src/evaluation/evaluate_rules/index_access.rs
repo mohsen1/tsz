@@ -1654,6 +1654,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let evaluated_object = self.evaluate(object_type);
         let evaluated_index = self.evaluate(index_type);
+        if (evaluated_object != object_type
+            && self.same_meta_recursion_identity(object_type, evaluated_object))
+            || (evaluated_index != index_type
+                && self.same_meta_recursion_identity(index_type, evaluated_index))
+        {
+            self.defer_same_identity_meta_recursion();
+            return self.interner().index_access(object_type, index_type);
+        }
         if evaluated_object != object_type || evaluated_index != index_type {
             // Use recurse_index_access to respect depth limits
             return self.recurse_index_access(evaluated_object, evaluated_index);
