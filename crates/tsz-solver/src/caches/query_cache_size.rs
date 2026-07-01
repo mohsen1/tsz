@@ -30,6 +30,24 @@ impl QueryCache<'_> {
                     + std::mem::size_of::<EvaluationCacheKey>()
                     + std::mem::size_of::<TypeId>());
         }
+        {
+            let index = self.eval_dependency_index.borrow();
+            size += index.reverse.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<DefId>()
+                    + std::mem::size_of::<FxHashSet<EvaluationCacheKey>>());
+            for keys in index.reverse.values() {
+                size +=
+                    keys.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<EvaluationCacheKey>());
+            }
+            size += index.key_dependencies.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<EvaluationCacheKey>()
+                    + std::mem::size_of::<FxHashSet<DefId>>());
+            for deps in index.key_dependencies.values() {
+                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
+            }
+        }
 
         // closed_eval_cache: EvaluationCacheKey -> TypeId
         {
@@ -38,6 +56,24 @@ impl QueryCache<'_> {
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<EvaluationCacheKey>()
                     + std::mem::size_of::<TypeId>());
+        }
+        {
+            let index = self.closed_eval_dependency_index.borrow();
+            size += index.reverse.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<DefId>()
+                    + std::mem::size_of::<FxHashSet<EvaluationCacheKey>>());
+            for keys in index.reverse.values() {
+                size +=
+                    keys.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<EvaluationCacheKey>());
+            }
+            size += index.key_dependencies.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<EvaluationCacheKey>()
+                    + std::mem::size_of::<FxHashSet<DefId>>());
+            for deps in index.key_dependencies.values() {
+                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
+            }
         }
 
         // conditional_branch_verdict_cache: (TypeId, TypeId, bool, bool) -> bool
@@ -58,6 +94,32 @@ impl QueryCache<'_> {
             size += map.capacity() * base_entry;
             // SmallVec spills to heap when > 4 elements; account for spilled entries.
             for key in map.keys() {
+                if key.1.spilled() {
+                    size += key.1.capacity() * std::mem::size_of::<TypeId>();
+                }
+            }
+        }
+        {
+            let index = self.application_eval_dependency_index.borrow();
+            size += index.reverse.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<DefId>()
+                    + std::mem::size_of::<FxHashSet<ApplicationEvalCacheKey>>());
+            for keys in index.reverse.values() {
+                size += keys.capacity()
+                    * (BUCKET_OVERHEAD + std::mem::size_of::<ApplicationEvalCacheKey>());
+                for key in keys {
+                    if key.1.spilled() {
+                        size += key.1.capacity() * std::mem::size_of::<TypeId>();
+                    }
+                }
+            }
+            size += index.key_dependencies.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<ApplicationEvalCacheKey>()
+                    + std::mem::size_of::<FxHashSet<DefId>>());
+            for (key, deps) in &index.key_dependencies {
+                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
                 if key.1.spilled() {
                     size += key.1.capacity() * std::mem::size_of::<TypeId>();
                 }

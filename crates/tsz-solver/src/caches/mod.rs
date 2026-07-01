@@ -2,6 +2,7 @@ mod application_eval_index;
 pub(crate) mod db;
 mod db_base_traits;
 pub(crate) mod display_provenance;
+mod eval_dependency_index;
 pub(crate) mod instantiation_cache;
 pub(crate) mod options;
 pub(crate) mod query_cache;

@@ -4,7 +4,7 @@ use crate::caches::db::{IntersectionMergeCacheEntry, QueryDatabase, TypeApplicat
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::caches::query_cache::{QueryCache, SharedQueryCache};
 use crate::caches::query_cache_statistics::QueryCacheStatistics;
-use crate::def::DefId;
+use crate::def::{DefId, DefinitionStore};
 use crate::intern::TypeInterner;
 use crate::types::{RelationCacheConfig, RelationCacheKey, TypeId};
 
@@ -94,6 +94,266 @@ fn closed_eval_cache_is_visible_in_statistics_and_size_estimate() {
 
     db.clear();
     assert_eq!(db.statistics().closed_eval_cache_entries, 0);
+}
+
+#[test]
+fn eval_cache_invalidation_uses_recorded_def_dependencies() {
+    // Structural rule: persisted eval-memo entries are stable only while the
+    // lazy `DefId` bodies they mention remain unchanged. A body rewrite must
+    // evict entries whose key or result mentions that `DefId`, while leaving
+    // unrelated eval entries resident.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let key_def = DefId(101);
+    let result_def = DefId(102);
+    let unrelated_key = TypeId::BOOLEAN;
+    let key_ref = interner.lazy(key_def);
+    let result_ref = interner.lazy(result_def);
+
+    db.insert_eval_memo(key_ref, false, TypeId::STRING);
+    db.insert_eval_memo(TypeId::NUMBER, false, result_ref);
+    db.insert_eval_memo(unrelated_key, false, TypeId::STRING);
+
+    assert_eq!(db.statistics().eval_cache_entries, 3);
+
+    db.invalidate_application_eval_cache_for_def(key_def);
+
+    assert_eq!(db.lookup_eval_memo(key_ref, false), None);
+    assert_eq!(db.lookup_eval_memo(TypeId::NUMBER, false), Some(result_ref));
+    assert_eq!(
+        db.lookup_eval_memo(unrelated_key, false),
+        Some(TypeId::STRING)
+    );
+
+    db.invalidate_application_eval_cache_for_def(result_def);
+
+    assert_eq!(db.lookup_eval_memo(TypeId::NUMBER, false), None);
+    assert_eq!(
+        db.lookup_eval_memo(unrelated_key, false),
+        Some(TypeId::STRING)
+    );
+}
+
+#[test]
+fn shared_eval_cache_invalidation_clears_promoted_sibling_cache() {
+    // Structural rule: shared eval-cache hits are promoted into the local
+    // per-file cache. The promotion must record the same `DefId` dependency
+    // edges as a local write so a later body rewrite clears both the promoted
+    // local copy and the shared entry for fresh sibling checkers.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new();
+    let dep_def = DefId(103);
+    let key = interner.lazy(dep_def);
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        db_a.insert_eval_memo(key, false, TypeId::NUMBER);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(db_b.lookup_eval_memo(key, false), Some(TypeId::NUMBER));
+        db_b.invalidate_application_eval_cache_for_def(dep_def);
+        assert_eq!(db_b.lookup_eval_memo(key, false), None);
+    }
+
+    {
+        let db_c = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_c.lookup_eval_memo(key, false),
+            None,
+            "fresh sibling cache must not see a shared eval entry after invalidation"
+        );
+    }
+}
+
+#[test]
+fn closed_eval_cache_invalidation_uses_recorded_def_dependencies() {
+    // Structural rule: `closed_eval_cache` is local to one `QueryCache`, but
+    // its values are still invalidated by rewritten lazy bodies when the key or
+    // result closure mentions that `DefId`.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let key_def = DefId(104);
+    let result_def = DefId(105);
+    let key_ref = interner.lazy(key_def);
+    let result_ref = interner.lazy(result_def);
+
+    db.insert_closed_eval_cache(key_ref, false, TypeId::STRING);
+    db.insert_closed_eval_cache(TypeId::NUMBER, false, result_ref);
+    db.insert_closed_eval_cache(TypeId::BOOLEAN, false, TypeId::STRING);
+
+    assert_eq!(db.statistics().closed_eval_cache_entries, 3);
+
+    db.invalidate_application_eval_cache_for_def(result_def);
+
+    assert_eq!(db.lookup_closed_eval_cache(TypeId::NUMBER, false), None);
+    assert_eq!(
+        db.lookup_closed_eval_cache(key_ref, false),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(
+        db.lookup_closed_eval_cache(TypeId::BOOLEAN, false),
+        Some(TypeId::STRING)
+    );
+
+    db.invalidate_application_eval_cache_for_def(key_def);
+    assert_eq!(db.lookup_closed_eval_cache(key_ref, false), None);
+}
+
+#[test]
+fn eval_family_invalidation_follows_definition_store_body_dependencies() {
+    // Structural rule: with a shared `DefinitionStore`, an eval-family cache
+    // entry keyed by `Lazy(A)` also depends on the lazy defs reachable from
+    // A's published body. Rewriting B must therefore evict an entry computed
+    // from A when A's body was `Lazy(B)`.
+    let interner = TypeInterner::new();
+    let store = DefinitionStore::new();
+    let base_def = DefId(106);
+    let body_def = DefId(107);
+    let base_ref = interner.lazy(base_def);
+    let body_ref = interner.lazy(body_def);
+    store.set_body(base_def, body_ref);
+    store.set_body_dependency_defs(base_def, [body_def]);
+
+    let db = QueryCache::new(&interner).with_definition_store(&store);
+    db.insert_eval_memo(base_ref, false, TypeId::STRING);
+    db.insert_closed_eval_cache(base_ref, false, TypeId::NUMBER);
+    db.insert_application_eval_cache(base_def, &[TypeId::STRING], false, TypeId::BOOLEAN);
+
+    db.invalidate_application_eval_cache_for_def(body_def);
+
+    assert_eq!(db.lookup_eval_memo(base_ref, false), None);
+    assert_eq!(db.lookup_closed_eval_cache(base_ref, false), None);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[TypeId::STRING], false),
+        None
+    );
+}
+
+#[test]
+fn eval_family_invalidation_follows_transitive_definition_store_body_dependencies() {
+    // Structural rule: the body-dependency graph is transitive. If a cache
+    // entry mentions `Lazy(A)`, A's body mentions `Lazy(B)`, and B's body
+    // mentions `Lazy(C)`, rewriting C must evict the entry without a full
+    // cache sweep.
+    let interner = TypeInterner::new();
+    let store = DefinitionStore::new();
+    let root_def = DefId(118);
+    let mid_def = DefId(119);
+    let leaf_def = DefId(120);
+    let unrelated_def = DefId(121);
+    let root_ref = interner.lazy(root_def);
+    let mid_ref = interner.lazy(mid_def);
+    let leaf_ref = interner.lazy(leaf_def);
+    let unrelated_ref = interner.lazy(unrelated_def);
+    store.set_body(root_def, mid_ref);
+    store.set_body_dependency_defs(root_def, [mid_def]);
+    store.set_body(mid_def, leaf_ref);
+    store.set_body_dependency_defs(mid_def, [leaf_def]);
+
+    let db = QueryCache::new(&interner).with_definition_store(&store);
+    db.insert_eval_memo(root_ref, false, TypeId::STRING);
+    db.insert_closed_eval_cache(root_ref, false, TypeId::NUMBER);
+    db.insert_application_eval_cache(root_def, &[TypeId::STRING], false, TypeId::BOOLEAN);
+    db.insert_eval_memo(unrelated_ref, false, TypeId::STRING);
+
+    db.invalidate_application_eval_cache_for_def(leaf_def);
+
+    assert_eq!(db.lookup_eval_memo(root_ref, false), None);
+    assert_eq!(db.lookup_closed_eval_cache(root_ref, false), None);
+    assert_eq!(
+        db.lookup_application_eval_cache(root_def, &[TypeId::STRING], false),
+        None
+    );
+    assert_eq!(
+        db.lookup_eval_memo(unrelated_ref, false),
+        Some(TypeId::STRING),
+        "transitive invalidation must preserve unrelated entries"
+    );
+}
+
+#[test]
+fn eval_family_invalidation_chases_store_body_deps_without_decoding_body_type_ids() {
+    // Structural rule: a shared `DefinitionStore` body can be producer-arena
+    // `TypeId` data. Cache invalidation must chase the recorded `DefId` body
+    // dependency graph instead of decoding that body through the consumer
+    // interner.
+    let producer = TypeInterner::new();
+    let consumer = TypeInterner::new();
+    let store = DefinitionStore::new();
+    let alias_def = DefId(108);
+    let dep_def = DefId(109);
+    let producer_body = producer.lazy(dep_def);
+    store.set_body(alias_def, producer_body);
+    store.set_body_dependency_defs(alias_def, [dep_def]);
+
+    let alias_ref = consumer.lazy(alias_def);
+    let db = QueryCache::new(&consumer).with_definition_store(&store);
+    db.insert_eval_memo(alias_ref, false, TypeId::STRING);
+
+    db.invalidate_application_eval_cache_for_def(dep_def);
+
+    assert_eq!(db.lookup_eval_memo(alias_ref, false), None);
+}
+
+#[test]
+fn eval_family_dependency_rewrite_removes_stale_body_dependency_edges() {
+    // Structural rule: dependency indexes describe the cache entry that was
+    // actually inserted, not the DefinitionStore graph as it happens to look
+    // at removal time. If A's body-deps change from B to C, evicting the old
+    // `Lazy(A)` entry must remove its stale B reverse edge before a fresh entry
+    // records the new C edge.
+    let interner = TypeInterner::new();
+    let store = DefinitionStore::new();
+    let root_def = DefId(122);
+    let stale_dep = DefId(123);
+    let current_dep = DefId(124);
+    let root_ref = interner.lazy(root_def);
+    let stale_ref = interner.lazy(stale_dep);
+    let current_ref = interner.lazy(current_dep);
+    store.set_body(root_def, stale_ref);
+    store.set_body_dependency_defs(root_def, [stale_dep]);
+
+    let db = QueryCache::new(&interner).with_definition_store(&store);
+    db.insert_eval_memo(root_ref, false, TypeId::STRING);
+    db.insert_closed_eval_cache(root_ref, false, TypeId::NUMBER);
+    db.insert_application_eval_cache(root_def, &[TypeId::STRING], false, TypeId::BOOLEAN);
+
+    store.set_body(root_def, current_ref);
+    store.set_body_dependency_defs(root_def, [current_dep]);
+    db.invalidate_application_eval_cache_for_def(root_def);
+
+    db.insert_eval_memo(root_ref, false, TypeId::STRING);
+    db.insert_closed_eval_cache(root_ref, false, TypeId::NUMBER);
+    db.insert_application_eval_cache(root_def, &[TypeId::STRING], false, TypeId::BOOLEAN);
+
+    db.invalidate_application_eval_cache_for_def(stale_dep);
+    assert_eq!(
+        db.lookup_eval_memo(root_ref, false),
+        Some(TypeId::STRING),
+        "stale body-dep edge must not evict the fresh eval entry"
+    );
+    assert_eq!(
+        db.lookup_closed_eval_cache(root_ref, false),
+        Some(TypeId::NUMBER),
+        "stale body-dep edge must not evict the fresh closed-eval entry"
+    );
+    assert_eq!(
+        db.lookup_application_eval_cache(root_def, &[TypeId::STRING], false),
+        Some(TypeId::BOOLEAN),
+        "stale body-dep edge must not evict the fresh application-eval entry"
+    );
+
+    db.invalidate_application_eval_cache_for_def(current_dep);
+    assert_eq!(db.lookup_eval_memo(root_ref, false), None);
+    assert_eq!(db.lookup_closed_eval_cache(root_ref, false), None);
+    assert_eq!(
+        db.lookup_application_eval_cache(root_def, &[TypeId::STRING], false),
+        None
+    );
 }
 
 #[test]
@@ -407,6 +667,52 @@ fn application_eval_cache_overwrite_replaces_recorded_result_dependencies() {
 }
 
 #[test]
+fn application_eval_cache_overwrite_replaces_key_arg_and_result_dependencies() {
+    // Structural rule: overwriting an application-eval key must leave exactly
+    // the current key/result dependency set behind. Stale argument/result edges
+    // must not evict a live replacement, while current argument/result rewrites
+    // must evict it.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let base_def = DefId(110);
+    let stale_arg_def = DefId(111);
+    let current_arg_def = DefId(112);
+    let stale_result_def = DefId(113);
+    let current_result_def = DefId(114);
+    let stale_arg = interner.lazy(stale_arg_def);
+    let current_arg = interner.lazy(current_arg_def);
+    let stale_result = interner.lazy(stale_result_def);
+    let current_result = interner.lazy(current_result_def);
+
+    db.insert_application_eval_cache(base_def, &[stale_arg], false, stale_result);
+    db.insert_application_eval_cache(base_def, &[current_arg], false, current_result);
+
+    db.invalidate_application_eval_cache_for_def(stale_arg_def);
+    db.invalidate_application_eval_cache_for_def(stale_result_def);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[current_arg], false),
+        Some(current_result),
+        "stale argument/result dependencies must not evict a replacement key"
+    );
+
+    db.invalidate_application_eval_cache_for_def(current_arg_def);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[current_arg], false),
+        None,
+        "current argument dependency must evict the replacement"
+    );
+
+    db.insert_application_eval_cache(base_def, &[current_arg], false, current_result);
+    db.invalidate_application_eval_cache_for_def(current_result_def);
+    assert_eq!(
+        db.lookup_application_eval_cache(base_def, &[current_arg], false),
+        None,
+        "current result dependency must evict the replacement"
+    );
+}
+
+#[test]
 fn shared_application_eval_cache_overwrite_replaces_recorded_result_dependencies() {
     // Structural rule: the opt-in shared application-eval cache has the same
     // exact-dependency invariant as the file-local cache. A stale dependency
@@ -447,6 +753,46 @@ fn shared_application_eval_cache_overwrite_replaces_recorded_result_dependencies
             db_d.lookup_application_eval_cache(base_def, &[TypeId::NUMBER], false),
             None,
             "invalidating the current shared dependency must evict the entry"
+        );
+    }
+}
+
+#[test]
+fn shared_application_eval_cache_promotion_records_local_dependency_edges() {
+    // Structural rule: a shared application-eval hit promoted into a sibling
+    // local cache must record local dependency edges. Rewriting the def from
+    // that sibling then clears both its promoted local copy and the shared
+    // entry for fresh siblings.
+    let interner = TypeInterner::new();
+    let shared = SharedQueryCache::new_for_instantiation_family_test(true);
+    let base_def = DefId(115);
+    let dep_def = DefId(116);
+    let dep_ref = interner.lazy(dep_def);
+
+    {
+        let db_a = QueryCache::new_with_shared(&interner, &shared);
+        db_a.insert_application_eval_cache(base_def, &[dep_ref], false, TypeId::STRING);
+    }
+
+    {
+        let db_b = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_b.lookup_application_eval_cache(base_def, &[dep_ref], false),
+            Some(TypeId::STRING)
+        );
+        db_b.invalidate_application_eval_cache_for_def(dep_def);
+        assert_eq!(
+            db_b.lookup_application_eval_cache(base_def, &[dep_ref], false),
+            None
+        );
+    }
+
+    {
+        let db_c = QueryCache::new_with_shared(&interner, &shared);
+        assert_eq!(
+            db_c.lookup_application_eval_cache(base_def, &[dep_ref], false),
+            None,
+            "fresh sibling must not see the shared application-eval entry after invalidation"
         );
     }
 }

@@ -234,15 +234,11 @@ impl<'a> CheckerState<'a> {
         let published = if keep_existing {
             existing_body.unwrap_or(ty)
         } else {
-            self.ctx.definition_store.set_body_finalized(
+            self.ctx.publish_finalized_definition_body(
                 def_id,
                 ty,
                 (!type_params.is_empty()).then(|| type_params.clone()),
-            );
-            // The store may still suppress the write (e.g. the opt-in freeze, or
-            // the monotone-deferral guard): mirror the AUTHORITATIVE store body,
-            // not the `ty` we attempted, so the env never diverges below it.
-            self.ctx.definition_store.get_body(def_id).unwrap_or(ty)
+            )
         };
         self.ctx
             .register_def_auto_params_in_envs(def_id, published, type_params);

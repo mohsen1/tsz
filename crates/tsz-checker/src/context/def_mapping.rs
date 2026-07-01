@@ -4,6 +4,8 @@
 //! references, type parameter registration, and resolved-type registration
 //! in the `TypeEnvironment`.
 
+mod body_publication;
+
 use std::sync::Arc;
 
 use crate::query_boundaries::common::TypeResolver;
@@ -905,7 +907,7 @@ impl CheckerContext<'_> {
         // it already held (a benign re-resolution oscillation). See
         // `def_published_bodies` and `register_def_with_params_in_envs`.
         let body_seen_before = body_changed && self.record_published_body(def_id, body);
-        self.definition_store.set_body(def_id, body);
+        self.publish_definition_body(def_id, body);
         if body_changed {
             // First publication (`None -> Some`) needs no env-eval/narrowing
             // sweep, for the same reason `invalidate_application_evals_on_body_rewrite`
@@ -976,8 +978,7 @@ impl CheckerContext<'_> {
         // still sweeps. The cheap, def-keyed application-eval invalidation still
         // runs on every real body change.
         let body_seen_before = body_changed && self.record_published_body(def_id, body);
-        self.definition_store
-            .set_body_with_params(def_id, body, Some(params.clone()));
+        self.publish_definition_body_with_params(def_id, body, params.clone());
         // First publication (`prev_body == None`) needs no sweep: no cached
         // entry can reference `def_id` before it had a resolvable body (see
         // `register_def_in_envs` and `invalidate_application_evals_on_body_rewrite`).
@@ -1549,7 +1550,7 @@ impl CheckerContext<'_> {
             // find type alias names via find_type_alias_by_body(). Without
             // this, type aliases show their structural expansion in diagnostics
             // (e.g., "{ r: number; g: number; b: number }" instead of "Color").
-            self.definition_store.set_body(def_id, type_id);
+            self.publish_definition_body(def_id, type_id);
         }
     }
 

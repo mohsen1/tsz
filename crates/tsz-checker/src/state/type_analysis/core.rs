@@ -1647,7 +1647,7 @@ impl CheckerState<'_> {
                 self.ctx
                     .definition_store
                     .register_type_to_def(result, def_id);
-                self.ctx.definition_store.set_body(def_id, result);
+                self.ctx.publish_definition_body(def_id, result);
 
                 // Record the body's display provenance (see
                 // `record_alias_body_provenance`). Only a non-generic alias is a

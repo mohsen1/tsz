@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
         if !params.is_empty() {
             self.ctx.insert_def_type_params(def_id, params.clone());
         }
-        self.ctx.definition_store.set_body(def_id, interface_type);
+        self.ctx.publish_definition_body(def_id, interface_type);
         self.ctx
             .definition_store
             .register_type_to_def(interface_type, def_id);

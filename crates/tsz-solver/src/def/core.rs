@@ -14,6 +14,7 @@
 //! | CLI  | Sequential allocation | Fresh start each compilation |
 //! | LSP  | Content-addressed hash | Stable IDs across edits |
 mod augmentation_symbols;
+mod body_dependencies;
 mod content_addressed;
 mod cross_file_cache;
 mod decl_identity;
@@ -350,6 +351,9 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
+    /// Body dependency graph captured as `DefId` edges by the publishing interner.
+    body_dependency_defs: DefDashMap<DefId, Arc<[DefId]>>,
+
     /// #14351 lazy-reference relation: instantiated heritage edges.
     ///
     /// Maps a derived `DefId` to the list of `(parent DefId, instantiated base
@@ -611,6 +615,7 @@ impl DefinitionStore {
             generation: AtomicU64::new(1),
             alias_forwards: DefDashMap::default(),
             type_to_def: DefDashMap::default(),
+            body_dependency_defs: DefDashMap::default(),
             heritage_instantiations: DefDashMap::default(),
             type_param_for_decl_node: DefDashMap::default(),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
@@ -836,72 +841,6 @@ impl DefinitionStore {
     /// Get the kind of a definition.
     pub fn get_kind(&self, id: DefId) -> Option<DefKind> {
         self.definitions.get(&id).map(|r| r.kind)
-    }
-
-    /// Get type parameters for a definition.
-    pub fn get_type_params(&self, id: DefId) -> Option<Vec<TypeParamInfo>> {
-        self.definitions.get(&id).map(|r| r.type_params.clone())
-    }
-
-    /// Get the body `TypeId` for a definition.
-    pub fn get_body(&self, id: DefId) -> Option<TypeId> {
-        self.definitions.get(&id).and_then(|r| r.body)
-    }
-
-    /// Whether `id` already publishes exactly `body` (and, when given,
-    /// exactly `params`). Comparison runs under the entry guard without
-    /// cloning, so no-op republication checks stay cheap on hot paths.
-    pub fn body_and_params_published(
-        &self,
-        id: DefId,
-        body: TypeId,
-        params: Option<&[TypeParamInfo]>,
-    ) -> bool {
-        self.definitions.get(&id).is_some_and(|entry| {
-            entry.body == Some(body)
-                && params.is_none_or(|params| entry.type_params.as_slice() == params)
-        })
-    }
-
-    /// Get parent class `DefId` for a class.
-    pub fn get_extends(&self, id: DefId) -> Option<DefId> {
-        self.definitions.get(&id).and_then(|r| r.extends)
-    }
-
-    /// Set the heritage (extends + implements) for a definition after registration.
-    ///
-    /// Used for cross-batch heritage resolution: when a user class extends a lib
-    /// type, the heritage is resolved by name after all pre-population batches
-    /// have completed.
-    pub fn set_heritage(&self, id: DefId, extends: Option<DefId>, implements: Vec<DefId>) {
-        if let Some(mut entry) = self.definitions.get_mut(&id) {
-            entry.extends = extends;
-            entry.implements = implements;
-            self.bump_generation();
-        }
-    }
-
-    /// #14351: record one instantiated heritage edge for the lazy-reference
-    /// relation. `derived` extends `parent`, and `base_type` is the parent
-    /// reference as written in `derived`'s own scope (e.g. `Functor1<F>` from
-    /// `interface Apply1<F> extends Functor1<F>`). First writer per
-    /// `(derived, parent)` wins; later equal writes are idempotent. This is
-    /// inert data — only the flag-gated lazy-reference relation branch reads it.
-    pub fn add_heritage_instantiation(&self, derived: DefId, parent: DefId, base_type: TypeId) {
-        let mut entry = self.heritage_instantiations.entry(derived).or_default();
-        if entry.iter().any(|&(p, _)| p == parent) {
-            return;
-        }
-        entry.push((parent, base_type));
-    }
-
-    /// #14351: the instantiated base `TypeId` for a DIRECT `extends` edge
-    /// `derived extends target`, or `None` if `target` is not a direct parent
-    /// of `derived` (the first slice handles single-hop heritage only).
-    pub fn get_heritage_instantiation(&self, derived: DefId, target: DefId) -> Option<TypeId> {
-        self.heritage_instantiations
-            .get(&derived)
-            .and_then(|edges| edges.iter().find(|&&(p, _)| p == target).map(|&(_, t)| t))
     }
 
     /// Update the body `TypeId` for a definition (for lazy evaluation).

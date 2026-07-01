@@ -493,7 +493,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             };
             self.ctx.insert_def_type_params(def_id, params);
-            self.ctx.definition_store.set_body(def_id, body);
+            self.ctx.publish_definition_body(def_id, body);
             def_id
         };
         let Some(def_info) = self.ctx.definition_store.get(def_id) else {

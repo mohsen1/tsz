@@ -4,7 +4,9 @@
 //! This is a child module of `query_cache`, so it keeps access to the cache's
 //! private fields.
 
-use super::{DefId, EvaluationCacheKey, QueryCache, TypeId, application_eval_index};
+use super::{
+    DefId, EvaluationCacheKey, QueryCache, TypeId, application_eval_index, eval_dependency_index,
+};
 use crate::caches::db::{TypeApplicationEvalCache, TypeCompilerOptions};
 
 impl TypeApplicationEvalCache for QueryCache<'_> {
@@ -60,15 +62,26 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
 
     fn invalidate_application_eval_cache_for_def(&self, def_id: DefId) {
         application_eval_index::invalidate_for_def(
-            self.interner,
             &self.application_eval_dependency_index,
             &self.application_eval_cache,
             def_id,
         );
-        if let Some(shared) = self.shared
-            && shared.shares_instantiation_family()
-        {
-            shared.invalidate_application_eval_cache_for_def(self.interner, def_id);
+        eval_dependency_index::invalidate_for_def(
+            &self.eval_dependency_index,
+            &self.eval_cache,
+            def_id,
+        );
+        eval_dependency_index::invalidate_for_def(
+            &self.closed_eval_dependency_index,
+            &self.closed_eval_cache,
+            def_id,
+        );
+        if let Some(shared) = self.shared {
+            shared.invalidate_application_eval_cache_for_def(
+                self.interner,
+                self.definition_store(),
+                def_id,
+            );
         }
     }
 
@@ -94,9 +107,9 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
             no_unchecked_indexed_access,
             self.exact_optional_property_types(),
         );
-        self.eval_cache.borrow_mut().entry(key).or_insert(result);
+        self.insert_eval_cache_entry_if_absent(key, result);
         if let Some(shared) = self.shared {
-            shared.eval_cache.entry(key).or_insert(result);
+            shared.insert_eval_cache_if_absent(self.interner, self.definition_store(), key, result);
         }
     }
 
@@ -121,7 +134,7 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         no_unchecked_indexed_access: bool,
         result: TypeId,
     ) {
-        self.closed_eval_cache.borrow_mut().insert(
+        self.insert_closed_eval_cache_entry(
             EvaluationCacheKey::new(
                 type_id,
                 no_unchecked_indexed_access,

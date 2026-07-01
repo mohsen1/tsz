@@ -400,7 +400,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(TypeId::ERROR, def_id);
-        self.ctx.definition_store.set_body(def_id, TypeId::ERROR);
+        self.ctx.publish_definition_body(def_id, TypeId::ERROR);
     }
 
     /// True when a *generic* type alias's unwrapped body is a self-application

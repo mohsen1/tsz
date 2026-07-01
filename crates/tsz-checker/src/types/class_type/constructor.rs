@@ -219,9 +219,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.definition_store.get_constructor_def(class_def)
             {
                 // Reuse the pre-populated companion identity, just set its body.
-                self.ctx
-                    .definition_store
-                    .set_body(pre_populated_ctor, result);
+                self.ctx.publish_definition_body(pre_populated_ctor, result);
                 pre_populated_ctor
             } else {
                 // Fallback: create a new DefId (anonymous classes, or classes
