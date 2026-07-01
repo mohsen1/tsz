@@ -24,11 +24,12 @@ use crate::type_queries::extended_constructors::{
     ConstructorCheckKind, ConstructorReturnMergeKind, InstanceTypeKind,
     classify_for_abstract_check, classify_for_base_instance_merge, classify_for_class_decl,
     classify_for_constructor_check, classify_for_constructor_return_merge,
-    classify_for_instance_type, resolve_abstract_constructor_anchor,
+    classify_for_instance_type, get_base_construct_return_type,
+    resolve_abstract_constructor_anchor,
 };
 use crate::types::{
-    CallableShape, ConditionalType, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    PropertyInfo, SymbolRef, TypeData, TypeParamInfo,
+    CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, ObjectFlags,
+    ObjectShape, PropertyInfo, SymbolRef, TypeData, TypeParamInfo,
 };
 
 // =============================================================================
@@ -857,4 +858,112 @@ fn anchor_application_with_non_abstract_base_is_not_abstract() {
         resolve_abstract_constructor_anchor(&interner, app),
         AbstractConstructorAnchor::NotAbstract,
     );
+}
+
+// =============================================================================
+// get_base_construct_return_type (issue #15248)
+// =============================================================================
+
+fn type_param(interner: &TypeInterner, name: &str, default: Option<TypeId>) -> TypeParamInfo {
+    TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }
+}
+
+/// Resolve the `CallableShapeId` for a callable type built from the given
+/// construct signatures.
+fn base_construct_return(
+    interner: &TypeInterner,
+    construct_signatures: Vec<CallSignature>,
+    type_arg_count: usize,
+) -> Option<TypeId> {
+    let callable = interner.callable(CallableShape {
+        construct_signatures,
+        ..Default::default()
+    });
+    let InstanceTypeKind::Callable(shape_id) = classify_for_instance_type(interner, callable)
+    else {
+        panic!("expected a Callable type");
+    };
+    get_base_construct_return_type(interner, shape_id, type_arg_count)
+}
+
+#[test]
+fn base_construct_zero_args_picks_non_generic_signature_not_the_generic() {
+    // `MapConstructor`-shaped: `new(): A` plus `new <K, V>(): B`. For a
+    // zero-type-argument base (`class X extends Map`), only the non-generic
+    // signature is applicable, so the base is `A` — never the union with `B`.
+    let interner = TypeInterner::new();
+    let ret_a = interner.lazy(DefId(100));
+    let ret_b = interner.lazy(DefId(200));
+    let non_generic = CallSignature::new(vec![], ret_a);
+    let generic = CallSignature {
+        type_params: vec![
+            type_param(&interner, "K", None),
+            type_param(&interner, "V", None),
+        ],
+        ..CallSignature::new(vec![], ret_b)
+    };
+    assert_eq!(
+        base_construct_return(&interner, vec![non_generic, generic], 0),
+        Some(ret_a),
+    );
+}
+
+#[test]
+fn base_construct_zero_args_is_signature_order_independent() {
+    // The generic signature declared first is still filtered out for a
+    // zero-type-argument base; the non-generic survivor is the base.
+    let interner = TypeInterner::new();
+    let ret_a = interner.lazy(DefId(100));
+    let ret_b = interner.lazy(DefId(200));
+    let generic = CallSignature {
+        type_params: vec![
+            type_param(&interner, "K", None),
+            type_param(&interner, "V", None),
+        ],
+        ..CallSignature::new(vec![], ret_b)
+    };
+    let non_generic = CallSignature::new(vec![], ret_a);
+    assert_eq!(
+        base_construct_return(&interner, vec![generic, non_generic], 0),
+        Some(ret_a),
+    );
+}
+
+#[test]
+fn base_construct_zero_args_instantiates_default_bearing_generic() {
+    // `new <T = string>(): T` is applicable for zero args (min arity 0) and its
+    // return type is instantiated with the default — the base is `string`.
+    let interner = TypeInterner::new();
+    let t = type_param(&interner, "T", Some(TypeId::STRING));
+    let ret_t = interner.type_param(t);
+    let sig = CallSignature {
+        type_params: vec![t],
+        ..CallSignature::new(vec![], ret_t)
+    };
+    assert_eq!(
+        base_construct_return(&interner, vec![sig], 0),
+        Some(TypeId::STRING),
+    );
+}
+
+#[test]
+fn base_construct_zero_args_no_applicable_signature_returns_none() {
+    // Only an under-applied generic signature (min arity 2) exists, so no
+    // signature is applicable to a zero-argument base; the caller falls back.
+    let interner = TypeInterner::new();
+    let ret_b = interner.lazy(DefId(200));
+    let generic = CallSignature {
+        type_params: vec![
+            type_param(&interner, "K", None),
+            type_param(&interner, "V", None),
+        ],
+        ..CallSignature::new(vec![], ret_b)
+    };
+    assert_eq!(base_construct_return(&interner, vec![generic], 0), None);
 }

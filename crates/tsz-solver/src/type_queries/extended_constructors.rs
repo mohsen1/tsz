@@ -438,6 +438,60 @@ pub fn classify_for_base_instance_merge(
     }
 }
 
+/// The base type of a class whose base is a class-like constructor *function*,
+/// following tsc's `resolveBaseTypesOfClass` else-branch:
+/// `getReturnTypeOfSignature(getInstantiatedConstructorsForTypeArguments(
+/// baseConstructorType, typeArguments)[0])`.
+///
+/// `getConstructorsForTypeArguments` keeps only the construct signatures whose
+/// arity window contains the extends clause's type-argument count `N` — those
+/// where `N in [minTypeArgumentCount, typeParameters.len()]` — and the base is
+/// the return type of the *first* survivor (default-instantiated when `N` is
+/// below its parameter count). A generic construct signature whose minimum arity
+/// exceeds `N` (e.g. `new <K, V>(): Map<K, V>` when `class X extends Map`
+/// supplies `N == 0`) is dropped rather than contributing its uninstantiated
+/// return type.
+///
+/// This is the arity-aware counterpart of
+/// [`get_construct_return_type_union`](super::data::get_construct_return_type_union);
+/// the union collapses every construct signature's return type together, which
+/// leaks the under-applied generic signature's free type parameters into the
+/// base (the immer `DraftMap extends Map` spurious `Map<K, V> | Map<any, any>`
+/// base, issue #15248). Returns `None` when the shape has no construct signature
+/// applicable to `type_arg_count`, so the caller can decide the fallback.
+pub fn get_base_construct_return_type(
+    db: &dyn TypeDatabase,
+    shape_id: crate::types::CallableShapeId,
+    type_arg_count: usize,
+) -> Option<TypeId> {
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+
+    let shape = db.callable_shape(shape_id);
+    // tsc `getConstructorsForTypeArguments`: the first construct signature whose
+    // `[minTypeArgumentCount, typeParameters.len()]` window contains the supplied
+    // type-argument count. `minTypeArgumentCount` is the number of leading type
+    // parameters without a default (defaults are trailing).
+    let sig = shape.construct_signatures.iter().find(|sig| {
+        let max = sig.type_params.len();
+        let min = sig
+            .type_params
+            .iter()
+            .filter(|tp| tp.default.is_none())
+            .count();
+        type_arg_count >= min && type_arg_count <= max
+    })?;
+    if sig.type_params.is_empty() {
+        return Some(sig.return_type);
+    }
+    // Under-applied within `[min, len]`: fill the unsupplied trailing type
+    // parameters from their defaults (they necessarily have defaults, since the
+    // arity filter admitted the shorter count) and read the instantiated return
+    // type — tsc's `getSignatureInstantiation`. `from_args` resolves the default
+    // chain in declaration order.
+    let substitution = TypeSubstitution::from_args(db, &sig.type_params, &[]);
+    Some(instantiate_type(db, sig.return_type, &substitution))
+}
+
 #[cfg(test)]
 #[path = "../../tests/extended_constructors_tests.rs"]
 mod tests;

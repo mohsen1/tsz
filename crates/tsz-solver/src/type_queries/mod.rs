@@ -94,7 +94,8 @@ pub use extended_constructors::{
     ConstructorCheckKind, ConstructorReturnMergeKind, InstanceTypeKind,
     classify_for_abstract_check, classify_for_base_instance_merge, classify_for_class_decl,
     classify_for_constructor_check, classify_for_constructor_return_merge,
-    classify_for_instance_type, resolve_abstract_constructor_anchor,
+    classify_for_instance_type, get_base_construct_return_type,
+    resolve_abstract_constructor_anchor,
 };
 
 pub use data::*;
