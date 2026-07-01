@@ -49,6 +49,8 @@ mod namespace_class_use_define_es5_tests;
 #[cfg(test)]
 mod private_field_helper_order_tests;
 #[cfg(test)]
+mod private_field_increment_value_position_tests;
+#[cfg(test)]
 mod private_tagged_template_tests;
 
 #[cfg(test)]

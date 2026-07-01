@@ -352,6 +352,97 @@ fn query_cache_caches_object_spread_properties() {
 }
 
 #[test]
+fn object_spread_intersection_preserves_traversal_order_with_overrides() {
+    // Structural rule: spreading intersection members follows member traversal
+    // order for display/cache identity, while shared property types keep the
+    // intersection semantics of the normalized source type.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let first = interner.intern_string("first");
+    let shared = interner.intern_string("shared");
+    let last = interner.intern_string("last");
+
+    let left = db.object(vec![
+        PropertyInfo::new(first, TypeId::STRING),
+        PropertyInfo::new(shared, TypeId::NUMBER),
+    ]);
+    let right = db.object(vec![
+        PropertyInfo::new(shared, TypeId::BOOLEAN),
+        PropertyInfo::new(last, TypeId::NULL),
+    ]);
+    let spread_type = db.intersection(vec![left, right]);
+
+    let props = db.collect_object_spread_properties(spread_type);
+    let names: Vec<_> = props
+        .iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+
+    assert_eq!(names, ["first", "shared", "last"]);
+    let shared_prop = props
+        .iter()
+        .find(|prop| prop.name == shared)
+        .expect("shared property should remain present");
+    assert_eq!(
+        shared_prop.type_id,
+        db.intersect_types_raw2(TypeId::NUMBER, TypeId::BOOLEAN)
+    );
+}
+
+#[test]
+fn object_spread_union_preserves_first_seen_property_order() {
+    // Structural rule: union spread combines properties in first-seen member
+    // order, then marks properties optional when not every non-nullish member
+    // contributes them.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let alpha = interner.intern_string("alpha");
+    let shared = interner.intern_string("shared");
+    let omega = interner.intern_string("omega");
+
+    let left = db.object(vec![
+        PropertyInfo::new(alpha, TypeId::STRING),
+        PropertyInfo::new(shared, TypeId::NUMBER),
+    ]);
+    let right = db.object(vec![
+        PropertyInfo::new(shared, TypeId::BOOLEAN),
+        PropertyInfo::new(omega, TypeId::NULL),
+    ]);
+    let spread_type = db.union(vec![left, right]);
+
+    let props = db.collect_object_spread_properties(spread_type);
+    let names: Vec<_> = props
+        .iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+
+    assert_eq!(names, ["alpha", "shared", "omega"]);
+    let shared_prop = props
+        .iter()
+        .find(|prop| prop.name == shared)
+        .expect("shared property should remain present");
+    assert_eq!(
+        shared_prop.type_id,
+        db.union2(TypeId::NUMBER, TypeId::BOOLEAN)
+    );
+    assert!(!shared_prop.optional);
+    assert!(
+        props
+            .iter()
+            .find(|prop| prop.name == alpha)
+            .expect("alpha property should remain present")
+            .optional
+    );
+    assert!(
+        props
+            .iter()
+            .find(|prop| prop.name == omega)
+            .expect("omega property should remain present")
+            .optional
+    );
+}
+
+#[test]
 fn object_spread_union_sibling_constraints_reenter_shared_constraint() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);

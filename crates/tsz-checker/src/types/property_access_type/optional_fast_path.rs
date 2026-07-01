@@ -57,20 +57,22 @@ impl<'a> CheckerState<'a> {
         let prop_atom = self.ctx.types.intern_string(property_name);
 
         // TOP-LEVEL CACHE: check the dedicated optional_chain_cache first.
-        // This is keyed by (object_type_with_nullish, prop_atom) and stores
-        // the FINAL result including undefined union. On cache hit, we skip
+        // This is keyed by (object_type_with_nullish, prop_atom,
+        // resolver_generation) and stores the FINAL result including undefined
+        // union. On cache hit, we skip
         // split_nullish, resolve_type, contains_type_params, property lookup,
         // and union2, eliminating repeated RefCell borrows and HashMap lookups.
         // Only used when flow narrowing is skipped (skip_result_flow_for_result),
         // which guarantees the result is context-independent.
+        let cache_generation = TypeResolver::resolver_generation(&self.ctx);
         if skip_result_flow_for_result
-            && let Some(&cached) = self
+            && let Some(cached) = self
                 .ctx
                 .flow_shared
                 .narrowing_cache
                 .optional_chain_cache
                 .borrow()
-                .get(&(object_type, prop_atom))
+                .get(&(object_type, prop_atom), cache_generation)
         {
             return Some(cached);
         }
@@ -139,7 +141,7 @@ impl<'a> CheckerState<'a> {
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow_mut()
-                    .insert((object_type, prop_atom), result_type);
+                    .insert((object_type, prop_atom), resolver_generation, result_type);
             }
             return Some(self.finalize_property_access_result(
                 idx,
@@ -223,7 +225,7 @@ impl<'a> CheckerState<'a> {
                         .narrowing_cache
                         .optional_chain_cache
                         .borrow_mut()
-                        .insert((object_type, prop_atom), result_type);
+                        .insert((object_type, prop_atom), resolver_generation, result_type);
                 }
                 if let Some(key) = optional_property_chain_cache_key {
                     self.ctx
@@ -231,7 +233,7 @@ impl<'a> CheckerState<'a> {
                         .narrowing_cache
                         .optional_property_chain_cache
                         .borrow_mut()
-                        .insert(key.clone(), result_type);
+                        .insert(key.clone(), resolver_generation, result_type);
                 }
                 Some(self.finalize_property_access_result(
                     idx,

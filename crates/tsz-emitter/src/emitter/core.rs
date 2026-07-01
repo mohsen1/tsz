@@ -1110,6 +1110,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Resolve the discarded-value context for this node. A statement's
+        // discarded expression propagates to children only through a
+        // parenthesized expression (tsc's `discardedValueVisitor` is
+        // transparent through parentheses only); every other node places its
+        // children in value-used positions, so clear the propagation flag for
+        // the subtree. `value_discarded` records THIS node's own status for the
+        // read-modify-write lowerings, without leaking into its children.
+        let prev_in_statement_expression = self.ctx.flags.in_statement_expression;
+        let prev_value_discarded = self.ctx.flags.value_discarded;
+        self.ctx.flags.value_discarded = prev_in_statement_expression;
+        if prev_in_statement_expression && node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            self.ctx.flags.in_statement_expression = false;
+        }
+
         // Check transform directives first
         let has_transform = !self.transforms.is_empty()
             && Self::kind_may_have_transform(node.kind)
@@ -1125,6 +1139,8 @@ impl<'a> Printer<'a> {
         }
 
         self.pending_source_pos = previous_pending;
+        self.ctx.flags.in_statement_expression = prev_in_statement_expression;
+        self.ctx.flags.value_discarded = prev_value_discarded;
         self.emit_recursion_depth -= 1;
     }
 

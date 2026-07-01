@@ -48,11 +48,11 @@ fn narrowing_cache_statistics_report_entries_and_size() {
     cache
         .optional_chain_cache
         .borrow_mut()
-        .insert((TypeId::STRING, prop), TypeId::BOOLEAN);
+        .insert((TypeId::STRING, prop), 7, TypeId::BOOLEAN);
     cache
         .optional_property_chain_cache
         .borrow_mut()
-        .insert(chain_key, TypeId::BOOLEAN);
+        .insert(chain_key, 7, TypeId::BOOLEAN);
     cache
         .contextual_resolve_cache
         .borrow_mut()
@@ -92,6 +92,12 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     let prop = db.intern_string("prop");
     let cache = NarrowingCache::new();
     let property_key = (TypeId::STRING, prop);
+    let chain_key = OptionalPropertyChainKey {
+        root_type: TypeId::STRING,
+        properties: vec![prop],
+        optional_mask: 1,
+        no_unchecked_indexed_access: false,
+    };
     let request_key =
         NarrowingRequest::new(TypeId::STRING, TypeGuard::Truthy, GuardSense::Positive)
             .stable_cache_key(NarrowingOptions::new());
@@ -110,6 +116,15 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
             .required_property_cache
             .borrow_mut()
             .insert(property_key, generation, true);
+        cache
+            .optional_chain_cache
+            .borrow_mut()
+            .insert(property_key, generation, TypeId::BOOLEAN);
+        cache.optional_property_chain_cache.borrow_mut().insert(
+            chain_key.clone(),
+            generation,
+            TypeId::NUMBER,
+        );
         cache.narrow_type_cache.borrow_mut().insert(
             request_key.clone(),
             generation,
@@ -130,7 +145,7 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     }
 
     let stats = cache.cache_statistics();
-    assert_eq!(stats.generation_stamped_cache_keys, 6);
+    assert_eq!(stats.generation_stamped_cache_keys, 8);
     assert_eq!(
         stats.max_generation_slots_per_cache_key,
         MAX_GENERATIONS_PER_NARROWING_KEY
@@ -141,6 +156,14 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     );
     assert_eq!(
         stats.required_property_cache_entries,
+        MAX_GENERATIONS_PER_NARROWING_KEY
+    );
+    assert_eq!(
+        stats.optional_chain_cache_entries,
+        MAX_GENERATIONS_PER_NARROWING_KEY
+    );
+    assert_eq!(
+        stats.optional_property_chain_cache_entries,
         MAX_GENERATIONS_PER_NARROWING_KEY
     );
     assert_eq!(
@@ -165,10 +188,78 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
         cache.property_cache.borrow().get(&property_key, 7),
         Some(Some(CachedPropertyType::explicit(TypeId::BOOLEAN)))
     );
+    assert_eq!(
+        cache.optional_chain_cache.borrow().get(&property_key, 1),
+        None
+    );
+    assert_eq!(
+        cache.optional_chain_cache.borrow().get(&property_key, 7),
+        Some(TypeId::BOOLEAN)
+    );
+    assert_eq!(
+        cache
+            .optional_property_chain_cache
+            .borrow()
+            .get(&chain_key, 1),
+        None
+    );
+    assert_eq!(
+        cache
+            .optional_property_chain_cache
+            .borrow()
+            .get(&chain_key, 7),
+        Some(TypeId::NUMBER)
+    );
     assert_eq!(cache.narrow_type_cache.borrow().get(&request_key, 1), None);
     assert_eq!(
         cache.narrow_type_cache.borrow().get(&request_key, 7),
         Some(TypeId::STRING)
+    );
+}
+
+#[test]
+fn optional_chain_caches_serve_only_matching_resolver_generation() {
+    let db = TypeInterner::new();
+    let prop = db.intern_string("prop");
+    let property_key = (TypeId::STRING, prop);
+    let chain_key = OptionalPropertyChainKey {
+        root_type: TypeId::STRING,
+        properties: vec![prop],
+        optional_mask: 1,
+        no_unchecked_indexed_access: false,
+    };
+    let cache = NarrowingCache::new();
+
+    cache
+        .optional_chain_cache
+        .borrow_mut()
+        .insert(property_key, 3, TypeId::BOOLEAN);
+    cache
+        .optional_property_chain_cache
+        .borrow_mut()
+        .insert(chain_key.clone(), 3, TypeId::NUMBER);
+
+    assert_eq!(
+        cache.optional_chain_cache.borrow().get(&property_key, 3),
+        Some(TypeId::BOOLEAN)
+    );
+    assert_eq!(
+        cache.optional_chain_cache.borrow().get(&property_key, 4),
+        None
+    );
+    assert_eq!(
+        cache
+            .optional_property_chain_cache
+            .borrow()
+            .get(&chain_key, 3),
+        Some(TypeId::NUMBER)
+    );
+    assert_eq!(
+        cache
+            .optional_property_chain_cache
+            .borrow()
+            .get(&chain_key, 4),
+        None
     );
 }
 
