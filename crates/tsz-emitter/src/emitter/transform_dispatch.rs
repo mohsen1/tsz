@@ -130,6 +130,21 @@ impl<'a> Printer<'a> {
                     None
                 };
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
+                // Hand off a deferred ESM `export { X };` for a top-level
+                // `export class` so the ES5 emitter places it right after the
+                // class IIFE and before the deferred `WeakMap` storage inits
+                // (matching tsc and the CommonJS `exports.X = X;` handoff below).
+                if self
+                    .pending_esm_class_export_name
+                    .as_ref()
+                    .is_some_and(|(class_idx, _)| *class_idx == class_node)
+                {
+                    let (_, export_name) = self
+                        .pending_esm_class_export_name
+                        .take()
+                        .expect("pending ESM class export should be present");
+                    es5_emitter.set_pending_esm_class_export_name(export_name);
+                }
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);
                 }

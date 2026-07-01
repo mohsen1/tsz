@@ -51,6 +51,20 @@ impl<'a> Printer<'a> {
                     es5_emitter
                         .set_pending_commonjs_class_export_bindings(local_name, export_names);
                 }
+                // ESM analogue: hand off a deferred `export { X };` so it lands
+                // right after the class IIFE and before the deferred `WeakMap`
+                // storage inits.
+                if self
+                    .pending_esm_class_export_name
+                    .as_ref()
+                    .is_some_and(|(class_idx, _)| *class_idx == *class_node)
+                {
+                    let (_, export_name) = self
+                        .pending_esm_class_export_name
+                        .take()
+                        .expect("pending ESM class export should be present");
+                    es5_emitter.set_pending_esm_class_export_name(export_name);
+                }
                 let es5_output = self.emit_es5_class_output(
                     &mut es5_emitter,
                     *class_node,

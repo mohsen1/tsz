@@ -321,6 +321,7 @@ impl<'a> Printer<'a> {
             pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
+            pending_esm_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
             namespace_iife_param_counter: FxHashMap::default(),
             namespace_prior_exports: FxHashMap::default(),

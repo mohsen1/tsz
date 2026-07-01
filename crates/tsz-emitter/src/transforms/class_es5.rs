@@ -95,6 +95,10 @@ pub struct ClassES5Emitter<'a> {
     /// `export class` lowered to an ES5 IIFE. Emitted right after the IIFE
     /// statement, before trailing computed-property side effects.
     pending_commonjs_class_export_name: Option<(String, Vec<String>)>,
+    /// ESM analogue: `export { X };` for a top-level `export class` lowered to an
+    /// ES5 IIFE. Emitted right after the IIFE and before the deferred `WeakMap`
+    /// storage inits, matching tsc.
+    pending_esm_class_export_name: Option<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -119,6 +123,7 @@ impl<'a> ClassES5Emitter<'a> {
             outer_reserved_for_generator_state: Vec::new(),
             tc39_wrap_output: true,
             pending_commonjs_class_export_name: None,
+            pending_esm_class_export_name: None,
         }
     }
 
@@ -148,6 +153,12 @@ impl<'a> ClassES5Emitter<'a> {
         export_names: Vec<String>,
     ) {
         self.pending_commonjs_class_export_name = Some((local_name, export_names));
+    }
+
+    /// Schedule a deferred ESM `export { <name> };` re-export for a top-level
+    /// `export class` lowered to an ES5 IIFE.
+    pub fn set_pending_esm_class_export_name(&mut self, name: String) {
+        self.pending_esm_class_export_name = Some(name);
     }
 
     pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
@@ -559,6 +570,9 @@ impl<'a> ClassES5Emitter<'a> {
         printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
         if let Some((local_name, export_names)) = self.pending_commonjs_class_export_name.clone() {
             printer.set_pending_commonjs_class_export_bindings(local_name, export_names);
+        }
+        if let Some(export_name) = self.pending_esm_class_export_name.clone() {
+            printer.set_pending_esm_class_export_name(Some(export_name));
         }
         if !self.outer_reserved_for_generator_state.is_empty() {
             printer.set_outer_reserved_for_generator_state(

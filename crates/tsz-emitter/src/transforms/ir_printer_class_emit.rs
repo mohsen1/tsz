@@ -8,6 +8,21 @@ use crate::transforms::ir::{IRMethodName, IRNode};
 use tsz_parser::syntax_kind_ext;
 
 impl<'a> IRPrinter<'a> {
+    /// Emit a staged ESM `export { X };` for a top-level `export class` lowered
+    /// to an ES5 IIFE, on its own line at the current indent. Placed right after
+    /// the class IIFE and before the deferred `WeakMap` storage inits, matching
+    /// tsc (the ESM analogue of the CommonJS `exports.X = X;` above). No-op when
+    /// nothing is staged; consumed by whichever class IR node this class emits.
+    fn emit_pending_esm_class_export(&mut self) {
+        if let Some(export_name) = self.take_pending_esm_class_export_name() {
+            self.write_line();
+            self.write_indent();
+            self.write("export { ");
+            self.write(&export_name);
+            self.write(" };");
+        }
+    }
+
     pub(super) fn emit_es5_class_iife_node(&mut self, node: &IRNode) {
         let IRNode::ES5ClassIIFE {
             name,
@@ -79,6 +94,9 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
         }
+
+        // ESM analogue of the CommonJS export above.
+        self.emit_pending_esm_class_export();
 
         for init in computed_prop_temp_inits {
             self.write_line();
@@ -180,6 +198,10 @@ impl<'a> IRPrinter<'a> {
         self.write(" = ");
         self.emit_es5_class_expression(name, base_class.as_deref(), super_param.as_deref(), body);
         self.write(";");
+
+        // ESM `export { X };` after the class statement, before the deferred
+        // `WeakMap` storage inits (see `emit_pending_esm_class_export`).
+        self.emit_pending_esm_class_export();
 
         for init in computed_prop_temp_inits {
             self.write_line();

@@ -31,6 +31,10 @@ name = "esm_export_star_as_downlevel_tests"
 path = "tests/esm_export_star_as_downlevel_tests.rs"
 
 [[test]]
+name = "esm_export_class_es5_weakmap_order_tests"
+path = "tests/esm_export_class_es5_weakmap_order_tests.rs"
+
+[[test]]
 name = "es2018_object_rest_following_param_tests"
 path = "tests/es2018_object_rest_following_param_tests.rs"
 
