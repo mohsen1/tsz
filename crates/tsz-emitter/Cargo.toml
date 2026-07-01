@@ -159,6 +159,10 @@ name = "cjs_hoisted_var_position_tests"
 path = "tests/cjs_hoisted_var_position_tests.rs"
 
 [[test]]
+name = "cjs_hoisted_func_export_order_tests"
+path = "tests/cjs_hoisted_func_export_order_tests.rs"
+
+[[test]]
 name = "object_literal_recovery_tests"
 path = "tests/object_literal_recovery_tests.rs"
 
