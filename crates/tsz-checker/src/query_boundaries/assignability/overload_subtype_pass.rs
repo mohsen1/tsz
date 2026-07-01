@@ -44,7 +44,7 @@ pub(crate) fn cached_overload_subtype_pass_assignability<
 
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(inputs.db),
-        evaluation_session: None,
+        evaluation_session: inputs.evaluation_session,
         inheritance_graph: Some(inputs.inheritance_graph),
         class_check: None,
     };

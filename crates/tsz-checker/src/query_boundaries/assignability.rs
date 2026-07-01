@@ -29,13 +29,14 @@ fn assignability_policy_and_context<'a>(
     inheritance_graph: &'a InheritanceGraph,
     flags: u16,
     sound_mode: bool,
+    evaluation_session: Option<&'a tsz_solver::evaluation::session::EvaluationSession>,
 ) -> (RelationPolicy, RelationContext<'a>) {
     let policy = relation_policy::from_checker_flags_u16(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
     let context = RelationContext {
         query_db: Some(db),
-        evaluation_session: None,
+        evaluation_session,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
@@ -891,9 +892,15 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::relations::subtype::Ty
         flags,
         inheritance_graph,
         sound_mode,
+        evaluation_session,
     } = *inputs;
-    let (policy, context) =
-        assignability_policy_and_context(db, inheritance_graph, flags, sound_mode);
+    let (policy, context) = assignability_policy_and_context(
+        db,
+        inheritance_graph,
+        flags,
+        sound_mode,
+        evaluation_session,
+    );
     tsz_solver::relations::relation_queries::query_relation_with_overrides(RelationQueryInputs {
         interner: db.as_type_database(),
         resolver,
@@ -958,6 +965,7 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::relations::subtype::Ty
         flags,
         inheritance_graph,
         sound_mode,
+        evaluation_session,
     } = *inputs;
     let policy = relation_policy::from_checker_flags_u16(flags)
         .with_strict_subtype_checking(sound_mode)
@@ -965,7 +973,7 @@ pub(crate) fn is_assignable_no_weak_checks<R: tsz_solver::relations::subtype::Ty
         .with_skip_weak_type_checks(true);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
-        evaluation_session: None,
+        evaluation_session,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
@@ -993,6 +1001,12 @@ pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::relations::subtype
     pub flags: u16,
     pub inheritance_graph: &'a InheritanceGraph,
     pub sound_mode: bool,
+    /// The checker's shared `EvaluationSession`, so relation probes entered
+    /// through this boundary accrue cross-evaluator guard state (conditional
+    /// depth, cross-eval active set, query memo) on the same session as
+    /// evaluation-entered probes instead of the thread-local fallback
+    /// session (issue #14346 split-brain).
+    pub evaluation_session: Option<&'a tsz_solver::evaluation::session::EvaluationSession>,
 }
 
 pub(crate) struct AssignabilityFailureAnalysis {
@@ -1055,6 +1069,7 @@ pub(crate) fn check_assignable_gate_with_overrides<
         inputs.inheritance_graph,
         inputs.flags,
         inputs.sound_mode,
+        inputs.evaluation_session,
     );
     let outcome = query_assignability_with_failure_analysis(RelationQueryInputs {
         interner: inputs.db.as_type_database(),
@@ -1141,16 +1156,33 @@ pub(crate) struct RelationOutcome {
 /// post-processing. The second return value is the raw solver analysis of a
 /// freshly executed non-decision-only pass, for the caller to memoize; it is
 /// `None` on the decision-only path and on memo replays.
+/// The checker-environment slice of a relation execution: everything the
+/// boundary needs besides the request itself. Mirrors
+/// `AssignabilityQueryInputs` for the request-driven `execute_relation` path.
+pub(crate) struct RelationExecutionEnv<'a, R: tsz_solver::relations::subtype::TypeResolver> {
+    pub db: &'a dyn QueryDatabase,
+    pub resolver: &'a R,
+    pub flags: u16,
+    pub inheritance_graph: &'a InheritanceGraph,
+    pub sound_mode: bool,
+    /// See `AssignabilityQueryInputs::evaluation_session` (issue #14346).
+    pub evaluation_session: Option<&'a tsz_solver::evaluation::session::EvaluationSession>,
+}
+
 pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
     request: &RelationRequest,
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    flags: u16,
-    inheritance_graph: &InheritanceGraph,
+    env: &RelationExecutionEnv<'_, R>,
     overrides: &dyn tsz_solver::relations::compat::AssignabilityOverrideProvider,
-    sound_mode: bool,
     precomputed: Option<&CachedAssignabilityAnalysis>,
 ) -> (RelationOutcome, Option<CachedAssignabilityAnalysis>) {
+    let RelationExecutionEnv {
+        db,
+        resolver,
+        flags,
+        inheritance_graph,
+        sound_mode,
+        evaluation_session,
+    } = *env;
     let _span = tracing::debug_span!(
         "execute_relation",
         src = request.source.0,
@@ -1194,8 +1226,13 @@ pub(crate) fn execute_relation<R: tsz_solver::relations::subtype::TypeResolver>(
             // independently configured checkers and could contradict each other
             // (or drop the reason entirely when a checker override forced the
             // failure).
-            let (policy, context) =
-                assignability_policy_and_context(db, inheritance_graph, solver_flags, sound_mode);
+            let (policy, context) = assignability_policy_and_context(
+                db,
+                inheritance_graph,
+                solver_flags,
+                sound_mode,
+                evaluation_session,
+            );
             // The overload subtype pass rides on the typed `any`-propagation mode
             // (not the packed `u16` flags, which are saturated). The mode
             // participates in `RelationPolicy::cache_config`, so pass-1 results
@@ -1777,13 +1814,14 @@ pub(crate) fn check_application_variance_assignability<
         flags,
         inheritance_graph,
         sound_mode,
+        evaluation_session,
     } = *inputs;
     let policy = relation_policy::from_checker_flags_u16(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(db),
-        evaluation_session: None,
+        evaluation_session,
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };

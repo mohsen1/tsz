@@ -638,6 +638,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             };
             if matches!(
                 crate::query_boundaries::assignability::check_application_variance_assignability(
@@ -1270,6 +1271,7 @@ impl<'a> CheckerState<'a> {
             flags,
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
+            evaluation_session: Some(self.ctx.eval_session.as_ref()),
         };
         // Snapshot the unresolved-`Lazy` counter before the relation so
         // `failure_memo_store` can refuse to persist an analysis that compared

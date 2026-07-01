@@ -618,7 +618,7 @@ fn overload_return_base_matches_and_params_cover(
     let policy = relation_policy::from_checker_flags_u16(checker.ctx.pack_relation_flags());
     let context = tsz_solver::relations::relation_queries::RelationContext {
         query_db: Some(checker.ctx.types),
-        evaluation_session: None,
+        evaluation_session: Some(checker.ctx.eval_session.as_ref()),
         inheritance_graph: Some(&checker.ctx.inheritance_graph),
         class_check: None,
     };
