@@ -15,6 +15,8 @@ use tsz_solver::TypeId;
 
 #[path = "access/global_this_keyed.rs"]
 mod global_this_keyed;
+#[path = "access/invalid_target.rs"]
+mod invalid_target;
 #[path = "access/optional_chain.rs"]
 mod optional_chain;
 #[path = "access/symbol_constructor_index.rs"]
@@ -92,6 +94,11 @@ impl<'a> CheckerState<'a> {
         } else {
             index_type_for_access
         };
+
+        if self.optional_chain_invalid_assignment_target_context(idx) {
+            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
+            return TypeId::ANY;
+        }
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall

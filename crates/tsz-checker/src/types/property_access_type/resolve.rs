@@ -56,19 +56,26 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         }
+
+        if self.optional_chain_invalid_assignment_target_context(idx) {
+            let read_request = request.read().normal_origin().contextual_opt(None);
+            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
+            return TypeId::ANY;
+        }
+
         let optional_property_chain_cache_key =
             self.optional_property_chain_cache_key(idx, request);
         let optional_property_chain_cache_generation = TypeResolver::resolver_generation(&self.ctx);
-        if let Some(key) = optional_property_chain_cache_key.as_ref()
-            && let Some(cached) = self
+        if let Some(key) = optional_property_chain_cache_key.as_ref() {
+            let cache = self
                 .ctx
                 .flow_shared
                 .narrowing_cache
                 .optional_property_chain_cache
-                .borrow()
-                .get(key, optional_property_chain_cache_generation)
-        {
-            return cached;
+                .borrow();
+            if let Some(cached) = cache.get(key, optional_property_chain_cache_generation) {
+                return cached;
+            }
         }
 
         if let Some(type_id) = self.partial_object_literal_initializer_property_type(
