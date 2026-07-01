@@ -27,6 +27,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [[test]]
+name = "async_generator_nested_function_context_tests"
+path = "tests/async_generator_nested_function_context_tests.rs"
+
+[[test]]
 name = "esm_export_star_as_downlevel_tests"
 path = "tests/esm_export_star_as_downlevel_tests.rs"
 

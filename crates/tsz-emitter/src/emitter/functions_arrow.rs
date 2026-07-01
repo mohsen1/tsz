@@ -1311,9 +1311,11 @@ impl<'a> Printer<'a> {
             let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            self.ctx.emit_await_as_yield_await = false;
             if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
                 self.ctx.rewrite_arguments_to_arguments_1 = true;
                 self.ctx.arguments_capture_name = Some(capture_name);
@@ -1357,6 +1359,7 @@ impl<'a> Printer<'a> {
                 self.splice_single_line_async_generator_hoists(var_insert_pos);
             }
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
@@ -1390,9 +1393,11 @@ impl<'a> Printer<'a> {
             let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            self.ctx.emit_await_as_yield_await = false;
             self.ctx.rewrite_arguments_to_arguments_1 = true;
             self.ctx.arguments_capture_name = Some(arguments_capture_name);
 
@@ -1440,6 +1445,7 @@ impl<'a> Printer<'a> {
             }
 
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
@@ -1463,9 +1469,11 @@ impl<'a> Printer<'a> {
             let var_insert_pos = self.writer.len();
 
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            self.ctx.emit_await_as_yield_await = false;
             if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
                 self.ctx.rewrite_arguments_to_arguments_1 = true;
                 self.ctx.arguments_capture_name = Some(capture_name);
@@ -1480,6 +1488,7 @@ impl<'a> Printer<'a> {
             }
             self.splice_single_line_async_generator_hoists(var_insert_pos);
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
@@ -1496,9 +1505,11 @@ impl<'a> Printer<'a> {
             self.write(", void 0, void 0, function* () {");
             let var_insert_pos = self.writer.len();
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            self.ctx.emit_await_as_yield_await = false;
             if let Some(capture_name) = enclosing_arguments_capture_name.clone() {
                 self.ctx.rewrite_arguments_to_arguments_1 = true;
                 self.ctx.arguments_capture_name = Some(capture_name);
@@ -1519,6 +1530,7 @@ impl<'a> Printer<'a> {
                 self.splice_single_line_async_generator_hoists(var_insert_pos);
             }
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" })");
@@ -1536,9 +1548,11 @@ impl<'a> Printer<'a> {
 
         // Emit body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
         let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
+        self.ctx.emit_await_as_yield_await = false;
         if let Some(capture_name) = enclosing_arguments_capture_name {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
             self.ctx.arguments_capture_name = Some(capture_name);
@@ -1559,6 +1573,7 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
         self.ctx.arguments_capture_name = saved_arguments_capture_name;
 
@@ -1755,9 +1770,11 @@ impl<'a> Printer<'a> {
         let body_has_for_await = is_block && self.body_contains_for_await(func.body);
 
         let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
         let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         self.ctx.emit_await_as_yield = true;
+        self.ctx.emit_await_as_yield_await = false;
         if let Some(capture_name) = arguments_capture_name.clone() {
             self.ctx.rewrite_arguments_to_arguments_1 = true;
             self.ctx.arguments_capture_name = Some(capture_name);
@@ -1791,6 +1808,7 @@ impl<'a> Printer<'a> {
             self.splice_single_line_async_generator_hoists(var_insert_pos);
         }
         self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
         if emits_arguments_capture {
             self.ctx.arguments_capture_name = arguments_capture_name.clone();

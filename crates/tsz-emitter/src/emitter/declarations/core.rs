@@ -235,6 +235,18 @@ impl<'a> Printer<'a> {
         self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
+        // A nested ordinary function or sync generator establishes its own
+        // async context: `await`/`yield` inside it never inherit the enclosing
+        // async-function (`emit_await_as_yield`) or async-generator
+        // (`emit_await_as_yield_await`) lowering mode. Without this reset, a
+        // sync `function*`'s `yield* x` nested in a down-leveled async generator
+        // would wrongly lower to the `__await(yield* __asyncDelegator(...))`
+        // form. The async-lowering emit paths take earlier early-returns and
+        // set these flags for their own bodies, so they are unaffected.
+        let prev_emit_await_as_yield = self.ctx.emit_await_as_yield;
+        let prev_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
+        self.ctx.emit_await_as_yield = false;
+        self.ctx.emit_await_as_yield_await = false;
         let prev_arguments_capture_name = self.ctx.arguments_capture_name.take();
         let prev_async_generator_shadowed_parameter_names =
             std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
@@ -259,6 +271,8 @@ impl<'a> Printer<'a> {
         self.ctx.arguments_capture_name = prev_arguments_capture_name;
         self.ctx.async_generator_shadowed_parameter_names =
             prev_async_generator_shadowed_parameter_names;
+        self.ctx.emit_await_as_yield = prev_emit_await_as_yield;
+        self.ctx.emit_await_as_yield_await = prev_emit_await_as_yield_await;
         self.ctx.flags.in_generator = prev_in_generator;
         if let Some(previous) = previous_new_target_capture {
             self.restore_new_target_capture(previous);
