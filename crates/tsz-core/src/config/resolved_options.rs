@@ -204,6 +204,25 @@ pub const fn default_module_kind_for_target(
     }
 }
 
+/// Resolve the default `module` kind when it is not explicitly set, matching
+/// tsc: `moduleResolution` `node16`/`nodenext` imply the matching module kind,
+/// otherwise the module is derived from the effective target
+/// (`default_module_kind_for_target`). This is the single source of truth shared
+/// by both the tsconfig resolution and the CLI-override paths so a `--target` or
+/// `--moduleResolution` override recomputes the same default.
+#[must_use]
+pub const fn derive_default_module_kind(
+    target: ScriptTarget,
+    target_explicitly_set: bool,
+    module_resolution: Option<ModuleResolutionKind>,
+) -> ModuleKind {
+    match module_resolution {
+        Some(ModuleResolutionKind::Node16) => ModuleKind::Node16,
+        Some(ModuleResolutionKind::NodeNext) => ModuleKind::NodeNext,
+        _ => default_module_kind_for_target(target, target_explicitly_set),
+    }
+}
+
 /// Default `moduleResolution` used when it is omitted for a module kind.
 #[must_use]
 pub const fn default_module_resolution_for_module(module: ModuleKind) -> ModuleResolutionKind {
@@ -389,19 +408,6 @@ pub fn resolve_compiler_options(
     }
     resolved.checker.target = checker_target_from_emitter(resolved.printer.target);
 
-    let module_explicitly_set = options.module.is_some();
-    if let Some(module) = options.module.as_deref() {
-        let kind = parse_module_kind(module)?;
-        resolved.printer.module = kind;
-        resolved.checker.module = kind;
-    } else {
-        let default_module =
-            default_module_kind_for_target(resolved.printer.target, options.target.is_some());
-        resolved.printer.module = default_module;
-        resolved.checker.module = default_module;
-    }
-    resolved.checker.module_explicitly_set = module_explicitly_set;
-
     if let Some(module_resolution) = options.module_resolution.as_deref() {
         let value = module_resolution.trim();
         if !value.is_empty() {
@@ -409,19 +415,23 @@ pub fn resolve_compiler_options(
         }
     }
 
-    // When module is not explicitly set, infer it from moduleResolution (matches tsc behavior).
-    // tsc infers module: node16 when moduleResolution: node16, etc.
-    if !module_explicitly_set && let Some(mr) = resolved.module_resolution {
-        let inferred = match mr {
-            ModuleResolutionKind::Node16 => Some(ModuleKind::Node16),
-            ModuleResolutionKind::NodeNext => Some(ModuleKind::NodeNext),
-            _ => None,
-        };
-        if let Some(kind) = inferred {
-            resolved.printer.module = kind;
-            resolved.checker.module = kind;
-        }
+    let module_explicitly_set = options.module.is_some();
+    if let Some(module) = options.module.as_deref() {
+        let kind = parse_module_kind(module)?;
+        resolved.printer.module = kind;
+        resolved.checker.module = kind;
+    } else {
+        // No explicit module: derive it from moduleResolution (node16/nodenext)
+        // or the effective target (matches tsc's `getEmitModuleKind`).
+        let default_module = derive_default_module_kind(
+            resolved.printer.target,
+            options.target.is_some(),
+            resolved.module_resolution,
+        );
+        resolved.printer.module = default_module;
+        resolved.checker.module = default_module;
     }
+    resolved.checker.module_explicitly_set = module_explicitly_set;
     let effective_resolution = resolved.effective_module_resolution();
     // TS2792 remains tied to Classic resolution sites in conformance. Keep the
     // downstream checker/resolver flag derived from the computed effective

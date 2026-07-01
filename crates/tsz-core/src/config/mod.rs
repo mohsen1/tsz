@@ -38,7 +38,7 @@ pub use parse::{ParsedTsConfig, parse_tsconfig, parse_tsconfig_with_diagnostics}
 pub use resolved_options::{
     JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions,
     default_module_detection_for_module, default_module_kind_for_target,
-    default_module_resolution_for_module, resolve_compiler_options,
+    default_module_resolution_for_module, derive_default_module_kind, resolve_compiler_options,
 };
 
 /// Custom deserializer for boolean options that accepts both bool and string values.

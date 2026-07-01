@@ -496,6 +496,88 @@ fn test_cli_module_resolution_preserves_config_package_json_resolution_false() {
     assert!(!options.resolve_package_json_imports);
 }
 
+/// A CLI `--target es5` with no explicit `--module` must default `module` to
+/// CommonJS, matching tsc (`getEmitModuleKind`: an unspecified module resolves
+/// to CommonJS for a target below ES2015). Regression: the CLI override path
+/// applied `--target` after the config-level module default was computed, so it
+/// kept the ambient ES module default and emitted invalid `export` syntax at an
+/// ES5 target.
+#[test]
+fn test_cli_target_es5_defaults_module_to_commonjs() {
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es5"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(options.printer.module, ModuleKind::CommonJS);
+    assert_eq!(options.checker.module, ModuleKind::CommonJS);
+    assert!(!options.checker.module_explicitly_set);
+}
+
+/// Adjacent: a CLI `--target es2022` with no `--module` keeps the target's ES
+/// module kind (not CommonJS), so ES module emit is preserved for modern
+/// targets.
+#[test]
+fn test_cli_target_es2022_defaults_module_to_es_module() {
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es2022"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(options.printer.module, ModuleKind::ES2022);
+    assert_eq!(options.checker.module, ModuleKind::ES2022);
+}
+
+/// An explicit CLI `--module` always wins over the target-derived default: even
+/// at `--target es5`, `--module esnext` keeps ES module emit.
+#[test]
+fn test_cli_explicit_module_wins_over_target_default() {
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es5", "--module", "esnext"])
+        .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(options.printer.module, ModuleKind::ESNext);
+    assert!(options.checker.module_explicitly_set);
+}
+
+/// A `module` set explicitly in the tsconfig must survive a CLI `--target`
+/// override that changes the target-derived default: `--target es5` over a
+/// config `module: esnext` keeps ES module emit.
+#[test]
+fn test_cli_target_es5_preserves_explicit_config_module() {
+    let args = CliArgs::try_parse_from(["tsz", "--target", "es5"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    options.printer.module = ModuleKind::ESNext;
+    options.checker.module = ModuleKind::ESNext;
+    // Mirrors the config-level resolution marking module as explicitly set.
+    options.checker.module_explicitly_set = true;
+    let config_options = CompilerOptions {
+        module: Some("esnext".to_string()),
+        ..Default::default()
+    };
+    super::apply_cli_overrides_with_config_options(&mut options, &args, Some(&config_options))
+        .expect("apply overrides");
+
+    assert_eq!(
+        options.printer.module,
+        ModuleKind::ESNext,
+        "an explicit config module must survive a CLI --target override"
+    );
+}
+
+/// A CLI `--moduleResolution node16` with no explicit `--module` implies
+/// `module: node16` (mirrors tsc and the config-level resolution), independent
+/// of target.
+#[test]
+fn test_cli_module_resolution_node16_implies_module_node16() {
+    let args =
+        CliArgs::try_parse_from(["tsz", "--moduleResolution", "node16"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+
+    assert_eq!(options.printer.module, ModuleKind::Node16);
+    assert_eq!(options.checker.module, ModuleKind::Node16);
+}
+
 /// `--strict false` on the command line must override `strict: true` from
 /// `tsconfig.json`. `preprocess_args` forwards the explicit-false intent
 /// through the hidden `--__explicitly-disabled-bool-flag` side-channel; this
