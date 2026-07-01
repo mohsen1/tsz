@@ -128,6 +128,73 @@ fn array_nested_single_binding_inlines_alongside_object_rest_sibling() {
 }
 
 #[test]
+fn object_nested_single_with_intermediate_default_captures_leaf_default_once() {
+    // Repro for #14766: a single top-level nested element with an intermediate
+    // default (`{ ... } = {}`) and a defaulted leaf, sourced from a
+    // NON-identifier expression (a call). tsc captures the leaf member access in
+    // one temp before applying the default; tsz used to re-read `.bee` twice, so
+    // a getter with side effects would fire twice.
+    let source = "declare function get(): { a?: { bee?: number } };\n\
+         const { a: { bee = 1 } = {} } = get();\n";
+    let output = parse_lower_emit(source, es5_opts());
+
+    // The leaf `.bee` member access must be read exactly once (into a temp), and
+    // the `=== void 0` default test must reference that temp, never the member
+    // access itself (the double-eval signature `X.bee === void 0 ? 1 : X.bee`).
+    assert!(
+        !output.contains(".bee === void 0"),
+        "The defaulted leaf must test a captured temp, not re-read `.bee`.\n\
+         Output:\n{output}"
+    );
+    assert_eq!(
+        output.matches(".bee").count(),
+        1,
+        "The leaf member access `.bee` must be emitted exactly once.\n\
+         Output:\n{output}"
+    );
+}
+
+#[test]
+fn object_nested_single_with_intermediate_default_object_literal_source_captures_once() {
+    // Same shape as above but sourced from an object literal (also a
+    // non-identifier expression). The leaf default must still capture once.
+    let source = "const { a: { bee = 1 } = {} } = { a: { bee: 5 } };\n";
+    let output = parse_lower_emit(source, es5_opts());
+
+    assert!(
+        !output.contains(".bee === void 0"),
+        "Object-literal source: defaulted leaf must test a captured temp.\n\
+         Output:\n{output}"
+    );
+    assert_eq!(
+        output.matches(".bee").count(),
+        1,
+        "Object-literal source: `.bee` must be emitted exactly once.\n\
+         Output:\n{output}"
+    );
+}
+
+#[test]
+fn object_nested_single_with_intermediate_default_no_leaf_default_reads_once() {
+    // Regression guard for the no-default branch of the same inline path: the
+    // leaf without a default must still be a single inline read (no temp, no
+    // `=== void 0` test on the member access).
+    let source = "declare function get(): { a?: { bee?: number } };\n\
+         const { a: { bee } = {} } = get();\n";
+    let output = parse_lower_emit(source, es5_opts());
+
+    assert!(
+        !output.contains(".bee === void 0"),
+        "A non-defaulted leaf must not gain a `=== void 0` test.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches(".bee").count(),
+        1,
+        "A non-defaulted leaf must read `.bee` exactly once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn multi_element_nested_pattern_keeps_intermediate_temp() {
     // Sanity: a nested pattern with more than one binding still materializes the
     // source once into a temp (`numElements !== 1`) — unchanged behaviour.
