@@ -38,7 +38,11 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation.
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+    evaluate_type_with_request(
+        interner,
+        EvaluationRequest::new(type_id)
+            .with_exact_optional_property_types(interner.exact_optional_property_types()),
+    )
 }
 
 /// Convenience function for full type evaluation with an explicit resolver.

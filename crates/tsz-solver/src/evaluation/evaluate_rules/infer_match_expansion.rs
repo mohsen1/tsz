@@ -303,7 +303,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         session: &EvaluationSession,
     ) -> TypeId {
         let nuia = self.no_unchecked_indexed_access();
-        crate::evaluation::cross_eval_guard::memoized_eval(session, type_id, nuia, || {
+        let exact_optional = self.exact_optional_property_types();
+        let request = crate::evaluation::request::EvaluationRequest::new(type_id)
+            .with_no_unchecked_indexed_access(nuia)
+            .with_exact_optional_property_types(exact_optional);
+        crate::evaluation::cross_eval_guard::memoized_eval(session, request, || {
             let Ok(_entry) = session.enter_infer_match_expansion_depth() else {
                 return EvaluationMemoResult::unstable_complete(type_id);
             };
@@ -312,8 +316,6 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             if let Some(query_db) = self.query_db() {
                 evaluator = evaluator.with_query_db(query_db);
             }
-            let request = crate::evaluation::request::EvaluationRequest::new(type_id)
-                .with_no_unchecked_indexed_access(nuia);
             evaluator.evaluate_request_memo_result(request)
         })
         .unwrap_or(type_id)

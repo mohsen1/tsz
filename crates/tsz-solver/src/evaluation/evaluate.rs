@@ -75,6 +75,7 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     eval_session: Option<&'a EvaluationSession>,
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
     cache: FxHashMap<TypeId, TypeId>,
     /// Unified recursion guard for `TypeId` cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
@@ -304,6 +305,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             eval_session: None,
             resolver,
             no_unchecked_indexed_access: false,
+            exact_optional_property_types: interner.exact_optional_property_types(),
             cache: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::TypeEvaluation,
@@ -580,6 +582,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.no_unchecked_indexed_access = enabled;
     }
 
+    pub fn set_exact_optional_property_types(&mut self, enabled: bool) {
+        if self.exact_optional_property_types != enabled {
+            self.cache.clear();
+            self.tainted.clear();
+        }
+        self.exact_optional_property_types = enabled;
+    }
+
     pub const fn set_max_mapped_keys(&mut self, max_mapped_keys: usize) {
         self.max_mapped_keys = max_mapped_keys;
         // A non-default expansion cap changes where evaluation bails; memo
@@ -630,6 +640,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// evaluator.
     pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
+        self.set_exact_optional_property_types(request.exact_optional_property_types());
         self.request_termination_kind = None;
         self.request_unresolved_def_seen = false;
         let type_id = self.evaluate(request.type_id());
@@ -783,6 +794,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) const fn no_unchecked_indexed_access(&self) -> bool {
         self.no_unchecked_indexed_access
+    }
+
+    /// Check if `exactOptionalPropertyTypes` is enabled.
+    #[inline]
+    pub(crate) const fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types
     }
 
     /// Check if depth limit was exceeded.

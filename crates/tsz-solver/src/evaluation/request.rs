@@ -156,7 +156,9 @@ mod tests {
     use super::{EvaluationCacheKey, EvaluationOptions, EvaluationRequest};
     use crate::construction::TypeInterner;
     use crate::evaluation::evaluate::evaluate_type_with_request;
-    use crate::types::TypeId;
+    use crate::types::{
+        MappedModifier, MappedType, PropertyInfo, TypeData, TypeId, TypeParamInfo, TypeParamOrigin,
+    };
 
     #[test]
     fn default_request_cache_key_disables_no_unchecked_indexed_access() {
@@ -228,5 +230,64 @@ mod tests {
         );
         let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
         assert_eq!(no_unchecked_result, expected);
+    }
+
+    #[test]
+    fn request_routes_exact_optional_property_types_option() {
+        let interner = TypeInterner::new();
+        let prop = interner.intern_string("value");
+        let key_name = interner.intern_string("K");
+        let key_param_info = TypeParamInfo {
+            name: key_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        };
+        let key_param = interner.type_param(key_param_info);
+        let number_or_undefined = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+        let source = interner.object(vec![PropertyInfo::opt(prop, number_or_undefined)]);
+        let mapped = interner.mapped(MappedType {
+            type_param: key_param_info,
+            constraint: interner.keyof(source),
+            name_type: None,
+            template: interner.index_access(source, key_param),
+            optional_modifier: Some(MappedModifier::Remove),
+            readonly_modifier: None,
+        });
+
+        let legacy_result = evaluate_type_with_request(&interner, EvaluationRequest::new(mapped));
+        let exact_result = evaluate_type_with_request(
+            &interner,
+            EvaluationRequest::new(mapped).with_exact_optional_property_types(true),
+        );
+
+        assert_eq!(
+            mapped_property_type(&interner, legacy_result, prop),
+            TypeId::NUMBER,
+            "legacy optional mode strips top-level undefined when -? removes optionality"
+        );
+        assert_eq!(
+            mapped_property_type(&interner, exact_result, prop),
+            number_or_undefined,
+            "exact optional mode preserves explicit undefined under -?"
+        );
+    }
+
+    fn mapped_property_type(
+        interner: &TypeInterner,
+        object: TypeId,
+        prop: tsz_common::Atom,
+    ) -> TypeId {
+        let Some(TypeData::Object(shape_id)) = interner.lookup(object) else {
+            panic!("expected evaluated mapped type to produce an object");
+        };
+        interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .find(|property| property.name == prop)
+            .map(|property| property.type_id)
+            .expect("mapped object should contain requested property")
     }
 }

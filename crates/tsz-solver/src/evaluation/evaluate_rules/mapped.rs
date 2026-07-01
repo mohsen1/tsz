@@ -175,7 +175,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `undefined`. The sibling mapped-array shard uses the same rule for
     /// tuple element mapping.
     pub(super) fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
-        if strip && !self.interner().exact_optional_property_types() {
+        if strip && !self.exact_optional_property_types() {
             crate::narrowing::utils::remove_undefined(self.interner(), ty)
         } else {
             ty

@@ -24,21 +24,21 @@
 //! treats a within-instance cycle), which lets the in-flight expansion — the one
 //! holding the real work — converge and breaks the churn.
 
+use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::session::EvaluationSession;
 use crate::types::TypeId;
 
 /// Look up a memoized fresh-evaluator result for the current top-level query.
 ///
-/// The key includes `no_unchecked_indexed_access` because evaluation results
-/// depend on it (the per-checker `eval_cache` keys on the same flag): a memo
-/// keyed on `TypeId` alone would return a result computed under the wrong mode.
+/// The key includes the index-access option pair because evaluation results
+/// depend on both flags: a memo keyed on `TypeId` alone would return a result
+/// computed under the wrong mode.
 pub(crate) fn query_memo_get(
     session: &EvaluationSession,
-    type_id: TypeId,
-    no_unchecked_indexed_access: bool,
+    key: EvaluationCacheKey,
 ) -> Option<TypeId> {
-    session.query_memo_get(type_id, no_unchecked_indexed_access)
+    session.query_memo_get(key)
 }
 
 /// Record a stable fresh-evaluator result for the current top-level query.
@@ -46,13 +46,8 @@ pub(crate) fn query_memo_get(
 /// Callers must only store results that did not hit a recursion/budget limit
 /// (`TypeEvaluator::recursion_limit_hit`), so an opaque cycle/budget bail is
 /// never cached and reused as if it were the converged answer.
-pub(crate) fn query_memo_put(
-    session: &EvaluationSession,
-    type_id: TypeId,
-    no_unchecked_indexed_access: bool,
-    result: TypeId,
-) {
-    session.query_memo_put(type_id, no_unchecked_indexed_access, result);
+pub(crate) fn query_memo_put(session: &EvaluationSession, key: EvaluationCacheKey, result: TypeId) {
+    session.query_memo_put(key, result);
 }
 
 /// Clear the per-query memo. Invoked when a fresh top-level evaluation query
@@ -76,12 +71,10 @@ pub(crate) fn reset_query_memo(session: &EvaluationSession) {
 /// whose stability decides whether the per-query memo may store it.
 pub(crate) fn memoized_eval(
     session: &EvaluationSession,
-    type_id: TypeId,
-    no_unchecked_indexed_access: bool,
+    request: EvaluationRequest,
     compute: impl FnOnce() -> EvaluationMemoResult,
 ) -> Option<TypeId> {
-    memoized_eval_with_stability(session, type_id, no_unchecked_indexed_access, compute)
-        .map(EvaluationMemoResult::into_type_id)
+    memoized_eval_with_stability(session, request, compute).map(EvaluationMemoResult::into_type_id)
 }
 
 /// Like [`memoized_eval`], but also reports whether the result is *stable*:
@@ -93,25 +86,20 @@ pub(crate) fn memoized_eval(
 /// distinguish a genuinely evaluated answer from a recursion-bail artifact.
 pub(crate) fn memoized_eval_with_stability(
     session: &EvaluationSession,
-    type_id: TypeId,
-    no_unchecked_indexed_access: bool,
+    request: EvaluationRequest,
     compute: impl FnOnce() -> EvaluationMemoResult,
 ) -> Option<EvaluationMemoResult> {
-    if let Some(cached) = query_memo_get(session, type_id, no_unchecked_indexed_access) {
+    let key = request.cache_key();
+    if let Some(cached) = query_memo_get(session, key) {
         return Some(EvaluationMemoResult::cached(cached));
     }
-    let _cross = match CrossEvalExpansionGuard::enter(session, type_id) {
+    let _cross = match CrossEvalExpansionGuard::enter(session, request.type_id()) {
         CrossEvalExpansionState::Entered(guard) => guard,
         CrossEvalExpansionState::AlreadyActive => return None,
     };
     let memo_result = compute();
     if memo_result.is_stable_for_per_query_memo() {
-        query_memo_put(
-            session,
-            type_id,
-            no_unchecked_indexed_access,
-            memo_result.type_id(),
-        );
+        query_memo_put(session, key, memo_result.type_id());
     }
     Some(memo_result)
 }
@@ -165,16 +153,26 @@ mod tests {
     use crate::evaluation::result::{EvaluationRequestStability, EvaluationResult};
 
     #[test]
-    fn memo_keys_on_no_unchecked_indexed_access() {
+    fn memo_keys_on_index_access_options() {
         let session = EvaluationSession::new();
         reset_query_memo(&session);
         let t = TypeId(7);
-        query_memo_put(&session, t, false, TypeId(70));
-        query_memo_put(&session, t, true, TypeId(71));
-        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(70)));
-        assert_eq!(query_memo_get(&session, t, true), Some(TypeId(71)));
+        let default_key = EvaluationCacheKey::new(t, false, false);
+        let no_unchecked_key = EvaluationCacheKey::new(t, true, false);
+        let exact_optional_key = EvaluationCacheKey::new(t, false, true);
+        let both_key = EvaluationCacheKey::new(t, true, true);
+        query_memo_put(&session, default_key, TypeId(70));
+        query_memo_put(&session, no_unchecked_key, TypeId(71));
+        query_memo_put(&session, exact_optional_key, TypeId(72));
+        assert_eq!(query_memo_get(&session, default_key), Some(TypeId(70)));
+        assert_eq!(query_memo_get(&session, no_unchecked_key), Some(TypeId(71)));
+        assert_eq!(
+            query_memo_get(&session, exact_optional_key),
+            Some(TypeId(72))
+        );
+        assert_eq!(query_memo_get(&session, both_key), None);
         reset_query_memo(&session);
-        assert_eq!(query_memo_get(&session, t, false), None);
+        assert_eq!(query_memo_get(&session, default_key), None);
     }
 
     #[test]
@@ -183,19 +181,24 @@ mod tests {
         reset_query_memo(&session);
         let t = TypeId(8);
 
-        let first = memoized_eval(&session, t, false, || {
+        let request = EvaluationRequest::new(t);
+
+        let first = memoized_eval(&session, request, || {
             EvaluationMemoResult::unstable_complete(TypeId(80))
         });
 
         assert_eq!(first, Some(TypeId(80)));
-        assert_eq!(query_memo_get(&session, t, false), None);
+        assert_eq!(query_memo_get(&session, request.cache_key()), None);
 
-        let second = memoized_eval(&session, t, false, || {
+        let second = memoized_eval(&session, request, || {
             EvaluationMemoResult::cached(TypeId(81))
         });
 
         assert_eq!(second, Some(TypeId(81)));
-        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(81)));
+        assert_eq!(
+            query_memo_get(&session, request.cache_key()),
+            Some(TypeId(81))
+        );
         reset_query_memo(&session);
     }
 
@@ -204,9 +207,10 @@ mod tests {
         let session = EvaluationSession::new();
         reset_query_memo(&session);
         let t = TypeId(9);
+        let request = EvaluationRequest::new(t);
         let mut calls = 0;
 
-        let first = memoized_eval(&session, t, false, || {
+        let first = memoized_eval(&session, request, || {
             calls += 1;
             EvaluationMemoResult::for_depth_agnostic_memo(
                 EvaluationResult::complete(TypeId(90)),
@@ -215,16 +219,22 @@ mod tests {
         });
 
         assert_eq!(first, Some(TypeId(90)));
-        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(90)));
+        assert_eq!(
+            query_memo_get(&session, request.cache_key()),
+            Some(TypeId(90))
+        );
 
-        let second = memoized_eval(&session, t, false, || {
+        let second = memoized_eval(&session, request, || {
             calls += 1;
             EvaluationMemoResult::cached(TypeId(91))
         });
 
         assert_eq!(second, Some(TypeId(90)));
         assert_eq!(calls, 1);
-        assert_eq!(query_memo_get(&session, t, false), Some(TypeId(90)));
+        assert_eq!(
+            query_memo_get(&session, request.cache_key()),
+            Some(TypeId(90))
+        );
         reset_query_memo(&session);
     }
 

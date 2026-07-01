@@ -1469,7 +1469,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let value_type = self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
         let value_type = if matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
-            && !self.interner().exact_optional_property_types()
+            && !self.exact_optional_property_types()
             && let Some(source) = self.homomorphic_mapped_source_for_index_read(&mapped)
             && self.index_type_can_hit_optional_property(source, substitution_index)
         {
