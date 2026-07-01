@@ -6,9 +6,9 @@
 
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
-    QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance,
-    TypeExtractParamsCache, TypePredicateCache, TypePruneUnionCache, TypeSubstitutionConstruction,
-    TypeTupleLimitSignal, TypeWidenCache,
+    IntersectionMergeCacheEntry, QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache,
+    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
+    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -260,8 +260,10 @@ pub struct QueryCache<'a> {
     /// Cache for intersection-to-merged-object results.
     /// Avoids expensive `collect_properties` calls for the same intersection target
     /// across multiple `SubtypeChecker` instances (common in constraint checking).
+    /// Scoped by resolver generation because lazy member resolution can change
+    /// both successful merges and negative eligibility decisions.
     /// `Some(type_id)` = successfully merged, `None` = not eligible for merging.
-    intersection_merge_cache: RefCell<FxHashMap<TypeId, Option<TypeId>>>,
+    intersection_merge_cache: RefCell<intersection_merge_memo::IntersectionMergeMemo>,
     /// Cross-call cache for `instantiate_type` results, keyed by
     /// `(TypeId, CanonicalSubst, mode_bits, Option<this_type>)`.
     ///
@@ -342,7 +344,9 @@ impl<'a> QueryCache<'a> {
             property_cache: RefCell::new(FxHashMap::default()),
             variance_cache: RefCell::new(FxHashMap::default()),
             canonical_cache: RefCell::new(FxHashMap::default()),
-            intersection_merge_cache: RefCell::new(FxHashMap::default()),
+            intersection_merge_cache: RefCell::new(
+                intersection_merge_memo::IntersectionMergeMemo::default(),
+            ),
             instantiation_cache: InstantiationCache::new(),
             subtype_reduction_cache: SubtypeReductionCache::new(),
             application_eval_cache_stats: SharedCacheCounter::new(),
@@ -438,7 +442,10 @@ impl<'a> QueryCache<'a> {
             property_cache_entries: self.property_cache.borrow().len(),
             variance_cache_entries: self.variance_cache.borrow().len(),
             canonical_cache_entries: self.canonical_cache.borrow().len(),
-            intersection_merge_cache_entries: self.intersection_merge_cache.borrow().len(),
+            intersection_merge_cache_entries: self
+                .intersection_merge_cache
+                .borrow()
+                .total_entries(),
             intersection_merge_cache_hits: self.intersection_merge_cache_stats.hits(),
             intersection_merge_cache_misses: self.intersection_merge_cache_stats.misses(),
             instantiation_cache_entries: self.instantiation_cache.len(),
@@ -1752,12 +1759,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.insert_policy_relation_cache(CachedPolicyRelation::Assignability, key, result);
     }
 
-    fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
+    fn lookup_intersection_merge(
+        &self,
+        intersection_id: TypeId,
+        resolver_generation: u64,
+    ) -> Option<IntersectionMergeCacheEntry> {
         let result = self
             .intersection_merge_cache
             .borrow()
-            .get(&intersection_id)
-            .copied();
+            .get(intersection_id, resolver_generation);
         if result.is_some() {
             self.intersection_merge_cache_stats.record_hit();
         } else {
@@ -1766,10 +1776,17 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn insert_intersection_merge(&self, intersection_id: TypeId, result: Option<TypeId>) {
-        self.intersection_merge_cache
-            .borrow_mut()
-            .insert(intersection_id, result);
+    fn insert_intersection_merge(
+        &self,
+        intersection_id: TypeId,
+        resolver_generation: u64,
+        result: Option<TypeId>,
+    ) {
+        self.intersection_merge_cache.borrow_mut().insert(
+            intersection_id,
+            resolver_generation,
+            result,
+        );
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
@@ -1935,6 +1952,8 @@ mod tests;
 
 #[path = "query_cache_collect_properties_memo.rs"]
 mod collect_properties_memo;
+#[path = "query_cache_intersection_merge_memo.rs"]
+mod intersection_merge_memo;
 
 #[path = "query_cache_application_eval.rs"]
 mod application_eval;

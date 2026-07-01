@@ -29,6 +29,30 @@ use tsz_common::interner::Atom;
 
 pub use crate::caches::display_provenance::TypeDisplayProvenance;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntersectionMergeCacheEntry {
+    Merged(TypeId),
+    NotEligible,
+}
+
+impl IntersectionMergeCacheEntry {
+    #[inline]
+    pub const fn from_result(result: Option<TypeId>) -> Self {
+        match result {
+            Some(type_id) => Self::Merged(type_id),
+            None => Self::NotEligible,
+        }
+    }
+
+    #[inline]
+    pub const fn into_result(self) -> Option<TypeId> {
+        match self {
+            Self::Merged(type_id) => Some(type_id),
+            Self::NotEligible => None,
+        }
+    }
+}
+
 /// Read-only access to interned type storage.
 ///
 /// This is the narrow capability for helpers that only inspect existing
@@ -1853,17 +1877,27 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCa
 
     /// Look up a cached intersection-to-merged-object result.
     /// Used by `build_object_intersection_target` to avoid expensive property
-    /// collection for large intersections that are checked multiple times
-    /// (e.g., `T extends A & B & C & ...` in constraint checking).
+    /// collection for large intersections that are checked multiple times.
+    /// The stamp must come from the resolver used to resolve lazy members.
     /// Returns `None` if not cached.
-    fn lookup_intersection_merge(&self, _intersection_id: TypeId) -> Option<Option<TypeId>> {
+    fn lookup_intersection_merge(
+        &self,
+        _intersection_id: TypeId,
+        _resolver_generation: u64,
+    ) -> Option<IntersectionMergeCacheEntry> {
         None
     }
 
     /// Cache an intersection-to-merged-object result.
     /// `result` is `Some(merged_type_id)` on success, `None` if the intersection
     /// is not eligible for merging (contains callables, non-objects, etc.).
-    fn insert_intersection_merge(&self, _intersection_id: TypeId, _result: Option<TypeId>) {}
+    fn insert_intersection_merge(
+        &self,
+        _intersection_id: TypeId,
+        _resolver_generation: u64,
+        _result: Option<TypeId>,
+    ) {
+    }
 
     /// Look up a cached assignability result for the given key.
     /// Returns `None` if the result is not cached.

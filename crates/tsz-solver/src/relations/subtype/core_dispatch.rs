@@ -631,20 +631,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);
+            let resolver_generation = self.resolver.resolver_generation();
 
             // Fast path: check the shared intersection merge cache first to
             // skip the O(N) eligibility scan for repeated constraint checks.
             let cached = self
                 .query_db
-                .and_then(|db| db.lookup_intersection_merge(target));
+                .and_then(|db| db.lookup_intersection_merge(target, resolver_generation));
             let merged_target = if let Some(cached_result) = cached {
-                cached_result
+                cached_result.into_result()
             } else if self.can_use_object_intersection_fast_path(&member_list) {
                 self.build_object_intersection_target(target)
             } else {
                 // Not eligible; cache the negative result to avoid re-scanning.
                 if let Some(db) = self.query_db {
-                    db.insert_intersection_merge(target, None);
+                    db.insert_intersection_merge(target, resolver_generation, None);
                 }
                 None
             };

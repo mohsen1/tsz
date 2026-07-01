@@ -31,12 +31,12 @@
 //! name (per the anti-hardcoding contract).
 
 use crate::classes::inheritance::InheritanceGraph;
-use crate::construction::TypeInterner;
+use crate::construction::{QueryCache, TypeInterner};
 use crate::def::resolver::TypeEnvironment;
 use crate::def::{DefId, DefKind};
 use crate::objects::collect::{PropertyCollectionResult, collect_properties};
 use crate::operations::property::PropertyAccessEvaluator;
-use crate::relations::subtype::SubtypeChecker;
+use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{PropertyInfo, SymbolRef, TypeData, TypeId, TypeParamInfo};
 use tsz_binder::SymbolId;
 
@@ -388,6 +388,81 @@ fn subtype_enforces_inherited_member_on_lazy_heritage_target() {
     assert!(
         !checker.check_subtype(missing_inherited, target).is_true(),
         "source missing the inherited member must be rejected",
+    );
+}
+
+#[test]
+fn target_intersection_merge_cache_recomputes_after_lazy_resolver_generation_change() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let cache = QueryCache::new(&interner);
+    let base = DefId(31_011);
+
+    declare_interface(
+        &mut env,
+        base,
+        object(&interner, &[("old_branch_member", TypeId::STRING)]),
+    );
+
+    let stable_target_members = [
+        "stable_a", "stable_b", "stable_c", "stable_d", "stable_e", "stable_f", "stable_g",
+    ];
+    let target = stable_target_members
+        .iter()
+        .map(|&name| object(&interner, &[(name, TypeId::NUMBER)]))
+        .chain(std::iter::once(interner.lazy(base)))
+        .reduce(|left, right| interner.intersect_types_raw2(left, right))
+        .expect("target intersection has members");
+
+    let source_with_old = object(
+        &interner,
+        &[
+            ("stable_a", TypeId::NUMBER),
+            ("stable_b", TypeId::NUMBER),
+            ("stable_c", TypeId::NUMBER),
+            ("stable_d", TypeId::NUMBER),
+            ("stable_e", TypeId::NUMBER),
+            ("stable_f", TypeId::NUMBER),
+            ("stable_g", TypeId::NUMBER),
+            ("old_branch_member", TypeId::STRING),
+        ],
+    );
+    let source_with_old_again = object(
+        &interner,
+        &[
+            ("stable_a", TypeId::NUMBER),
+            ("stable_b", TypeId::NUMBER),
+            ("stable_c", TypeId::NUMBER),
+            ("stable_d", TypeId::NUMBER),
+            ("stable_e", TypeId::NUMBER),
+            ("stable_f", TypeId::NUMBER),
+            ("stable_g", TypeId::NUMBER),
+            ("old_branch_member", TypeId::STRING),
+            ("extra_marker", TypeId::BOOLEAN),
+        ],
+    );
+
+    let mut first_checker = SubtypeChecker::with_resolver(&interner, &env).with_query_db(&cache);
+    assert!(
+        first_checker
+            .check_subtype(source_with_old, target)
+            .is_true(),
+        "control: initial lazy member is satisfied and populates the merge cache",
+    );
+
+    let generation_before_mutation = env.resolver_generation();
+    env.insert_def(
+        base,
+        object(&interner, &[("fresh_branch_member", TypeId::BOOLEAN)]),
+    );
+    assert!(env.resolver_generation() > generation_before_mutation);
+
+    let mut second_checker = SubtypeChecker::with_resolver(&interner, &env).with_query_db(&cache);
+    assert!(
+        !second_checker
+            .check_subtype(source_with_old_again, target)
+            .is_true(),
+        "the cached merged target must miss after resolver generation changes",
     );
 }
 
