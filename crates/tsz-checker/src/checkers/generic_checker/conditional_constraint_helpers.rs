@@ -15,47 +15,27 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        let cache_key = (type_arg, constraint);
-        if let Some(&cached) = self
-            .ctx
-            .type_reference_validation_caches
-            .conditional_branch_constraint
-            .get(&cache_key)
-        {
-            return cached;
-        }
-
-        // Program-wide success tier: file checkers re-prove the same
-        // conditional-branch pairs for every file that references the same
-        // generic alias. Only successes are shared (see
-        // `SharedConstraintProofCache`).
-        if self.shared_constraint_proof_hit(|s| s.conditional_branch_successes.contains(&cache_key))
-        {
-            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "hit");
-            self.ctx
+        let cache_key = self.generic_constraint_proof_key(type_arg, constraint);
+        if let Some(stamp) = self.assignability_eval_memo_stamp()
+            && let Some(cached) = self
+                .ctx
                 .type_reference_validation_caches
                 .conditional_branch_constraint
-                .insert(cache_key, true);
-            return true;
+                .get(stamp, cache_key)
+        {
+            return cached;
         }
 
         let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.conditional_result_branches_satisfy_constraint_uncached(type_arg, constraint);
-        self.ctx
-            .type_reference_validation_caches
-            .conditional_branch_constraint
-            .insert(cache_key, result);
-        if result {
-            self.publish_shared_constraint_proof(
-                lazy_failures_at_entry,
-                type_arg,
-                constraint,
-                |shared| {
-                    tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "conditional_branch", "publish");
-                    shared.conditional_branch_successes.insert(cache_key);
-                },
-            );
+        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry) {
+            if let Some(stamp) = self.assignability_eval_memo_stamp() {
+                self.ctx
+                    .type_reference_validation_caches
+                    .conditional_branch_constraint
+                    .insert(stamp, cache_key, result);
+            }
         }
         result
     }
@@ -138,45 +118,27 @@ impl<'a> CheckerState<'a> {
         branch: TypeId,
         constraint: TypeId,
     ) -> bool {
-        let cache_key = (branch, constraint);
-        if let Some(&cached) = self
-            .ctx
-            .type_reference_validation_caches
-            .indexed_object_map_branch_constraint
-            .get(&cache_key)
-        {
-            return cached;
-        }
-
-        // Program-wide success tier (see first probe above).
-        if self.shared_constraint_proof_hit(|s| {
-            s.indexed_object_map_branch_successes.contains(&cache_key)
-        }) {
-            tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "hit");
-            self.ctx
+        let cache_key = self.generic_constraint_proof_key(branch, constraint);
+        if let Some(stamp) = self.assignability_eval_memo_stamp()
+            && let Some(cached) = self
+                .ctx
                 .type_reference_validation_caches
                 .indexed_object_map_branch_constraint
-                .insert(cache_key, true);
-            return true;
+                .get(stamp, cache_key)
+        {
+            return cached;
         }
 
         let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.indexed_object_map_branch_satisfies_constraint_uncached(branch, constraint);
-        self.ctx
-            .type_reference_validation_caches
-            .indexed_object_map_branch_constraint
-            .insert(cache_key, result);
-        if result {
-            self.publish_shared_constraint_proof(
-                lazy_failures_at_entry,
-                branch,
-                constraint,
-                |shared| {
-                    tracing::trace!(target: "tsz::shared_constraint_proofs", kind = "indexed_object_map", "publish");
-                    shared.indexed_object_map_branch_successes.insert(cache_key);
-                },
-            );
+        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry) {
+            if let Some(stamp) = self.assignability_eval_memo_stamp() {
+                self.ctx
+                    .type_reference_validation_caches
+                    .indexed_object_map_branch_constraint
+                    .insert(stamp, cache_key, result);
+            }
         }
         result
     }
