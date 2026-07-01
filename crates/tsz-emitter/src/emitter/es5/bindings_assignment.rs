@@ -652,7 +652,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !self.ctx.flags.in_statement_expression {
+        if !self.ctx.flags.value_discarded {
             let temp = self.make_unique_name_hoisted_assignment();
             self.write("(");
             self.write(&temp);

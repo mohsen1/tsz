@@ -51,7 +51,7 @@ impl<'a> Printer<'a> {
             return false;
         };
 
-        if !self.ctx.flags.in_statement_expression {
+        if !self.ctx.flags.value_discarded {
             return self.emit_scoped_static_super_value_assignment(&member, operator, right);
         }
 
@@ -95,7 +95,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        if !self.ctx.flags.in_statement_expression {
+        if !self.ctx.flags.value_discarded {
             return self.emit_scoped_static_super_value_update(&member, operator, is_prefix);
         }
 
