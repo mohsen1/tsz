@@ -96,6 +96,10 @@ name = "parallel_sequential_agreement_tests"
 path = "tests/parallel_sequential_agreement_tests.rs"
 
 [[test]]
+name = "evaluator_cache_agreement_tests"
+path = "tests/evaluator_cache_agreement_tests.rs"
+
+[[test]]
 name = "delete_inherited_optional_heritage_tests"
 path = "tests/delete_inherited_optional_heritage_tests.rs"
 
