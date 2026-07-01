@@ -476,6 +476,9 @@ path = "tests/awaited_generic_application_fold_tests.rs"
 name = "await_call_identifier_diagnostics_tests"
 path = "tests/await_call_identifier_diagnostics_tests.rs"
 [[test]]
+name = "await_suspension_condition_narrowing_tests"
+path = "tests/await_suspension_condition_narrowing_tests.rs"
+[[test]]
 name = "await_thenable_this_context_tests"
 path = "tests/await_thenable_this_context_tests.rs"
 [[test]]
