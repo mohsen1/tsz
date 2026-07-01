@@ -75,6 +75,8 @@ pub struct EvaluationSession {
     conditional_subtype_depth: Cell<u32>,
     /// Cross-evaluator nesting depth for infer-pattern matching expansion.
     infer_match_expansion_depth: Cell<u32>,
+    /// Checker type-reference alias-forwarding depth.
+    type_reference_resolution_depth: Cell<u32>,
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
@@ -142,6 +144,23 @@ impl Drop for InferMatchExpansionDepthEntry<'_> {
     }
 }
 
+/// RAII entry for one checker type-reference alias-forwarding expansion.
+#[must_use]
+pub struct TypeReferenceResolutionDepthEntry<'a> {
+    session: &'a EvaluationSession,
+}
+
+impl Drop for TypeReferenceResolutionDepthEntry<'_> {
+    fn drop(&mut self) {
+        self.session.type_reference_resolution_depth.set(
+            self.session
+                .type_reference_resolution_depth
+                .get()
+                .saturating_sub(1),
+        );
+    }
+}
+
 impl EvaluationSession {
     /// Create a new session with all counters at zero.
     pub fn new() -> Self {
@@ -151,6 +170,7 @@ impl EvaluationSession {
             lazy_resolution_fuel: Cell::new(0),
             conditional_subtype_depth: Cell::new(0),
             infer_match_expansion_depth: Cell::new(0),
+            type_reference_resolution_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
         }
@@ -281,6 +301,32 @@ impl EvaluationSession {
     #[inline]
     pub(crate) const fn infer_match_expansion_depth(&self) -> u32 {
         self.infer_match_expansion_depth.get()
+    }
+
+    /// Enter one checker type-reference alias-forwarding expansion.
+    #[inline]
+    pub fn enter_type_reference_resolution_depth(
+        &self,
+    ) -> Option<TypeReferenceResolutionDepthEntry<'_>> {
+        let prior_depth = self.type_reference_resolution_depth.get();
+        if prior_depth >= crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH {
+            None
+        } else {
+            self.type_reference_resolution_depth.set(prior_depth + 1);
+            Some(TypeReferenceResolutionDepthEntry { session: self })
+        }
+    }
+
+    /// Current checker type-reference alias-forwarding depth.
+    #[inline]
+    pub const fn type_reference_resolution_depth(&self) -> u32 {
+        self.type_reference_resolution_depth.get()
+    }
+
+    /// Reset checker type-reference alias-forwarding depth for a new file.
+    #[inline]
+    pub fn reset_type_reference_resolution_depth(&self) {
+        self.type_reference_resolution_depth.set(0);
     }
 
     /// Enter cross-evaluator expansion of `type_id`.
@@ -484,5 +530,49 @@ mod tests {
         }
 
         assert_eq!(session.conditional_subtype_depth(), 0);
+    }
+
+    #[test]
+    fn type_reference_resolution_depth_entry_restores_on_drop() {
+        let session = EvaluationSession::new();
+        {
+            let _outer = session
+                .enter_type_reference_resolution_depth()
+                .expect("first type-reference depth entry should fit");
+            assert_eq!(session.type_reference_resolution_depth(), 1);
+            {
+                let _inner = session
+                    .enter_type_reference_resolution_depth()
+                    .expect("nested type-reference depth entry should fit");
+                assert_eq!(session.type_reference_resolution_depth(), 2);
+            }
+            assert_eq!(session.type_reference_resolution_depth(), 1);
+        }
+        assert_eq!(session.type_reference_resolution_depth(), 0);
+    }
+
+    #[test]
+    fn type_reference_resolution_depth_rejects_at_cap_without_mutating_depth() {
+        let session = EvaluationSession::new();
+        let mut entries = Vec::new();
+        for _ in 0..crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH {
+            entries.push(
+                session
+                    .enter_type_reference_resolution_depth()
+                    .expect("pre-cap entry should fit"),
+            );
+        }
+
+        assert_eq!(
+            session.type_reference_resolution_depth(),
+            crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH
+        );
+        assert!(session.enter_type_reference_resolution_depth().is_none());
+        assert_eq!(
+            session.type_reference_resolution_depth(),
+            crate::limits::MAX_TYPE_REFERENCE_RESOLUTION_DEPTH
+        );
+        drop(entries);
+        assert_eq!(session.type_reference_resolution_depth(), 0);
     }
 }

@@ -184,6 +184,52 @@ type Remote = number;
 }
 
 #[test]
+fn type_reference_depth_cap_falls_back_to_own_lazy_reference() {
+    let (arena, binder, _) = parse_and_bind(
+        "entry.ts",
+        r#"
+type AliasThroughWrapper<T> = { value: T };
+"#,
+    );
+    let sym_id = binder
+        .file_locals
+        .get("AliasThroughWrapper")
+        .expect("entry file should bind the local generic alias");
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "entry.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let eval_session = std::rc::Rc::clone(&checker.ctx.eval_session);
+    let mut depth_entries = Vec::new();
+    while let Some(entry) = eval_session.enter_type_reference_resolution_depth() {
+        depth_entries.push(entry);
+    }
+    assert!(
+        eval_session.type_reference_resolution_depth() > 0,
+        "test setup should exhaust the shared type-reference depth cap"
+    );
+
+    let (body, params) = checker.type_reference_symbol_type_with_params(sym_id);
+    let expected_lazy = checker.ctx.create_lazy_type_ref(sym_id);
+    assert_eq!(
+        body, expected_lazy,
+        "depth exhaustion should leave the alias as its own lazy reference"
+    );
+    assert!(
+        params.is_empty(),
+        "depth fallback should not synthesize alias parameters"
+    );
+
+    drop(depth_entries);
+    assert_eq!(eval_session.type_reference_resolution_depth(), 0);
+}
+
+#[test]
 fn def_type_params_fallback_rejects_different_name_symbol_collision() {
     let (target_arena, target_binder, _) = parse_and_bind(
         "target.ts",

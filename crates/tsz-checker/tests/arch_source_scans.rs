@@ -47,3 +47,5 @@ mod relation_routing_residual_arch_tests;
 mod spelling_suggestion_gateway_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
+#[path = "arch_source_scans/type_reference_depth_session_scans.rs"]
+mod type_reference_depth_session_scans;
