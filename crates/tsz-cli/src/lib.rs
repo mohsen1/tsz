@@ -41,6 +41,9 @@ mod cross_file_imported_const_computed_key_identity_tests;
 #[path = "../tests/cross_file_local_callee_symbol_identity_tests.rs"]
 mod cross_file_local_callee_symbol_identity_tests;
 #[cfg(test)]
+#[path = "../tests/cross_module_generic_method_constraint_cli_tests.rs"]
+mod cross_module_generic_method_constraint_cli_tests;
+#[cfg(test)]
 #[path = "../tests/driver_tests.rs"]
 mod driver_tests;
 #[cfg(test)]
