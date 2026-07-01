@@ -946,15 +946,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Async callback bodies are checked through the async-return path, where
-        // the body expression is awaited before comparing against the contextual
-        // return. This call-argument elaborator only sees the callable return
-        // type; drilling into an async expression body here can turn valid
-        // `T | PromiseLike<T>` contexts into false synchronous TS2322s.
-        if func.is_async {
-            return false;
-        }
-
         // Skip elaboration when the expected return type contains unresolved
         // type parameters or inference placeholders. During generic call
         // inference, the expected callback return type may still reference
@@ -1007,6 +998,20 @@ impl<'a> CheckerState<'a> {
         let Some(body_node) = self.ctx.arena.get(func.body) else {
             return false;
         };
+
+        // Async call-argument callbacks are checked through the async-return
+        // path, where the body expression is awaited before comparison. This
+        // generic call-argument elaborator only sees the callable return type;
+        // drilling into an async expression body there can turn valid
+        // `T | PromiseLike<T>` contexts into false synchronous TS2322s.
+        //
+        // Direct assignment/JSDoc contexts still need expression-body
+        // elaboration so `async () => 0` assigned to `function(): string`
+        // reports at the returned `0` like `tsc`. Keep block bodies out of this
+        // path because `tsc` does not drill into those async JSDoc returns.
+        if func.is_async && (!allow_unresolved_holes || body_node.kind == syntax_kind_ext::BLOCK) {
+            return false;
+        }
 
         match body_node.kind {
             // Expression-bodied arrow function: () => ({ ... })
