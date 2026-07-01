@@ -31,7 +31,11 @@ impl<'a> Printer<'a> {
         elements.len()
     }
 
-    fn emit_assignment_target(&mut self, target_idx: NodeIndex) {
+    /// Emit an assignment-target LHS, routing an exported local through the
+    /// CommonJS live-export mirror (`exports.x = x = ...`) and otherwise
+    /// emitting it plainly. Shared by ES5 destructuring lowering and the
+    /// down-leveled `**=` write target.
+    pub(in crate::emitter) fn emit_assignment_target(&mut self, target_idx: NodeIndex) {
         if self.emit_commonjs_live_export_assignment_target(target_idx) {
             return;
         }

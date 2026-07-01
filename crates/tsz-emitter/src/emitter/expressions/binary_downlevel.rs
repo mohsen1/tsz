@@ -135,7 +135,7 @@ impl<'a> Printer<'a> {
         right: NodeIndex,
     ) {
         let Some(left_node) = self.arena.get(original_left) else {
-            self.emit(original_left);
+            self.emit_assignment_target(original_left);
             self.write(" = Math.pow(");
             self.emit(unwrapped_left);
             self.write(", ");
@@ -163,7 +163,7 @@ impl<'a> Printer<'a> {
 
         if !is_element_access && !is_property_access {
             // Simple identifier: `x **= y` → `x = Math.pow(x, y)`
-            self.emit(original_left);
+            self.emit_assignment_target(original_left);
             self.write(" = Math.pow(");
             self.emit(unwrapped_left);
             self.write(", ");
@@ -173,7 +173,7 @@ impl<'a> Printer<'a> {
         }
 
         let Some(access) = self.arena.get_access_expr(left_node) else {
-            self.emit(original_left);
+            self.emit_assignment_target(original_left);
             self.write(" = Math.pow(");
             self.emit(unwrapped_left);
             self.write(", ");
@@ -365,21 +365,21 @@ impl<'a> Printer<'a> {
         if is_and {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" && (");
-            self.emit_expression_for_logical_assignment(binary.left);
+            self.emit_logical_assignment_write_target(left, binary.left);
             self.write(" = ");
             self.emit_expression_for_logical_assignment(binary.right);
             self.write(")");
         } else if binary.operator_token == SyntaxKind::BarBarEqualsToken as u16 {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" || (");
-            self.emit_expression_for_logical_assignment(binary.left);
+            self.emit_logical_assignment_write_target(left, binary.left);
             self.write(" = ");
             self.emit_expression_for_logical_assignment(binary.right);
             self.write(")");
         } else if self.ctx.options.target.supports_es2020() {
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" ?? (");
-            self.emit_expression_for_logical_assignment(binary.left);
+            self.emit_logical_assignment_write_target(left, binary.left);
             self.write(" = ");
             self.emit_expression_for_logical_assignment(binary.right);
             self.write(")");
@@ -390,11 +390,33 @@ impl<'a> Printer<'a> {
             self.write(" !== void 0 ? ");
             self.emit_expression_for_logical_assignment(binary.left);
             self.write(" : (");
-            self.emit_expression_for_logical_assignment(binary.left);
+            self.emit_logical_assignment_write_target(left, binary.left);
             self.write(" = ");
             self.emit_expression_for_logical_assignment(binary.right);
             self.write(")");
         }
+    }
+
+    /// Emit the inner write-target LHS of a lowered logical assignment
+    /// (`&&=` / `||=` / `??=`), threading the write through the CommonJS
+    /// live-export mirror when the target is an exported local. The non-lowered
+    /// assignment path routes the target through
+    /// [`Self::emit_commonjs_live_export_assignment_target`] (producing
+    /// `exports.x = x = ...` for a clause export or `exports.x = ...` for an
+    /// inline export); the lowered expansion must do the same or the exported
+    /// binding is never updated. `unwrapped_left` is the paren-stripped target
+    /// used for the live-export identifier check; `original_left` is the node
+    /// used for the plain fallback so parenthesized/nested forms still emit
+    /// correctly.
+    fn emit_logical_assignment_write_target(
+        &mut self,
+        unwrapped_left: NodeIndex,
+        original_left: NodeIndex,
+    ) {
+        if self.emit_commonjs_live_export_assignment_target(unwrapped_left) {
+            return;
+        }
+        self.emit_expression_for_logical_assignment(original_left);
     }
 
     /// Whether lowering a non-es2020 `??=` with target `left` consumes a hoisted
