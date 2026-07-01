@@ -18,25 +18,28 @@ impl AsyncES5Transformer<'_> {
     ///
     /// Returns the statement list for the wrapper `FunctionExpr` body: an
     /// optional `var arguments_N = arguments;` declaration followed by the
-    /// `__awaiter` call. Unlike ordinary async functions, async arrows keep the
-    /// compact inline-generator callback form (`multiline_callback: false`)
-    /// even when they capture `arguments`; only the outer wrapper picks up the
-    /// extra capture statement.
+    /// `__awaiter` call. Unlike ordinary async functions, async arrows never
+    /// fold an `arguments` capture into the callback shape — the capture goes on
+    /// the outer wrapper — so the callback breaks across lines only for a
+    /// multi-line source body, keeping the compact inline form
+    /// (`multiline_callback: false`) for a single-line one, exactly like the
+    /// async function/expression path. `body_idx` is the arrow's source body
+    /// block, used for that source-line decision.
     pub(crate) fn build_async_arrow_awaiter_body(
         &self,
         this_arg: IRNode,
         generator_body: IRNode,
         hoisted_var_groups: Vec<Vec<String>>,
+        body_idx: NodeIndex,
     ) -> Vec<IRNode> {
         let mut body = Vec::new();
         self.emit_arguments_capture_decl(&mut body);
-        // Preserve the prior behavior for class-member async arrows: hoisted
-        // `var` groups keep the callback body multi-line. Known divergence from
-        // `tsc` (which keeps a single-line source body inline even with hoisted
-        // vars); this path does not receive the body block index, so applying
-        // the source-line rule here needs a signature change — a follow-up kept
-        // out of this zero-regression change.
-        let callback_multiline = !hoisted_var_groups.is_empty();
+        // Key the callback shape on the source-line rule (shared with the async
+        // function/expression path) rather than on hoisted-var presence: `tsc`
+        // keeps a single-line source body's callback inline even when it hoists
+        // `var` groups, and breaks a multi-line body's callback even when it
+        // hoists none.
+        let callback_multiline = !self.body_source_is_single_line(body_idx);
         body.push(IRNode::AwaiterCall {
             this_arg: Box::new(this_arg),
             needs_lexical_this_capture: generator_body.contains_captured_this_reference(),

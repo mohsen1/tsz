@@ -1664,6 +1664,7 @@ impl<'a> AstToIr<'a> {
             this_arg,
             generator_body,
             hoisted_var_groups,
+            arrow.body,
         );
         let is_expression_body = !transformer.state.captures_arguments;
         IRNode::FunctionExpr {

@@ -382,12 +382,12 @@ impl<'a> ES5ClassTransformer<'a> {
             .set(async_transformer.dynamic_import_promise_counter.get());
         let hoisted_var_groups =
             AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
-        // Preserve the prior behavior for async auto-accessor arrows: hoisted
-        // `var` groups keep the callback body multi-line. Known divergence from
-        // `tsc` (which keeps a single-line source body inline even with hoisted
-        // vars); moving to the source-line rule is a follow-up kept out of this
-        // zero-regression change.
-        let callback_multiline = !hoisted_var_groups.is_empty();
+        // `tsc` keeps the `__awaiter` callback body inline for a single-line
+        // source arrow body — even when it hoists `var` groups — and only breaks
+        // it across lines for a multi-line source body, exactly like the async
+        // function/expression path. Key on the source-line shape (`arrow.body`)
+        // rather than on hoisted-var presence.
+        let callback_multiline = !async_transformer.body_source_is_single_line(arrow.body);
 
         Some(IRNode::FunctionExpr {
             name: None,

@@ -690,6 +690,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 .set(async_transformer.dynamic_import_promise_counter.get());
             let hoisted_var_groups =
                 AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+            // `tsc` breaks the `__awaiter` callback across lines for a multi-line
+            // source method body and keeps it inline for a single-line one (even
+            // with hoisted `var` groups), exactly like the async
+            // function/expression path — key on the source-line shape.
+            let callback_multiline = !async_transformer.body_source_is_single_line(body_idx);
             vec![IRNode::AwaiterCall {
                 this_arg: Box::new(IRNode::this()),
                 needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
@@ -697,7 +702,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 hoisted_var_groups,
                 promise_constructor: self
                     .async_method_promise_constructor(method_data.type_annotation),
-                multiline_callback: false,
+                multiline_callback: callback_multiline,
                 directives: Vec::new(),
             }]
         } else if is_async_generator {
@@ -901,6 +906,13 @@ impl<'a> ES5ClassTransformer<'a> {
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
+                        // `tsc` breaks the `__awaiter` callback across lines for a
+                        // multi-line source method body and keeps it inline for a
+                        // single-line one (even with hoisted `var` groups), exactly
+                        // like the async function/expression path — key on the
+                        // source-line shape.
+                        let callback_multiline =
+                            !async_transformer.body_source_is_single_line(method_data.body);
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             needs_lexical_this_capture: generator_body
@@ -909,7 +921,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
-                            multiline_callback: false,
+                            multiline_callback: callback_multiline,
                             directives: Vec::new(),
                         }]
                     } else if is_async_generator {
@@ -1056,6 +1068,13 @@ impl<'a> ES5ClassTransformer<'a> {
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
+                        // `tsc` breaks the `__awaiter` callback across lines for a
+                        // multi-line source method body and keeps it inline for a
+                        // single-line one (even with hoisted `var` groups), exactly
+                        // like the async function/expression path — key on the
+                        // source-line shape.
+                        let callback_multiline =
+                            !async_transformer.body_source_is_single_line(method_data.body);
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
                             needs_lexical_this_capture: generator_body
@@ -1064,7 +1083,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
-                            multiline_callback: false,
+                            multiline_callback: callback_multiline,
                             directives: Vec::new(),
                         }]
                     } else if is_async_generator {
