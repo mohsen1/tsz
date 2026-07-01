@@ -1,3 +1,4 @@
+use crate::evaluation::request::EvaluationRequest;
 use crate::evaluation::session::{EvaluationSession, with_current_session};
 use crate::relations::subtype::{RelationEvaluationResult, SubtypeChecker, TypeResolver};
 use crate::types::TypeId;
@@ -30,7 +31,10 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         if type_id.is_intrinsic() {
             return RelationEvaluationResult::stable(type_id);
         }
-        let cache_key = (type_id, self.no_unchecked_indexed_access);
+        let request = EvaluationRequest::new(type_id)
+            .with_no_unchecked_indexed_access(self.no_unchecked_indexed_access)
+            .with_exact_optional_property_types(self.exact_optional_property_types);
+        let cache_key = request.cache_key();
         if let Some(&cached) = self.eval_cache.get(&cache_key) {
             return cached;
         }
@@ -41,13 +45,10 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             *fuel -= 1;
         }
 
-        let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         let memo_result = if let Some(session) = self.eval_session {
-            self.evaluate_type_with_session(type_id, no_unchecked_indexed_access, session)
+            self.evaluate_type_with_session(request, session)
         } else {
-            with_current_session(|session| {
-                self.evaluate_type_with_session(type_id, no_unchecked_indexed_access, session)
-            })
+            with_current_session(|session| self.evaluate_type_with_session(request, session))
         };
         let Some(memo_result) = memo_result else {
             return RelationEvaluationResult::unstable(type_id);
@@ -59,27 +60,19 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
 
     fn evaluate_type_with_session(
         &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
+        request: EvaluationRequest,
         session: &EvaluationSession,
     ) -> Option<crate::evaluation::result::EvaluationMemoResult> {
         use crate::evaluation::cross_eval_guard;
         use crate::evaluation::evaluate::TypeEvaluator;
 
-        cross_eval_guard::memoized_eval_with_stability(
-            session,
-            type_id,
-            no_unchecked_indexed_access,
-            || {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver)
-                    .with_evaluation_session(session);
-                if let Some(db) = self.query_db {
-                    evaluator = evaluator.with_query_db(db);
-                }
-                let request = crate::evaluation::request::EvaluationRequest::new(type_id)
-                    .with_no_unchecked_indexed_access(no_unchecked_indexed_access);
-                evaluator.evaluate_request_memo_result(request)
-            },
-        )
+        cross_eval_guard::memoized_eval_with_stability(session, request, || {
+            let mut evaluator = TypeEvaluator::with_resolver(self.interner, self.resolver)
+                .with_evaluation_session(session);
+            if let Some(db) = self.query_db {
+                evaluator = evaluator.with_query_db(db);
+            }
+            evaluator.evaluate_request_memo_result(request)
+        })
     }
 }

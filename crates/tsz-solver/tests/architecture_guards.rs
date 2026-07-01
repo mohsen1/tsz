@@ -356,13 +356,17 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && subtype_core_rs.contains("cache_stability: RelationEvaluationStability")
             && !subtype_core_rs.contains("stable_for_depth_agnostic_cache: bool")
             && subtype_core_rs
-                .contains("eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>")
+                .contains("eval_cache: FxHashMap<EvaluationCacheKey, RelationEvaluationResult>")
+            && function_checking_eval_rs.contains("EvaluationRequest::new(type_id)")
+            && function_checking_eval_rs.contains(
+                ".with_exact_optional_property_types(self.exact_optional_property_types)"
+            )
             && function_checking_eval_rs
                 .contains("RelationEvaluationResult::from_depth_agnostic_memo(memo_result)")
             && functions_mod_rs.contains(".is_unstable_unknown()")
             && !functions_mod_rs
                 .contains("evaluate_type_with_stability(ret) == (TypeId::UNKNOWN, false)"),
-        "function-relation evaluation caches must carry stability through RelationEvaluationResult instead of anonymous (TypeId, bool) tuples"
+        "function-relation evaluation caches must key on EvaluationCacheKey and carry stability through RelationEvaluationResult instead of anonymous (TypeId, bool) tuples"
     );
     assert!(
         cross_eval_guard_rs.contains("use crate::evaluation::session::EvaluationSession;")

@@ -54,6 +54,33 @@ fn subtype_checker_cache_statistics_account_for_eval_entries() {
 }
 
 #[test]
+fn subtype_checker_eval_cache_keys_on_exact_optional_property_types() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    checker.exact_optional_property_types = false;
+    assert_eq!(checker.evaluate_type(union), union);
+    assert_eq!(checker.cache_statistics().eval_entries, 1);
+
+    checker.exact_optional_property_types = true;
+    assert_eq!(checker.evaluate_type(union), union);
+    assert_eq!(
+        checker.cache_statistics().eval_entries,
+        2,
+        "flipping exactOptionalPropertyTypes must select a distinct relation eval-cache slot"
+    );
+
+    checker.exact_optional_property_types = false;
+    assert_eq!(checker.evaluate_type(union), union);
+    assert_eq!(
+        checker.cache_statistics().eval_entries,
+        2,
+        "restoring the original option should reuse the original slot"
+    );
+}
+
+#[test]
 fn test_any_top_bottom_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -1801,4 +1828,3 @@ fn test_lazy_type_params_falls_back_from_symbol_based_lazy_ref() {
     let mut checker = SubtypeChecker::with_resolver(&interner, &env);
     assert!(checker.is_subtype_of(symbol_reference, TypeId::STRING));
 }
-

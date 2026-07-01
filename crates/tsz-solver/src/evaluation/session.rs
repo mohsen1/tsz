@@ -9,6 +9,7 @@
 //! via `Rc` across parent/child contexts so counters survive cross-arena
 //! delegation without implicit global state.
 
+use crate::evaluation::request::EvaluationCacheKey;
 use crate::types::TypeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
@@ -71,7 +72,7 @@ pub struct EvaluationSession {
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
-    query_memo: RefCell<FxHashMap<(TypeId, bool), TypeId>>,
+    query_memo: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
 }
 
 /// RAII entry for one conditional-subtype relation probe in an
@@ -260,28 +261,14 @@ impl EvaluationSession {
 
     /// Look up a stable fresh-evaluator result for the current top-level query.
     #[inline]
-    pub(crate) fn query_memo_get(
-        &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        self.query_memo
-            .borrow()
-            .get(&(type_id, no_unchecked_indexed_access))
-            .copied()
+    pub(crate) fn query_memo_get(&self, key: EvaluationCacheKey) -> Option<TypeId> {
+        self.query_memo.borrow().get(&key).copied()
     }
 
     /// Record a stable fresh-evaluator result for the current top-level query.
     #[inline]
-    pub(crate) fn query_memo_put(
-        &self,
-        type_id: TypeId,
-        no_unchecked_indexed_access: bool,
-        result: TypeId,
-    ) {
-        self.query_memo
-            .borrow_mut()
-            .insert((type_id, no_unchecked_indexed_access), result);
+    pub(crate) fn query_memo_put(&self, key: EvaluationCacheKey, result: TypeId) {
+        self.query_memo.borrow_mut().insert(key, result);
     }
 
     /// Clear the per-query fresh-evaluator memo.
@@ -404,19 +391,30 @@ mod tests {
     }
 
     #[test]
-    fn test_query_memo_keys_on_no_unchecked_indexed_access() {
+    fn test_query_memo_keys_on_index_access_options() {
         let session = EvaluationSession::new();
         let type_id = TypeId(202);
+        let default_key = EvaluationCacheKey::new(type_id, false, false);
+        let no_unchecked_key = EvaluationCacheKey::new(type_id, true, false);
+        let exact_optional_key = EvaluationCacheKey::new(type_id, false, true);
+        let both_key = EvaluationCacheKey::new(type_id, true, true);
 
-        session.query_memo_put(type_id, false, TypeId(210));
-        session.query_memo_put(type_id, true, TypeId(211));
+        session.query_memo_put(default_key, TypeId(210));
+        session.query_memo_put(no_unchecked_key, TypeId(211));
+        session.query_memo_put(exact_optional_key, TypeId(212));
 
-        assert_eq!(session.query_memo_get(type_id, false), Some(TypeId(210)));
-        assert_eq!(session.query_memo_get(type_id, true), Some(TypeId(211)));
+        assert_eq!(session.query_memo_get(default_key), Some(TypeId(210)));
+        assert_eq!(session.query_memo_get(no_unchecked_key), Some(TypeId(211)));
+        assert_eq!(
+            session.query_memo_get(exact_optional_key),
+            Some(TypeId(212))
+        );
+        assert_eq!(session.query_memo_get(both_key), None);
 
         session.reset_query_memo();
-        assert_eq!(session.query_memo_get(type_id, false), None);
-        assert_eq!(session.query_memo_get(type_id, true), None);
+        assert_eq!(session.query_memo_get(default_key), None);
+        assert_eq!(session.query_memo_get(no_unchecked_key), None);
+        assert_eq!(session.query_memo_get(exact_optional_key), None);
     }
 
     #[test]

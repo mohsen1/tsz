@@ -17,6 +17,7 @@ use crate::construction::TypeDatabase;
 use crate::def::DefId;
 #[cfg(test)]
 use crate::diagnostics::SubtypeFailureReason;
+use crate::evaluation::request::EvaluationCacheKey;
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::session::EvaluationSession;
 use crate::objects::{PropertyCollectionResult, collect_properties_cached};
@@ -427,11 +428,11 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Cache for `evaluate_type` results within this `SubtypeChecker`'s lifetime.
     /// This prevents O(n²) behavior when the same type (e.g., a large union) is
     /// evaluated multiple times across different subtype checks.
-    /// Key is (`TypeId`, `no_unchecked_indexed_access`) since that flag affects evaluation.
+    /// Key includes the evaluation-sensitive index-access option pair.
     /// Value records the collapsed result plus whether evaluation converged
     /// without tripping a recursion/depth/budget limit (see
     /// `evaluate_type_with_stability`).
-    pub(crate) eval_cache: FxHashMap<(TypeId, bool), RelationEvaluationResult>,
+    pub(crate) eval_cache: FxHashMap<EvaluationCacheKey, RelationEvaluationResult>,
     /// Apparent object shapes for primitive wrapper fallback.
     ///
     /// Primitive structural subtype checks can ask for the same wrapper shape
@@ -843,7 +844,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
         let eval_entries = self.eval_cache.len();
         let estimated_size_bytes = eval_entries
-            .saturating_mul(std::mem::size_of::<((TypeId, bool), (TypeId, bool))>())
+            .saturating_mul(std::mem::size_of::<(
+                EvaluationCacheKey,
+                RelationEvaluationResult,
+            )>())
             .saturating_add(
                 self.local_relation_cache
                     .len()
