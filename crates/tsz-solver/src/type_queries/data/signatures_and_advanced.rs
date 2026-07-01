@@ -12,7 +12,7 @@ use crate::evaluation::evaluate::{TypeEvaluator, evaluate_index_access, evaluate
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
+use crate::types::{CallSignature, ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -772,32 +772,32 @@ fn apparent_type_has_signatures_rec(
     }
 }
 
-/// Get the union of all construct signature return types from a callable shape.
-///
-/// Returns `Some(TypeId)` for the union of all construct signature return types,
-/// or `None` if the shape has no construct signatures. This encapsulates the common
-/// pattern of iterating construct signatures to collect instance types.
+/// Union of the construct signature return types applicable with zero explicit
+/// type arguments (`tsc`'s `getConstructorsForTypeArguments`): only fully
+/// defaulted signatures contribute, so still-generic overloads never leak free
+/// type parameters into the instance type (`Map<any, any> | Map<K, V>` for
+/// `class DraftMap extends Map`, #15248). Generic-only bases fall back to every
+/// signature; `None` when there are no construct signatures. See
+/// `construct_return_union_tests`.
 pub fn get_construct_return_type_union(
     db: &dyn TypeDatabase,
     shape_id: crate::types::CallableShapeId,
 ) -> Option<TypeId> {
     let shape = db.callable_shape(shape_id);
-    if shape.construct_signatures.is_empty() {
-        return None;
-    }
+    let defaulted = |sig: &CallSignature| sig.type_params.iter().all(|p| p.default.is_some());
+    let any_defaulted = shape.construct_signatures.iter().any(defaulted);
     let returns: Vec<TypeId> = shape
         .construct_signatures
         .iter()
+        .filter(|&sig| !any_defaulted || defaulted(sig))
         .map(|sig| sig.return_type)
         .collect();
-    Some(crate::utils::union_or_single(db, returns))
+    (!returns.is_empty()).then(|| crate::utils::union_or_single(db, returns))
 }
 
-/// Get the construct return type from any type (Callable or Function constructor).
-///
-/// For Callable types, returns the union of all construct signature return types.
-/// For Function types marked as constructors, returns the return type.
-/// Returns None for non-constructable types.
+/// Construct return type for any type: the applicable construct-signature union
+/// for a Callable (see `get_construct_return_type_union`), the return type for a
+/// constructor Function, `None` otherwise.
 pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     use crate::type_queries::extended_constructors::InstanceTypeKind;
     match crate::type_queries::classify_for_instance_type(db, type_id) {
