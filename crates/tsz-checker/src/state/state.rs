@@ -69,13 +69,11 @@ thread_local! {
 
 /// Reset the cross-arena delegation depth counter to zero.
 ///
-/// `enter_cross_arena_delegation` / `leave_cross_arena_delegation` are a manual
-/// (non-RAII) enter/leave pair, so a compilation that bails out between them
-/// without unwinding — e.g. the stack-overflow breaker tripping or resolution
-/// fuel running out — can leave the counter non-zero. A leftover depth would
-/// then make `enter_cross_arena_delegation` refuse delegation in an unrelated
-/// later compilation. Reset between independent compilations (batch mode) so a
-/// pathological project cannot poison the next one.
+/// `CrossArenaDelegationGuard` restores depth on normal exits and unwinds, but
+/// this reset keeps row/file boundaries isolated against any future
+/// non-unwinding bailout path or dirty state injected by tests. A leftover
+/// depth would make `enter_cross_arena_delegation` refuse delegation in an
+/// unrelated later compilation.
 pub(crate) fn reset_cross_arena_depth() {
     CROSS_ARENA_DEPTH.with(|c| c.set(0));
     CLASS_HERITAGE_BASE_DEPTH.with(|c| c.set(0));
@@ -117,6 +115,19 @@ pub(crate) fn cross_arena_bailout_epoch_for_test() -> u64 {
 pub struct CheckerState<'a> {
     /// Shared checker context containing all state.
     pub ctx: CheckerContext<'a>,
+}
+
+/// RAII scope for cross-arena delegation depth.
+///
+/// Holding this guard represents one live child-checker delegation frame. Drop
+/// restores the shared depth counter, including early returns and unwinds.
+#[must_use]
+pub(crate) struct CrossArenaDelegationGuard;
+
+impl Drop for CrossArenaDelegationGuard {
+    fn drop(&mut self) {
+        CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
 }
 
 // Re-export from centralized limits — do NOT redefine these here.
@@ -377,18 +388,19 @@ impl<'a> CheckerState<'a> {
     /// Thread-local guard for cross-arena delegation depth.
     /// All cross-arena delegation points (`delegate_cross_arena_symbol_resolution`,
     /// `get_type_params_for_symbol`, `type_of_value_declaration`) MUST call this
-    /// before creating a child `CheckerState`. Returns true if delegation is allowed.
-    pub(crate) fn enter_cross_arena_delegation() -> bool {
+    /// before creating a child `CheckerState`. Returns `None` when delegation is
+    /// refused by the depth cap.
+    pub(crate) fn enter_cross_arena_delegation() -> Option<CrossArenaDelegationGuard> {
         let d = CROSS_ARENA_DEPTH.with(std::cell::Cell::get);
         if d >= 5 {
             // Refused by the depth cap: record the bailout so any enclosing
             // delegation that captured the epoch refuses to persist its
             // (now transiently-incomplete) result.
             Self::mark_cross_arena_bailout();
-            return false;
+            return None;
         }
         CROSS_ARENA_DEPTH.with(|c| c.set(d + 1));
-        true
+        Some(CrossArenaDelegationGuard)
     }
 
     /// Record that a cross-arena delegation was refused by the depth cap.
@@ -401,11 +413,6 @@ impl<'a> CheckerState<'a> {
     /// the result must not be persisted as authoritative.
     pub(crate) fn cross_arena_bailout_epoch() -> u64 {
         CROSS_ARENA_BAILOUT_EPOCH.with(std::cell::Cell::get)
-    }
-
-    /// Decrement the cross-arena delegation depth counter.
-    pub(crate) fn leave_cross_arena_delegation() {
-        CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
     pub(crate) fn is_require_call_bound_identifier(&self, idx: NodeIndex) -> bool {

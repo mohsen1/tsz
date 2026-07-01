@@ -680,11 +680,10 @@ impl<'a> CheckerState<'a> {
                 }
                 // Found class in another file's arena. Create a child checker
                 // with that arena and directly compute the class type.
-                if !Self::enter_cross_arena_delegation() {
+                let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                     return (TypeId::ERROR, Vec::new());
-                }
+                };
                 if !self.ctx.enter_recursion() {
-                    Self::leave_cross_arena_delegation();
                     return (TypeId::ERROR, Vec::new());
                 }
 
@@ -768,7 +767,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.symbol_instance_types.entry_or_insert(k, v);
                 }
 
-                Self::leave_cross_arena_delegation();
+                drop(cross_arena_guard);
                 self.ctx.leave_recursion();
 
                 if result != TypeId::UNKNOWN && result != TypeId::ERROR {

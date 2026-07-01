@@ -23,6 +23,8 @@
 //!   literals or direct interning calls.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
 //!   named checker-owned walk state instead of paired raw visited sets.
+//! - `cross_arena_delegation_scope_scans`: cross-arena delegation depth uses a
+//!   scoped guard instead of manual enter/leave pairs.
 //! - `index_signature_boundary_scans`: production checker index-signature
 //!   queries go through `query_boundaries::index_signature` rather than
 //!   constructing the raw solver resolver at call sites.
@@ -33,6 +35,8 @@ mod class_instance_walk_state_scans;
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
+#[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]
+mod cross_arena_delegation_scope_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/lazy_resolution_session_scans.rs"]

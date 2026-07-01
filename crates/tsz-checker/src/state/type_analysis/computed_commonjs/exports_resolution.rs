@@ -139,9 +139,7 @@ impl<'a> CheckerState<'a> {
             assign.is_export_equals.then_some(assign.expression)
         })?;
 
-        if !Self::enter_cross_arena_delegation() {
-            return None;
-        }
+        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             target_arena.as_ref(),
             target_binder.as_ref(),
@@ -160,7 +158,7 @@ impl<'a> CheckerState<'a> {
         );
 
         let ty = checker.get_type_of_node(expr_idx);
-        Self::leave_cross_arena_delegation();
+        drop(cross_arena_guard);
         self.ctx.merge_symbol_file_targets_from(&checker.ctx);
 
         (ty != TypeId::UNKNOWN && ty != TypeId::ERROR).then_some(ty)
