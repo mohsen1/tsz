@@ -244,6 +244,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let (min_args, max_args) = self.arg_count_bounds(&func.params, &func.type_params);
 
         if arg_types.len() < min_args {
+            if let Some(result) = self.rest_tuple_mismatch_for_too_few_args(
+                &func.params,
+                &func.type_params,
+                arg_types,
+                func.return_type,
+            ) {
+                return result;
+            }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_args,
                 expected_max: max_args,

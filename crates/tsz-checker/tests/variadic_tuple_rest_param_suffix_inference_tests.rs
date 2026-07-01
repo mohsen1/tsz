@@ -16,7 +16,7 @@
 //! deliberately wrong target type MUST raise exactly one `TS2322`. Binder
 //! spellings are varied so the behavior is structural, not name-keyed.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::test_utils::{check_source_code_messages, check_source_codes};
 
 fn assert_no_errors(source: &str, label: &str) {
     let codes = check_source_codes(source);
@@ -224,5 +224,37 @@ const r = f("first", 1, 2, true);
 const ok: [string, [number, number], boolean] = r;
 "#,
         "fixed leading param + [...M, L] rest tuple",
+    );
+}
+
+#[test]
+fn optional_fixed_suffix_reserves_slot_for_element_check() {
+    let diags = check_source_code_messages(
+        r#"
+declare function take<Items extends unknown[] = []>(args: [...Items, number?]): Items;
+const got = take(["head", "tail"]);
+const ok: [string] = got;
+"#,
+    );
+
+    assert_eq!(
+        diags,
+        vec![(
+            2322,
+            "Type 'string' is not assignable to type 'number'.".to_string()
+        )],
+        "optional fixed suffix should report only the element mismatch"
+    );
+}
+
+#[test]
+fn optional_fixed_suffix_valid_element_keeps_variadic_middle() {
+    assert_no_errors(
+        r#"
+declare function take<Items extends unknown[] = []>(args: [...Items, number?]): Items;
+const got = take(["head", 42]);
+const ok: [string] = got;
+"#,
+        "valid optional fixed suffix reserves the trailing slot and infers Items=[string]",
     );
 }

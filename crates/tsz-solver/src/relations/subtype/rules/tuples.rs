@@ -13,7 +13,7 @@ use crate::types::{PropertyInfo, TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
 use crate::visitor::{
     array_element_type, is_type_parameter, object_shape_id, object_with_index_shape_id,
-    tuple_list_id, type_param_info,
+    readonly_inner_type, tuple_list_id, type_param_info,
 };
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -56,6 +56,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && is_type_parameter(self.interner, target[0].type_id)
         {
             return self.check_subtype(source[0].type_id, target[0].type_id);
+        }
+
+        if !target.iter().any(|elem| elem.rest)
+            && let Some(inlined_source) = self.inline_fixed_source_variadic_spreads(source)
+        {
+            return self.check_tuple_subtype(&inlined_source, target);
         }
 
         // Count required elements
@@ -166,7 +172,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             if variadic_is_type_param
                                 && is_type_parameter(self.interner, s_elem.type_id)
                             {
-                                if !self.check_subtype(s_elem.type_id, variadic).is_true() {
+                                if !self
+                                    .check_type_parameter_variadic_spread_subtype(
+                                        s_elem.type_id,
+                                        variadic,
+                                    )
+                                    .is_true()
+                                {
                                     return SubtypeResult::False;
                                 }
                             } else if !self.check_subtype(s_elem.type_id, variadic_array).is_true()
@@ -504,6 +516,96 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ## Examples:
     pub(crate) fn expand_tuple_rest(&self, type_id: TypeId) -> TupleRestExpansion {
         utils::expand_tuple_rest(self.interner, type_id)
+    }
+
+    fn inline_fixed_source_variadic_spreads(
+        &self,
+        source: &[TupleElement],
+    ) -> Option<Vec<TupleElement>> {
+        let mut inlined = Vec::new();
+        let mut changed = false;
+        for elem in source {
+            if !elem.rest {
+                inlined.push(*elem);
+                continue;
+            }
+
+            let fixed = self.fixed_tuple_elements_for_variadic_spread(elem.type_id)?;
+            changed = true;
+            inlined.extend(fixed);
+        }
+        changed.then_some(inlined)
+    }
+
+    fn fixed_tuple_elements_for_variadic_spread(
+        &self,
+        type_id: TypeId,
+    ) -> Option<Vec<TupleElement>> {
+        let mut current = readonly_inner_type(self.interner, type_id).unwrap_or(type_id);
+        for _ in 0..8 {
+            if let Some(list_id) = tuple_list_id(self.interner, current) {
+                let elements = self.interner.tuple_list(list_id);
+                if elements.iter().any(|elem| elem.rest) {
+                    return None;
+                }
+                return Some(elements.to_vec());
+            }
+
+            let info = type_param_info(self.interner, current)?;
+            let constraint = info.constraint?;
+            if constraint == current {
+                return None;
+            }
+            current = readonly_inner_type(self.interner, constraint).unwrap_or(constraint);
+        }
+        None
+    }
+
+    fn check_type_parameter_variadic_spread_subtype(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> SubtypeResult {
+        let Some(source_info) = type_param_info(self.interner, source) else {
+            return self.check_subtype(source, target);
+        };
+        if type_param_info(self.interner, target).is_none() {
+            return self.check_subtype(source, target);
+        }
+
+        if source == target
+            || self.type_param_constraint_chain_contains(source_info.constraint, target)
+        {
+            SubtypeResult::True
+        } else {
+            SubtypeResult::False
+        }
+    }
+
+    fn type_param_constraint_chain_contains(
+        &self,
+        constraint: Option<TypeId>,
+        target: TypeId,
+    ) -> bool {
+        let Some(mut current) = constraint else {
+            return false;
+        };
+        for _ in 0..8 {
+            if current == target {
+                return true;
+            }
+            let Some(info) = type_param_info(self.interner, current) else {
+                return false;
+            };
+            let Some(next) = info.constraint else {
+                return false;
+            };
+            if next == current {
+                return false;
+            }
+            current = next;
+        }
+        false
     }
 
     /// Check if Array<`element_type`> (the interface) is a subtype of the target.

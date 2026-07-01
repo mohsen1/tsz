@@ -978,10 +978,11 @@ impl<'a> CheckerState<'a> {
     /// it with a coincidentally-shaped non-generic type-alias name.
     ///
     /// Used when the operand came from an inline / anonymous composite annotation
-    /// (`const x: { a: number } = …`, `… : { a: number } | { b: string }`): tsc
-    /// spells the alias name only when the reference carried an `aliasSymbol`, so
-    /// an anonymous annotation must render the structural shape. Nominal shapes
-    /// (interfaces / classes) and generic applications keep their names.
+    /// (`const x: { a: number } = …`, `… : { a: number } | { b: string }`,
+    /// or a synthesized rest-argument tuple): tsc spells the alias name only
+    /// when the reference carried an `aliasSymbol`, so an anonymous annotation
+    /// must render the structural shape. Nominal shapes (interfaces / classes)
+    /// and generic applications keep their names.
     pub(crate) fn format_type_for_assignability_message_anonymous_composite_structural(
         &mut self,
         ty: TypeId,
@@ -1088,6 +1089,32 @@ impl<'a> CheckerState<'a> {
             | "void" | "undefined" | "null" | "object" => None,
             _ => Some(name),
         }
+    }
+
+    pub(in crate::error_reporter) fn variadic_tuple_alias_structural_display(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<String> {
+        let evaluated = self.evaluate_type_with_env(ty);
+        if evaluated == TypeId::ERROR {
+            return None;
+        }
+
+        let elements = crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)?;
+        if !elements.iter().any(|element| element.rest) {
+            return None;
+        }
+
+        let other_evaluated = self.evaluate_type_for_assignability(other);
+        if crate::query_boundaries::common::tuple_elements(self.ctx.types, other).is_none()
+            && crate::query_boundaries::common::tuple_elements(self.ctx.types, other_evaluated)
+                .is_none()
+        {
+            return None;
+        }
+
+        Some(self.format_type_for_assignability_message_anonymous_composite_structural(evaluated))
     }
 
     fn format_assignability_type_for_message_internal(

@@ -1111,6 +1111,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // so the signature's type parameters are resolved — no erasure.
             let (min_args, max_args) = self.arg_count_bounds(&instantiated_params, &[]);
             if arg_types.len() < min_args {
+                if let Some(result) = self.rest_tuple_mismatch_for_too_few_args(
+                    &instantiated_params,
+                    &[],
+                    arg_types,
+                    func.return_type,
+                ) {
+                    return result;
+                }
                 return CallResult::ArgumentCountMismatch {
                     expected_min: min_args,
                     expected_max: max_args,

@@ -1463,44 +1463,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let (min_args, max_args) = self.arg_count_bounds(&func.params, &func.type_params);
 
         if arg_types.len() < min_args {
-            // For variadic tuple rest params (e.g. `...args: [...T[], Required]`),
-            // TSC checks assignability of the args-as-tuple against the rest param
-            // type, producing TS2345 instead of TS2555. Detect this case and return
-            // ArgumentTypeMismatch so the checker emits TS2345.
-            if let Some(rest_param) = func.params.last().filter(|p| p.rest) {
-                let rest_type = self.unwrap_readonly(rest_param.type_id);
-                // `...args: never` means any call is invalid — TSC builds an empty
-                // tuple and checks it against `never`, producing TS2345.
-                let should_type_check = if rest_type == TypeId::NEVER {
-                    true
-                } else if let Some(TypeData::Tuple(elements)) = self.interner.lookup(rest_type) {
-                    // A leading rest element makes arity indeterminate (TS2345);
-                    // a fixed element before the first rest keeps min arity
-                    // determinate (TS2555), even for `[a, ...b[], c]`.
-                    let elems = self.interner.tuple_list(elements);
-                    elems.first().is_some_and(|e| e.rest)
-                } else {
-                    false
-                };
-                if should_type_check {
-                    // Build tuple type from actual args
-                    let args_tuple_elems: Vec<TupleElement> = arg_types
-                        .iter()
-                        .map(|&t| TupleElement {
-                            type_id: t,
-                            name: None,
-                            optional: false,
-                            rest: false,
-                        })
-                        .collect();
-                    let args_tuple = self.interner.tuple(args_tuple_elems);
-                    return CallResult::ArgumentTypeMismatch {
-                        index: 0,
-                        expected: rest_type,
-                        actual: args_tuple,
-                        fallback_return: func.return_type,
-                    };
-                }
+            // For open variadic tuple rest params (e.g.
+            // `...args: [...T, Required]`), TSC checks the supplied rest
+            // arguments as a tuple against the rest-param type, producing
+            // TS2345 instead of TS2555.
+            if let Some(result) = self.rest_tuple_mismatch_for_too_few_args(
+                &func.params,
+                &func.type_params,
+                arg_types,
+                func.return_type,
+            ) {
+                return result;
             }
             return CallResult::ArgumentCountMismatch {
                 expected_min: min_args,
