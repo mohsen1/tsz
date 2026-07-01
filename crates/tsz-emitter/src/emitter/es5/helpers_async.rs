@@ -494,9 +494,14 @@ impl<'a> Printer<'a> {
             // `for await...of` downleveling) land inline, matching tsc.
             let var_insert_pos = self.writer.len();
             let saved_yield = self.ctx.emit_await_as_yield;
+            let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
             let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
             let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
             self.ctx.emit_await_as_yield = true;
+            // A non-generator async function lowers `await x` to `yield x`, never
+            // the async-generator `yield __await(x)` form — clear any enclosing
+            // async-generator context so it does not leak into this body.
+            self.ctx.emit_await_as_yield_await = false;
             if body_captures_arguments {
                 self.ctx.rewrite_arguments_to_arguments_1 = true;
                 self.ctx.arguments_capture_name = arguments_capture_name;
@@ -513,6 +518,7 @@ impl<'a> Printer<'a> {
             self.function_scope_depth -= 1;
             self.splice_single_line_async_generator_hoists(var_insert_pos);
             self.ctx.emit_await_as_yield = saved_yield;
+            self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
             self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
             self.ctx.arguments_capture_name = saved_arguments_capture_name;
             self.write(" });");
@@ -541,11 +547,16 @@ impl<'a> Printer<'a> {
 
         // Emit function body with await→yield substitution
         let saved_yield = self.ctx.emit_await_as_yield;
+        let saved_emit_await_as_yield_await = self.ctx.emit_await_as_yield_await;
         let saved_args = self.ctx.rewrite_arguments_to_arguments_1;
         let saved_arguments_capture_name = self.ctx.arguments_capture_name.clone();
         let saved_shadowed_parameter_names =
             std::mem::take(&mut self.ctx.async_generator_shadowed_parameter_names);
         self.ctx.emit_await_as_yield = true;
+        // A non-generator async function lowers `await x` to `yield x`, never
+        // the async-generator `yield __await(x)` form — clear any enclosing
+        // async-generator context so it does not leak into this body.
+        self.ctx.emit_await_as_yield_await = false;
         self.ctx.async_generator_shadowed_parameter_names = if async_shadowed_var_names.is_empty() {
             Vec::new()
         } else {
@@ -606,6 +617,7 @@ impl<'a> Printer<'a> {
         }
         self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield = saved_yield;
+        self.ctx.emit_await_as_yield_await = saved_emit_await_as_yield_await;
         self.ctx.rewrite_arguments_to_arguments_1 = saved_args;
         self.ctx.arguments_capture_name = saved_arguments_capture_name;
         self.ctx.async_generator_shadowed_parameter_names = saved_shadowed_parameter_names;
