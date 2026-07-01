@@ -131,7 +131,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|idx| idx.get(module_name))
             .and_then(|inner| inner.get(import_name))
         {
-            for &(file_idx, sym_id) in entries.iter() {
+            for &(file_idx, sym_id) in entries {
                 if let Some(resolved) = resolve_candidate(sym_id, file_idx) {
                     return Some(resolved);
                 }
