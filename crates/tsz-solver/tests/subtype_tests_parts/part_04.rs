@@ -358,6 +358,59 @@ fn test_generic_function_constraint_directionality() {
 }
 
 #[test]
+fn test_deferred_index_access_distinct_key_guard_respects_alpha_equivalence() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let left_key = interner.fresh_type_param(TypeParamInfo::simple(interner.intern_string("Left")));
+    let right_key =
+        interner.fresh_type_param(TypeParamInfo::simple(interner.intern_string("Right")));
+    let object = interner.object_with_index(ObjectShape {
+        symbol_index: None,
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    assert!(
+        checker.index_accesses_have_distinct_type_param_keys(left_key, right_key),
+        "unpaired deferred keys must stay distinct"
+    );
+
+    checker.type_param_equivalences.push((left_key, right_key));
+    assert!(
+        !checker.index_accesses_have_distinct_type_param_keys(left_key, right_key),
+        "alpha-paired deferred keys are the same logical parameter inside the current relation"
+    );
+
+    let source = interner.index_access(object, left_key);
+    let target = interner.index_access(object, right_key);
+    assert!(
+        checker.is_subtype_of(source, target),
+        "active alpha pairing should relate equivalent deferred indexed accesses"
+    );
+    checker.type_param_equivalences.clear();
+
+    assert!(
+        !checker.is_subtype_of(source, target),
+        "without the alpha frame, distinct deferred keys remain unrelated"
+    );
+    assert!(
+        checker
+            .index_access_distinct_type_param_keys_failure_reason(left_key, right_key)
+            .is_some(),
+        "the mismatch elaboration should still be available for unpaired keys"
+    );
+}
+
+#[test]
 fn test_generic_covariant_return_position() {
     // Producer<T> = { get(): T } - T is in covariant position
     // Producer<string> <: Producer<string | number> (covariant)
@@ -1781,4 +1834,3 @@ fn test_contravariant_multiple_params() {
     assert!(checker.is_subtype_of(fn_wider, fn_narrower));
     assert!(!checker.is_subtype_of(fn_narrower, fn_wider));
 }
-

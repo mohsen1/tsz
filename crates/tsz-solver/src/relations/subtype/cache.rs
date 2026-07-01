@@ -383,7 +383,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //
         // A `this`-bearing pair is shareable once keyed by its resolved binding;
         // without a binding it stays on the instance-local fallback memo.
-        let can_use_shared_relation_cache = !has_this_type || this_binding.is_some();
+        //
+        // Active type-parameter equivalences are relation-local alpha-renaming
+        // state and are not represented in `RelationCacheKey`, so verdicts under
+        // that frame must be recomputed rather than cached or replayed.
+        let has_active_type_param_equivalences = !self.type_param_equivalences.is_empty();
+        let can_use_shared_relation_cache =
+            !has_active_type_param_equivalences && (!has_this_type || this_binding.is_some());
         // The `in_callback_param_check` state is encoded in
         // `RelationFlags::IN_CALLBACK_PARAM_CHECK` via `make_cache_key`, so
         // callback-mode results live in a separate cache slot from
@@ -410,7 +416,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         Some(RelationCacheValue::LimitTrue { .. }) | None => {}
                     }
                 }
-            } else if !self.local_relation_cache.is_empty() {
+            } else if !has_active_type_param_equivalences && !self.local_relation_cache.is_empty() {
                 // Unbindable polymorphic-`this` pair: excluded from the
                 // cross-checker shared cache, but memoizable for this checker
                 // instance's lifetime (issue #13828). The resolver's `this`
@@ -1314,6 +1320,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => return,
         };
         if self.bypass_evaluation
+            || !self.type_param_equivalences.is_empty()
             || self.unresolved_lazy_relation_event_count() != unresolved_lazy_events_at_entry
             || crate::limits::weak_type_sensitivity_count() != weak_sensitivity_at_entry
         {
@@ -1594,6 +1601,7 @@ mod tests {
     use crate::caches::db::QueryDatabase;
     use crate::caches::query_cache::QueryCache;
     use crate::intern::TypeInterner;
+    use crate::types::{IndexSignature, ObjectFlags, ObjectShape, TypeParamInfo};
     use tsz_binder::SymbolId;
 
     #[test]
@@ -1707,6 +1715,59 @@ mod tests {
             db.lookup_subtype_cache(key),
             None,
             "this checker's unresolved Lazy event must keep the frame non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn active_type_param_equivalence_bypasses_relation_cache() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+
+        let left_key =
+            interner.fresh_type_param(TypeParamInfo::simple(interner.intern_string("Left")));
+        let right_key =
+            interner.fresh_type_param(TypeParamInfo::simple(interner.intern_string("Right")));
+        let object = interner.object_with_index(ObjectShape {
+            symbol_index: None,
+            symbol: None,
+            flags: ObjectFlags::empty(),
+            properties: Vec::new(),
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::NUMBER,
+                readonly: false,
+                param_name: None,
+            }),
+            number_index: None,
+        });
+        let source = interner.index_access(object, left_key);
+        let target = interner.index_access(object, right_key);
+        let cache_key = checker.make_cache_key(source, target);
+        db.insert_subtype_cache(cache_key, false);
+
+        checker.type_param_equivalences.push((left_key, right_key));
+        assert!(
+            checker.check_subtype(source, target).is_true(),
+            "active alpha-pairing must recompute instead of replaying a flagless cached false"
+        );
+
+        let lazy_entry = checker.unresolved_lazy_relation_event_count();
+        let weak_entry = crate::limits::weak_type_sensitivity_count();
+        checker.record_definitive_verdict(
+            source,
+            target,
+            SubtypeResult::True,
+            true,
+            lazy_entry,
+            weak_entry,
+        );
+        assert_eq!(
+            db.lookup_subtype_cache(cache_key),
+            Some(false),
+            "alpha-scoped verdicts must not overwrite the ordinary relation cache slot"
         );
         crate::limits::reset_subtype_thread_local_state();
     }

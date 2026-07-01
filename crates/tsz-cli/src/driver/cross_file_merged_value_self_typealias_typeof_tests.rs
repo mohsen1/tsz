@@ -165,3 +165,201 @@ fn marker_assignable_to_string_cross_file() {
         "string marker should be assignable to `string`, got: {diags:?}"
     );
 }
+
+/// fp-ts-style HKT defunctionalization: a concrete instance object assigned to
+/// an interface whose generic method signatures are typed in `Kind2<F, E, _>`
+/// must instantiate `F` through the `typeof URI` value-space literal.
+#[test]
+fn hkt_instance_assignable_through_typeof_uri_tag_project() {
+    let diags = compile_project(&[
+        (
+            "HKT.ts",
+            r#"
+export interface URItoKind2<E, A> {}
+export type URIS2 = keyof URItoKind2<any, any>;
+export type Kind2<F extends URIS2, E, A> = F extends URIS2 ? URItoKind2<E, A>[F] : never;
+export interface Functor2<F extends URIS2> {
+    readonly map: <E, A, B>(fa: Kind2<F, E, A>, f: (a: A) => B) => Kind2<F, E, B>;
+}
+"#,
+        ),
+        (
+            "IOEither.ts",
+            r#"
+import { Functor2, URItoKind2 } from "./HKT";
+declare module "./HKT" {
+    interface URItoKind2<E, A> {
+        readonly IOEither: IOEither<E, A>;
+    }
+}
+export interface IOEither<E, A> { (): E | A }
+export const URI = "IOEither";
+export type URI = typeof URI;
+
+declare const ioMap: <E, A, B>(fa: IOEither<E, A>, f: (a: A) => B) => IOEither<E, B>;
+
+export const Functor: Functor2<URI> = {
+    map: ioMap,
+};
+"#,
+        ),
+    ]);
+    assert_eq!(
+        count_code(&diags, TS2322),
+        0,
+        "HKT instance through `typeof URI` tag should be assignable, got: {diags:?}"
+    );
+}
+
+/// Anti-hardcoding: renamed registry, tag, alias, and member names still obey
+/// the same value-space `typeof` rule.
+#[test]
+fn hkt_instance_assignability_is_binder_name_independent_project() {
+    let diags = compile_project(&[
+        (
+            "registry.ts",
+            r#"
+export interface Slots2<E, A> {}
+export type Tags2 = keyof Slots2<any, any>;
+export type Pick2<G extends Tags2, E, A> = G extends Tags2 ? Slots2<E, A>[G] : never;
+export interface Mapper2<G extends Tags2> {
+    readonly transform: <E, A, B>(fa: Pick2<G, E, A>, f: (a: A) => B) => Pick2<G, E, B>;
+}
+"#,
+        ),
+        (
+            "widget.ts",
+            r#"
+import { Mapper2, Slots2 } from "./registry";
+declare module "./registry" {
+    interface Slots2<E, A> {
+        readonly Widget: Widget<E, A>;
+    }
+}
+export interface Widget<E, A> { (): E | A }
+export const TAG = "Widget";
+export type TAG = typeof TAG;
+
+declare const widgetMap: <E, A, B>(fa: Widget<E, A>, f: (a: A) => B) => Widget<E, B>;
+
+export const Mapper: Mapper2<TAG> = {
+    transform: widgetMap,
+};
+"#,
+        ),
+    ]);
+    assert_eq!(
+        count_code(&diags, TS2322),
+        0,
+        "renamed-binder HKT registry instance should be assignable, got: {diags:?}"
+    );
+}
+
+/// Direct indexed-access lookup: `URItoKind2<E, A>[typeof URI]` must use the
+/// value-space literal key and find the augmented registry member.
+#[test]
+fn typeof_uri_tag_indexes_augmented_registry_member_project() {
+    let diags = compile_project(&[
+        (
+            "HKT.ts",
+            r#"
+export interface URItoKind2<E, A> {}
+"#,
+        ),
+        (
+            "Either.ts",
+            r#"
+import { URItoKind2 } from "./HKT";
+declare module "./HKT" {
+    interface URItoKind2<E, A> {
+        readonly Either: { left: E; right: A };
+    }
+}
+export const URI = "Either";
+export type URI = typeof URI;
+
+export const cell: URItoKind2<string, number>[URI] = { left: "e", right: 1 };
+"#,
+        ),
+    ]);
+    assert_eq!(
+        count_code(&diags, TS2322),
+        0,
+        "augmented member indexed by the `typeof URI` tag should accept the value, got: {diags:?}"
+    );
+}
+
+/// The tag remains its exact literal, not widened to `string`.
+#[test]
+fn typeof_uri_tag_preserves_literal_narrowing_project() {
+    let diags = compile_project(&[(
+        "tag.ts",
+        r#"
+const URI = "IOEither";
+type URI = typeof URI;
+
+export const bad: URI = "Other";
+"#,
+    )]);
+    assert_eq!(
+        count_code(&diags, TS2322),
+        1,
+        "non-matching literal assigned to `type URI = typeof URI` should be rejected, got: {diags:?}"
+    );
+}
+
+/// Negative control: once the HKT tag resolves, return-position mismatch is
+/// still rejected instead of being hidden behind `any`.
+#[test]
+fn hkt_functor2_wrapped_renamed_instance_rejects_incompatible_map_project() {
+    let diags = compile_project(&[
+        (
+            "registry.ts",
+            r#"
+export interface Slots2<Env, Item> {}
+export type Tags2 = keyof Slots2<any, any>;
+export type Select2<Token extends Tags2, Env, Item> =
+    Token extends Tags2 ? Slots2<Env, Item>[Token] : never;
+export type Wrapped2<Token extends Tags2, Env, Item> = {
+    readonly value: Select2<Token, Env, Item>;
+};
+export interface Functor2<Token extends Tags2> {
+    readonly map: <Env, Input, Output>(
+        fa: Wrapped2<Token, Env, Input>,
+        f: (value: Input) => Output,
+    ) => Wrapped2<Token, Env, Output>;
+}
+"#,
+        ),
+        (
+            "packet.ts",
+            r#"
+import { Functor2, Slots2, Wrapped2 } from "./registry";
+declare module "./registry" {
+    interface Slots2<Env, Item> {
+        readonly Packet: Packet<Env, Item>;
+    }
+}
+export interface Packet<Err, Value> {
+    readonly run: () => Err | Value;
+}
+export const TOKEN = "Packet";
+export type TOKEN = typeof TOKEN;
+
+declare const badMap: <Env, Input, Output>(
+    fa: Wrapped2<TOKEN, Env, Input>,
+    f: (value: Input) => Output,
+) => Wrapped2<TOKEN, Env, Input>;
+
+export const badFunctor: Functor2<TOKEN> = {
+    map: badMap,
+};
+"#,
+        ),
+    ]);
+    assert_eq!(
+        count_code(&diags, TS2322),
+        1,
+        "incompatible wrapped HKT map implementation should produce one TS2322, got: {diags:?}"
+    );
+}
