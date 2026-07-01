@@ -136,10 +136,16 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         check: TypeId,
         extends: TypeId,
         no_unchecked_indexed_access: bool,
+        exact_optional_property_types: bool,
     ) -> Option<bool> {
         self.conditional_branch_verdict_cache
             .borrow()
-            .get(&(check, extends, no_unchecked_indexed_access))
+            .get(&(
+                check,
+                extends,
+                no_unchecked_indexed_access,
+                exact_optional_property_types,
+            ))
             .copied()
     }
 
@@ -148,10 +154,17 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
         check: TypeId,
         extends: TypeId,
         no_unchecked_indexed_access: bool,
+        exact_optional_property_types: bool,
         verdict: bool,
     ) {
-        self.conditional_branch_verdict_cache
-            .borrow_mut()
-            .insert((check, extends, no_unchecked_indexed_access), verdict);
+        self.conditional_branch_verdict_cache.borrow_mut().insert(
+            (
+                check,
+                extends,
+                no_unchecked_indexed_access,
+                exact_optional_property_types,
+            ),
+            verdict,
+        );
     }
 }

@@ -120,9 +120,9 @@ impl QueryCacheStatistics {
 
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
         let closed_eval = self.closed_eval_cache_entries * (BUCKET_OVERHEAD + 13);
-        // (TypeId, TypeId, bool) key + bool value ≈ 10 bytes.
+        // (TypeId, TypeId, bool, bool) key + bool value ≈ 12 bytes.
         let conditional_verdict =
-            self.conditional_branch_verdict_cache_entries * (BUCKET_OVERHEAD + 10);
+            self.conditional_branch_verdict_cache_entries * (BUCKET_OVERHEAD + 12);
         let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
         let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
         let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);

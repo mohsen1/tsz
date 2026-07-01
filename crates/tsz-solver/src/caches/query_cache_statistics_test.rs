@@ -72,10 +72,11 @@ fn closed_eval_cache_is_visible_in_statistics_and_size_estimate() {
 fn conditional_branch_verdict_cache_round_trips_and_is_key_partitioned() {
     // Structural rule (issues #8356 / #13097): the conditional-branch verdict
     // cache is a per-`QueryCache` map keyed by
-    // `(check, extends, no_unchecked_indexed_access)`. It stores `bool`
-    // verdicts (a distinct relation from plain subtyping), is partitioned by
-    // the `no_unchecked_indexed_access` flag, and is cleared with the rest of
-    // the query cache. Raw-interner backends opt out (default `None`/no-op).
+    // `(check, extends, no_unchecked_indexed_access,
+    // exact_optional_property_types)`. It stores `bool` verdicts (a distinct
+    // relation from plain subtyping), is partitioned by both option flags, and
+    // is cleared with the rest of the query cache. Raw-interner backends opt
+    // out (default `None`/no-op).
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
     let before = db.statistics();
@@ -83,14 +84,14 @@ fn conditional_branch_verdict_cache_round_trips_and_is_key_partitioned() {
 
     // Miss on an empty cache.
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false),
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
         None
     );
 
     // Round-trip a `true` verdict.
-    db.insert_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true);
+    db.insert_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false, true);
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false),
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
         Some(true)
     );
 
@@ -103,19 +104,36 @@ fn conditional_branch_verdict_cache_round_trips_and_is_key_partitioned() {
     // The `no_unchecked_indexed_access` flag partitions the key: the same
     // type pair under the other flag value is a distinct, still-empty slot.
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, true),
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, true, false),
         None
+    );
+    // `exactOptionalPropertyTypes` also partitions the key. A branch probe can
+    // depend on mapped/indexed access semantics that distinguish optional
+    // markers from explicit `| undefined`, so reusing the same pair across
+    // exact-optional modes would select the wrong branch.
+    assert_eq!(
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true),
+        None
+    );
+    db.insert_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true, false);
+    assert_eq!(
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true),
+        Some(false)
+    );
+    assert_eq!(
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
+        Some(true)
     );
     // Operand order matters — `check`/`extends` are not symmetric.
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false),
+        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false),
         None
     );
 
     // A `false` verdict round-trips distinctly from an absent entry.
-    db.insert_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false);
+    db.insert_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false, false);
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false),
+        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false),
         Some(false)
     );
 
@@ -123,11 +141,11 @@ fn conditional_branch_verdict_cache_round_trips_and_is_key_partitioned() {
     db.clear();
     assert_eq!(db.statistics().conditional_branch_verdict_cache_entries, 0);
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false),
+        db.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
         None
     );
     assert_eq!(
-        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false),
+        db.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false),
         None
     );
 }
@@ -137,9 +155,9 @@ fn conditional_branch_verdict_cache_defaults_off_for_raw_interner() {
     // The trait default is a no-op so raw `TypeInterner` backends and tests
     // opt out: a lookup always misses and an insert is dropped.
     let interner = TypeInterner::new();
-    interner.insert_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true);
+    interner.insert_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false, true);
     assert_eq!(
-        interner.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false),
+        interner.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
         None
     );
 }

@@ -297,13 +297,11 @@ pub trait TypeCompilerOptions {
 
 /// Per-file cache hooks for evaluated generic applications.
 ///
-/// The cache is keyed by the resolver-independent `(DefId, args,
-/// no_unchecked_indexed_access)` triple. Callers are responsible for using it
-/// only from authoritative full-resolver contexts; limited/noop resolvers can
-/// otherwise skip fallback behavior that is part of recursive and inference
-/// parity. Keeping these hooks separate from [`TypeDatabase`] makes
-/// application-eval cache access a narrow cache capability instead of growing
-/// the general type storage interface.
+/// The application-eval cache is keyed by `(DefId, args,
+/// no_unchecked_indexed_access, exact_optional_property_types)`. Use it only
+/// from authoritative full-resolver contexts; limited/noop resolvers can skip
+/// fallback behavior that is part of recursive and inference parity. Keeping
+/// this separate from [`TypeDatabase`] avoids growing the storage interface.
 pub trait TypeApplicationEvalCache {
     /// Project-wide (#14345) instantiation result lookup. Default `None`.
     fn lookup_proto_instantiation_cache(
@@ -398,9 +396,9 @@ pub trait TypeApplicationEvalCache {
     /// Evaluating a closed type is resolver-independent and deterministic per
     /// interner, so the result can be memoized project-wide and reused across
     /// the many fresh `TypeEvaluator` instances created during instantiation
-    /// (`evaluate_index_access`, `evaluate_keyof`, …). The key is keyed by both
-    /// the `TypeId` and `no_unchecked_indexed_access` because the latter changes
-    /// `T[K]` results. Default returns `None` so non-cache backends opt out.
+    /// (`evaluate_index_access`, `evaluate_keyof`, …). The key is keyed by the
+    /// `TypeId` plus both option flags, which can change `T[K]` results.
+    /// Default returns `None` so non-cache backends opt out.
     fn lookup_closed_eval_cache(
         &self,
         _type_id: TypeId,
@@ -429,8 +427,8 @@ pub trait TypeApplicationEvalCache {
     /// stored into — the ordinary subtype relation cache. Only *definitive*
     /// verdicts (`Holds`/`Fails`) that consumed no unregistered `Lazy` body,
     /// took no depth bail, and tripped no recursion/iteration limit are
-    /// persisted, so a stored verdict is a stable function of
-    /// `(check, extends, no_unchecked_indexed_access)` reusable across the many
+    /// persisted, so a stored verdict is stable for `(check, extends,
+    /// no_unchecked_indexed_access, exact_optional_property_types)` across the
     /// fresh `TypeEvaluator` instances instantiation spins up. Default returns
     /// `None` so non-cache backends opt out.
     fn lookup_conditional_branch_verdict(
@@ -438,6 +436,7 @@ pub trait TypeApplicationEvalCache {
         _check: TypeId,
         _extends: TypeId,
         _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
     ) -> Option<bool> {
         None
     }
@@ -450,6 +449,7 @@ pub trait TypeApplicationEvalCache {
         _check: TypeId,
         _extends: TypeId,
         _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
         _verdict: bool,
     ) {
     }
