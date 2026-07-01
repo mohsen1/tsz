@@ -305,7 +305,11 @@ pub(crate) enum ObjectRestFollowingParam {
     /// into the body (`var c = _b[0], d = _b[2]`; `var b = _b.b`; own rest
     /// `var b = _b.b, r2 = __rest(_b, ["b"])`), matching `tsc`'s ES2015
     /// destructuring transform for the following parameters.
-    Binding { temp: String, pattern: NodeIndex },
+    Binding {
+        temp: String,
+        pattern: NodeIndex,
+        initializer: NodeIndex,
+    },
     /// A following plain-identifier parameter with a default: hoisted as an
     /// `if (name === void 0) { name = init; }` guard.
     Default {

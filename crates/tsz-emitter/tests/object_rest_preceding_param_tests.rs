@@ -103,6 +103,20 @@ fn following_plain_default_hoists_and_forces_multiline() {
     );
 }
 
+/// A following binding pattern with a parameter default creates a source temp
+/// using the `=== void 0` ternary, then flattens from that temp.
+#[test]
+fn following_binding_default_uses_void0_ternary_temp() {
+    let source = "function l({ key, ...rest }: any, [lo, hi] = [1, 2]) { return lo + hi + rest; }";
+    let output = parse_and_print_with_opts(source, es2017());
+    assert!(
+        output.contains(
+            "function l(_a, _b) { var { key } = _a, rest = __rest(_a, [\"key\"]); var _c = _b === void 0 ? [1, 2] : _b, lo = _c[0], hi = _c[1]; return lo + hi + rest; }"
+        ),
+        "following binding default must flatten from a void0 source temp.\nOutput:\n{output}"
+    );
+}
+
 /// A following `...rest` parameter stays native in the parameter list.
 #[test]
 fn following_rest_identifier_stays_in_parameter_list() {

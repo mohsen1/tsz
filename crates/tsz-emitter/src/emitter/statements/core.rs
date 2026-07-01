@@ -975,12 +975,31 @@ impl<'a> Printer<'a> {
             std::mem::take(&mut self.pending_object_rest_param_following);
         for entry in &following {
             match entry {
-                ObjectRestFollowingParam::Binding { temp, pattern } => {
+                ObjectRestFollowingParam::Binding {
+                    temp,
+                    pattern,
+                    initializer,
+                } => {
                     if inline && *wrote_any {
                         self.write(" ");
                     }
+                    let hoisted_start = self.hoisted_assignment_temps.len();
+                    let hoist_anchor = self.capture_hoist_anchor();
                     let mut started = false;
-                    self.emit_param_binding_assignments(*pattern, temp, &mut started);
+                    if initializer.is_some() {
+                        let source = self.get_temp_var_name();
+                        self.emit_param_assignment_prefix(&mut started);
+                        self.write(&source);
+                        self.write(" = ");
+                        self.write(temp);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(*initializer);
+                        self.write(" : ");
+                        self.write(temp);
+                        self.emit_param_binding_assignments(*pattern, &source, &mut started);
+                    } else {
+                        self.emit_param_binding_assignments(*pattern, temp, &mut started);
+                    }
                     if started {
                         self.write(";");
                         if inline {
@@ -989,6 +1008,7 @@ impl<'a> Printer<'a> {
                             self.write_line();
                         }
                     }
+                    self.insert_param_binding_hoisted_temps(hoisted_start, hoist_anchor);
                 }
                 ObjectRestFollowingParam::Default { name, initializer } => {
                     if inline && *wrote_any {

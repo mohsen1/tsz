@@ -422,10 +422,16 @@ impl<'a> Printer<'a> {
             // A following binding parameter's initializer/type is stripped from
             // the signature; its destructuring (default included) is fully
             // flattened into the body prologue, matching `tsc`'s ES2015 transform.
+            if param.initializer.is_some()
+                && let Some(initializer_node) = self.arena.get(param.initializer)
+            {
+                self.skip_comments_in_range(initializer_node.pos, initializer_node.end);
+            }
             self.pending_object_rest_param_following
                 .push(ObjectRestFollowingParam::Binding {
                     temp,
                     pattern: param.name,
+                    initializer: param.initializer,
                 });
         }
         true
