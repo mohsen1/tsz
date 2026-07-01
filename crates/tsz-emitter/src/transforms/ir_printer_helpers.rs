@@ -62,36 +62,10 @@ impl<'a> IRPrinter<'a> {
     }
 
     pub(super) fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
-        body_source_range
-            .and_then(|(pos, end)| {
-                self.source_text.map(|text| {
-                    let start = pos as usize;
-                    let end = std::cmp::min(end as usize, text.len());
-                    if start < end {
-                        let slice = &text[start..end];
-                        if let Some(open) = slice.find('{') {
-                            let mut depth = 1;
-                            for (i, ch) in slice[open + 1..].char_indices() {
-                                match ch {
-                                    '{' => depth += 1,
-                                    '}' => {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            let inner = &slice[open..open + 1 + i + 1];
-                                            return !inner.contains('\n');
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        !slice.contains('\n')
-                    } else {
-                        false
-                    }
-                })
-            })
-            .unwrap_or(false)
+        let (Some((pos, end)), Some(text)) = (body_source_range, self.source_text) else {
+            return false;
+        };
+        crate::transforms::emit_utils::source_block_is_single_line(text, pos as usize, end as usize)
     }
 
     /// Emit function body with default parameter checks prepended (ES5 style)

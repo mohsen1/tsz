@@ -225,9 +225,23 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    /// Record a hoisted-temp name produced by an IR-conversion lowering
-    /// (`??`, `?.`, etc.) so the surrounding `transform_*` entry point can
-    /// declare it alongside the rest of the state-machine var hoists.
+    /// Whether the async function's source `body` block fits on a single line —
+    /// the structural signal `tsc` uses to keep the `__awaiter` callback body
+    /// inline (`function () { [var a;] return __generator(...) })`) versus
+    /// breaking it across lines. Absent source text, defaults to `false` (treat
+    /// as multi-line), matching the emitter's `is_body_source_single_line`.
+    /// Delegates to the shared [`emit_utils::source_block_is_single_line`] scan
+    /// so the transform and print phases cannot drift.
+    fn body_source_is_single_line(&self, body_idx: NodeIndex) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        super::emit_utils::source_block_is_single_line(text, node.pos as usize, node.end as usize)
+    }
+
     /// Transform an async function declaration to IR
     ///
     /// Returns an `IRNode::AwaiterCall` with a nested `IRNode::GeneratorBody`
@@ -399,7 +413,10 @@ impl<'a> AsyncES5Transformer<'a> {
             generator_body: Box::new(generator_body),
             hoisted_var_groups,
             promise_constructor,
-            multiline_callback: captures_arguments,
+            // `tsc` breaks the callback body across lines for a multi-line
+            // source body (or, historically here, an `arguments` capture);
+            // hoisted `var` groups alone stay inline.
+            multiline_callback: captures_arguments || !self.body_source_is_single_line(body_idx),
             directives,
         };
 
