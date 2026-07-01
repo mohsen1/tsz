@@ -417,9 +417,7 @@ impl<'a> CheckerState<'a> {
                         && delegate_type != TypeId::ERROR
                     {
                         delegate_type
-                    } else if alias_body_is_keyof_type_query {
-                        self.type_reference_symbol_type_with_params(sym_id).0
-                    } else if shadows_file_local_lib_type {
+                    } else if alias_body_is_keyof_type_query || shadows_file_local_lib_type {
                         self.type_reference_symbol_type_with_params(sym_id).0
                     } else {
                         self.get_type_of_symbol(sym_id)

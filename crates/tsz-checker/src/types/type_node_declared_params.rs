@@ -5,7 +5,7 @@ use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 
-impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+impl TypeNodeChecker<'_, '_> {
     pub(super) fn ensure_declared_type_params_cached(
         &self,
         sym_id: tsz_binder::SymbolId,
