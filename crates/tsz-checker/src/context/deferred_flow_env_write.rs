@@ -74,6 +74,23 @@ pub enum DeferredFlowEnvWrite {
         symbol: tsz_solver::SymbolRef,
         value_type: TypeId,
     },
+    /// `set_boxed_type` — register the boxed interface for a primitive.
+    RegisterBoxedType {
+        kind: tsz_solver::IntrinsicKind,
+        type_id: TypeId,
+    },
+    /// `set_array_base_type` — register the canonical `Array<T>` base type.
+    RegisterArrayBaseType {
+        type_id: TypeId,
+        params: Vec<tsz_solver::TypeParamInfo>,
+    },
+    /// `insert_def` + `register_boxed_def_id` — register a boxed interface's
+    /// `Lazy(DefId)` body and intrinsic-kind marker.
+    RegisterBoxedDef {
+        kind: tsz_solver::IntrinsicKind,
+        type_id: TypeId,
+        def_id: DefId,
+    },
     /// `register_well_known_symbol_name` — register a `[Symbol.*]` computed
     /// property name's backing `SymbolRef`.
     RegisterWellKnownSymbolName {
@@ -186,6 +203,18 @@ impl DeferredFlowEnvWrite {
             Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
             Self::InsertTypeofValueType { symbol, value_type } => {
                 env.insert_typeof_value_type(*symbol, *value_type);
+            }
+            Self::RegisterBoxedType { kind, type_id } => env.set_boxed_type(*kind, *type_id),
+            Self::RegisterArrayBaseType { type_id, params } => {
+                env.set_array_base_type(*type_id, params.clone());
+            }
+            Self::RegisterBoxedDef {
+                kind,
+                type_id,
+                def_id,
+            } => {
+                env.insert_def(*def_id, *type_id);
+                env.register_boxed_def_id(*kind, *def_id);
             }
             Self::RegisterWellKnownSymbolName { name, symbol_ref } => {
                 env.register_well_known_symbol_name(name.clone(), *symbol_ref);

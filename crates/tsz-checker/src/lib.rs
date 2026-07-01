@@ -142,6 +142,9 @@ mod await_alias_union_distribution_tests;
 #[path = "tests/await_structural_thenable_tests.rs"]
 mod await_structural_thenable_tests;
 #[cfg(test)]
+#[path = "tests/boxed_global_env_authority_tests.rs"]
+mod boxed_global_env_authority_tests;
+#[cfg(test)]
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
