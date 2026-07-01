@@ -382,13 +382,32 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             && instantiation_result_rs.contains("fn is_stable_for_project_cache(self) -> bool")
             && instantiation_api_rs.contains("ProjectInstantiationCacheLimitSnapshot::capture")
             && instantiation_api_rs.contains("InstantiationMemoResult::for_project_cache")
-            && instantiation_api_rs.contains("InstantiationTermination::from_depth_exceeded")
+            && instantiation_api_rs.contains("instantiator.termination()")
             && instantiation_api_rs.contains("is_stable_for_project_cache()")
             && !instantiation_result_rs.contains("overflowed: bool")
             && !instantiation_result_rs
                 .contains("fn from_walk(type_id: TypeId, depth_exceeded: bool)")
             && !instantiation_api_rs.contains("let limit_tripped ="),
         "project instantiation cache writes must consume InstantiationMemoResult stability instead of rebuilding a raw limit_tripped predicate"
+    );
+}
+
+#[test]
+fn instantiation_depth_state_is_named_at_the_walker_boundary() {
+    let instantiation_rs = read_solver_source("instantiation/instantiate.rs");
+    let instantiation_api_rs = read_solver_source("instantiation/instantiate/api.rs");
+
+    assert!(
+        instantiation_rs.contains("InstantiationWalkState")
+            && instantiation_rs.contains("fn has_depth_exceeded(&self) -> bool")
+            && instantiation_rs.contains("fn mark_depth_exceeded(&mut self)")
+            && instantiation_rs.contains("fn enter_frame(&mut self) -> InstantiationFrameState")
+            && instantiation_rs.contains("enum InstantiationFrameState")
+            && instantiation_api_rs.contains("instantiator.termination()")
+            && !instantiation_rs.contains("self.depth_exceeded = true")
+            && !instantiation_rs.contains("if self.depth_exceeded")
+            && !instantiation_api_rs.contains("instantiator.depth_exceeded"),
+        "instantiation overflow state must be owned by named walker-state helpers instead of direct depth_exceeded mutation"
     );
 }
 

@@ -30,7 +30,7 @@ impl<'a> TypeInstantiator<'a> {
                 let cond_type = self.interner.conditional(cond);
                 let mut results = Vec::with_capacity(2);
                 for &member in &[TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN_FALSE] {
-                    if self.depth_exceeded {
+                    if self.has_depth_exceeded() {
                         return TypeId::ERROR;
                     }
                     let mut member_subst = self.substitution.clone();
@@ -51,12 +51,12 @@ impl<'a> TypeInstantiator<'a> {
                         )
                     };
                     if instantiated == TypeId::ERROR {
-                        self.depth_exceeded = true;
+                        self.mark_depth_exceeded();
                         return TypeId::ERROR;
                     }
                     let evaluated = self.evaluate_type(instantiated);
                     if evaluated == TypeId::ERROR {
-                        self.depth_exceeded = true;
+                        self.mark_depth_exceeded();
                         return TypeId::ERROR;
                     }
                     results.push(evaluated);
@@ -76,7 +76,7 @@ impl<'a> TypeInstantiator<'a> {
                 if members.len()
                     > crate::evaluation::evaluate_rules::conditional::MAX_CONDITIONAL_DISTRIBUTION_SIZE
                 {
-                    self.depth_exceeded = true;
+                    self.mark_depth_exceeded();
                     return TypeId::ERROR;
                 }
                 let cond_type = self.interner.conditional(cond);
@@ -89,7 +89,7 @@ impl<'a> TypeInstantiator<'a> {
                 let mut member_subst = self.substitution.clone();
                 for &member in members.iter() {
                     // Check depth before each distribution step
-                    if self.depth_exceeded {
+                    if self.has_depth_exceeded() {
                         return TypeId::ERROR;
                     }
                     member_subst.insert(info.name, member);
@@ -110,7 +110,7 @@ impl<'a> TypeInstantiator<'a> {
                     };
                     // Check if instantiation hit depth limit
                     if instantiated == TypeId::ERROR {
-                        self.depth_exceeded = true;
+                        self.mark_depth_exceeded();
                         return TypeId::ERROR;
                     }
                     // Don't evaluate here — the instantiator lacks a TypeResolver,
