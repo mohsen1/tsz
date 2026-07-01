@@ -1360,7 +1360,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let candidate = self
                     .interner
                     .application(original_app.base, expanded_args.into_owned());
-                if crate::visitor::contains_type_by_id(self.interner, candidate, result) {
+                if self.cached_contains_type_by_id(candidate, result) {
                     original_type_id
                 } else {
                     candidate
@@ -1633,6 +1633,55 @@ mod tests {
             Some(TypeId::STRING),
             "the unresolved-def epoch is per application body, not a sticky global \
              application_eval_cache disable",
+        );
+    }
+
+    #[test]
+    fn expanded_application_display_alias_containment_uses_shared_memo() {
+        let types = TypeInterner::new();
+        let prop = types.intern_string("x");
+        let object = types.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
+        let key = types.literal_string("x");
+        let index_access = types.index_access(object, key);
+        let base = types.lazy(DefId(901_010));
+        let original = types.application(base, vec![index_access]);
+        let expanded_candidate = types.application(base, vec![TypeId::NUMBER]);
+
+        let mut evaluator =
+            TypeEvaluator::new(&types).with_expanded_application_display_alias_args();
+
+        assert!(crate::visitor::contains_type_by_id(
+            &types,
+            expanded_candidate,
+            TypeId::NUMBER
+        ));
+        assert_eq!(
+            types.contains_type_by_id_memo(expanded_candidate, TypeId::NUMBER),
+            None
+        );
+
+        evaluator.record_application_evaluation_display_aliases(
+            TypeId::NUMBER,
+            original,
+            &[index_access],
+            true,
+            false,
+            None,
+        );
+
+        assert_eq!(
+            types.contains_type_by_id_memo(expanded_candidate, TypeId::NUMBER),
+            Some(true)
+        );
+        assert!(
+            TypeEvaluator::new(&types)
+                .cached_contains_type_by_id(expanded_candidate, TypeId::NUMBER)
+        );
+        assert_eq!(
+            types
+                .type_predicate_cache_statistics()
+                .contains_type_by_id_cache_entries,
+            1
         );
     }
 }
