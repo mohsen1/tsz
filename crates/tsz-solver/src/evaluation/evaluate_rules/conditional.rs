@@ -149,6 +149,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     fn conditional_subtype_checker(&self) -> SubtypeChecker<'a, R> {
         let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access();
+        checker.exact_optional_property_types = self.exact_optional_property_types();
         if let Some(query_db) = self.query_db() {
             checker = checker.with_query_db(query_db);
         }

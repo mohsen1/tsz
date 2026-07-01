@@ -22,7 +22,7 @@ impl QueryCache<'_> {
 
         let mut size = std::mem::size_of::<Self>();
 
-        // eval_cache: (TypeId, bool) -> TypeId
+        // eval_cache: EvaluationCacheKey -> TypeId
         {
             let map = self.eval_cache.borrow();
             size += map.capacity()
@@ -31,7 +31,7 @@ impl QueryCache<'_> {
                     + std::mem::size_of::<TypeId>());
         }
 
-        // closed_eval_cache: (TypeId, bool) -> TypeId
+        // closed_eval_cache: EvaluationCacheKey -> TypeId
         {
             let map = self.closed_eval_cache.borrow();
             size += map.capacity()
@@ -40,12 +40,12 @@ impl QueryCache<'_> {
                     + std::mem::size_of::<TypeId>());
         }
 
-        // conditional_branch_verdict_cache: (TypeId, TypeId, bool) -> bool
+        // conditional_branch_verdict_cache: (TypeId, TypeId, bool, bool) -> bool
         {
             let map = self.conditional_branch_verdict_cache.borrow();
             size += map.capacity()
                 * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<(TypeId, TypeId, bool)>()
+                    + std::mem::size_of::<ConditionalBranchVerdictCacheKey>()
                     + std::mem::size_of::<bool>());
         }
 

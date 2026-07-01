@@ -3,7 +3,7 @@ use crate::caches::db::TypeApplicationEvalCache;
 use crate::caches::query_cache::QueryCache;
 use crate::evaluation::result::TerminationKind;
 use crate::intern::TypeInterner;
-use crate::types::TypeId;
+use crate::types::{PropertyInfo, TypeId};
 
 #[test]
 fn test_is_primitive_vs_function_intrinsic() {
@@ -279,7 +279,7 @@ fn incomplete_request_verdict_blocks_conditional_branch_persistent_write() {
         BranchRelation::Holds
     );
     assert_eq!(
-        cache.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::UNKNOWN, false),
+        cache.lookup_conditional_branch_verdict(TypeId::STRING, TypeId::UNKNOWN, false, false),
         Some(true)
     );
 
@@ -290,7 +290,45 @@ fn incomplete_request_verdict_blocks_conditional_branch_persistent_write() {
         BranchRelation::Holds
     );
     assert_eq!(
-        cache.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::UNKNOWN, false),
+        cache.lookup_conditional_branch_verdict(TypeId::NUMBER, TypeId::UNKNOWN, false, false),
         None
+    );
+}
+
+#[test]
+fn conditional_subtype_relation_tracks_exact_optional_property_types() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let name = interner.intern_string("x");
+    let source = interner.object(vec![PropertyInfo::new(name, TypeId::UNDEFINED)]);
+    let target = interner.object(vec![PropertyInfo::opt(name, TypeId::NUMBER)]);
+
+    let mut exact_off = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    exact_off.set_exact_optional_property_types(false);
+    assert_eq!(
+        exact_off.conditional_subtype_relation(source, target),
+        BranchRelation::Holds
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(source, target, false, false),
+        Some(true)
+    );
+
+    let mut exact_on = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    exact_on.set_exact_optional_property_types(true);
+    assert_eq!(
+        exact_on.conditional_subtype_relation(source, target),
+        BranchRelation::Fails
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(source, target, false, true),
+        Some(false)
+    );
+
+    let mut exact_off_again = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    exact_off_again.set_exact_optional_property_types(false);
+    assert_eq!(
+        exact_off_again.conditional_subtype_relation(source, target),
+        BranchRelation::Holds
     );
 }

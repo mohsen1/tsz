@@ -49,6 +49,7 @@ mod resolver;
 // does not depend on that option and it is intentionally not part of this key.
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
+type ConditionalBranchVerdictCacheKey = (TypeId, TypeId, bool, bool);
 
 const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
 const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
@@ -225,14 +226,16 @@ pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     /// Substitution-independent evaluation cache (see the `closed_eval` module
-    /// in `evaluate`). Keyed by `(TypeId, no_unchecked_indexed_access)`.
+    /// in `evaluate`). Keyed by
+    /// `(TypeId, no_unchecked_indexed_access, exact_optional_property_types)`.
     closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     /// Persistent conditional-branch subtype verdicts (issues #8356 / #13097).
-    /// Keyed by `(check, extends, no_unchecked_indexed_access)`; stores only
-    /// definitive, limit-free verdicts so it survives the per-evaluator
-    /// `conditional_subtype_cache` that is dropped on every evaluator
-    /// construction. Shares this cache's `clear()`/file lifecycle envelope.
-    conditional_branch_verdict_cache: RefCell<FxHashMap<(TypeId, TypeId, bool), bool>>,
+    /// Keyed by `(check, extends, no_unchecked_indexed_access,
+    /// exact_optional_property_types)`; stores only definitive, limit-free
+    /// verdicts so it survives the per-evaluator `conditional_subtype_cache`
+    /// that is dropped on every evaluator construction. Shares this cache's
+    /// `clear()`/file lifecycle envelope.
+    conditional_branch_verdict_cache: RefCell<FxHashMap<ConditionalBranchVerdictCacheKey, bool>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,

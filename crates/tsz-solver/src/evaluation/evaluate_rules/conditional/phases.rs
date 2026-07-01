@@ -675,6 +675,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 check_type,
                 extends_type,
                 self.no_unchecked_indexed_access(),
+                self.exact_optional_property_types(),
             )
         {
             tsz_common::perf_counters::record_eval_conditional_verdict_persist_hit();
@@ -774,7 +775,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.cache_conditional_subtype(check_type, extends_type, verdict);
 
             // Publish to the cross-evaluator verdict cache only when the answer
-            // is a stable function of `(check, extends, no_unchecked)`:
+            // is a stable function of `(check, extends, no_unchecked, exact_optional)`:
             //  - definitive (not `Undetermined`, already guaranteed here) — a
             //    `false` that consumed an unregistered `Lazy` body never reaches
             //    this arm, so no registration-window artifact is published;
@@ -795,6 +796,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     check_type,
                     extends_type,
                     self.no_unchecked_indexed_access(),
+                    self.exact_optional_property_types(),
                     verdict,
                 );
                 tsz_common::perf_counters::record_eval_conditional_verdict_persist_insert();
