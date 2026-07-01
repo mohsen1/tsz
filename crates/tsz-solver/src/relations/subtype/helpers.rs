@@ -74,7 +74,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
 
-        source_param != target_param
+        !self.type_params_equivalent_in_current_relation(source_param, target_param)
+    }
+
+    pub(crate) fn type_params_equivalent_in_current_relation(
+        &self,
+        source_param: TypeId,
+        target_param: TypeId,
+    ) -> bool {
+        source_param == target_param
+            || self.type_param_equivalences.iter().any(|&(left, right)| {
+                (source_param == left && target_param == right)
+                    || (source_param == right && target_param == left)
+            })
     }
 
     /// Build the elaboration carrier for two distinct type-parameter keys
