@@ -371,6 +371,10 @@ name = "async_loop_emit"
 path = "tests/async_loop_emit.rs"
 
 [[test]]
+name = "async_generator_delegating_yield_helpers_tests"
+path = "tests/async_generator_delegating_yield_helpers_tests.rs"
+
+[[test]]
 name = "for_await_async_generator_keyword_tests"
 path = "tests/for_await_async_generator_keyword_tests.rs"
 

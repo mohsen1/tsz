@@ -7,6 +7,7 @@ use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
 use tsz_common::ScriptTarget;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -460,14 +461,69 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Mark helpers needed for async generator functions (async function*).
-    pub(super) fn mark_async_generator_helpers(&mut self) {
+    /// Mark helpers needed for async generator functions (`async function*`)
+    /// whose target down-levels the async generator (target `< ES2018`).
+    ///
+    /// Every down-leveled async generator needs `__await`/`__asyncGenerator`
+    /// (plus `__generator` at ES5). A *delegating* `yield* x` in the
+    /// generator's own body lowers to
+    /// `yield __await(yield* __asyncDelegator(__asyncValues(x)))`, so it
+    /// additionally needs `__asyncValues`/`__asyncDelegator`. `tsc` registers
+    /// the four helpers in canonical tslib order (`__asyncValues`, `__await`,
+    /// `__asyncDelegator`, `__asyncGenerator`); the ES2018-tier helpers emit in
+    /// request order, so the marking calls follow that sequence. `body` is the
+    /// generator's function/method body (`NodeIndex::none()` when absent, e.g.
+    /// an overload signature).
+    pub(super) fn mark_async_generator_helpers(&mut self, body: NodeIndex) {
+        let has_delegating_yield = self.async_generator_body_has_delegating_yield(body);
         let helpers = self.transforms.helpers_mut();
+        if has_delegating_yield {
+            helpers.mark_async_values();
+        }
         helpers.mark_await_helper();
+        if has_delegating_yield {
+            helpers.mark_async_delegator();
+        }
         helpers.mark_async_generator();
         if self.ctx.target_es5 {
             helpers.generator = true;
         }
+    }
+
+    /// Returns `true` if `body` (a down-leveled async generator's function or
+    /// method body) lexically contains a delegating `yield* x` — a `yield*`
+    /// with a delegate expression — that binds to *this* generator.
+    ///
+    /// A `yield` binds only to its immediately-enclosing generator, so a
+    /// delegating `yield*` inside a nested function-like belongs to that inner
+    /// function (which owns its own helper marking) and must not be attributed
+    /// here. The scan therefore stops at nested function-like boundaries. A
+    /// bare `yield*` with no delegate expression is skipped: it emits `yield* `
+    /// with no delegation call and needs neither helper.
+    fn async_generator_body_has_delegating_yield(&self, body: NodeIndex) -> bool {
+        if body.is_none() {
+            return false;
+        }
+        let mut stack = vec![body];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::YIELD_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr_ex(node)
+                && unary.asterisk_token
+                && self.arena.get(unary.expression).is_some()
+            {
+                return true;
+            }
+            // Stop at nested function-likes: a `yield*` there binds to that
+            // inner function, not this generator (see doc comment).
+            if idx != body && emit_utils::is_function_like_boundary(node.kind) {
+                continue;
+            }
+            stack.extend(self.arena.get_children(idx));
+        }
+        false
     }
 
     pub(super) fn has_class_member_modifier(

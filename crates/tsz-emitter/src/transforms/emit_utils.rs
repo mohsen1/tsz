@@ -472,6 +472,21 @@ pub(crate) fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -
         || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
 }
 
+/// Function-like node kinds that open their own `this`/`arguments`/generator
+/// (`yield`) binding scope. A construct lexically inside one of these — a
+/// `yield*`, `await`, hoisted `var`, or `super` reference — binds to that inner
+/// function, not the enclosing body, so binding-scope-aware subtree scans stop
+/// descending at these boundaries.
+pub(crate) const fn is_function_like_boundary(kind: u16) -> bool {
+    kind == syntax_kind_ext::FUNCTION_DECLARATION
+        || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        || kind == syntax_kind_ext::ARROW_FUNCTION
+        || kind == syntax_kind_ext::METHOD_DECLARATION
+        || kind == syntax_kind_ext::CONSTRUCTOR
+        || kind == syntax_kind_ext::GET_ACCESSOR
+        || kind == syntax_kind_ext::SET_ACCESSOR
+}
+
 fn optional_chain_call_uses_simple_receiver(arena: &NodeArena, callee: NodeIndex) -> bool {
     let Some(callee_node) = arena.get(callee) else {
         return false;
