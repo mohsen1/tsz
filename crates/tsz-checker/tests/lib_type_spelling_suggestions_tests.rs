@@ -67,3 +67,51 @@ fn type_position_mapp_suggests_map() {
         "expected TS2552 'Mapp' -> 'Map', got: {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Value- vs type-position keyword candidates (type-position half).
+//
+// The `VALUE` and `TYPE` symbol-flag masks overlap (both include
+// `CLASS`/`ENUM`/`ENUM_MEMBER`), so gating the built-in intrinsic keywords on
+// `meaning & TYPE` used to leak the lowercase *type* keywords (`number`,
+// `boolean`, ...) into *value*-position lookups, and never offered the global
+// *value* symbol `undefined`. The value-position half is exercised end-to-end
+// in `crates/tsz-cli/tests/cannot_find_name_value_suggestion_cli_tests.rs`
+// (the in-process checker harness here does not report value-position
+// `cannot find name`). These two guards lock the *type*-position side: the
+// intrinsic type keywords stay available, and `undefined` — a value symbol,
+// not a type symbol — is never offered in type position.
+// ---------------------------------------------------------------------------
+
+/// True when the diagnostics contain a bare TS2304 for `typo` and do NOT offer
+/// any TS2552 spelling suggestion for it.
+fn is_bare_not_found(diags: &[Diagnostic], typo: &str) -> bool {
+    let mentions = |code: u32| {
+        diags
+            .iter()
+            .any(|d| d.code == code && d.message_text.contains(&format!("'{typo}'")))
+    };
+    mentions(2304) && !mentions(2552)
+}
+
+/// `undefined` is NOT a type-meaning symbol, so a type-position typo near it
+/// stays a bare TS2304 (tsc reports no suggestion for `let x: undefindd`).
+#[test]
+fn type_position_undefined_typo_has_no_suggestion() {
+    let diags = check_with_es2015("let x: undefindd;\n");
+    assert!(
+        is_bare_not_found(&diags, "undefindd"),
+        "expected bare TS2304 for 'undefindd' in type position, got: {diags:?}"
+    );
+}
+
+/// Regression guard: fixing the value-position leak must NOT remove the
+/// (correct) type-keyword suggestions in *type* position — `sting` → `string`.
+#[test]
+fn type_position_type_keyword_still_suggested() {
+    let diags = check_with_es2015("let s: sting;\n");
+    assert!(
+        finds_suggestion(&diags, "sting", "string"),
+        "expected TS2552 'sting' -> 'string', got: {diags:?}"
+    );
+}

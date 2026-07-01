@@ -5,17 +5,28 @@ use crate::state_type_analysis::cross_file_direct::is_builtin_lib_file_name;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
-/// Built-in TypeScript intrinsic type names that tsc registers as symbols
-/// in the checker's globals. Used as candidates for spelling suggestions
-/// so that typos like "sting" → "string" produce TS2552.
+/// Built-in TypeScript intrinsic **type** names that tsc registers as symbols
+/// in the checker's globals. Used as candidates for spelling suggestions in
+/// *type* position so that typos like "sting" → "string" produce TS2552.
 ///
-/// NOTE: Only types that tsc registers as actual symbol entries in its
-/// global scope are included here. Keyword types like `null`, `undefined`,
-/// `unknown`, `void`, `never`, and `any` are parsed syntactically and do
-/// NOT appear in tsc's globals map, so they must NOT be offered as
-/// spelling suggestions.
+/// NOTE: Only intrinsics that tsc registers as actual *type*-meaning symbol
+/// entries in its global scope are included here. Keyword literals `null`,
+/// `void`, `never`, `any`, and `unknown` are parsed syntactically and do NOT
+/// appear in tsc's globals map, so they must NOT be offered as suggestions.
+/// `undefined` is the exception: tsc registers it as a *value* symbol (see
+/// [`BUILTIN_VALUE_KEYWORDS`]), so it is a value-position candidate, not a
+/// type-position one.
 const BUILTIN_TYPE_KEYWORDS: &[&str] =
     &["string", "number", "boolean", "symbol", "bigint", "object"];
+
+/// Built-in TypeScript intrinsic **value** names that tsc registers as symbols
+/// in the checker's globals. `undefined` is created as a global `Property`
+/// symbol (tsc's `undefinedSymbol`), so a value-position typo such as
+/// `udefined` suggests `undefined` (TS2552). It is *not* a type-meaning symbol,
+/// so type-position lookups never offer it — matching tsc, which reports plain
+/// TS2304 for `let x: undefindd`. `NaN`/`Infinity` are already real lib.es5
+/// symbols and are found through the ordinary lib-globals scan.
+const BUILTIN_VALUE_KEYWORDS: &[&str] = &["undefined"];
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -585,20 +596,36 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // When searching for TYPE meanings, also include built-in type keywords.
-        // In tsc, intrinsic types (string, number, boolean, etc.) are registered
-        // in the checker's globals map. We include them here as candidates so
-        // that typos like "sting" → "string" are caught.
-        if meaning_flags == 0 || meaning_flags & tsz_binder::symbol_flags::TYPE != 0 {
-            for keyword in BUILTIN_TYPE_KEYWORDS {
-                Self::consider_identifier_suggestion(
-                    name,
-                    keyword,
-                    name_len,
-                    maximum_length_difference,
-                    best_distance,
-                    best_candidate,
-                );
+        // Also include the built-in intrinsic keywords that tsc registers as
+        // symbols in its globals map.
+        //
+        // The `VALUE` and `TYPE` flag masks OVERLAP (both include
+        // `CLASS`/`ENUM`/`ENUM_MEMBER`), so testing `meaning_flags & TYPE`
+        // (or `& VALUE`) would misclassify a pure value-position or
+        // type-position lookup — e.g. a value lookup passes `meaning == VALUE`,
+        // yet `VALUE & TYPE != 0`, which used to leak the *type* keywords
+        // (`number`, `boolean`, …) into value position so `numbr` wrongly
+        // suggested `number` instead of the value `Number`. Gate on the
+        // *exclusive* bits of each meaning so type keywords are offered only to
+        // type/unconstrained lookups and value keywords only to
+        // value/unconstrained lookups.
+        const TYPE_ONLY: u32 = tsz_binder::symbol_flags::TYPE & !tsz_binder::symbol_flags::VALUE;
+        const VALUE_ONLY: u32 = tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::TYPE;
+        for (gate, keywords) in [
+            (TYPE_ONLY, BUILTIN_TYPE_KEYWORDS),
+            (VALUE_ONLY, BUILTIN_VALUE_KEYWORDS),
+        ] {
+            if meaning_flags == 0 || meaning_flags & gate != 0 {
+                for keyword in keywords {
+                    Self::consider_identifier_suggestion(
+                        name,
+                        keyword,
+                        name_len,
+                        maximum_length_difference,
+                        best_distance,
+                        best_candidate,
+                    );
+                }
             }
         }
     }

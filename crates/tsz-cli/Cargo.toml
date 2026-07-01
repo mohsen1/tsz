@@ -164,6 +164,10 @@ name = "lib_target_suggestion_ts2550_tests"
 path = "tests/lib_target_suggestion_ts2550_tests.rs"
 
 [[test]]
+name = "cannot_find_name_value_suggestion_cli_tests"
+path = "tests/cannot_find_name_value_suggestion_cli_tests.rs"
+
+[[test]]
 name = "cross_binder_reexport_meaning_tests"
 path = "tests/cross_binder_reexport_meaning_tests.rs"
 
