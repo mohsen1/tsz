@@ -1979,4 +1979,5 @@ fn test_all_definition_names_qualifies_namespace_exports() {
     );
 }
 
+include!("def_tests_parts/semantic_construction_order.rs");
 include!("def_tests_parts/type_to_def.rs");
