@@ -836,19 +836,22 @@ pub(crate) fn instantiate_with_request_cached(
     allow_alpha_cache: bool,
     request: InstantiationRequest<'_>,
 ) -> InstantiationResult {
+    let resolver_rereduce_request = resolver_rereduce_instantiation_request(query_db);
     // Project-wide instantiation cache (#14345), consulted by ALL callers —
     // including the `query_db=None` evaluators that bypass the per-file
     // `QueryCache` instantiation cache and otherwise re-mint the same
     // `(body, subst, options, this_type)` walk. Sound because instantiation is
-    // pure structural substitution: the instantiator runs resolver-less
-    // (`with_query_db` forces `query_db=None`), `Lazy`/`TypeQuery` are leaves,
-    // and conditional/mapped bodies are not evaluated during the walk, so the
-    // result is a pure function of the key and the immutable interner —
-    // query_db-independent (proven by
-    // `instantiate_generic_cached_no_query_db_disables_cache`). The store-gate
-    // below refuses any result produced under a limit, mirroring the
-    // substitution-independent `closed_eval_cache`'s limit-gate set.
-    let proto_key = if project_instantiation_cache_enabled() {
+    // pure structural substitution in the default resolver-less mode:
+    // `Lazy`/`TypeQuery` are leaves, and conditional/mapped bodies are not
+    // evaluated during the walk, so the result is a pure function of the key and
+    // the immutable interner — query_db-independent (proven by
+    // `instantiate_generic_cached_no_query_db_disables_cache`). The staged
+    // resolver re-reduce mode deliberately breaks that purity by reading a
+    // caller-attached `DefinitionStore`, so it bypasses both project-wide and
+    // per-query instantiation caches. The store-gate below refuses any result
+    // produced under a limit, mirroring the substitution-independent
+    // `closed_eval_cache`'s limit-gate set.
+    let proto_key = if !resolver_rereduce_request && project_instantiation_cache_enabled() {
         let key = request.cache_key();
         if let Some(cached) = interner.lookup_proto_instantiation_cache(&key) {
             return InstantiationResult::ok(cached);
@@ -889,6 +892,9 @@ fn instantiate_with_request_cached_inner(
     request: InstantiationRequest<'_>,
 ) -> InstantiationResult {
     if let Some(db) = query_db {
+        if resolver_rereduce_instantiation_request(query_db) {
+            return run_instantiator(interner, query_db, request);
+        }
         let key = request.cache_key();
         if let Some(cached) = db.lookup_instantiation_cache(&key) {
             return InstantiationResult::ok(cached);
@@ -922,6 +928,11 @@ fn instantiate_with_request_cached_inner(
         return result;
     }
     run_instantiator(interner, query_db, request)
+}
+
+#[inline]
+fn resolver_rereduce_instantiation_request(query_db: Option<&dyn QueryDatabase>) -> bool {
+    query_db.is_some() && super::flags::inst_resolver_rereduce_enabled()
 }
 
 fn alpha_canonicalize_cached_result(
