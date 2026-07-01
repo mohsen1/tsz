@@ -166,7 +166,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && let Some(cached) =
                 db.lookup_intersection_merge(target_intersection, resolver_generation)
         {
-            return cached;
+            return cached.into_result();
         }
 
         use crate::objects::collect_properties_cached;

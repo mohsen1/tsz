@@ -1,6 +1,6 @@
 //! Query cache statistics and size-accounting coverage tests.
 
-use crate::caches::db::{QueryDatabase, TypeApplicationEvalCache};
+use crate::caches::db::{IntersectionMergeCacheEntry, QueryDatabase, TypeApplicationEvalCache};
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::caches::query_cache::{QueryCache, SharedQueryCache};
 use crate::caches::query_cache_statistics::QueryCacheStatistics;
@@ -22,7 +22,7 @@ fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {
     db.insert_intersection_merge(TypeId::STRING, 1, Some(TypeId::NUMBER));
     assert_eq!(
         db.lookup_intersection_merge(TypeId::STRING, 1),
-        Some(Some(TypeId::NUMBER))
+        Some(IntersectionMergeCacheEntry::Merged(TypeId::NUMBER))
     );
 
     let after = db.statistics();
@@ -43,14 +43,20 @@ fn intersection_merge_cache_partitions_results_by_resolver_generation() {
     let db = QueryCache::new(&interner);
 
     db.insert_intersection_merge(TypeId::STRING, 1, None);
-    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 1), Some(None));
+    assert_eq!(
+        db.lookup_intersection_merge(TypeId::STRING, 1),
+        Some(IntersectionMergeCacheEntry::NotEligible)
+    );
     assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 2), None);
 
     db.insert_intersection_merge(TypeId::STRING, 2, Some(TypeId::NUMBER));
-    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 1), Some(None));
+    assert_eq!(
+        db.lookup_intersection_merge(TypeId::STRING, 1),
+        Some(IntersectionMergeCacheEntry::NotEligible)
+    );
     assert_eq!(
         db.lookup_intersection_merge(TypeId::STRING, 2),
-        Some(Some(TypeId::NUMBER))
+        Some(IntersectionMergeCacheEntry::Merged(TypeId::NUMBER))
     );
 
     let stats = db.statistics();

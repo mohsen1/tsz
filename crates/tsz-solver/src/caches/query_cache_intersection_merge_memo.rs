@@ -3,13 +3,14 @@
 //! Split out of `query_cache.rs` to keep that shard under the 2000-line
 //! file-size cap. This is a child module of `query_cache`.
 
+use crate::caches::db::IntersectionMergeCacheEntry;
 use crate::types::TypeId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 const MAX_GENERATIONS_PER_INTERSECTION: usize = 4;
 
-type GenerationSlots = SmallVec<[(u64, Option<TypeId>); 1]>;
+type GenerationSlots = SmallVec<[(u64, IntersectionMergeCacheEntry); 1]>;
 
 #[derive(Default)]
 pub(super) struct IntersectionMergeMemo {
@@ -17,7 +18,11 @@ pub(super) struct IntersectionMergeMemo {
 }
 
 impl IntersectionMergeMemo {
-    pub(super) fn get(&self, intersection_id: TypeId, generation: u64) -> Option<Option<TypeId>> {
+    pub(super) fn get(
+        &self,
+        intersection_id: TypeId,
+        generation: u64,
+    ) -> Option<IntersectionMergeCacheEntry> {
         self.entries
             .get(&intersection_id)?
             .iter()
@@ -31,13 +36,14 @@ impl IntersectionMergeMemo {
         generation: u64,
         result: Option<TypeId>,
     ) {
+        let entry = IntersectionMergeCacheEntry::from_result(result);
         let slots = self.entries.entry(intersection_id).or_default();
 
         if let Some(slot) = slots
             .iter_mut()
             .find(|(slot_generation, _)| *slot_generation == generation)
         {
-            slot.1 = result;
+            slot.1 = entry;
             return;
         }
 
@@ -51,7 +57,7 @@ impl IntersectionMergeMemo {
             slots.swap_remove(oldest);
         }
 
-        slots.push((generation, result));
+        slots.push((generation, entry));
     }
 
     pub(super) fn clear(&mut self) {
@@ -69,7 +75,8 @@ impl IntersectionMergeMemo {
                 + std::mem::size_of::<GenerationSlots>());
         for slots in self.entries.values() {
             if slots.spilled() {
-                size += slots.capacity() * std::mem::size_of::<(u64, Option<TypeId>)>();
+                size +=
+                    slots.capacity() * std::mem::size_of::<(u64, IntersectionMergeCacheEntry)>();
             }
         }
         size

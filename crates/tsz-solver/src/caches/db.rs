@@ -29,6 +29,30 @@ use tsz_common::interner::Atom;
 
 pub use crate::caches::display_provenance::TypeDisplayProvenance;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IntersectionMergeCacheEntry {
+    Merged(TypeId),
+    NotEligible,
+}
+
+impl IntersectionMergeCacheEntry {
+    #[inline]
+    pub const fn from_result(result: Option<TypeId>) -> Self {
+        match result {
+            Some(type_id) => Self::Merged(type_id),
+            None => Self::NotEligible,
+        }
+    }
+
+    #[inline]
+    pub const fn into_result(self) -> Option<TypeId> {
+        match self {
+            Self::Merged(type_id) => Some(type_id),
+            Self::NotEligible => None,
+        }
+    }
+}
+
 /// Read-only access to interned type storage.
 ///
 /// This is the narrow capability for helpers that only inspect existing
@@ -1860,7 +1884,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver + CollectPropertiesResultCa
         &self,
         _intersection_id: TypeId,
         _resolver_generation: u64,
-    ) -> Option<Option<TypeId>> {
+    ) -> Option<IntersectionMergeCacheEntry> {
         None
     }
 

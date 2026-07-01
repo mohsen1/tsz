@@ -639,7 +639,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .query_db
                 .and_then(|db| db.lookup_intersection_merge(target, resolver_generation));
             let merged_target = if let Some(cached_result) = cached {
-                cached_result
+                cached_result.into_result()
             } else if self.can_use_object_intersection_fast_path(&member_list) {
                 self.build_object_intersection_target(target)
             } else {

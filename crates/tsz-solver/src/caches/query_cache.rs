@@ -6,9 +6,9 @@
 
 use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
 use crate::caches::db::{
-    QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance,
-    TypeExtractParamsCache, TypePredicateCache, TypePruneUnionCache, TypeSubstitutionConstruction,
-    TypeTupleLimitSignal, TypeWidenCache,
+    IntersectionMergeCacheEntry, QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache,
+    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
+    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -1763,7 +1763,7 @@ impl QueryDatabase for QueryCache<'_> {
         &self,
         intersection_id: TypeId,
         resolver_generation: u64,
-    ) -> Option<Option<TypeId>> {
+    ) -> Option<IntersectionMergeCacheEntry> {
         let result = self
             .intersection_merge_cache
             .borrow()
