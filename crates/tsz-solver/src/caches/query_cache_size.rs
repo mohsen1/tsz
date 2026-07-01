@@ -137,14 +137,10 @@ impl QueryCache<'_> {
             size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
         }
 
-        // intersection_merge_cache: TypeId -> Option<TypeId>
-        {
-            let map = self.intersection_merge_cache.borrow();
-            size += map.capacity()
-                * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<TypeId>()
-                    + std::mem::size_of::<Option<TypeId>>());
-        }
+        size += self
+            .intersection_merge_cache
+            .borrow()
+            .estimated_size_bytes(BUCKET_OVERHEAD);
 
         // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
         // CanonicalSubst's inline SmallVec buffer is included in the

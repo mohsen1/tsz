@@ -18,10 +18,10 @@ fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {
     assert_eq!(before.intersection_merge_cache_hits, 0);
     assert_eq!(before.intersection_merge_cache_misses, 0);
 
-    assert_eq!(db.lookup_intersection_merge(TypeId::STRING), None);
-    db.insert_intersection_merge(TypeId::STRING, Some(TypeId::NUMBER));
+    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 1), None);
+    db.insert_intersection_merge(TypeId::STRING, 1, Some(TypeId::NUMBER));
     assert_eq!(
-        db.lookup_intersection_merge(TypeId::STRING),
+        db.lookup_intersection_merge(TypeId::STRING, 1),
         Some(Some(TypeId::NUMBER))
     );
 
@@ -35,6 +35,28 @@ fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {
     let rendered = after.to_string();
     assert!(rendered.contains("intersection_merge"));
     assert!(rendered.contains("1 hits, 1 misses"));
+}
+
+#[test]
+fn intersection_merge_cache_partitions_results_by_resolver_generation() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    db.insert_intersection_merge(TypeId::STRING, 1, None);
+    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 1), Some(None));
+    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 2), None);
+
+    db.insert_intersection_merge(TypeId::STRING, 2, Some(TypeId::NUMBER));
+    assert_eq!(db.lookup_intersection_merge(TypeId::STRING, 1), Some(None));
+    assert_eq!(
+        db.lookup_intersection_merge(TypeId::STRING, 2),
+        Some(Some(TypeId::NUMBER))
+    );
+
+    let stats = db.statistics();
+    assert_eq!(stats.intersection_merge_cache_entries, 2);
+    assert_eq!(stats.intersection_merge_cache_hits, 3);
+    assert_eq!(stats.intersection_merge_cache_misses, 1);
 }
 
 #[test]

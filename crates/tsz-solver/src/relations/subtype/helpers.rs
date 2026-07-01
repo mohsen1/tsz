@@ -159,10 +159,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &self,
         target_intersection: TypeId,
     ) -> Option<TypeId> {
+        let resolver_generation = self.resolver.resolver_generation();
         // Check the shared QueryCache first to avoid expensive property collection
         // for large intersections checked across multiple SubtypeChecker instances.
         if let Some(db) = self.query_db
-            && let Some(cached) = db.lookup_intersection_merge(target_intersection)
+            && let Some(cached) =
+                db.lookup_intersection_merge(target_intersection, resolver_generation)
         {
             return cached;
         }
@@ -205,7 +207,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Cache the result for subsequent SubtypeChecker instances.
         if let Some(db) = self.query_db {
-            db.insert_intersection_merge(target_intersection, result);
+            db.insert_intersection_merge(target_intersection, resolver_generation, result);
         }
         result
     }
