@@ -940,14 +940,27 @@ impl<'a> Printer<'a> {
             && (clause_node.kind == SyntaxKind::Identifier as u16
                 || clause_node.kind == SyntaxKind::StringLiteral as u16)
         {
-            if self.ctx.options.module == ModuleKind::ES2015
-                && clause_node.kind == SyntaxKind::StringLiteral as u16
-            {
-                let temp_name = self.make_unique_name();
+            // `export * as ns from "mod"` is an ES2020 feature. When the module
+            // output target predates it (`module: es2015`), tsc rewrites the
+            // namespace re-export into a namespace import plus a re-export:
+            //   import * as ns_1 from "mod";
+            //   export { ns_1 as ns };
+            // For an identifier clause the generated import binding is named
+            // after the export name, matching tsc's `getGeneratedNameForNode`
+            // (`export * as ns` -> `ns_1`); a string-literal export name has no
+            // identifier base, so a fresh temp is used.
+            if self.ctx.options.module == ModuleKind::ES2015 {
+                let temp_name = if clause_node.kind == SyntaxKind::Identifier as u16 {
+                    let base = self.get_identifier_text_idx(export.export_clause);
+                    self.make_unique_name_from_base(&base)
+                } else {
+                    self.make_unique_name()
+                };
                 self.write("import * as ");
                 self.write(&temp_name);
                 self.write(" from ");
                 self.emit_module_specifier(export.module_specifier);
+                self.emit_import_attributes(export.attributes);
                 self.write_semicolon();
                 self.write_line();
                 self.write("export { ");
