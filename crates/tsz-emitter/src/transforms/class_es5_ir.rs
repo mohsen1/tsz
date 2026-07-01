@@ -1496,6 +1496,20 @@ impl<'a> ES5ClassTransformer<'a> {
             &self.class_name,
             &mut used_private_names,
         );
+        // A private auto-accessor (`accessor #y`) lowers to a backing-storage
+        // `WeakMap` (collected into `auto_accessors`) plus a branded get/set pair
+        // that reads/writes that storage. Collect the storage and synthesize the
+        // accessor pair BEFORE the instance-brand decision below so the brand and
+        // the read/write routing (`with_private_member_maps`) both account for the
+        // synthesized private accessors.
+        self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
+        self.private_accessors
+            .extend(collect_private_auto_accessor_accessors(
+                self.arena,
+                class_idx,
+                &self.class_name,
+                &mut used_private_names,
+            ));
         let has_instance_private_brand =
             self.private_methods.iter().any(|method| !method.is_static)
                 || self
@@ -1508,7 +1522,6 @@ impl<'a> ES5ClassTransformer<'a> {
                 &mut used_private_names,
             )
         });
-        self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause
         let base_class = self.get_extends_class(&class_data.heritage_clauses);
@@ -1797,7 +1810,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
             }
         }
-        weakmap_inits.extend(self.private_method_and_accessor_init_strings());
+        weakmap_inits.extend(self.private_method_and_accessor_init_strings(class_data));
         // Static private field initializers are no longer emitted as a grouped
         // block here; they are interleaved with the public static field inits and
         // static blocks in source order via `deferred_static_prop_stmts` below,

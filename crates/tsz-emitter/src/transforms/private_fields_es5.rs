@@ -87,6 +87,12 @@ pub struct PrivateAccessorInfo {
     pub setter_is_async: bool,
     /// Whether this is a static private accessor
     pub is_static: bool,
+    /// For a private auto-accessor (`accessor #y`), the backing-storage `WeakMap`
+    /// name (e.g. `_C_y_accessor_storage`). When set, this entry is a synthesized
+    /// accessor pair whose get/set bodies are generated (they read/write that
+    /// storage) rather than lowered from source getter/setter bodies. `None` for
+    /// ordinary source-declared private accessors.
+    pub synthetic_storage: Option<String>,
 }
 
 /// State for tracking private fields during class transformation
@@ -613,6 +619,7 @@ pub fn collect_private_members_with_reserved(
                         getter_is_async: false,
                         setter_is_async: false,
                         is_static,
+                        synthetic_storage: None,
                     });
                     accessors.len() - 1
                 };
@@ -752,6 +759,7 @@ pub fn collect_private_accessors_with_reserved(
                     getter_is_async: false,
                     setter_is_async: false,
                     is_static,
+                    synthetic_storage: None,
                 });
                 accessors.len() - 1
             };
