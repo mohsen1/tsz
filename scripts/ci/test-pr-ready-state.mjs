@@ -172,6 +172,12 @@ assert.match(
 );
 
 assert.match(
+  ciWorkflow,
+  /full_ci:[\s\S]+?TSZ_CI_EMERGENCY_SCALE_DOWN: "1"[\s\S]+?TSZ_CI_MANUAL_FULL_CI:[\s\S]+?inputs\.full_ci[\s\S]+?Emergency GCP cost scale-down is active[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false/,
+  "CI should default to emergency light-only mode and require explicit manual full_ci dispatch for Cloud Run / Cloud Build fanout",
+);
+
+assert.match(
   gateClassifier,
   /ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm/,
   "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",

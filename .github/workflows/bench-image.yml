@@ -2,10 +2,10 @@
 # Cloud Builds.
 #
 # This workflow is intentionally SEPARATE from ci.yml / bench.yml and is NOT a
-# required check. It cannot affect PR CI status. Building and pushing an image is
-# safe (it only produces SHA-tagged + :latest image tags in a registry); nothing
-# is switched over to the image until a maintainer points the bench configs at
-# it via the vars.BENCH_IMAGE_REF repo variable (see
+# required check. It cannot affect PR CI status. During emergency GCP cost
+# scale-down, this build is manual-only; nothing is switched over to the image
+# until a maintainer points the bench configs at it via the vars.BENCH_IMAGE_REF
+# repo variable (see
 # scripts/infra/bench-base/README.md). Until then the bench configs default to
 # the stock `rust:1.95` image and the inline bootstrap, so this workflow is a
 # no-op on bench behavior.
@@ -24,14 +24,6 @@ on:
         description: "Provenance note: why are you rebuilding the bench base image?"
         type: string
         default: "manual rebuild"
-  push:
-    paths:
-      - 'scripts/infra/bench-base/Dockerfile'
-      - 'scripts/cloudbuild/cloudbuild-bench-image.yaml'
-      - '.github/workflows/bench-image.yml'
-  schedule:
-    # Weekly rebuild to pick up base-image / OS security updates.
-    - cron: '0 7 * * 2'
 
 permissions:
   contents: read

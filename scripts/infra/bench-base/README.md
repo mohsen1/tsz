@@ -43,9 +43,10 @@ no-ops until a maintainer sets these repo variables:
 | `BENCH_IMAGE_REPO`          | yes      | Image repo path, e.g. `us-central1-docker.pkg.dev/<project>/<repo>/tsz-bench-base`. |
 | `BENCH_IMAGE_GCP_REGION`    | no       | Cloud Build region (defaults to `us-central1`).        |
 
-Triggers: push to the `Dockerfile` / cloudbuild config / workflow paths, a
-weekly cron, and manual `workflow_dispatch`. Every build is tagged with the
-commit SHA (provenance) and `:latest`.
+Trigger: manual `workflow_dispatch` only while emergency GCP cost scale-down is
+active. Re-enable push or scheduled rebuilds only after benchmark Cloud Build
+spend is intentionally budgeted again. Every build is tagged with the commit SHA
+(provenance) and `:latest`.
 
 ## Switch the bench builds over
 

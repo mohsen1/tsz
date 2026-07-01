@@ -35,11 +35,11 @@ issue #13750.
 
 ## Build / deploy pipeline
 
-`.github/workflows/runner-image.yml` builds (and optionally deploys) the image:
+`.github/workflows/runner-image.yml` builds (and optionally deploys) the image.
+During emergency GCP cost scale-down it is manual-only:
 
-- **Triggers:** `workflow_dispatch`, `push` touching the `Dockerfile`,
-  `start.sh`, the cloudbuild config, or the workflow itself, and a weekly cron
-  (build-only, for base-image security updates).
+- **Triggers:** `workflow_dispatch` only. Re-enable push or scheduled rebuilds
+  only after the Cloud Run runner fleet is intentionally budgeted again.
 - **Build** (`build` job): submits
   `scripts/cloudbuild/cloudbuild-runner-image.yaml` via `gcloud builds submit`,
   producing an image tagged with the commit SHA (provenance) **and** `latest`.
@@ -66,7 +66,7 @@ variables → Actions → Variables) before the workflow does anything:
 | `RUNNER_IMAGE_GCP_REGION` | build/deploy | defaults to `us-central1` |
 | `RUNNER_IMAGE_CLOUD_RUN_SERVICE` | deploy | the Cloud Run service name |
 | `RUNNER_IMAGE_MIN_INSTANCES` | deploy | defaults to `0` (scale-to-zero) |
-| `RUNNER_IMAGE_MAX_INSTANCES` | deploy | defaults to `50` |
+| `RUNNER_IMAGE_MAX_INSTANCES` | deploy | defaults to `1` |
 
 Authentication uses the **ambient gcloud credentials** already present on the
 self-hosted runners (the same mechanism `ci.yml` / `bench.yml` rely on for
@@ -85,13 +85,14 @@ gh workflow run runner-image.yml -f deploy=true -f reason="bump runner to <ver>"
 ## Scaling policy (IaC)
 
 `cloud-run-service.yaml` captures the intended scaling policy
-(`concurrency=1`, `minScale=0`, `maxScale=50`, `timeoutSeconds=3600`) as a
+(`concurrency=1`, `minScale=0`, `maxScale=1`, `timeoutSeconds=3600`) as a
 reviewable skeleton. It is **not** applied automatically. Before adopting it as
 the source of truth, reconcile it with the live service
 (`gcloud run services describe <service> --format export`) and wire the
 `GITHUB_TOKEN` secret reference. Treat any `minScale>0` warm pool as a measured
 cost decision (per-job queue-wait data, #13715), since `minScale>0` defeats
-scale-to-zero.
+scale-to-zero. Raising `maxScale` above `1` is also a measured cost decision:
+it can multiply active 8-vCPU / 32 GiB runner spend during CI bursts.
 
 ## Health automation (issue #13750)
 

@@ -13,8 +13,8 @@
 #   * minScale=0     - scale-to-zero by default. Treat any minScale>0 warm pool
 #                      as a measured cost decision using per-job queue_wait data
 #                      (#13715); minScale>0 defeats scale-to-zero.
-#   * maxScale=50    - upper bound on concurrent runners; tune to the fleet's
-#                      observed peak (health probe warns at online<20/online<5).
+#   * maxScale=1     - emergency cost ceiling: at most one runner instance may
+#                      start until the fleet is intentionally scaled back up.
 #   * timeoutSeconds=3600 - a runner job may run up to 60 minutes before the
 #                      platform reclaims the instance.
 #
@@ -33,7 +33,7 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/minScale: "0"
-        autoscaling.knative.dev/maxScale: "50"
+        autoscaling.knative.dev/maxScale: "1"
     spec:
       containerConcurrency: 1
       timeoutSeconds: 3600

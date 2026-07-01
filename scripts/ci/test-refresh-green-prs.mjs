@@ -59,8 +59,13 @@ assert.deepEqual(
 
 assert.match(
   REFRESH_WORKFLOW,
-  /on:\s*\n\s+push:\s*\n\s+branches: \[main\]\s*\n\s+schedule:\s*\n\s+# Drain at most one stale green PR per run, away from the top of the hour\.\s*\n\s+- cron: '7,27,47 \* \* \* \*'/,
-  "refresh-green-prs should run automatically on main pushes and a staggered schedule",
+  /on:\s*\n\s+# Emergency GCP cost scale-down:[\s\S]+?workflow_dispatch:/,
+  "refresh-green-prs should be manual-only during emergency cost scale-down",
+);
+assert.doesNotMatch(
+  REFRESH_WORKFLOW,
+  /schedule:\s*\n\s*- cron:|push:\s*\n\s*branches: \[main\]/,
+  "refresh-green-prs must not auto-update branches while expensive CI is scaled down",
 );
 
 assert.equal(checkRollupState([check()]).kind, "passed");
