@@ -661,3 +661,163 @@ fn test_var_function_recovery_ignores_string_literal_text() {
         "String literal contents must not trigger the recovery tail: {output}"
     );
 }
+
+// --- ES5 static private member down-leveling (#15302) --------------------
+//
+// At sub-ES2022 targets a static private field/method/accessor brands against
+// the class-value alias (`_a`, the `_a = C` binding) with its storage variable
+// threaded as the trailing `__classPrivateFieldGet(recv, _a, "<kind>",
+// <storage>)` argument, and a static `#name in obj` brand check lowers to
+// `__classPrivateFieldIn(_a, obj)`. Before the fix these left invalid output
+// (`C.()` for a call, raw `#name in obj`, and a 3-arg get that dropped the
+// storage box). All shapes below are verified byte-identical (modulo
+// whitespace) to `tsc` 6.0.2. Receivers use `this` so the assertions do not
+// depend on the separate class self-reference aliasing of an explicit class
+// name (a pre-existing, broader gap tracked apart from static privates).
+
+#[test]
+fn test_static_private_field_read_write_es5() {
+    let output = emit_class(
+        r#"class Registry {
+            static #slot = 1;
+            static read() { return this.#slot; }
+            static write() { this.#slot = 5; }
+        }"#,
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _a, "f", _Registry_slot)"#),
+        "static field read must brand against `_a` with the storage box as `f`: {output}"
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldSet(this, _a, 5, "f", _Registry_slot)"#),
+        "static field write must brand against `_a` with the storage box as `f`: {output}"
+    );
+    assert!(
+        output.contains("_a = Registry"),
+        "the class-value brand must be initialized `_a = Registry`: {output}"
+    );
+}
+
+#[test]
+fn test_static_private_method_call_es5() {
+    let output = emit_class(
+        r#"class Registry {
+            static #make() { return 2; }
+            static call() { return this.#make(); }
+        }"#,
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _a, "m", _Registry_make).call(this)"#),
+        "static method call must read the method value branded against `_a`, then `.call(this)`: {output}"
+    );
+    assert!(
+        !output.contains(".()"),
+        "static method call must never emit the broken `C.()` form: {output}"
+    );
+}
+
+#[test]
+fn test_static_private_accessor_es5() {
+    let output = emit_class(
+        r#"class Registry {
+            static get #view() { return 3; }
+            static set #view(v: number) {}
+            static getV() { return this.#view; }
+            static setV() { this.#view = 9; }
+        }"#,
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _a, "a", _Registry_view_get)"#),
+        "static getter must brand against `_a` with the getter fn as the trailing ref: {output}"
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldSet(this, _a, 9, "a", _Registry_view_set)"#),
+        "static setter must brand against `_a` with the setter fn as the trailing ref: {output}"
+    );
+}
+
+#[test]
+fn test_static_private_brand_check_es5() {
+    let output = emit_class(
+        r#"class Registry {
+            static #slot = 1;
+            static #make() { return 2; }
+            static brandF(o: any) { return #slot in o; }
+            static brandM(o: any) { return #make in o; }
+        }"#,
+    );
+    assert!(
+        output.contains("__classPrivateFieldIn(_a, o)"),
+        "a static `#name in obj` brand check must lower to `__classPrivateFieldIn(_a, obj)`: {output}"
+    );
+    assert!(
+        !output.contains("#slot in") && !output.contains("#make in"),
+        "the raw `#name in obj` operator must not survive down-leveling: {output}"
+    );
+}
+
+#[test]
+fn test_static_private_increment_temp_avoids_brand_collision_es5() {
+    // The `this.#slot++` read-modify-write needs a hoisted temp; it must not
+    // reuse the class-value brand `_a` (temp slot 0), which the same expression
+    // reads. tsc allocates `_b`; a `var _a;` here would shadow and clobber the
+    // brand.
+    let output = emit_class(
+        r#"class Registry {
+            static #slot = 0;
+            static inc() { this.#slot++; return this.#slot; }
+        }"#,
+    );
+    assert!(
+        output.contains("(_b = __classPrivateFieldGet(this, _a, \"f\", _Registry_slot), _b++, _b)"),
+        "the increment temp must be `_b`, distinct from the class brand `_a`: {output}"
+    );
+    assert!(
+        !output.contains("var _a;"),
+        "must not emit a member-local `var _a;` that shadows the class brand: {output}"
+    );
+}
+
+#[test]
+fn test_static_private_anti_hardcoding_renamed_binder_es5() {
+    // The brand/storage decision keys on the binding origin, never on the
+    // spelling: different class and member names must derive different storage
+    // vars while keeping the identical `_a`-branded shape.
+    let output = emit_class(
+        r#"class Vault {
+            static #secret = 1;
+            static peek() { return this.#secret; }
+        }"#,
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _a, "f", _Vault_secret)"#),
+        "storage var must derive from the actual class/field names (`_Vault_secret`): {output}"
+    );
+    assert!(
+        !output.contains("_Registry_"),
+        "no hardcoded name from other fixtures may leak: {output}"
+    );
+}
+
+#[test]
+fn test_instance_private_field_unchanged_by_static_slot_change_es5() {
+    // Routing static fields through read/write slots must not perturb the
+    // instance-field form: an instance private field still brands against its
+    // own `WeakMap` with the 3-arg get (no `_a`, no trailing ref).
+    let output = emit_class(
+        r#"class Box {
+            #value = 1;
+            static #shared = 2;
+            read() { return this.#value; }
+            static readShared() { return this.#shared; }
+        }"#,
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _Box_value, "f")"#),
+        "instance field read must keep the WeakMap-branded 3-arg get: {output}"
+    );
+    assert!(
+        output.contains(r#"__classPrivateFieldGet(this, _a, "f", _Box_shared)"#),
+        "static field read in the same class must still brand against `_a`: {output}"
+    );
+}

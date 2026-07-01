@@ -500,6 +500,15 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
+    /// The temp-sequence index that member-body hoisted temps must start from,
+    /// so they do not collide with class-IIFE-scope temp names the bodies still
+    /// reference. A static-private class reserves the class-value brand `_a`
+    /// (temp slot 0), so member bodies start at slot 1 (`_b`); otherwise there
+    /// is nothing to reserve and they start at slot 0 (`_a`), as before.
+    fn reserved_member_body_temp_start(&self) -> u32 {
+        u32::from(self.has_static_private_lowering() && self.current_static_class_alias.is_some())
+    }
+
     /// Set the base indent level for nested contexts (e.g., 1 for class inside namespace)
     pub const fn set_indent_base(&mut self, level: u32) {
         self.indent_base = level;
@@ -702,6 +711,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 &self.private_accessors,
                 &self.private_methods,
                 self.private_instances_weakset_name.as_deref(),
+                self.current_static_class_alias.as_deref(),
             );
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);
@@ -1214,7 +1224,14 @@ impl<'a> ES5ClassTransformer<'a> {
         // Snapshot hoisted temps before converting statements
         let hoisted_before = self.extra_hoisted_temps.borrow().len();
         let saved_temp_counter = self.temp_var_counter.get();
-        self.temp_var_counter.set(0);
+        // A static-private class reserves the class-value brand `_a` (temp slot
+        // 0) at IIFE scope, and member bodies reference it (e.g.
+        // `__classPrivateFieldSet(this, _a, …)`). Member-body hoisted temps must
+        // therefore start after it (`_b`, …), matching tsc; starting at `_a`
+        // would emit a `var _a;` that shadows and clobbers the brand the same
+        // body reads.
+        self.temp_var_counter
+            .set(self.reserved_member_body_temp_start());
 
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)

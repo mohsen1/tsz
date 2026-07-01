@@ -11,22 +11,39 @@ use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
-/// Build the read/write slot for a private accessor. An instance accessor
-/// brands against `_C_instances` and threads `func_var` (the getter/setter) as
-/// the trailing helper argument; the legacy static-accessor shape brands
-/// against `func_var` itself with no trailing reference.
-fn accessor_slot(instance_brand: Option<&str>, func_var: &str) -> PrivateMemberSlot {
-    match instance_brand {
-        Some(brand) => PrivateMemberSlot {
-            state_var: brand.to_string(),
-            kind: "a",
-            member_ref: Some(func_var.to_string()),
-        },
-        None => PrivateMemberSlot {
-            state_var: func_var.to_string(),
-            kind: "a",
-            member_ref: None,
-        },
+/// The brand a non-field private member is keyed by: the class-value alias
+/// (`_a`, the `_a = C` binding) for a static member, the `_C_instances`
+/// `WeakSet` for an instance member. `None` when the required brand var was not
+/// allocated (an instance member with no `WeakSet`, or a static member with no
+/// class alias), in which case the caller leaves the member on the existing
+/// fallthrough.
+const fn member_brand<'b>(
+    is_static: bool,
+    static_class_brand: Option<&'b str>,
+    instances_weakset: Option<&'b str>,
+) -> Option<&'b str> {
+    if is_static {
+        static_class_brand
+    } else {
+        instances_weakset
+    }
+}
+
+/// Build a read/write slot that brands against `brand` and threads `storage`
+/// (the getter/setter/method function, or a static field's `{ value }` box) as
+/// the trailing helper argument:
+/// `__classPrivateFieldGet(recv, brand, "<kind>", storage)` /
+/// `__classPrivateFieldSet(recv, brand, value, "<kind>", storage)`. `brand` is
+/// `_C_instances` for an instance accessor/method and the class-value alias
+/// (`_a`) for any static member; `kind` is `"f"` (static field), `"a"`
+/// (accessor), or `"m"` (method). Instance *fields* do not use this shape —
+/// they brand against their own `WeakMap` with no trailing reference — so they
+/// stay in `private_field_map`.
+fn member_slot(brand: &str, kind: &'static str, storage: &str) -> PrivateMemberSlot {
+    PrivateMemberSlot {
+        state_var: brand.to_string(),
+        kind,
+        member_ref: Some(storage.to_string()),
     }
 }
 
@@ -37,67 +54,81 @@ impl AstToIr<'_> {
     ///
     /// Instance accessors and methods brand against `instances_weakset`
     /// (`_C_instances`) and carry the getter/setter/method function reference,
-    /// matching tsc's 4-arg get / 5-arg set forms. Static accessors keep their
-    /// historical lowering (the function var as the brand, no trailing
-    /// reference); static methods are intentionally left to the existing
-    /// fallthrough.
+    /// matching tsc's 4-arg get / 5-arg set forms. Static fields, accessors, and
+    /// methods brand against `static_class_brand` (`_a`, the `_a = C` class-value
+    /// alias) with the storage variable threaded the same way, matching tsc's
+    /// `__classPrivateFieldGet(recv, _a, "<kind>", <storage>)` static form; a
+    /// static method read this way is invoked via `.call(recv)`, and its brand
+    /// also serves the `#name in obj` check (via `private_brand_var`).
     pub fn with_private_member_maps(
         mut self,
         fields: &[crate::transforms::private_fields_es5::PrivateFieldInfo],
         accessors: &[crate::transforms::private_fields_es5::PrivateAccessorInfo],
         methods: &[crate::transforms::private_fields_es5::PrivateMethodInfo],
         instances_weakset: Option<&str>,
+        static_class_brand: Option<&str>,
     ) -> Self {
         for field in fields {
+            // A static private field brands against the class-value alias with
+            // the `{ value }` storage box threaded as `f`
+            // (`__classPrivateFieldGet(recv, _a, "f", _C_x)`), so it needs a
+            // read/write slot rather than the instance `WeakMap` field map
+            // (`__classPrivateFieldGet(recv, _C_x, "f")`).
+            if field.is_static
+                && let Some(brand) = static_class_brand
+            {
+                self.private_read_slots.insert(
+                    field.name.clone(),
+                    member_slot(brand, "f", &field.weakmap_name),
+                );
+                self.private_write_slots.insert(
+                    field.name.clone(),
+                    member_slot(brand, "f", &field.weakmap_name),
+                );
+                continue;
+            }
             self.private_field_map
                 .insert(field.name.clone(), field.weakmap_name.clone());
         }
         for accessor in accessors {
-            // An instance accessor brands against `_C_instances` and passes the
-            // getter/setter as the trailing helper argument. A static accessor
-            // (or any accessor without an instance brand) retains the legacy
-            // form where the function var itself is the brand and there is no
-            // trailing reference.
-            let instance_brand = (!accessor.is_static).then_some(instances_weakset).flatten();
+            // Instance accessors brand against `_C_instances`; static accessors
+            // brand against the class-value alias `_a`. Either way the
+            // getter/setter is threaded as the trailing helper argument.
+            let Some(brand) =
+                member_brand(accessor.is_static, static_class_brand, instances_weakset)
+            else {
+                continue;
+            };
             if let Some(ref get_var) = accessor.get_var_name {
-                self.private_read_slots.insert(
-                    accessor.name.clone(),
-                    accessor_slot(instance_brand, get_var),
-                );
+                self.private_read_slots
+                    .insert(accessor.name.clone(), member_slot(brand, "a", get_var));
             }
             if let Some(ref set_var) = accessor.set_var_name {
-                self.private_write_slots.insert(
-                    accessor.name.clone(),
-                    accessor_slot(instance_brand, set_var),
-                );
+                self.private_write_slots
+                    .insert(accessor.name.clone(), member_slot(brand, "a", set_var));
             }
         }
         for method in methods {
-            // A private method is read as a function value branded against
-            // `_C_instances`, then invoked with `.call`. Static private methods
-            // brand against the class alias and are left to the fallthrough.
-            if method.is_static {
+            // A private method is read as a function value, then invoked with
+            // `.call`. Instance methods brand against `_C_instances`; static
+            // methods brand against the class-value alias `_a`.
+            let Some(brand) = member_brand(method.is_static, static_class_brand, instances_weakset)
+            else {
                 continue;
-            }
-            if let Some(instances) = instances_weakset {
-                self.private_read_slots.insert(
-                    method.name.clone(),
-                    PrivateMemberSlot {
-                        state_var: instances.to_string(),
-                        kind: "m",
-                        member_ref: Some(method.fn_var_name.clone()),
-                    },
-                );
-            }
+            };
+            self.private_read_slots.insert(
+                method.name.clone(),
+                member_slot(brand, "m", &method.fn_var_name),
+            );
         }
         self
     }
 
     /// Look up private-member storage info for a read of `this.#name`. Returns
     /// `(brand_var, kind, member_ref)`: `member_ref` is the trailing
-    /// getter/method function for the 4-arg `__classPrivateFieldGet` form, or
-    /// `None` for a plain field (`kind == "f"`) and the legacy static-accessor
-    /// shape where the function var is the brand.
+    /// getter/method/storage function for the 4-arg `__classPrivateFieldGet`
+    /// form, or `None` for an instance field (`kind == "f"`, brand is the
+    /// `WeakMap`).
     pub(super) fn private_read_info(
         &self,
         clean_name: &str,
