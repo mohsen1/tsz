@@ -570,36 +570,6 @@ impl<'a> ES5ClassTransformer<'a> {
         Some(self.private_assignment_string(var, function))
     }
 
-    pub(super) fn static_private_field_init_strings(&self) -> Vec<String> {
-        self.private_fields
-            .iter()
-            .filter(|field| field.is_static)
-            .map(|field| {
-                let value = if field.has_initializer && field.initializer.is_some() {
-                    if let Some(alias) = self.current_static_class_alias.as_ref() {
-                        self.convert_expression_static_with_class_alias(field.initializer, alias)
-                    } else {
-                        self.convert_expression_static(field.initializer)
-                    }
-                } else {
-                    IRNode::Undefined
-                };
-                self.render_private_init_expression(&IRNode::assign(
-                    IRNode::id(field.weakmap_name.clone()),
-                    IRNode::ObjectLiteral {
-                        properties: vec![IRProperty {
-                            key: IRPropertyKey::Identifier("value".into()),
-                            value,
-                            kind: IRPropertyKind::Init,
-                        }],
-                        source_range: None,
-                        extra_indent: 0,
-                    },
-                ))
-            })
-            .collect()
-    }
-
     fn build_private_method_function_ir(&self, member_idx: NodeIndex) -> Option<IRNode> {
         let method = self
             .private_methods
@@ -1308,8 +1278,49 @@ impl<'a> ES5ClassTransformer<'a> {
                     if crate::transforms::emit_utils::is_runtime_omitted_member(
                         self.arena,
                         &prop_data.modifiers,
-                    ) || is_private_field
-                    {
+                    ) {
+                        continue;
+                    }
+                    if is_private_field {
+                        // Static private field initializer. tsc interleaves it
+                        // with the sibling public static field inits and static
+                        // blocks in source order (`C.a = ...; _C_b = { value: ...
+                        // }; C.c = ...`), so push it into the same source-ordered
+                        // deferred stream here rather than emitting it as a
+                        // separate grouped block before all public inits. The
+                        // storage `var _C_b` is still declared by
+                        // `private_storage_declarations_in_tsc_order`; only the
+                        // value assignment is positioned here.
+                        if let Some(field) = self
+                            .private_fields
+                            .iter()
+                            .find(|field| field.member_idx == member_idx && field.is_static)
+                        {
+                            let value = if field.has_initializer && field.initializer.is_some() {
+                                if let Some(ref alias) = class_alias {
+                                    self.convert_expression_static_with_class_alias(
+                                        field.initializer,
+                                        alias,
+                                    )
+                                } else {
+                                    self.convert_expression_static(field.initializer)
+                                }
+                            } else {
+                                IRNode::Undefined
+                            };
+                            deferred_static_prop_inits.push(IRNode::expr_stmt(IRNode::assign(
+                                IRNode::id(field.weakmap_name.clone()),
+                                IRNode::ObjectLiteral {
+                                    properties: vec![IRProperty {
+                                        key: IRPropertyKey::Identifier("value".into()),
+                                        value,
+                                        kind: IRPropertyKind::Init,
+                                    }],
+                                    source_range: None,
+                                    extra_indent: 0,
+                                },
+                            )));
+                        }
                         continue;
                     }
                     if !self.property_initializer_has_equals(member_node, prop_data) {

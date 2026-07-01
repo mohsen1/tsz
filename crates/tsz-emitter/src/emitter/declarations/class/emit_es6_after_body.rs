@@ -4,11 +4,21 @@ use super::StaticFieldInit;
 use super::emit_es6_private_accessors::PrivateAutoAccessorInfo;
 use super::private_comma_items::PrivateCommaItems;
 use super::replace_identifier;
-use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef};
+use crate::emitter::core::{PrivateAccessorDef, PrivateMethodDef, StaticPrivateInit};
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{ClassData, Node};
 use tsz_scanner::SyntaxKind;
+
+/// Alias context needed to emit a static block IIFE in the class-declaration
+/// static-element stream (bundled so the shared emit helper stays under the
+/// argument-count lint).
+struct StaticBlockScope<'a> {
+    class_name: &'a str,
+    this_binding: Option<&'a str>,
+    super_base: Option<&'a str>,
+    class_alias: Option<&'a str>,
+}
 
 pub(super) struct ClassEs6AfterBody<'a> {
     pub(super) node: &'a Node,
@@ -242,6 +252,20 @@ impl<'a> Printer<'a> {
             && has_any_private_lowering
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
+        // Static private field VALUE inits (`_C_x = { value: ... }`) are static
+        // *elements*: tsc interleaves them with the public static field inits and
+        // static blocks in source order. When public static field inits are
+        // present the source-ordered emission loop below runs, so divert the
+        // private value inits into this list and splice them in by source position
+        // instead of emitting the whole group up-front. With no public static
+        // field inits there is nothing to interleave against, so they keep tsc's
+        // grouped order at their existing emission site. Only the class
+        // *declaration* emission loop below is handled here; a class expression
+        // routes its static field inits through the comma-expression path and
+        // keeps its existing private-init handling.
+        let interleave_static_private_inits =
+            !static_field_inits.is_empty() && class_expr_static_temp.is_none();
+        let mut interleaved_static_private_inits: Vec<StaticPrivateInit> = Vec::new();
         if emit_private_inits_before_static_elements {
             let static_private_inits = std::mem::take(&mut self.pending_static_private_inits);
             let private_class_alias_pair = self.pending_private_class_alias.take();
@@ -264,7 +288,7 @@ impl<'a> Printer<'a> {
                 || !accessor_defs.is_empty()
                 || !private_auto_accessors.is_empty()
                 || !private_auto_instance_storage_inits.is_empty()
-                || !static_private_inits.is_empty();
+                || (!interleave_static_private_inits && !static_private_inits.is_empty());
 
             if has_pre_static_private_inits {
                 self.write_line();
@@ -362,10 +386,18 @@ impl<'a> Printer<'a> {
                     emitted_private_auto_accessors_pre_static = true;
                 }
                 self.write(";");
-                for init in &static_private_inits {
-                    self.write_line();
-                    self.emit_static_private_init(init, &class_name, true);
+                if interleave_static_private_inits {
+                    // Emitted below, interleaved with the public static field
+                    // inits and static blocks in source order.
+                    interleaved_static_private_inits = static_private_inits;
+                } else {
+                    for init in &static_private_inits {
+                        self.write_line();
+                        self.emit_static_private_init(init, &class_name, true);
+                    }
                 }
+            } else if interleave_static_private_inits {
+                interleaved_static_private_inits = static_private_inits;
             }
         }
         // No private lowering but static elements present: emit the auto-accessor
@@ -618,38 +650,28 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             let mut next_static_block = 0usize;
+            let mut next_private_init = 0usize;
+            let static_block_scope = StaticBlockScope {
+                class_name,
+                this_binding: static_initializer_this_binding,
+                super_base: static_initializer_super_base,
+                class_alias: static_initializer_class_alias.as_deref(),
+            };
             for (name_emit, init_idx, _member_pos, leading_comments, trailing_comments) in
                 &static_field_inits
             {
-                if !self.defer_class_static_blocks {
-                    while next_static_block < deferred_static_blocks.len() {
-                        let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
-                        let block_pos = self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos);
-                        if block_pos >= *_member_pos {
-                            break;
-                        }
-                        let prev_this_alias = self.scoped_static_this_alias.clone();
-                        let prev_super_alias = self.scoped_static_super_base_alias.clone();
-                        self.scoped_static_this_alias =
-                            static_initializer_this_binding.map(std::sync::Arc::from);
-                        self.scoped_static_super_base_alias =
-                            static_initializer_super_base.map(std::sync::Arc::from);
-                        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                        if let Some(alias) = static_initializer_class_alias.as_ref() {
-                            self.scoped_class_expression_self_alias = Some((
-                                Arc::<str>::from(class_name),
-                                Arc::<str>::from(alias.as_str()),
-                            ));
-                        }
-                        self.emit_static_block_iife_expression(block_idx, comment_idx);
-                        self.scoped_class_expression_self_alias = prev_self_alias;
-                        self.scoped_static_this_alias = prev_this_alias;
-                        self.scoped_static_super_base_alias = prev_super_alias;
-                        self.write(";");
-                        self.write_line();
-                        next_static_block += 1;
-                    }
-                }
+                // Drain static blocks and static private field value inits that
+                // precede this public static field, spliced together in source
+                // order so `static #a; static { block }; static b` initializes in
+                // declaration order (tsc parity).
+                self.drain_interleaved_static_elements(
+                    *_member_pos,
+                    &deferred_static_blocks,
+                    &interleaved_static_private_inits,
+                    &mut next_static_block,
+                    &mut next_private_init,
+                    &static_block_scope,
+                );
 
                 // Emit saved leading comments from the original static property declaration
                 for (comment_text, source_pos) in leading_comments {
@@ -777,33 +799,18 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
-            if !self.defer_class_static_blocks {
-                while next_static_block < deferred_static_blocks.len() {
-                    let (block_idx, comment_idx) = deferred_static_blocks[next_static_block];
-                    let prev_this_alias = self.scoped_static_this_alias.clone();
-                    let prev_super_alias = self.scoped_static_super_base_alias.clone();
-                    self.scoped_static_this_alias =
-                        static_initializer_this_binding.map(std::sync::Arc::from);
-                    self.scoped_static_super_base_alias =
-                        static_initializer_super_base.map(std::sync::Arc::from);
-                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                    if let Some(alias) = static_initializer_class_alias.as_ref() {
-                        self.scoped_class_expression_self_alias = Some((
-                            Arc::<str>::from(class_name),
-                            Arc::<str>::from(alias.as_str()),
-                        ));
-                    }
-                    self.emit_static_block_iife_expression(block_idx, comment_idx);
-                    self.scoped_class_expression_self_alias = prev_self_alias;
-                    self.scoped_static_this_alias = prev_this_alias;
-                    self.scoped_static_super_base_alias = prev_super_alias;
-                    self.write(";");
-                    self.write_line();
-                    next_static_block += 1;
-                }
-                if next_static_block > 0 {
-                    deferred_static_blocks.clear();
-                }
+            // Flush any static blocks and static private field inits that come
+            // after the last public static field, still spliced in source order.
+            self.drain_interleaved_static_elements(
+                u32::MAX,
+                &deferred_static_blocks,
+                &interleaved_static_private_inits,
+                &mut next_static_block,
+                &mut next_private_init,
+                &static_block_scope,
+            );
+            if !self.defer_class_static_blocks && next_static_block > 0 {
+                deferred_static_blocks.clear();
             }
         }
 
@@ -1184,6 +1191,81 @@ impl<'a> Printer<'a> {
             );
             self.scoped_class_expression_self_alias = prev_self_alias;
         }
+    }
+
+    /// Emit the deferred static blocks and static private field value inits
+    /// whose source position precedes `threshold`, spliced together in source
+    /// order. `next_static_block` / `next_private_init` are the shared cursors
+    /// into the two position-sorted streams, advanced in place. Passing
+    /// `u32::MAX` as the threshold flushes whatever remains. This is the single
+    /// merge routine behind both the pre-field drain (stop before the next
+    /// public static field) and the trailing flush.
+    fn drain_interleaved_static_elements(
+        &mut self,
+        threshold: u32,
+        deferred_static_blocks: &[(NodeIndex, usize)],
+        interleaved_static_private_inits: &[StaticPrivateInit],
+        next_static_block: &mut usize,
+        next_private_init: &mut usize,
+        scope: &StaticBlockScope<'_>,
+    ) {
+        loop {
+            let block_pos = if !self.defer_class_static_blocks
+                && *next_static_block < deferred_static_blocks.len()
+            {
+                let (block_idx, _) = deferred_static_blocks[*next_static_block];
+                self.arena.get(block_idx).map_or(u32::MAX, |node| node.pos)
+            } else {
+                u32::MAX
+            };
+            let priv_pos = interleaved_static_private_inits
+                .get(*next_private_init)
+                .map_or(u32::MAX, |init| init.member_pos);
+            if block_pos >= threshold && priv_pos >= threshold {
+                break;
+            }
+            if priv_pos < block_pos {
+                self.emit_static_private_init(
+                    &interleaved_static_private_inits[*next_private_init],
+                    scope.class_name,
+                    true,
+                );
+                self.write_line();
+                *next_private_init += 1;
+            } else {
+                let (block_idx, comment_idx) = deferred_static_blocks[*next_static_block];
+                self.emit_scoped_static_block_stmt(block_idx, comment_idx, scope);
+                *next_static_block += 1;
+            }
+        }
+    }
+
+    /// Emit one deferred static block as a scoped IIFE statement (with the
+    /// `this`/`super`/self-class alias context installed), followed by `;` and a
+    /// newline. Shared by the source-ordered static-element drains so a static
+    /// block and a static private field init can be spliced together in position
+    /// order without duplicating the alias-context bookkeeping.
+    fn emit_scoped_static_block_stmt(
+        &mut self,
+        block_idx: NodeIndex,
+        comment_idx: usize,
+        ctx: &StaticBlockScope<'_>,
+    ) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        self.scoped_static_this_alias = ctx.this_binding.map(std::sync::Arc::from);
+        self.scoped_static_super_base_alias = ctx.super_base.map(std::sync::Arc::from);
+        let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+        if let Some(alias) = ctx.class_alias {
+            self.scoped_class_expression_self_alias =
+                Some((Arc::<str>::from(ctx.class_name), Arc::<str>::from(alias)));
+        }
+        self.emit_static_block_iife_expression(block_idx, comment_idx);
+        self.scoped_class_expression_self_alias = prev_self_alias;
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
+        self.write(";");
+        self.write_line();
     }
 
     fn static_field_initializer_is_object_rest_assignment(&self, init_idx: NodeIndex) -> bool {

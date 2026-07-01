@@ -43,6 +43,10 @@ pub(crate) struct StaticPrivateInit {
     pub(crate) storage_name: String,
     pub(crate) initializer: NodeIndex,
     pub(crate) storage_kind: PrivateFieldStorageKind,
+    /// Source position of the declaring member, used to interleave the value
+    /// initialization with sibling public static field inits and static blocks
+    /// in source order (tsc's initialization-order semantics).
+    pub(crate) member_pos: u32,
 }
 
 /// A const enum entry scoped to a specific region of the source.
