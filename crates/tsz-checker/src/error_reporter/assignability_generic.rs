@@ -261,6 +261,18 @@ impl<'a> CheckerState<'a> {
                 tgt_str = display;
                 static_schema_display = true;
             }
+            if let Some(display) =
+                self.static_schema_array_structural_display_text(&tgt_str, source)
+            {
+                tgt_str = display;
+                static_schema_display = true;
+            }
+            if let Some(display) =
+                self.static_schema_type_parameter_array_constraint_display(target, &tgt_str, source)
+            {
+                tgt_str = display;
+                static_schema_display = true;
+            }
             if !static_schema_display
                 && let Some((direct_source, direct_target)) =
                     self.direct_type_param_alias_application_pair_display(source, target)

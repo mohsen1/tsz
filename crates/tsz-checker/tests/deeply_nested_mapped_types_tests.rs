@@ -12,14 +12,18 @@ fn check(source: &str) -> Vec<u32> {
 /// scope), returning only the diagnostic codes. Skips gracefully (empty) when
 /// the bundled lib asset is unavailable in the build environment.
 fn check_with_es5_lib_codes(source: &str) -> Vec<u32> {
+    check_with_es5_lib_code_messages(source)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+}
+
+fn check_with_es5_lib_code_messages(source: &str) -> Vec<(u32, String)> {
     let libs = load_lib_files(&["es5.d.ts"]);
     if libs.is_empty() {
         return Vec::new();
     }
     check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &libs)
-        .into_iter()
-        .map(|(code, _)| code)
-        .collect()
 }
 
 fn ts2322_count(codes: &[u32]) -> usize {
@@ -567,7 +571,14 @@ function f1(ors: Input[]): Output[] { return ors; }
 function f2<T extends Output[]>(ors: Input[]): T { return ors; }
 function f3(ors: (typeof Input.static)[]): Output[] { return ors; }
 "#;
-    let codes = check(source);
+    let diagnostics = check_with_es5_lib_code_messages(source);
+    if diagnostics.is_empty() {
+        return; // lib asset unavailable — covered by CLI/conformance instead
+    }
+    let codes = diagnostics
+        .iter()
+        .map(|(code, _)| *code)
+        .collect::<Vec<_>>();
     assert!(
         !codes.contains(&2344),
         "Evaluate<PropertiesReducer> must not produce TS2344: {codes:?}"
@@ -575,6 +586,21 @@ function f3(ors: (typeof Input.static)[]): Output[] { return ors; }
     assert!(
         !codes.contains(&2464),
         "Evaluate<PropertiesReducer> must not produce TS2464: {codes:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("foo: string")
+                && message.contains("bar: string")
+                && !message.contains("Output[]")
+        }),
+        "generic `T extends Output[]` return mismatch must render the target structurally: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 2322 || !message.contains("Output[]")),
+        "TypeBox static-schema TS2322 diagnostics must not fall back to the unreduced `Output[]` alias: {diagnostics:?}"
     );
 }
 
