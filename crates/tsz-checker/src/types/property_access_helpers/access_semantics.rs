@@ -1212,6 +1212,48 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         let mut method_signatures = Vec::new();
 
+        // `tsc` parity: `.bind(thisArg)` on an overloaded function whose call
+        // signatures declare no `this` parameter returns
+        // `OmitThisParameter<T> = T` — the FULL overload set — because
+        // `ThisParameterType<T>` is `unknown`, so the first
+        // `CallableFunction.bind` overload wins and preserves every signature.
+        // The per-signature synthesis below instead emits one bound function
+        // per receiver call signature, which collapses an overloaded receiver
+        // to its first signature during overload resolution (e.g. immer's
+        // `produceWithPatches.bind(immer)`). Emit a single identity `.bind`
+        // method first, carrying every call signature of the receiver, so
+        // resolving `.bind(thisArg)` yields the whole overload set. It takes
+        // exactly one parameter, so partial-application `.bind(thisArg, arg0,
+        // ...)` calls still fall through to the per-signature overloads below.
+        if property_name == "bind"
+            && call_targets.len() > 1
+            && construct_targets.is_empty()
+            && call_targets.iter().all(|sig| sig.this_type.is_none())
+        {
+            let full_receiver = factory.callable(tsz_solver::CallableShape {
+                call_signatures: call_targets.clone(),
+                construct_signatures: Vec::new(),
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            });
+            method_signatures.push(tsz_solver::CallSignature {
+                type_params: Vec::new(),
+                params: vec![tsz_solver::ParamInfo {
+                    name: Some(self.ctx.types.intern_string("thisArg")),
+                    type_id: TypeId::ANY,
+                    optional: false,
+                    rest: false,
+                }],
+                this_type: None,
+                return_type: full_receiver,
+                type_predicate: None,
+                is_method: false,
+            });
+        }
+
         for (sig, is_constructor) in call_targets
             .iter()
             .map(|sig| (sig, false))
