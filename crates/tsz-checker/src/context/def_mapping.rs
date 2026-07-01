@@ -4,7 +4,6 @@
 //! references, type parameter registration, and resolved-type registration
 //! in the `TypeEnvironment`.
 
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use crate::query_boundaries::common::TypeResolver;
@@ -14,6 +13,9 @@ use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
+use crate::context::def_mapping_env_writes::{
+    apply_or_defer_env_write, drain_env_write_queue_into, flush_env_write_queue,
+};
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
 use crate::query_boundaries::common::TypeEnvironment;
 
@@ -33,65 +35,6 @@ fn eager_warm_local_caches() -> bool {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
     })
-}
-
-// --- Shared dual-environment write discipline ---
-//
-// The context owns two `TypeEnvironment` instances behind separate `RefCell`s:
-// the authoritative evaluator env (`type_env`) and the flow-analyzer env
-// (`type_environment`). They are kept separate so a re-entrant evaluator can
-// publish-and-read freshly resolved `DefId -> TypeId` bodies into `type_env`
-// while the flow analyzer holds `type_environment` borrowed for narrowing. Both
-// envs share *one* race-safe write discipline, expressed once below and reused
-// for each (env, deferred-queue) pair rather than hand-duplicated per env.
-
-/// Apply `op` to `env`, or queue it on `queue` when `env` is already borrowed.
-///
-/// A registration can race with a live borrow during recursive resolution
-/// (which can hold either env, including the target itself). On a successful
-/// borrow this first drains any previously-deferred writes (in order) so the env
-/// catches up, then applies `op`; on a borrow conflict it queues `op` for later
-/// replay rather than dropping it. Dropping an authoritative write would also
-/// drop the shared `DefinitionStore` write-through that lives inside the env
-/// mutator, collapsing a def / class-instance body to `never` for every later
-/// consumer.
-fn apply_or_defer_env_write(
-    env: &RefCell<TypeEnvironment>,
-    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
-    op: DeferredFlowEnvWrite,
-) {
-    match env.try_borrow_mut() {
-        Ok(mut env) => {
-            drain_env_write_queue_into(queue, &mut env);
-            op.apply(&mut env);
-        }
-        Err(_) => queue.borrow_mut().push(op),
-    }
-}
-
-/// Replay every queued deferred write into an already-borrowed env, clearing the
-/// queue. A single `take` leaves an empty queue, so the loop is a no-op when
-/// nothing was deferred.
-fn drain_env_write_queue_into(
-    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
-    env: &mut TypeEnvironment,
-) {
-    let pending = std::mem::take(&mut *queue.borrow_mut());
-    for op in pending {
-        op.apply(env);
-    }
-}
-
-/// Replay any deferred writes for `env` that lost the borrow race, if it is
-/// momentarily borrowable. A no-op when nothing was deferred or the env is not
-/// borrowable (the next successful write drains the backlog).
-fn flush_env_write_queue(
-    env: &RefCell<TypeEnvironment>,
-    queue: &RefCell<Vec<DeferredFlowEnvWrite>>,
-) {
-    if let Ok(mut env) = env.try_borrow_mut() {
-        drain_env_write_queue_into(queue, &mut env);
-    }
 }
 
 impl CheckerContext<'_> {

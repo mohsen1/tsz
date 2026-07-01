@@ -30,6 +30,7 @@ mod type_node_property_names;
 mod type_node_query_members;
 mod type_node_resolution;
 mod type_node_signature;
+mod type_node_value_symbols;
 pub(crate) mod unique_symbol_arena;
 pub(crate) mod unique_symbol_construction;
 pub(crate) mod utilities;
