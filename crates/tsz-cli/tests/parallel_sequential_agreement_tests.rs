@@ -535,7 +535,7 @@ fn genuine_parallel_disposable_delegation_matches_sequential() {
     );
 }
 
-/// Forced-parallel witness for the still-open #13862 materialization campaign.
+/// Forced-parallel regression guard for the #13862 materialization campaign.
 ///
 /// `dom_element_heritage_clean_sequential` proves the *default* (DOM-gated
 /// sequential) schedule is correct. This test pins the *forced-parallel*
@@ -547,23 +547,13 @@ fn genuine_parallel_disposable_delegation_matches_sequential() {
 /// cluster of false `TS2345` ("`SVGGraphicsElement` is missing the following
 /// properties from type 'Node': ...").
 ///
-/// Confirmed contamination vectors (all on `main`, monotone publication
-/// default-on): the per-file `TypeEnvironment` rebuild, the program-shared
-/// `DefinitionStore` first-form/last-writer window before a def's first
-/// *finalized* publish, and the `shared_lib_type_cache`
-/// (`lib_resolution.rs` `resolve_lib_type_by_name`, which adopts a sibling's
-/// cached interface `TypeId` whenever `cached_lib_type_is_usable` passes —
-/// that check validates body-presence, not heritage-completeness). Priming the
-/// referenced lib-interface heritage closure in the sequential prime pass plus
-/// freeze/defer does **not** close it, because the divergence is driven by the
-/// per-worker env rebuild and the shared-cache adoption, not only the
-/// `DefinitionStore`. Lifting the gate requires the complete + deterministic
-/// materialization campaign tracked in #13862 / #13861.
-///
-/// `#[ignore]`d (repo known-bug-witness convention): un-ignoring it reproduces
-/// the open non-determinism deterministically across the attempt loop.
+/// This pins the checker-agnostic fast-path contamination vector: a worker must
+/// not use direct lazy identities or sibling-visible shared lib types for lib
+/// names whose declarations carry heritage, because the final inherited
+/// surface is still checker-relative until materialization is owned
+/// deterministically. The gate is structural over declarations, so binders and
+/// file names are irrelevant.
 #[test]
-#[ignore = "open bug #13862: forced-parallel DOM/SVG deep-heritage materialization is schedule-dependent"]
 fn forced_parallel_dom_heritage_matches_sequential_witness() {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping #13862 forced-parallel DOM witness: tsz binary not found");

@@ -567,17 +567,22 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
             Some(html_div_arena),
             false,
         )
-        .expect("value-merged DOM interfaces whose declared methods return void should stay lazy");
+        .expect("lazy-safe value/interface DOM types may still use local Lazy identities");
     assert!(html_div_params.is_empty());
     assert!(
         crate::query_boundaries::common::lazy_def_id(state.ctx.types, html_div).is_some(),
-        "HTMLDivElement should return a type-position Lazy ref",
+        "HTMLDivElement should return a local type-position Lazy ref",
     );
     let inner_html = state
         .resolve_simple_lib_interface_own_property("HTMLDivElement", "innerHTML")
         .expect("single-member DOM resolver should walk non-generic inherited properties");
     assert_ne!(inner_html, TypeId::ERROR);
     assert_ne!(inner_html, TypeId::UNKNOWN);
+    let append_child = state
+        .resolve_simple_lib_interface_own_property("HTMLDivElement", "appendChild")
+        .expect("single-member DOM resolver should walk inherited methods");
+    assert_ne!(append_child, TypeId::ERROR);
+    assert_ne!(append_child, TypeId::UNKNOWN);
 
     let document_sym_id = state
         .ctx
@@ -601,7 +606,7 @@ fn direct_value_merged_builtin_dom_interface_symbol_type_returns_type_position_l
                 false,
             )
             .is_none(),
-        "value-merged DOM interfaces with non-void method returns should stay on the existing child/interface path",
+        "value-merged DOM interfaces with heritage stay on the existing child/interface path",
     );
     let query_selector = state
         .resolve_simple_lib_interface_own_property("Document", "querySelector")

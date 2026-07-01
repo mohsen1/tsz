@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
                 self.get_cross_file_symbol(sym_id)
                     .filter(|s| s.has_any_flags(symbol_flags::CLASS))
                     .map(|s| s.escaped_name.clone())
-                    .filter(|n| !self.lib_name_locally_augmented(n))
+                    .filter(|n| !self.lib_name_requires_checker_local_resolution(n))
             })
             .flatten()
     }
@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
         }
         let symbol = self.get_cross_file_symbol(sym_id)?;
         let name = symbol.escaped_name.clone();
-        if self.lib_name_locally_augmented(&name) {
+        if self.lib_name_requires_checker_local_resolution(&name) {
             return None;
         }
         Some(name)
@@ -94,6 +94,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn cache_shared_actual_lib_delegation(&self, shared_name: &str, result: TypeId) {
+        if self.lib_name_requires_checker_local_resolution(shared_name) {
+            return;
+        }
         self.insert_to_shared_lib_cache(
             shared_actual_lib_delegation_cache_key(shared_name),
             result,
@@ -110,7 +113,8 @@ impl<'a> CheckerState<'a> {
         }
         let symbol = self.get_cross_file_symbol(sym_id)?;
         let name = symbol.escaped_name.clone();
-        if self.lib_name_locally_augmented(&name) || self.any_program_file_augments_lib_name(&name)
+        if self.lib_name_requires_checker_local_resolution(&name)
+            || self.any_program_file_augments_lib_name(&name)
         {
             return None;
         }
@@ -145,6 +149,9 @@ impl<'a> CheckerState<'a> {
         mode: u8,
         result: TypeId,
     ) {
+        if self.lib_name_requires_checker_local_resolution(shared_name) {
+            return;
+        }
         let Some(file_name) = decl_arena
             .source_files
             .first()
@@ -181,7 +188,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let name = symbol.escaped_name.clone();
-        if self.lib_name_locally_augmented(&name) {
+        if self.lib_name_requires_checker_local_resolution(&name) {
             return None;
         }
         Some(name)
@@ -212,6 +219,9 @@ impl<'a> CheckerState<'a> {
         shared_name: &str,
         result: TypeId,
     ) {
+        if self.lib_name_requires_checker_local_resolution(shared_name) {
+            return;
+        }
         self.insert_to_shared_lib_cache(
             shared_actual_lib_class_delegation_cache_key(shared_name),
             result,

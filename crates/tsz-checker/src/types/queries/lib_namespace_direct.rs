@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
             return *cached;
         }
 
-        if !self.lib_name_locally_augmented(cache_name)
+        if !self.lib_name_requires_parallel_local_resolution(cache_name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
             && let Some(entry) = shared.get(cache_name)
         {
@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
             .lib_type_resolution_caches
             .types
             .insert(cache_name.to_string(), Some(ty));
-        if !self.lib_name_locally_augmented(cache_name)
+        if !self.lib_name_requires_parallel_local_resolution(cache_name)
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
         {
             shared.insert(cache_name.to_string(), Some(ty));
