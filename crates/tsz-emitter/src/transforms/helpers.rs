@@ -407,6 +407,11 @@ pub struct HelpersNeeded {
     pub export_star: bool,
     pub import_default: bool,
     pub import_star: bool,
+    /// Whether `__exportStar` was requested before `__importStar`. Both are
+    /// priority 2 in tsc, whose `compareEmitHelpers` is a *stable* sort, so two
+    /// same-priority helpers keep their first-request order. This is emit-order
+    /// bookkeeping only and does not itself imply either helper is needed.
+    pub export_star_before_import_star: bool,
     pub make_template_object: bool,
     pub class_private_field_get: bool,
     pub class_private_field_set: bool,
@@ -517,6 +522,26 @@ impl HelpersNeeded {
         self.remember_unprioritized(HelperEmitOrder::ImportDefault);
     }
 
+    /// Mark `__importStar` as needed, recording its request order relative to
+    /// `__exportStar`. Both are priority 2 in tsc; because `compareEmitHelpers`
+    /// is a stable sort, the one requested first is emitted first. Recording
+    /// happens only on the first request of either helper (dedup-safe).
+    pub const fn mark_import_star(&mut self) {
+        if !self.import_star && !self.export_star {
+            self.export_star_before_import_star = false;
+        }
+        self.import_star = true;
+    }
+
+    /// Mark `__exportStar` as needed, recording its request order relative to
+    /// `__importStar` (see [`Self::mark_import_star`]).
+    pub const fn mark_export_star(&mut self) {
+        if !self.import_star && !self.export_star {
+            self.export_star_before_import_star = true;
+        }
+        self.export_star = true;
+    }
+
     pub fn mark_async_values(&mut self) {
         self.async_values = true;
         // `__asyncValues` (for-await-of) is an ES2018 async-iteration helper, so
@@ -599,11 +624,19 @@ impl HelpersNeeded {
         if self.run_initializers {
             names.push("__runInitializers");
         }
-        if self.import_star {
-            names.push("__importStar");
-        }
-        if self.export_star {
-            names.push("__exportStar");
+        // `__importStar` / `__exportStar` are both priority 2 in tsc; a stable
+        // sort keeps them in request order (see `export_star_before_import_star`).
+        let import_star = (self.import_star, "__importStar");
+        let export_star = (self.export_star, "__exportStar");
+        let (first, second) = if self.export_star_before_import_star {
+            (export_star, import_star)
+        } else {
+            (import_star, export_star)
+        };
+        for (needed, name) in [first, second] {
+            if needed {
+                names.push(name);
+            }
         }
         if self.metadata {
             names.push("__metadata");
@@ -756,18 +789,29 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
-    if helpers.import_star {
-        output.push_str(IMPORT_STAR_HELPER);
-        output.push('\n');
-    }
+    // `__importStar` and `__exportStar` are both priority 2 in tsc; because
+    // `compareEmitHelpers` is a stable sort, the one requested first is emitted
+    // first (recorded by `export_star_before_import_star`).
+    // `__rewriteRelativeImportExtension` keeps its historical slot between them.
+    let import_star = (helpers.import_star, IMPORT_STAR_HELPER);
+    let export_star = (helpers.export_star, EXPORT_STAR_HELPER);
+    let (first, second) = if helpers.export_star_before_import_star {
+        (export_star, import_star)
+    } else {
+        (import_star, export_star)
+    };
+    let push_helper = |out: &mut String, (needed, text): (bool, &str)| {
+        if needed {
+            out.push_str(text);
+            out.push('\n');
+        }
+    };
+    push_helper(&mut output, first);
     if helpers.rewrite_relative_import_extension {
         output.push_str(REWRITE_RELATIVE_IMPORT_EXTENSION_HELPER);
         output.push('\n');
     }
-    if helpers.export_star {
-        output.push_str(EXPORT_STAR_HELPER);
-        output.push('\n');
-    }
+    push_helper(&mut output, second);
     // Priority 3: metadata
     if helpers.metadata {
         output.push_str(METADATA_HELPER);
@@ -1203,6 +1247,87 @@ mod tests {
         // Only the two set helpers, in priority order (`__assign` is priority
         // 1, `__spreadArray` is unprioritized so it comes later).
         assert_eq!(names, vec!["__assign", "__spreadArray"]);
+    }
+
+    // -----------------------------------------------------------------
+    // __importStar / __exportStar request-order (both priority 2 in tsc)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn export_star_before_import_star_flag_alone_does_not_trigger_any_needed() {
+        // Like `class_private_field_set_before_get`, the request-order flag is
+        // emit bookkeeping only. On its own it must not make `any_needed()` true
+        // (which would install a spurious tslib import) nor emit a name.
+        let helpers = HelpersNeeded {
+            export_star_before_import_star: true,
+            ..HelpersNeeded::default()
+        };
+        assert!(!helpers.any_needed());
+        assert!(helpers.needed_names().is_empty());
+        assert!(emit_helpers(&helpers).is_empty());
+    }
+
+    #[test]
+    fn import_star_requested_first_emits_import_star_first() {
+        // `export * as ns` (import_star) requested before `export *` (export_star):
+        // tsc's stable same-priority sort keeps import_star first.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_import_star();
+        helpers.create_binding = true;
+        helpers.mark_export_star();
+
+        assert!(!helpers.export_star_before_import_star);
+        let names = helpers.needed_names();
+        let i_import = names.iter().position(|n| *n == "__importStar").unwrap();
+        let i_export = names.iter().position(|n| *n == "__exportStar").unwrap();
+        assert!(i_import < i_export, "names: {names:?}");
+
+        let output = emit_helpers(&helpers);
+        assert!(
+            find_helper(&output, "__importStar") < find_helper(&output, "__exportStar"),
+            "emit order wrong:\n{output}",
+        );
+    }
+
+    #[test]
+    fn export_star_requested_first_emits_export_star_first() {
+        // `export *` (export_star) requested before `export * as ns` (import_star):
+        // tsc's stable same-priority sort keeps export_star first. This is the
+        // case the fixed-order emitter got wrong.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_export_star();
+        helpers.create_binding = true;
+        helpers.mark_import_star();
+
+        assert!(helpers.export_star_before_import_star);
+        let names = helpers.needed_names();
+        let i_import = names.iter().position(|n| *n == "__importStar").unwrap();
+        let i_export = names.iter().position(|n| *n == "__exportStar").unwrap();
+        assert!(i_export < i_import, "names: {names:?}");
+
+        let output = emit_helpers(&helpers);
+        assert!(
+            find_helper(&output, "__exportStar") < find_helper(&output, "__importStar"),
+            "emit order wrong:\n{output}",
+        );
+    }
+
+    #[test]
+    fn star_request_order_is_recorded_only_on_first_request() {
+        // Marking import_star, then export_star, then import_star again must not
+        // flip the recorded order (dedup-safe): import_star stays first.
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_import_star();
+        helpers.mark_export_star();
+        helpers.mark_import_star();
+        assert!(!helpers.export_star_before_import_star);
+
+        // And the mirror: export first stays export-first despite re-marks.
+        let mut h2 = HelpersNeeded::default();
+        h2.mark_export_star();
+        h2.mark_import_star();
+        h2.mark_export_star();
+        assert!(h2.export_star_before_import_star);
     }
 
     // -----------------------------------------------------------------
