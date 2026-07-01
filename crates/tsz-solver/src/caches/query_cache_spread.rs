@@ -200,13 +200,13 @@ impl QueryCache<'_> {
                 if let Some(display_props) = self.interner.get_display_properties(normalized) {
                     display_props.as_ref().clone()
                 } else {
-                    let mut props = self.interner.object_shape(shape_id).properties.to_vec();
+                    let mut props = self.interner.object_shape(shape_id).properties.clone();
                     crate::types::normalize_display_property_order(&mut props);
                     props
                 }
             }
             TypeData::Callable(shape_id) => {
-                self.interner.callable_shape(shape_id).properties.to_vec()
+                self.interner.callable_shape(shape_id).properties.clone()
             }
             TypeData::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);

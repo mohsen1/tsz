@@ -897,12 +897,12 @@ fn display_properties_for_intersection_member(
 
     match db.lookup(member)? {
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let mut props = db.object_shape(shape_id).properties.to_vec();
+            let mut props = db.object_shape(shape_id).properties.clone();
             normalize_display_property_order(&mut props);
             Some(props)
         }
         TypeData::Callable(shape_id) => {
-            let mut props = db.callable_shape(shape_id).properties.to_vec();
+            let mut props = db.callable_shape(shape_id).properties.clone();
             normalize_display_property_order(&mut props);
             Some(props)
         }
