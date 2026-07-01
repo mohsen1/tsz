@@ -827,7 +827,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             &program_context,
             &[2552],
         );
-        diagnostics.retain(is_datetimeformatpart_spelling_baseline_diagnostic);
+        diagnostics
+            .retain(|diag| is_datetimeformatpart_spelling_baseline_diagnostic(diag, checker_libs));
         diagnostics
     } else {
         Vec::new()
