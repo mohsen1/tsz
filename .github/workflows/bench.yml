@@ -1,16 +1,9 @@
 name: Bench
 
 on:
-  # Perf is measured per-tip on a cadence (not per-commit): each tick benches the
-  # current main HEAD (github.sha). Dropping the per-CI-completion workflow_run
-  # trigger removes the batch-supersession + defer/catch-up machinery — the
-  # schedule itself is the catch-up (the next tick measures the newest tip).
-  schedule:
-    - cron: '30 */3 * * *'   # perf cadence: bench current main tip every 3h
-    # Daily latest PGO release: submit the Cloud Build prep first, then publish
-    # the finished artifact without fanning out benchmark shards.
-    - cron: '0 3 * * *'
-    - cron: '0 5 * * *'
+  # Emergency GCP cost scale-down: benchmark Cloud Build fanout is manual-only.
+  # Re-enable a measured cadence only after the runner fleet and Cloud Build
+  # spend are intentionally budgeted.
   workflow_dispatch:
     inputs:
       publish_latest_pgo:
@@ -19,12 +12,11 @@ on:
         default: false
         type: boolean
 
-# Single-flight per channel. cancel-in-progress:false lets an in-flight bench
-# finish (a ~2h run is never thrown away); at most one newer run queues behind it
-# and benches the then-current tip. Perf and the daily PGO release use separate
-# groups so a long perf run never delays the release (and vice versa).
+# Single-flight per manual channel. cancel-in-progress:false lets an in-flight
+# bench finish (a ~2h run is never thrown away). Perf and the PGO release use
+# separate groups so a long perf run never delays the release (and vice versa).
 concurrency:
-  group: bench-${{ (github.event.schedule == '0 3 * * *' || github.event.schedule == '0 5 * * *' || (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo)) && 'release' || 'perf' }}
+  group: bench-${{ inputs.publish_latest_pgo && 'release' || 'perf' }}
   cancel-in-progress: false
 
 permissions:
@@ -39,10 +31,8 @@ env:
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
-  # Per-tip cadence: github.sha is main's HEAD at trigger time for schedule /
-  # workflow_dispatch on the default branch, so the whole pipeline measures and
-  # publishes the current tip. The cadence + the latest.json source-monotonic
-  # guard replace the old age/stale/catch-up knobs (all removed).
+  # Manual runs target github.sha for the selected ref. The latest.json
+  # source-monotonic guard still prevents publishing stale benchmark data.
   GITHUB_SHA: ${{ github.sha }}
   BENCH_TARGET_SHA: ${{ github.sha }}
   # Build image for the prepare/shard Cloud Builds. Empty (default) falls back to
@@ -81,9 +71,7 @@ jobs:
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
       vars.TSZ_BENCH_SELF_HOSTED_PREP == '1' &&
-      !((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-        (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
-        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+      !inputs.publish_latest_pgo
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     outputs:
@@ -158,10 +146,8 @@ jobs:
     needs: bench-gate
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
-      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
       (vars.TSZ_BENCH_SELF_HOSTED_PREP != '1' ||
-       (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+       inputs.publish_latest_pgo)
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 120
     outputs:
@@ -247,8 +233,7 @@ jobs:
     if: >-
       always() &&
       needs.bench-gate.outputs.should_run == 'true' &&
-      ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+      inputs.publish_latest_pgo
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 25
     env:
@@ -299,12 +284,8 @@ jobs:
                 exit 1
               fi
 
-              if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
-                    "${latest_target_sha}" != "${target_sha}" ]]; then
+              if [[ "${latest_target_sha}" != "${target_sha}" ]]; then
                 echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${target_sha}."
-              elif [[ "${{ github.event_name }}" == "schedule" &&
-                      "${latest_build_date}" != "$(date -u +%F)" ]]; then
-                echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
               elif storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
                 bench-prep.env && \
@@ -338,9 +319,6 @@ jobs:
 
             if (( SECONDS >= deadline )); then
               echo "No finished Cloud Build PGO artifact is available yet."
-              if [[ "${{ github.event_name }}" == "schedule" ]]; then
-                exit 1
-              fi
               echo "ready=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -526,8 +504,7 @@ jobs:
     if: >-
       always() &&
       (needs.bench-prepare.outputs.should_run == 'true' ||
-       (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
-        !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
+       (!inputs.publish_latest_pgo &&
         needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')

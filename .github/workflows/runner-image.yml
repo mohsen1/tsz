@@ -2,8 +2,8 @@
 # runner image for the Cloud Run fleet.
 #
 # This workflow is intentionally SEPARATE from ci.yml / bench.yml and is NOT a
-# required check. It cannot affect PR CI status. The build step is safe to run
-# automatically (it only produces a SHA-tagged image); the deploy step touches
+# required check. It cannot affect PR CI status. During emergency GCP cost
+# scale-down, build and deploy are both manual-only. The deploy step touches
 # live infrastructure and is therefore gated behind a manual workflow_dispatch
 # input AND the `runner-image-deploy` environment (configure it with required
 # reviewers for manual approval).
@@ -16,7 +16,7 @@
 #   vars.RUNNER_IMAGE_GCP_REGION           (optional; defaults to us-central1)
 #   vars.RUNNER_IMAGE_CLOUD_RUN_SERVICE    (required to deploy)
 #   vars.RUNNER_IMAGE_MIN_INSTANCES        (optional; defaults to 0)
-#   vars.RUNNER_IMAGE_MAX_INSTANCES        (optional; defaults to 50)
+#   vars.RUNNER_IMAGE_MAX_INSTANCES        (optional; defaults to 1)
 name: runner-image
 
 on:
@@ -30,16 +30,6 @@ on:
         description: "Provenance note: why are you rebuilding / deploying?"
         type: string
         default: "manual rebuild"
-  push:
-    paths:
-      - 'scripts/infra/cloud-run-gh-runner/Dockerfile'
-      - 'scripts/infra/cloud-run-gh-runner/start.sh'
-      - 'scripts/cloudbuild/cloudbuild-runner-image.yaml'
-      - '.github/workflows/runner-image.yml'
-  schedule:
-    # Weekly rebuild to pick up base-image / OS security updates. Build only;
-    # the scheduled run can never deploy (deploy requires workflow_dispatch).
-    - cron: '0 7 * * 1'
 
 permissions:
   contents: read
@@ -133,7 +123,7 @@ jobs:
           SERVICE: ${{ vars.RUNNER_IMAGE_CLOUD_RUN_SERVICE }}
           IMAGE_SHA_TAG: ${{ needs.build.outputs.image_sha_tag }}
           MIN_INSTANCES: ${{ vars.RUNNER_IMAGE_MIN_INSTANCES || '0' }}
-          MAX_INSTANCES: ${{ vars.RUNNER_IMAGE_MAX_INSTANCES || '50' }}
+          MAX_INSTANCES: ${{ vars.RUNNER_IMAGE_MAX_INSTANCES || '1' }}
         run: |
           set -euo pipefail
           echo "Deploying ${IMAGE_SHA_TAG} to Cloud Run service ${SERVICE}"

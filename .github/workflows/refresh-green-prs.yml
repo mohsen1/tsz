@@ -1,11 +1,8 @@
 name: Refresh Green PRs
 
 on:
-  push:
-    branches: [main]
-  schedule:
-    # Drain at most one stale green PR per run, away from the top of the hour.
-    - cron: '7,27,47 * * * *'
+  # Emergency GCP cost scale-down: do not auto-refresh stale PRs because each
+  # branch update can trigger a fresh expensive CI suite.
   workflow_dispatch:
     inputs:
       dry_run:

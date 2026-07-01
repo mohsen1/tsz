@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      full_ci:
+        description: "Run the expensive Cloud Run / Cloud Build suites despite emergency cost scale-down."
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -27,6 +33,11 @@ env:
   TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
   _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
   TSZ_CI_RUNNER_LABEL: tsz-cloud-run
+  # Emergency GCP bill guard: automatic PR/push/merge_queue events publish the
+  # required light summary but do not fan out Cloud Run runners or Cloud Build
+  # jobs. Use workflow_dispatch with full_ci=true after re-enabling the runner
+  # fleet when a full validation pass is worth the spend.
+  TSZ_CI_EMERGENCY_SCALE_DOWN: "1"
 
 jobs:
   gate:
@@ -88,6 +99,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_EVENT_NAME: ${{ github.event_name }}
           METADATA_ACTIVE_SUITE_FOUND: ${{ steps.metadata-active-suite.outputs.active_suite_found }}
+          TSZ_CI_MANUAL_FULL_CI: ${{ github.event_name == 'workflow_dispatch' && inputs.full_ci || false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -379,6 +391,20 @@ jobs:
                 fi
               fi
             fi
+          fi
+          if [[ "${TSZ_CI_EMERGENCY_SCALE_DOWN:-0}" == "1" &&
+                "${TSZ_CI_MANUAL_FULL_CI:-false}" != "true" ]]; then
+            echo "Emergency GCP cost scale-down is active — skipping Cloud Run / Cloud Build CI fanout."
+            echo "Dispatch this workflow manually with full_ci=true after intentionally re-enabling the runner fleet."
+            should_run=false
+            full_run=false
+            rust_cache_refresh=false
+            required_summary=true
+            bench_shell_only=false
+            perf_tool_only=false
+            arch_tool_only=false
+            metadata_only_skip=false
+            compiler_checks_required=false
           fi
           if [[ "$should_run" != "true" ]]; then
             full_run=false

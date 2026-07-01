@@ -187,14 +187,19 @@ assert.match(
   "bench-prep-ready artifact should include both the prep manifest and tarball consumed by shard jobs",
 );
 
-// Phase 7: perf is measured per-tip on a schedule cadence. The per-commit
+// Emergency cost mode: perf fanout is manual-only. The per-commit
 // workflow_run trigger + defer-to-oldest gate + age/stale/catch-up machinery
-// were removed and replaced by a single per-channel concurrency group
-// (the authoritative single-flight) and a trivial should_run=true gate.
+// stay removed, but the scheduled cadence is disabled until Cloud Build spend
+// is intentionally budgeted again.
+assert.doesNotMatch(
+  workflow,
+  /schedule:\s*\n\s*- cron:/,
+  "bench should not run scheduled Cloud Build fanout during emergency cost scale-down",
+);
 assert.match(
   workflow,
-  /schedule:\s*\n\s*- cron: '30 \*\/3 \* \* \*'/,
-  "bench should measure perf on a 3h schedule cadence",
+  /workflow_dispatch:\s*\n\s*inputs:\s*\n\s*publish_latest_pgo:/,
+  "bench should remain manually dispatchable",
 );
 assert.doesNotMatch(
   workflow,
@@ -209,7 +214,7 @@ assert.match(
 assert.match(
   workflow,
   /BENCH_TARGET_SHA: \$\{\{ github\.sha \}\}/,
-  "bench should target the current main tip (github.sha) under the cadence model",
+  "bench should target the selected dispatch ref (github.sha) under manual mode",
 );
 assert.doesNotMatch(
   workflow,
