@@ -43,17 +43,14 @@ impl<'a> CheckerState<'a> {
         let home_def_id = self.ctx.get_or_create_def_id(home_symbol);
 
         // Publish the merged body under the home def so `get_body(home_def_id)`
-        // surfaces the merged members for the index-reduction redirect.
-        self.ctx
-            .definition_store
-            .set_body_with_params(home_def_id, merged_type, None);
+        // surfaces the merged members for the index-reduction redirect. Route
+        // the body through the checker env authority so evaluator/flow env
+        // writes are deferred instead of dropped on recursive borrow races.
+        self.ctx.register_def_in_envs(home_def_id, merged_type);
         if let Some(shape) = type_environment::object_shape(self.ctx.types, merged_type) {
             self.ctx
                 .definition_store
                 .set_instance_shape(home_def_id, shape);
-        }
-        if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-            env.insert_def(home_def_id, merged_type);
         }
 
         // Record the redirect edge keyed on the raw home `SymbolId` (the same
