@@ -211,3 +211,28 @@ declare module "Use/Drop" {
         "negative assignment should still be checked through the alias body; got {diags:#?}"
     );
 }
+
+#[test]
+fn local_generic_alias_reuses_same_file_symbol_def_even_when_span_metadata_differs() {
+    let diags = diagnostics(
+        r#"
+type Reducer<S> = (state: S) => S;
+declare function combineReducers<S>(reducers: { [K in keyof S]: Reducer<S[K]> }): Reducer<S>;
+
+type MyState = { combined: { foo: number } };
+declare const foo: Reducer<MyState['combined']['foo']>;
+
+const myReducer1: Reducer<MyState> = combineReducers({
+    combined: combineReducers({ foo }),
+});
+
+const myReducer2 = combineReducers({
+    combined: combineReducers({ foo }),
+});
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "same-file generic alias application should preserve indexed access inference; got {diags:#?}"
+    );
+}

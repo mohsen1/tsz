@@ -15,7 +15,7 @@ impl CheckerContext<'_> {
         &self,
         info: &DefinitionInfo,
         sym_id: SymbolId,
-        symbol: &tsz_binder::Symbol,
+        _symbol: &tsz_binder::Symbol,
         file_idx: u32,
         expected_name: &str,
     ) -> bool {
@@ -26,18 +26,7 @@ impl CheckerContext<'_> {
             return false;
         }
 
-        let span = symbol.first_declaration_span().or_else(|| {
-            if symbol.value_declaration.is_some() {
-                symbol.value_declaration_span()
-            } else {
-                None
-            }
-        });
-        match (span, info.span) {
-            (Some(symbol_span), Some(info_span)) => symbol_span == info_span,
-            (Some(_), None) => false,
-            _ => true,
-        }
+        true
     }
 
     /// Resolve-or-mint the canonical `DefId` for a declaration identified by its
