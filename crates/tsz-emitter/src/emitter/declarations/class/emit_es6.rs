@@ -973,10 +973,12 @@ impl<'a> Printer<'a> {
                     } else {
                         (f.weakmap_name.clone(), PrivateFieldStorageKind::Value)
                     };
+                    let member_pos = self.arena.get(f.member_idx).map_or(u32::MAX, |n| n.pos);
                     Some(StaticPrivateInit {
                         storage_name,
                         initializer: f.initializer,
                         storage_kind,
+                        member_pos,
                     })
                 })
                 .collect();

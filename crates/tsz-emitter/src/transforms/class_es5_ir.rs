@@ -1780,7 +1780,10 @@ impl<'a> ES5ClassTransformer<'a> {
             weakmap_inits.push(format!("{instances} = new WeakSet()"));
         }
         weakmap_inits.extend(self.private_method_and_accessor_init_strings());
-        let post_weakmap_statements = self.static_private_field_init_strings();
+        // Static private field initializers are no longer emitted as a grouped
+        // block here; they are interleaved with the public static field inits and
+        // static blocks in source order via `deferred_static_prop_stmts` below,
+        // matching tsc's initialization side-effect order.
         if !private_storage_decls.is_empty() {
             body.push(IRNode::VarDeclList(
                 private_storage_decls
@@ -1796,11 +1799,6 @@ impl<'a> ES5ClassTransformer<'a> {
                     weakmap_inits.join(", ").into(),
                 )));
             }
-            body.extend(
-                post_weakmap_statements
-                    .into_iter()
-                    .map(|statement| IRNode::expr_stmt(IRNode::Raw(statement.into()))),
-            );
             weakmap_inits = Vec::new();
         } else {
             weakmap_decls.extend(private_storage_decls);
