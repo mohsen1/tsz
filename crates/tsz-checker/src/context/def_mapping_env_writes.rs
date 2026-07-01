@@ -39,15 +39,6 @@ pub(super) fn drain_env_write_queue_into(
     }
 }
 
-pub(super) fn flush_env_write_queue(
-    env: &RefCell<TypeEnvironment>,
-    queue: &RefCell<Vec<DeferredEnvWrite>>,
-) {
-    if let Ok(mut env) = env.try_borrow_mut() {
-        drain_env_write_queue_into(queue, &mut env);
-    }
-}
-
 impl CheckerContext<'_> {
     /// Register a merged interface+value symbol's `typeof` value-space type in
     /// the type environment through the race-safe deferral discipline.

@@ -16,7 +16,7 @@ use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
 use crate::context::def_mapping_env_writes::{
-    apply_or_defer_env_write, drain_env_write_queue_into, flush_env_write_queue,
+    apply_or_defer_env_write, drain_env_write_queue_into,
 };
 use crate::context::deferred_env_write::DeferredEnvWrite;
 use crate::query_boundaries::common::TypeEnvironment;
@@ -833,7 +833,9 @@ impl CheckerContext<'_> {
     /// method-body checking read it. A no-op when nothing was deferred or the
     /// env is momentarily unborrowable (the next successful write drains it).
     pub fn flush_deferred_env_writes(&self) {
-        flush_env_write_queue(&self.type_env, &self.deferred_env_writes);
+        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+            drain_env_write_queue_into(&self.deferred_env_writes, &mut env);
+        }
     }
 
     /// Number of registrations still waiting to be replayed into the env after
