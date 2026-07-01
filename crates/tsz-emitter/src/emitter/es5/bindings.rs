@@ -1627,18 +1627,28 @@ impl<'a> Printer<'a> {
         }
 
         self.write(", ");
-        self.write_binding_identifier_text(child_elem.name);
-        self.write(" = ");
-        self.write(source_name);
-        self.write(".");
-        self.write_identifier_text(key_idx);
         if child_elem.initializer.is_some() {
+            // Capture the leaf member access into a temp so it is evaluated once.
+            // A non-identifier source (call/object literal) or a getter with side
+            // effects must not be re-read; mirror tsc's
+            // `_c = _b.b, b = _c === void 0 ? init : _c` (matching the already-correct
+            // `_node` variant below and the multi-element path in bindings_patterns.rs).
+            let value_name = self.get_temp_var_name();
+            self.write(&value_name);
+            self.write(" = ");
+            self.emit_assignment_target_es5_with_computed(key_idx, source_name, None);
+            self.write(", ");
+            self.write_binding_identifier_text(child_elem.name);
+            self.write(" = ");
+            self.write(&value_name);
             self.write(" === void 0 ? ");
             self.emit_expression(child_elem.initializer);
             self.write(" : ");
-            self.write(source_name);
-            self.write(".");
-            self.write_identifier_text(key_idx);
+            self.write(&value_name);
+        } else {
+            self.write_binding_identifier_text(child_elem.name);
+            self.write(" = ");
+            self.emit_assignment_target_es5_with_computed(key_idx, source_name, None);
         }
         true
     }
