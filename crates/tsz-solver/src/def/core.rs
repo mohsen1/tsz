@@ -1761,12 +1761,13 @@ impl DefinitionStore {
                 return snapshot;
             }
 
-            let mappings: SymbolMappingsSnapshot = self
+            let mut mappings: Vec<_> = self
                 .symbol_only_index
                 .iter()
                 .map(|entry| (*entry.key(), *entry.value()))
-                .collect::<Vec<_>>()
-                .into();
+                .collect();
+            mappings.sort_by_key(|&(symbol_id, def_id)| (symbol_id, def_id.0));
+            let mappings: SymbolMappingsSnapshot = mappings.into();
 
             let generation_after = self.generation();
             if generation_before != generation_after {
