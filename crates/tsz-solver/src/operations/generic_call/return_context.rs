@@ -374,7 +374,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     fn evaluate_return_context_match_type(&mut self, type_id: TypeId) -> TypeId {
-        if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled() {
+        // #14346 global re-reduce depth budget: the flag-ON resolver evaluation
+        // is the per-turn growth site feeding the return-context self-recursion.
+        // Guard it on the shared native-depth budget; when exhausted, fall back
+        // to the resolver-less interner evaluation (the flag-OFF form).
+        if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
+            && let Some(_g) = crate::instantiation::instantiate::flags::rereduce_depth_try_enter()
+        {
             let evaluated = self
                 .checker
                 .evaluate_type_for_return_context_substitution(type_id);
@@ -925,8 +931,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // #14346 global re-reduce depth budget: this flag-ON self-recursion on
+        // the resolver-evaluated (`source_eval`/`target_eval`) forms is the
+        // cross-arena `URItoKindN` growth site — each turn interns a strictly
+        // larger evaluated pair, so the `(source, target)` visited set never
+        // trips. Guard the recursion on the shared native-depth budget and,
+        // when exhausted, skip this re-reduce (the flag-OFF path never takes
+        // this branch at all) and fall through to the deferred fallback below.
         if crate::instantiation::instantiate::flags::inst_resolver_rereduce_enabled()
             && (source_eval != source || target_eval != target)
+            && let Some(_g) = crate::instantiation::instantiate::flags::rereduce_depth_try_enter()
         {
             self.collect_return_context_substitution(
                 source_eval,

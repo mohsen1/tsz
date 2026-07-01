@@ -1086,7 +1086,12 @@ pub fn instantiate_type_cached(
             && (index_access_operand_needs_resolver(interner, new_obj)
                 || index_access_operand_needs_resolver(interner, new_idx))
         {
-            return db.evaluate_index_access(new_obj, new_idx);
+            // #14346 global re-reduce depth budget: bail to the deferred
+            // index-access when the shared native-depth budget is exhausted.
+            if let Some(_g) = super::flags::rereduce_depth_try_enter() {
+                return db.evaluate_index_access(new_obj, new_idx);
+            }
+            return interner.index_access(new_obj, new_idx);
         }
         return interner.index_access(new_obj, new_idx);
     }

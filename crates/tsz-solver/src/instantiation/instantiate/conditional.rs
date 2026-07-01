@@ -146,7 +146,12 @@ impl<'a> TypeInstantiator<'a> {
             && !crate::visitor::contains_type_parameters(self.interner, instantiated.check_type)
             && !crate::visitor::contains_type_parameters(self.interner, instantiated.extends_type)
         {
-            return self.evaluate_type(rebuilt);
+            // #14346 global re-reduce depth budget: bail to the deferred
+            // conditional when the shared native-depth budget is exhausted.
+            if let Some(_g) = super::flags::rereduce_depth_try_enter() {
+                return self.evaluate_type(rebuilt);
+            }
+            return rebuilt;
         }
         rebuilt
     }
