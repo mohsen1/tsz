@@ -54,3 +54,7 @@ path = "tests/conditional_deferred_return_tests.rs"
 [[test]]
 name = "conditional_infer_tuple_numeric_key_tests"
 path = "tests/conditional_infer_tuple_numeric_key_tests.rs"
+
+[[test]]
+name = "evaluation_cache_agreement_tests"
+path = "tests/evaluation_cache_agreement_tests.rs"
