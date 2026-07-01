@@ -384,7 +384,9 @@ fn test_deferred_index_access_distinct_key_guard_respects_alpha_equivalence() {
         "unpaired deferred keys must stay distinct"
     );
 
-    checker.type_param_equivalences.push((left_key, right_key));
+    checker.type_param_equivalences.push(
+        crate::relations::subtype::TypeParamEquivalence::ids(left_key, right_key),
+    );
     assert!(
         !checker.index_accesses_have_distinct_type_param_keys(left_key, right_key),
         "alpha-paired deferred keys are the same logical parameter inside the current relation"

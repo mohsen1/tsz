@@ -41,7 +41,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let target_param = self.interner.type_param(target_mapped.type_param);
         let equiv_start = self.type_param_equivalences.len();
         self.type_param_equivalences
-            .push((source_param, target_param));
+            .push(crate::relations::subtype::TypeParamEquivalence::ids(
+                source_param,
+                target_param,
+            ));
         let compatible = self.check_subtype(source_name, target_name).is_true()
             && self.check_subtype(target_name, source_name).is_true();
         self.type_param_equivalences.truncate(equiv_start);
