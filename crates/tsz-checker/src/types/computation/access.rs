@@ -1337,7 +1337,8 @@ impl<'a> CheckerState<'a> {
             // are stored as "[Symbol.xxx]" in class/interface types, not "__unique_N".
             // When the __unique_N lookup fails, try the [Symbol.xxx] format.
             if result_type.is_none() {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                let sym_id =
+                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
                 if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                     let sym_name = &symbol.escaped_name;
                     // Check if the parent is the Symbol global constructor

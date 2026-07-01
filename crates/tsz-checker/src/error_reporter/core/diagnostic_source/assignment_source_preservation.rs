@@ -67,7 +67,8 @@ impl<'a> CheckerState<'a> {
         let evaluated = if let Some(symbol_ref) =
             crate::query_boundaries::common::type_query_symbol(self.ctx.types, display_type)
         {
-            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let sym_id =
+                crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref);
             let value_decl = self
                 .ctx
                 .binder

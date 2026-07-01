@@ -209,7 +209,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx
                             .binder
                             .symbols
-                            .get(tsz_binder::SymbolId(symbol.0))
+                            .get(crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol))
                             .and_then(|symbol| replacements.get(symbol.escaped_name.as_str()))
                             .copied()
                     },

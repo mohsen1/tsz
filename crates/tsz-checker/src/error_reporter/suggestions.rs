@@ -266,7 +266,9 @@ impl<'a> CheckerState<'a> {
 
         match classify_namespace_member(self.ctx.types, type_id) {
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id),
-            NamespaceMemberKind::TypeQuery(sym_ref) => Some(tsz_binder::SymbolId(sym_ref.0)),
+            NamespaceMemberKind::TypeQuery(sym_ref) => {
+                Some(crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref))
+            }
             NamespaceMemberKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
                 shape.symbol

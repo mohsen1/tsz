@@ -1462,7 +1462,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> bool {
-        use tsz_binder::SymbolId;
         use tsz_binder::symbol_flags;
 
         if !visited.insert(type_id) {
@@ -1481,8 +1480,9 @@ impl<'a> CheckerState<'a> {
 
         match query::classify_for_abstract_check(self.ctx.types, type_id) {
             query::AbstractClassCheckKind::TypeQuery(sym_ref) => {
-                if let Some(symbol) = self.ctx.binder.get_symbol(SymbolId(sym_ref.0))
-                    && symbol.has_any_flags(symbol_flags::ABSTRACT)
+                if let Some(symbol) = self.ctx.binder.get_symbol(
+                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref),
+                ) && symbol.has_any_flags(symbol_flags::ABSTRACT)
                 {
                     return true;
                 }

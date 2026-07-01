@@ -127,7 +127,8 @@ impl CheckerState<'_> {
         {
             return;
         }
-        let sym_id = SymbolId(symbol_ref.0);
+        let sym_id =
+            crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref);
         if let Some(value_type) = self.merged_interface_value_typeof_type(sym_id) {
             self.register_typeof_value_type_in_envs(sym_id, value_type);
         }

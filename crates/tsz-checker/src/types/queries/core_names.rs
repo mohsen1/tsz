@@ -220,7 +220,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_ref) =
                     crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, candidate)
                 {
-                    let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                    let sym_id =
+                        crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(
+                            sym_ref,
+                        );
                     if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                         let sym_name = symbol.escaped_name.clone();
                         if symbol.parent.is_some()

@@ -1108,7 +1108,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `Some("M")` for `namespace M {}` types, enabling `typeof M` display.
     pub(super) fn get_namespace_typeof_name(&self, type_id: TypeId) -> Option<String> {
         use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
-        use tsz_binder::{SymbolId, symbol_flags};
+        use tsz_binder::symbol_flags;
 
         const fn is_pure_namespace(symbol: &tsz_binder::Symbol) -> bool {
             symbol.has_any_flags(symbol_flags::MODULE)
@@ -1119,7 +1119,9 @@ impl<'a> CheckerState<'a> {
         let kind = classify_namespace_member(self.ctx.types, type_id);
         let sym_id = match kind {
             NamespaceMemberKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
-            NamespaceMemberKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            NamespaceMemberKind::TypeQuery(sym_ref) => {
+                crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref)
+            }
             NamespaceMemberKind::Callable(shape_id) => {
                 // Callable with namespace flags (class+namespace merges etc.)
                 let shape = self.ctx.types.callable_shape(shape_id);

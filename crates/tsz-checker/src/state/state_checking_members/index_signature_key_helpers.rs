@@ -30,7 +30,8 @@ impl<'a> CheckerState<'a> {
         let type_queries = self.ctx.collect_type_queries_cached(type_id);
         let mut replacements = Vec::new();
         for symbol_ref in type_queries.iter().copied() {
-            let sym_id = tsz_binder::SymbolId(symbol_ref.0);
+            let sym_id =
+                crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref);
             let value_type = self.get_type_of_symbol(sym_id);
             if value_type != TypeId::ANY
                 && value_type != TypeId::ERROR

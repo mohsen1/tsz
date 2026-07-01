@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
 
     fn static_schema_type_query_value_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         let sym_ref = diagnostic_query::get_type_query_symbol_ref(self.ctx.types, type_id)?;
-        let sym_id = tsz_binder::SymbolId(sym_ref.0);
+        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let value_decl = symbol.value_declaration.into_option().or_else(|| {
             symbol.declarations.iter().copied().find(|decl| {

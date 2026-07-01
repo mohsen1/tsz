@@ -734,8 +734,8 @@ impl<'a> CheckerState<'a> {
             }
             query::ConstructorTypeKind::TypeQuery(sym_ref) => {
                 // typeof X - get the type of the symbol X and collect constructors from it
-                use tsz_binder::SymbolId;
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id =
+                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
                 let sym_type = self.get_type_of_symbol(sym_id);
                 self.collect_constructor_types_from_type_inner(sym_type, ctor_types, visited);
             }

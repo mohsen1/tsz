@@ -1622,7 +1622,10 @@ impl<'a> CheckerState<'a> {
                 if let TypeQueryKind::TypeQuery(sym_ref) =
                     classify_type_query(self.ctx.types, object_type)
                 {
-                    let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                    let sym_id =
+                        crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(
+                            sym_ref,
+                        );
                     self.get_cross_file_symbol(sym_id)
                         .filter(|s| !s.escaped_name.is_empty())
                         .map(|s| s.escaped_name.clone())

@@ -232,7 +232,8 @@ impl<'a> CheckerState<'a> {
                     return;
                 };
 
-                let sym_id = SymbolId(sym_ref.0);
+                let sym_id =
+                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
                 if self.unique_symbol_type_is_inaccessible(sym_id) {
                     result = Some(sym_id);
                 }

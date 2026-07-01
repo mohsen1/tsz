@@ -663,7 +663,8 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_ref) =
             crate::query_boundaries::common::type_query_symbol(self.ctx.types, type_id)
         {
-            let sym_id = tsz_binder::SymbolId(sym_ref.0);
+            let sym_id =
+                crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
             let resolved = self.get_type_of_symbol(sym_id);
             if resolved != type_id {
                 return self.is_global_function_type(resolved);
@@ -908,8 +909,10 @@ impl<'a> CheckerState<'a> {
             //     class B extends ctor {}  // ctor: T where T extends typeof A
             //   }
             query::ConstructorCheckKind::TypeQuery(symbol_ref) => {
-                use tsz_binder::SymbolId;
-                let symbol_id = SymbolId(symbol_ref.0);
+                let symbol_id =
+                    crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(
+                        symbol_ref,
+                    );
                 if let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) {
                     // Classes have constructor types
                     if (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0 {
