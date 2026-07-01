@@ -533,7 +533,7 @@ impl<'a> CheckerState<'a> {
 
     /// Typed checker-cache key for TS2344 constraint proof helpers that run
     /// relation/evaluation work under the current checker policy.
-    pub(crate) fn generic_constraint_proof_key(
+    pub(crate) const fn generic_constraint_proof_key(
         &self,
         source: TypeId,
         target: TypeId,

@@ -29,13 +29,13 @@ impl<'a> CheckerState<'a> {
         let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.conditional_result_branches_satisfy_constraint_uncached(type_arg, constraint);
-        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry) {
-            if let Some(stamp) = self.assignability_eval_memo_stamp() {
-                self.ctx
-                    .type_reference_validation_caches
-                    .conditional_branch_constraint
-                    .insert(stamp, cache_key, result);
-            }
+        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry)
+            && let Some(stamp) = self.assignability_eval_memo_stamp()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .conditional_branch_constraint
+                .insert(stamp, cache_key, result);
         }
         result
     }
@@ -132,13 +132,13 @@ impl<'a> CheckerState<'a> {
         let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let result =
             self.indexed_object_map_branch_satisfies_constraint_uncached(branch, constraint);
-        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry) {
-            if let Some(stamp) = self.assignability_eval_memo_stamp() {
-                self.ctx
-                    .type_reference_validation_caches
-                    .indexed_object_map_branch_constraint
-                    .insert(stamp, cache_key, result);
-            }
+        if self.generic_constraint_proof_completed_clean(lazy_failures_at_entry)
+            && let Some(stamp) = self.assignability_eval_memo_stamp()
+        {
+            self.ctx
+                .type_reference_validation_caches
+                .indexed_object_map_branch_constraint
+                .insert(stamp, cache_key, result);
         }
         result
     }
