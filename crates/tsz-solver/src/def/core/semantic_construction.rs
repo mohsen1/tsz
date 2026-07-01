@@ -12,6 +12,68 @@ use super::{Atom, DefId, DefKind, DefinitionInfo, DefinitionStore};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::atomic::Ordering;
 
+#[cfg(test)]
+thread_local! {
+    static DETERMINISTIC_ELECTION_TEST_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Test guard that forces [`deterministic_store_election_enabled`] on/off for the
+/// current thread, so the ordering invariants can be pinned without relying on a
+/// process-global env var (which an `OnceLock` would latch on first read).
+#[cfg(test)]
+pub(crate) struct DeterministicElectionGuard {
+    previous: Option<bool>,
+}
+
+#[cfg(test)]
+impl DeterministicElectionGuard {
+    pub(crate) fn new(enabled: bool) -> Self {
+        let previous = DETERMINISTIC_ELECTION_TEST_OVERRIDE.with(|slot| {
+            let previous = slot.get();
+            slot.set(Some(enabled));
+            previous
+        });
+        Self { previous }
+    }
+}
+
+#[cfg(test)]
+impl Drop for DeterministicElectionGuard {
+    fn drop(&mut self) {
+        DETERMINISTIC_ELECTION_TEST_OVERRIDE.with(|slot| slot.set(self.previous));
+    }
+}
+
+/// Whether shared-store `DefId` allocation / canonical election runs in the
+/// deterministic, `#14344`-sound home-decl order (see
+/// [`DefinitionStore::from_semantic_def_entries`]).
+///
+/// The reorder is gated so the default (all-flags-OFF) pipeline stays
+/// byte-identical to `main`: the historical construction allocates `DefId`s in
+/// `FxHashMap` iteration order, and the composed cross-arena `#14344` / `#14345`
+/// substrate channels are what make the elected canonical observable (and what
+/// the run-to-run flap manifests under). Enabled iff at least one of those
+/// shared-store channels is active, or explicitly via
+/// `TSZ_DETERMINISTIC_STORE_ELECTION=1`. When none is set, the historical
+/// construction path is preserved unchanged.
+pub(crate) fn deterministic_store_election_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = DETERMINISTIC_ELECTION_TEST_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        std::env::var("TSZ_DETERMINISTIC_STORE_ELECTION").is_ok_and(|v| v == "1")
+            || super::typeof_uri_selfloop_enabled()
+            || super::augmented_body_symbol_redirect_enabled()
+            || super::augmentation_symbols::module_augmentation_symbol_edge_enabled()
+            || super::augmentation_symbols::module_augmentation_body_publish_enabled()
+    })
+}
+
 impl DefinitionStore {
     /// Create a pre-populated `DefinitionStore` from binder `SemanticDefEntry` data.
     ///
@@ -80,6 +142,39 @@ impl DefinitionStore {
         semantic_defs: &[(tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry)],
         intern_string: impl Fn(&str) -> Atom,
     ) -> Self {
+        // `DefId`s are allocated sequentially in Pass 1 in the order of this
+        // slice, and the shared-store elections downstream — first-wins
+        // `symbol_only_index`/`symbol_to_def` (`or_insert`) and the first
+        // `name_to_defs` heritage candidate — resolve by that same order. The
+        // two public constructors build the slice by iterating `FxHashMap`s,
+        // whose iteration order is not stable across the differing insertion
+        // histories produced by parallel/overlay merges, so both the assigned
+        // `DefId` values and the elected canonical copy would otherwise vary
+        // run-to-run (issue #14344). Sort by the arena-invariant home-decl
+        // provenance — declaring `(file_id, span_start)` (both preserved across
+        // arena copies), then the raw `SymbolId` as a stable final tiebreaker —
+        // so every run allocates the same `DefId`s and elects the same canonical
+        // def. This is the sound #14344 home-decl identity, not an arbitrary
+        // stabilization: cross-arena copies of one source decl share
+        // `(file_id, span_start)` and the smaller `SymbolId` wins deterministically.
+        //
+        // Gated: the reorder changes which equivalent cross-arena copy is
+        // elected canonical, which is observable only once the composed
+        // `#14344` / `#14345` shared-store channels expose that canonical to
+        // inference. Behind `deterministic_store_election_enabled` the default
+        // (all-flags-OFF) construction keeps the historical `FxHashMap` order so
+        // it stays byte-identical to `main`.
+        let owned_sorted;
+        let semantic_defs: &[(tsz_binder::SymbolId, &tsz_binder::SemanticDefEntry)] =
+            if deterministic_store_election_enabled() {
+                let mut ordered = semantic_defs.to_vec();
+                ordered.sort_by_key(|(sym_id, entry)| (entry.file_id, entry.span_start, sym_id.0));
+                owned_sorted = ordered;
+                &owned_sorted
+            } else {
+                semantic_defs
+            };
+
         let class_count = semantic_defs
             .iter()
             .map(|(_, entry)| *entry)
