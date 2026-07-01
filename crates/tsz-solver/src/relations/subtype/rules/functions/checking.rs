@@ -166,9 +166,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> TypeSubstitution {
-        use crate::types::TypeParamOrigin;
-        use rustc_hash::FxHashMap;
-
         let roots = source
             .params
             .iter()
@@ -178,50 +175,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .chain(target.params.iter().map(|p| p.type_id))
             .chain(target.this_type)
             .chain(std::iter::once(target.return_type));
-        let free_ids =
-            crate::visitors::visitor_predicates::free_type_parameter_ids_in(self.interner, roots);
-
-        // Per name: the single canonical (`User`-stripped) target id, or a
-        // poison marker once a conflicting surface is seen for the same name.
-        let mut by_name: FxHashMap<tsz_common::interner::Atom, Option<TypeId>> =
-            FxHashMap::default();
-        for id in free_ids {
-            let Some(info) = type_param_info(self.interner, id) else {
-                continue;
-            };
-            // Only DeclScoped params carry the construction stamp that splits
-            // alpha-equivalent decls. Leave User/inference placeholders alone.
-            if !matches!(info.origin, TypeParamOrigin::DeclScoped { .. }) {
-                continue;
-            }
-            // The User-canonical structural intern: same surface, origin erased.
-            // Alpha-equivalent DeclScoped params (same name+surface, distinct
-            // origins) all map to this single id.
-            let canonical = self.interner.type_param(TypeParamInfo {
-                origin: TypeParamOrigin::User,
-                ..info
-            });
-            match by_name.get_mut(&info.name) {
-                None => {
-                    by_name.insert(info.name, Some(canonical));
-                }
-                Some(slot @ Some(_)) if *slot == Some(canonical) => {}
-                // Two DeclScoped params share a name but strip to DISTINCT
-                // canonical ids = different surfaces. A name-keyed strip would
-                // unsoundly merge them; poison this name so it is excluded.
-                Some(slot) => {
-                    *slot = None;
-                }
-            }
-        }
-
-        let mut strip = TypeSubstitution::new();
-        for (name, canonical) in by_name {
-            if let Some(canonical) = canonical {
-                strip.insert(name, canonical);
-            }
-        }
-        strip
+        self.build_decl_param_structural_strip_for_roots(roots)
     }
 
     fn check_function_subtype_impl(
