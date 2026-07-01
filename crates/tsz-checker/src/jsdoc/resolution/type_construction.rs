@@ -1681,7 +1681,7 @@ impl<'a> CheckerState<'a> {
             // overwrite when the body actually resolved — never clobber a
             // previously-resolved alias body with the `ANY` placeholder.
             if let Some(body) = result {
-                self.ctx.definition_store.set_body(def_id, body);
+                self.ctx.publish_definition_body(def_id, body);
             }
         }
 

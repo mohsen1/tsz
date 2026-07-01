@@ -4,12 +4,15 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::application_eval_index::{self, ApplicationEvalDependencyIndex};
+use crate::caches::application_eval_index::{
+    self, ApplicationEvalDependencyIndex, ApplicationEvalDependencyIndexState,
+};
 use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache,
     TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
     TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
+use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
 use crate::caches::query_trace;
@@ -225,10 +228,12 @@ impl SharedCacheCounter {
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
     eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    eval_dependency_index: EvalDependencyIndex,
     /// Substitution-independent evaluation cache (see the `closed_eval` module
     /// in `evaluate`). Keyed by
     /// `(TypeId, no_unchecked_indexed_access, exact_optional_property_types)`.
     closed_eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    closed_eval_dependency_index: EvalDependencyIndex,
     /// Persistent conditional-branch subtype verdicts (issues #8356 / #13097).
     /// Keyed by `(check, extends, no_unchecked_indexed_access,
     /// exact_optional_property_types)`; stores only definitive, limit-free
@@ -329,10 +334,14 @@ impl<'a> QueryCache<'a> {
         QueryCache {
             interner,
             eval_cache: RefCell::new(FxHashMap::default()),
+            eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
             closed_eval_cache: RefCell::new(FxHashMap::default()),
+            closed_eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
             conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
-            application_eval_dependency_index: RefCell::new(FxHashMap::default()),
+            application_eval_dependency_index: RefCell::new(
+                ApplicationEvalDependencyIndexState::default(),
+            ),
             element_access_cache: RefCell::new(FxHashMap::default()),
             object_spread_properties_cache: RefCell::new(FxHashMap::default()),
             collect_properties_result_cache: RefCell::new(
@@ -387,7 +396,9 @@ impl<'a> QueryCache<'a> {
 
     pub fn clear(&self) {
         self.eval_cache.borrow_mut().clear();
+        self.eval_dependency_index.borrow_mut().clear();
         self.closed_eval_cache.borrow_mut().clear();
+        self.closed_eval_dependency_index.borrow_mut().clear();
         self.conditional_branch_verdict_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
@@ -1432,7 +1443,7 @@ impl QueryDatabase for QueryCache<'_> {
             | TypeData::Error,
         ) = self.interner.lookup(type_id)
         {
-            self.eval_cache.borrow_mut().insert(key, type_id);
+            self.insert_eval_cache_entry(key, type_id);
             return type_id;
         }
 
@@ -1490,20 +1501,24 @@ impl QueryDatabase for QueryCache<'_> {
         if union_complexity_stable
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
-            let mut cache = self.eval_cache.borrow_mut();
             if top_level_clean {
-                cache.insert(key, result);
+                self.insert_eval_cache_entry(key, result);
                 // Also write to shared cache for cross-file benefit.
                 if let Some(shared) = self.shared {
-                    shared.eval_cache.insert(key, result);
+                    shared.insert_eval_cache(self.interner, self.definition_store(), key, result);
                 }
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_stable_cache() {
                 if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
                     let ikey = request.with_type_id(intermediate_id).cache_key();
-                    cache.entry(ikey).or_insert(intermediate_result);
+                    self.insert_eval_cache_entry_if_absent(ikey, intermediate_result);
                     if let Some(shared) = self.shared {
-                        shared.eval_cache.entry(ikey).or_insert(intermediate_result);
+                        shared.insert_eval_cache_if_absent(
+                            self.interner,
+                            self.definition_store(),
+                            ikey,
+                            intermediate_result,
+                        );
                     }
                 }
             }

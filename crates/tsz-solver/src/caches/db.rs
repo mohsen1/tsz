@@ -122,9 +122,13 @@ pub trait TypeApplicationEvalCache {
     ) {
     }
 
-    /// Drop every cached application-eval entry that depends on `def_id` —
-    /// entries keyed by it directly, applications of it in a key's argument
-    /// list, and entries whose cached *result* still embeds `Lazy(def_id)`.
+    /// Drop every cached eval-family entry that depends on `def_id`.
+    ///
+    /// This includes application-eval entries keyed by the def directly or by
+    /// lazy refs in their args/results, ordinary eval-memo entries whose key or
+    /// result closure mentions the def, and closed-eval entries with the same
+    /// dependency. The concrete `QueryCache` implementation also invalidates
+    /// shared eval-family entries when a shared cache is attached.
     ///
     /// Called when a definition body is (re)registered with different
     /// content: results computed under the previous body (or before any body

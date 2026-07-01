@@ -89,10 +89,61 @@ impl QueryCache<'_> {
         if let Some(shared) = self.shared
             && let Some(result) = shared.eval_cache.get(&key).map(|r| *r)
         {
-            self.eval_cache.borrow_mut().insert(key, result);
+            self.insert_eval_cache_entry_if_absent(key, result);
             return Some(result);
         }
         None
+    }
+
+    pub(super) fn insert_eval_cache_entry(&self, key: EvaluationCacheKey, result: TypeId) {
+        let old_result = self.eval_cache.borrow_mut().insert(key, result);
+        eval_dependency_index::record_dependencies(
+            self.interner,
+            self.definition_store(),
+            &self.eval_dependency_index,
+            key,
+            old_result,
+            result,
+        );
+    }
+
+    pub(super) fn insert_eval_cache_entry_if_absent(
+        &self,
+        key: EvaluationCacheKey,
+        result: TypeId,
+    ) {
+        let inserted = {
+            let mut cache = self.eval_cache.borrow_mut();
+            match cache.entry(key) {
+                std::collections::hash_map::Entry::Occupied(_) => false,
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(result);
+                    true
+                }
+            }
+        };
+        if inserted {
+            eval_dependency_index::record_dependencies(
+                self.interner,
+                self.definition_store(),
+                &self.eval_dependency_index,
+                key,
+                None,
+                result,
+            );
+        }
+    }
+
+    pub(super) fn insert_closed_eval_cache_entry(&self, key: EvaluationCacheKey, result: TypeId) {
+        let old_result = self.closed_eval_cache.borrow_mut().insert(key, result);
+        eval_dependency_index::record_dependencies(
+            self.interner,
+            self.definition_store(),
+            &self.closed_eval_dependency_index,
+            key,
+            old_result,
+            result,
+        );
     }
 
     pub(super) fn check_application_eval_cache(
@@ -112,6 +163,7 @@ impl QueryCache<'_> {
                     .insert(key.clone(), result);
                 application_eval_index::record_dependencies(
                     self.interner,
+                    self.definition_store(),
                     &self.application_eval_dependency_index,
                     &key,
                     None,
@@ -139,7 +191,12 @@ impl QueryCache<'_> {
         if let Some(shared) = self.shared
             && shared.shares_instantiation_family()
         {
-            shared.insert_application_eval_cache(self.interner, key.clone(), result);
+            shared.insert_application_eval_cache(
+                self.interner,
+                self.definition_store(),
+                key.clone(),
+                result,
+            );
             self.application_eval_cache_stats.record_shared_insert();
             tsz_common::perf_counters::record_shared_application_eval_cache_insert();
         }
@@ -149,6 +206,7 @@ impl QueryCache<'_> {
             .insert(key.clone(), result);
         application_eval_index::record_dependencies(
             self.interner,
+            self.definition_store(),
             &self.application_eval_dependency_index,
             &key,
             old_result,

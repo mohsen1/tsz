@@ -884,6 +884,12 @@ impl<'a> CheckerState<'a> {
                     target,
                     anchor_idx,
                 );
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                    diag.message_text = self.rewrite_static_schema_array_target_in_ts2322_message(
+                        diag.message_text,
+                        source,
+                    );
+                }
                 let has_static_schema_display = self
                     .static_schema_array_structural_display(source, target)
                     .is_some()
@@ -1157,6 +1163,11 @@ impl<'a> CheckerState<'a> {
             target_str = display;
             static_schema_display = true;
         }
+        if let Some(display) = self.static_schema_array_structural_display_text(&target_str, source)
+        {
+            target_str = display;
+            static_schema_display = true;
+        }
         if !static_schema_display
             && let Some((direct_source, direct_target)) =
                 self.direct_type_param_alias_application_pair_display(source, target)
@@ -1366,6 +1377,10 @@ impl<'a> CheckerState<'a> {
             source_str = display;
         }
         if let Some(display) = self.static_schema_array_structural_display(target, source) {
+            target_str = display;
+        }
+        if let Some(display) = self.static_schema_array_structural_display_text(&target_str, source)
+        {
             target_str = display;
         }
         if let Some(display) =

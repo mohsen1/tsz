@@ -1,13 +1,16 @@
 //! Thread-safe shared query cache for cross-file type checking.
 
 use crate::caches::instantiation_cache::InstantiationCacheKey;
-use crate::caches::shared_instantiation::collect_application_eval_entry_def_dependencies;
 use crate::caches::shared_instantiation::shared_instantiation_family_requested;
-use crate::def::DefId;
+use crate::caches::shared_instantiation::{
+    collect_application_eval_entry_def_dependencies, collect_eval_entry_def_dependencies,
+};
+use crate::def::{DefId, DefinitionStore};
 use crate::evaluation::request::EvaluationCacheKey;
 use crate::intern::TypeInterner;
 use crate::types::{RelationCacheKey, RelationCacheValue, TypeId};
 use dashmap::DashMap;
+use dashmap::mapref::entry::Entry;
 use rustc_hash::{FxBuildHasher, FxHashSet};
 
 // The trailing two `bool`s are `no_unchecked_indexed_access` and
@@ -54,11 +57,15 @@ pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]
 /// request state.
 pub struct SharedQueryCache {
     pub(super) eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
+    pub(super) eval_dependency_index: DashMap<DefId, FxHashSet<EvaluationCacheKey>, FxBuildHasher>,
+    eval_key_dependency_index: DashMap<EvaluationCacheKey, FxHashSet<DefId>, FxBuildHasher>,
     pub(super) subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
     pub(super) application_eval_dependency_index:
         DashMap<DefId, FxHashSet<ApplicationEvalCacheKey>, FxBuildHasher>,
+    application_eval_key_dependency_index:
+        DashMap<ApplicationEvalCacheKey, FxHashSet<DefId>, FxBuildHasher>,
     pub(super) instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
     share_instantiation_family: bool,
 }
@@ -67,10 +74,13 @@ impl SharedQueryCache {
     pub fn new() -> Self {
         SharedQueryCache {
             eval_cache: DashMap::with_hasher(FxBuildHasher),
+            eval_dependency_index: DashMap::with_hasher(FxBuildHasher),
+            eval_key_dependency_index: DashMap::with_hasher(FxBuildHasher),
             subtype_cache: DashMap::with_hasher(FxBuildHasher),
             assignability_cache: DashMap::with_hasher(FxBuildHasher),
             application_eval_cache: DashMap::with_hasher(FxBuildHasher),
             application_eval_dependency_index: DashMap::with_hasher(FxBuildHasher),
+            application_eval_key_dependency_index: DashMap::with_hasher(FxBuildHasher),
             instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             share_instantiation_family: shared_instantiation_family_requested(),
         }
@@ -100,43 +110,135 @@ impl SharedQueryCache {
     pub(super) fn insert_application_eval_cache(
         &self,
         interner: &TypeInterner,
+        definition_store: Option<&DefinitionStore>,
         key: ApplicationEvalCacheKey,
         result: TypeId,
     ) {
         let old_result = self.application_eval_cache.insert(key.clone(), result);
         if let Some(old_result) = old_result {
-            self.remove_application_eval_dependencies(interner, &key, old_result);
+            self.remove_application_eval_dependencies(&key, old_result);
         }
-        for def_id in collect_application_eval_entry_def_dependencies(interner, &key, result) {
+        let deps = collect_application_eval_entry_def_dependencies(
+            interner,
+            definition_store,
+            &key,
+            result,
+        );
+        if deps.is_empty() {
+            return;
+        }
+        let deps: FxHashSet<_> = deps.into_iter().collect();
+        for &def_id in &deps {
             self.application_eval_dependency_index
                 .entry(def_id)
                 .or_default()
                 .insert(key.clone());
         }
+        self.application_eval_key_dependency_index.insert(key, deps);
     }
 
     pub(super) fn invalidate_application_eval_cache_for_def(
         &self,
-        interner: &TypeInterner,
+        _interner: &TypeInterner,
+        _definition_store: Option<&DefinitionStore>,
         def_id: DefId,
     ) {
-        let Some((_, keys)) = self.application_eval_dependency_index.remove(&def_id) else {
-            return;
-        };
-        for key in keys {
-            if let Some((_, old_result)) = self.application_eval_cache.remove(&key) {
-                self.remove_application_eval_dependencies(interner, &key, old_result);
+        self.invalidate_eval_cache_for_def(def_id);
+        if let Some((_, keys)) = self.application_eval_dependency_index.remove(&def_id) {
+            for key in keys {
+                if let Some((_, old_result)) = self.application_eval_cache.remove(&key) {
+                    self.remove_application_eval_dependencies(&key, old_result);
+                }
             }
         }
     }
 
-    fn remove_application_eval_dependencies(
+    pub(super) fn insert_eval_cache(
         &self,
         interner: &TypeInterner,
-        key: &ApplicationEvalCacheKey,
+        definition_store: Option<&DefinitionStore>,
+        key: EvaluationCacheKey,
         result: TypeId,
     ) {
-        for def_id in collect_application_eval_entry_def_dependencies(interner, key, result) {
+        let old_result = self.eval_cache.insert(key, result);
+        self.record_eval_dependencies(interner, definition_store, key, old_result, result);
+    }
+
+    pub(super) fn insert_eval_cache_if_absent(
+        &self,
+        interner: &TypeInterner,
+        definition_store: Option<&DefinitionStore>,
+        key: EvaluationCacheKey,
+        result: TypeId,
+    ) {
+        match self.eval_cache.entry(key) {
+            Entry::Occupied(_) => {}
+            Entry::Vacant(vacant) => {
+                vacant.insert(result);
+                self.record_eval_dependencies(interner, definition_store, key, None, result);
+            }
+        }
+    }
+
+    fn invalidate_eval_cache_for_def(&self, def_id: DefId) {
+        let Some((_, keys)) = self.eval_dependency_index.remove(&def_id) else {
+            return;
+        };
+        for key in keys {
+            if let Some((_, old_result)) = self.eval_cache.remove(&key) {
+                self.remove_eval_dependencies(key, old_result);
+            }
+        }
+    }
+
+    fn record_eval_dependencies(
+        &self,
+        interner: &TypeInterner,
+        definition_store: Option<&DefinitionStore>,
+        key: EvaluationCacheKey,
+        old_result: Option<TypeId>,
+        result: TypeId,
+    ) {
+        if let Some(old_result) = old_result {
+            self.remove_eval_dependencies(key, old_result);
+        }
+        let deps = collect_eval_entry_def_dependencies(interner, definition_store, key, result);
+        if deps.is_empty() {
+            return;
+        }
+        let deps: FxHashSet<_> = deps.into_iter().collect();
+        for &def_id in &deps {
+            self.eval_dependency_index
+                .entry(def_id)
+                .or_default()
+                .insert(key);
+        }
+        self.eval_key_dependency_index.insert(key, deps);
+    }
+
+    fn remove_eval_dependencies(&self, key: EvaluationCacheKey, _result: TypeId) {
+        let Some((_, deps)) = self.eval_key_dependency_index.remove(&key) else {
+            return;
+        };
+        for def_id in deps {
+            let Some(mut keys) = self.eval_dependency_index.get_mut(&def_id) else {
+                continue;
+            };
+            keys.remove(&key);
+            let empty = keys.is_empty();
+            drop(keys);
+            if empty {
+                self.eval_dependency_index
+                    .remove_if(&def_id, |_, keys| keys.is_empty());
+            }
+        }
+    }
+
+    fn remove_application_eval_dependencies(&self, key: &ApplicationEvalCacheKey, _result: TypeId) {
+        let Some((_, deps)) = self.application_eval_key_dependency_index.remove(key) else {
+            return;
+        };
+        for def_id in deps {
             let Some(mut keys) = self.application_eval_dependency_index.get_mut(&def_id) else {
                 continue;
             };
@@ -144,7 +246,8 @@ impl SharedQueryCache {
             let empty = keys.is_empty();
             drop(keys);
             if empty {
-                self.application_eval_dependency_index.remove(&def_id);
+                self.application_eval_dependency_index
+                    .remove_if(&def_id, |_, keys| keys.is_empty());
             }
         }
     }
@@ -163,6 +266,22 @@ impl SharedQueryCache {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<EvaluationCacheKey>()
                 + std::mem::size_of::<TypeId>());
+        size += self.eval_dependency_index.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<DefId>()
+                + std::mem::size_of::<FxHashSet<EvaluationCacheKey>>());
+        size += self.eval_key_dependency_index.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<EvaluationCacheKey>()
+                + std::mem::size_of::<FxHashSet<DefId>>());
+        for keys in &self.eval_dependency_index {
+            let keys = keys.value();
+            size +=
+                keys.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<EvaluationCacheKey>());
+        }
+        for deps in &self.eval_key_dependency_index {
+            size += deps.value().len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<DefId>());
+        }
         size += (self.subtype_cache.len() + self.assignability_cache.len())
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<RelationCacheKey>()
@@ -171,6 +290,22 @@ impl SharedQueryCache {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<ApplicationEvalCacheKey>()
                 + std::mem::size_of::<TypeId>());
+        size += self.application_eval_dependency_index.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<DefId>()
+                + std::mem::size_of::<FxHashSet<ApplicationEvalCacheKey>>());
+        size += self.application_eval_key_dependency_index.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<ApplicationEvalCacheKey>()
+                + std::mem::size_of::<FxHashSet<DefId>>());
+        for keys in &self.application_eval_dependency_index {
+            let keys = keys.value();
+            size += keys.len()
+                * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<ApplicationEvalCacheKey>());
+        }
+        for deps in &self.application_eval_key_dependency_index {
+            size += deps.value().len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<DefId>());
+        }
         size += self.instantiation_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<InstantiationCacheKey>()
