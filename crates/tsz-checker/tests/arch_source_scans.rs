@@ -45,6 +45,8 @@ mod lazy_resolution_session_scans;
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]
 mod object_literal_annotation_walker_scans;
+#[path = "arch_source_scans/relation_boundary_session_scans.rs"]
+mod relation_boundary_session_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
 mod relation_routing_residual_arch_tests;
 #[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]

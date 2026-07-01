@@ -82,6 +82,7 @@ pub(crate) fn cached_final_assignability(
                 flags,
                 inheritance_graph: &checker.ctx.inheritance_graph,
                 sound_mode: checker.ctx.sound_mode(),
+                evaluation_session: Some(checker.ctx.eval_session.as_ref()),
             },
             &overrides,
         )
@@ -96,6 +97,7 @@ pub(crate) fn cached_final_assignability(
                 flags,
                 inheritance_graph: &checker.ctx.inheritance_graph,
                 sound_mode: checker.ctx.sound_mode(),
+                evaluation_session: Some(checker.ctx.eval_session.as_ref()),
             },
             &overrides,
         )

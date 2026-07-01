@@ -476,6 +476,7 @@ impl<'a> CheckerState<'a> {
             let env = self.ctx.type_env.borrow();
             is_redeclaration_identical_with_resolver(
                 self.ctx.types,
+                Some(self.ctx.eval_session.as_ref()),
                 &*env,
                 prev_type,
                 current_type,

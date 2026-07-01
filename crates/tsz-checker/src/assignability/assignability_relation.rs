@@ -44,6 +44,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             },
             &overrides,
         );
@@ -166,12 +167,15 @@ impl<'a> CheckerState<'a> {
         let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
         let (mut outcome, capture) = execute_relation(
             request,
-            self.ctx.types,
-            &self.ctx,
-            flags,
-            &self.ctx.inheritance_graph,
+            &crate::query_boundaries::assignability::RelationExecutionEnv {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
+            },
             &overrides,
-            self.ctx.sound_mode(),
             precomputed.as_ref(),
         );
 
@@ -279,6 +283,7 @@ impl<'a> CheckerState<'a> {
             flags,
             inheritance_graph: &self.ctx.inheritance_graph,
             sound_mode: self.ctx.sound_mode(),
+            evaluation_session: Some(self.ctx.eval_session.as_ref()),
         };
         matches!(
             check_application_variance_assignability(&inputs),
@@ -347,6 +352,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             };
             if let Some(result) = check_application_variance_assignability(&inputs)
                 && (result || !ignore_variance_rejection)
@@ -370,12 +376,15 @@ impl<'a> CheckerState<'a> {
             let (relation_outcome, _capture) =
                 crate::query_boundaries::assignability::execute_relation(
                     &request,
-                    self.ctx.types,
-                    &*env,
-                    flags,
-                    &self.ctx.inheritance_graph,
+                    &crate::query_boundaries::assignability::RelationExecutionEnv {
+                        db: self.ctx.types,
+                        resolver: &*env,
+                        flags,
+                        inheritance_graph: &self.ctx.inheritance_graph,
+                        sound_mode: self.ctx.sound_mode(),
+                        evaluation_session: Some(self.ctx.eval_session.as_ref()),
+                    },
                     &overrides,
-                    self.ctx.sound_mode(),
                     None,
                 );
             relation_outcome
@@ -720,6 +729,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             };
             if let Some(result) = check_application_variance_assignability(&inputs)
                 && (result
@@ -1243,6 +1253,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             };
             if let Some(result) = check_application_variance_assignability(&inputs)
                 && (result
@@ -1701,6 +1712,7 @@ impl<'a> CheckerState<'a> {
                 flags: self.ctx.pack_relation_flags(),
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             },
             &overrides,
         )
@@ -1798,6 +1810,7 @@ impl<'a> CheckerState<'a> {
                 flags,
                 inheritance_graph: &self.ctx.inheritance_graph,
                 sound_mode: self.ctx.sound_mode(),
+                evaluation_session: Some(self.ctx.eval_session.as_ref()),
             };
             if let Some(result) = check_application_variance_assignability(&inputs)
                 && (result || !ignore_variance_rejection)
@@ -1885,6 +1898,7 @@ impl<'a> CheckerState<'a> {
         // Preserve existing behavior: bivariant path does not use checker overrides.
         let relation_result = cached_bivariant_assignability_with_resolver(
             self.ctx.types,
+            Some(self.ctx.eval_session.as_ref()),
             &*env,
             source,
             target,

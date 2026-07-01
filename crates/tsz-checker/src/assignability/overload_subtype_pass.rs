@@ -38,6 +38,7 @@ impl<'a> CheckerState<'a> {
                     flags,
                     inheritance_graph: &self.ctx.inheritance_graph,
                     sound_mode: self.ctx.sound_mode(),
+                    evaluation_session: Some(self.ctx.eval_session.as_ref()),
                 },
                 &overrides,
             );
