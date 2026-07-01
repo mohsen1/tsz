@@ -1,8 +1,12 @@
 //! Recursion-identity containment for evaluator meta-operations.
 
-use super::*;
+use super::TypeEvaluator;
+use crate::def::DefId;
+use crate::evaluation::result::TerminationKind;
+use crate::relations::subtype::TypeResolver;
+use crate::types::{TypeData, TypeId};
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+impl<R: TypeResolver> TypeEvaluator<'_, R> {
     // tsc bounds productive meta-operation growth by recursion identity. For
     // evaluator-side `IndexAccess`/`KeyOf`, the stable identity is the terminal
     // definition under transparent wrappers; when evaluation grows the wrapper
