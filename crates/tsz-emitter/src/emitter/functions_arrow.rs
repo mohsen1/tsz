@@ -1,3 +1,4 @@
+use super::ParamPrologueEntry;
 use super::Printer;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -244,9 +245,9 @@ impl<'a> Printer<'a> {
         self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
 
         // If we have pending object rest params and a concise body, convert to block body
-        if !body_is_block && !self.pending_object_rest_params.is_empty() {
-            let rest_params: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
+        if !body_is_block && !self.pending_param_prologue.is_empty() {
+            let rest_params: Vec<ParamPrologueEntry> =
+                std::mem::take(&mut self.pending_param_prologue);
             self.write("{");
             self.write_line();
             self.increase_indent();
@@ -1229,8 +1230,8 @@ impl<'a> Printer<'a> {
             self.emit_function_parameters_js(&func.parameters.nodes);
         }
         self.write(")");
-        let object_rest_param_prologue: Vec<(String, NodeIndex)> =
-            std::mem::take(&mut self.pending_object_rest_params);
+        let object_rest_param_prologue: Vec<ParamPrologueEntry> =
+            std::mem::take(&mut self.pending_param_prologue);
         let has_object_rest_param_prologue = !object_rest_param_prologue.is_empty();
 
         // Check if the body references `arguments`. If so, we must capture it
@@ -1300,8 +1301,8 @@ impl<'a> Printer<'a> {
             }
             self.write("], void 0, function* (");
             self.emit_function_parameters_js(&func.parameters.nodes);
-            let forwarded_object_rest_param_prologue: Vec<(String, NodeIndex)> =
-                std::mem::take(&mut self.pending_object_rest_params);
+            let forwarded_object_rest_param_prologue: Vec<ParamPrologueEntry> =
+                std::mem::take(&mut self.pending_param_prologue);
             let has_forwarded_object_rest_param_prologue =
                 !forwarded_object_rest_param_prologue.is_empty();
             self.write(") {");
@@ -1638,17 +1639,8 @@ impl<'a> Printer<'a> {
             || kind == syntax_kind_ext::SET_ACCESSOR
     }
 
-    fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
-        for (temp_name, _) in entries {
-            self.generated_temp_names.insert(temp_name.clone());
-        }
-        for (temp_name, pattern_idx) in entries {
-            self.write("var ");
-            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-            self.write(";");
-            self.write_line();
-        }
-        self.emit_pending_object_rest_param_defaults(false);
+    fn emit_object_rest_param_prologue_entries(&mut self, entries: &[ParamPrologueEntry]) {
+        self.emit_param_prologue_entries(entries, false);
     }
 
     /// Issue #3758: lower `async (x = init()) => body` so the default

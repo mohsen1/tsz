@@ -3,9 +3,9 @@
 //! This module handles emission of destructuring binding patterns.
 //! Includes object binding patterns, array binding patterns, and binding elements.
 
-use super::Printer;
+use super::{ParamPrologueEntry, Printer};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, ParameterData};
 use tsz_parser::parser::syntax_kind_ext;
 
 /// Represents how a property name should appear in the __rest exclude list.
@@ -297,6 +297,88 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    /// ES2018 object-rest parameter lowering for a single parameter in the
+    /// parameter list. Writes a generated temp in place of the parameter and
+    /// records the deferred body prologue, returning `true` when the parameter
+    /// was replaced (the caller should then skip its normal emission).
+    ///
+    /// Two cases, mirroring `tsc`'s ES2018 transform
+    /// (`collectParametersWithPrecedingObjectRestOrSpread` + `visitParameter`):
+    /// - a binding-pattern parameter that FOLLOWS the leading object-rest
+    ///   parameter (`*lowered_seen`) is flattened, ES2015-style, into the body —
+    ///   regardless of whether it has its own object rest — so evaluation order
+    ///   matches the hoisted rest. (A rest binding-pattern param, e.g.
+    ///   `...[x, y]`, is left to the normal path — that ultra-rare form is out of
+    ///   scope.)
+    /// - the leading object-rest parameter keeps a native binding for its
+    ///   non-rest elements plus a `__rest` extraction.
+    pub(in crate::emitter) fn emit_es2018_object_rest_param_placeholder(
+        &mut self,
+        param: &ParameterData,
+        param_idx: NodeIndex,
+        param_pos: u32,
+        lowered_seen: &mut bool,
+        counter: &mut u32,
+        used: &mut Vec<String>,
+    ) -> bool {
+        if *lowered_seen && !param.dot_dot_dot_token && self.is_binding_pattern(param.name) {
+            let temp = self.next_object_rest_param_temp_name(counter, used);
+            self.write(&temp);
+            self.skip_erased_param_ranges(param);
+            self.pending_param_prologue
+                .push(ParamPrologueEntry::FollowingBinding {
+                    temp,
+                    pattern: param.name,
+                    initializer: param.initializer,
+                });
+            return true;
+        }
+
+        if self.param_has_object_rest(param_idx) {
+            *lowered_seen = true;
+            let temp = self.next_object_rest_param_temp_name(counter, used);
+            if param.dot_dot_dot_token {
+                self.emit_rest_parameter_spread_prefix(param_pos, param.name);
+            }
+            self.write(&temp);
+            // Skip the erased type; the leading param's default stays in the list.
+            self.skip_param_type_comments(param);
+            if param.initializer.is_some() {
+                self.write(" = ");
+                self.emit(param.initializer);
+            }
+            self.pending_param_prologue
+                .push(ParamPrologueEntry::ObjectRest {
+                    temp,
+                    pattern: param.name,
+                });
+            return true;
+        }
+
+        false
+    }
+
+    /// Skip the comments inside a parameter's erased type annotation.
+    fn skip_param_type_comments(&mut self, param: &ParameterData) {
+        if param.type_annotation.is_some()
+            && let Some(type_node) = self.arena.get(param.type_annotation)
+        {
+            self.skip_comments_in_range(type_node.pos, type_node.end);
+        }
+    }
+
+    /// Skip the comments inside a following parameter's erased type annotation
+    /// and hoisted default initializer (neither is emitted in the parameter
+    /// list).
+    fn skip_erased_param_ranges(&mut self, param: &ParameterData) {
+        self.skip_param_type_comments(param);
+        if param.initializer.is_some()
+            && let Some(init_node) = self.arena.get(param.initializer)
+        {
+            self.skip_comments_in_range(init_node.pos, init_node.end);
+        }
     }
 
     /// Check if a function parameter has an object rest pattern.

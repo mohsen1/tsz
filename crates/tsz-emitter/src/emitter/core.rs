@@ -333,6 +333,52 @@ pub(crate) struct RestParamTransform {
     pub(crate) index: usize,
 }
 
+/// A single entry in a function's ES2018 object-rest parameter prologue. Entries
+/// are stored in parameter order and emitted as the leading statements of the
+/// body so evaluation order matches `tsc`'s ES2018/ES2015 parameter transforms.
+pub(crate) enum ParamPrologueEntry {
+    /// The leading object-rest binding parameter. Emits the non-rest elements as
+    /// a native binding plus the `__rest` extraction, e.g.
+    /// `{ a } = _a, r = __rest(_a, ["a"])`.
+    ObjectRest { temp: String, pattern: NodeIndex },
+    /// A binding-pattern parameter that follows the leading object-rest
+    /// parameter. Its destructuring is fully flattened (ES2015 style) from the
+    /// temp, e.g. `c = _b[0], d = _b[1]` or `rb = _b.b, r2 = __rest(_b, ["b"])`,
+    /// with an optional `=== void 0` default ternary. `initializer` is
+    /// `NodeIndex::NONE` when the parameter has no default.
+    FollowingBinding {
+        temp: String,
+        pattern: NodeIndex,
+        initializer: NodeIndex,
+    },
+    /// A plain-identifier parameter (with a default) that follows the leading
+    /// object-rest parameter. Emits `if (name === void 0) { name = init; }`,
+    /// which forces the body onto multiple lines (`startOnNewLine` in `tsc`).
+    Default {
+        name: String,
+        initializer: NodeIndex,
+    },
+}
+
+impl ParamPrologueEntry {
+    /// The generated temp this entry binds, if any (used to pre-register names so
+    /// nested flatten temps skip them).
+    pub(crate) fn temp(&self) -> Option<&str> {
+        match self {
+            Self::ObjectRest { temp, .. } | Self::FollowingBinding { temp, .. } => Some(temp),
+            Self::Default { .. } => None,
+        }
+    }
+
+    /// Whether this entry forces the body onto multiple lines. Only the plain-id
+    /// `if (x === void 0)` default is `startOnNewLine` in `tsc`; `var`-based
+    /// destructuring statements (native rest, flattened binding, even a
+    /// binding's `=== void 0` ternary default) stay inline.
+    pub(crate) const fn forces_multiline(&self) -> bool {
+        matches!(self, Self::Default { .. })
+    }
+}
+
 pub(crate) struct TemplateParts {
     pub(crate) cooked: Vec<String>,
     pub(crate) cooked_invalid: Vec<bool>,
@@ -810,11 +856,12 @@ pub struct Printer<'a> {
     /// iterator/result temps, matching tsc temp ordering.
     pub(crate) reserved_iterator_return_temps: FxHashMap<NodeIndex, String>,
 
-    /// Pending object rest parameter replacements for ES2018 lowering.
-    /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
-    /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
-    pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
-    pub(crate) pending_object_rest_param_defaults: Vec<(String, NodeIndex)>,
+    /// Pending function-parameter prologue entries for ES2018 object-rest
+    /// lowering, ordered by parameter position. When a function parameter binding
+    /// contains an object rest/spread (below ES2018), that parameter and every
+    /// parameter after it are replaced by generated temps and their destructuring
+    /// is hoisted into the body; this list drives that body preamble emission.
+    pub(crate) pending_param_prologue: Vec<ParamPrologueEntry>,
 
     /// Source span of a parser-recovery expression statement already folded into
     /// the previous variable statement's emitted initializer.

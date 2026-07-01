@@ -1,3 +1,4 @@
+use super::super::ParamPrologueEntry;
 use super::super::Printer;
 use super::super::get_trailing_comment_ranges;
 use super::super::hoist_anchor::HoistAnchor;
@@ -45,8 +46,8 @@ impl<'a> Printer<'a> {
             && !needs_this_capture
             && !self.has_pending_new_target_capture()
             && is_function_body_block
-            && !self.pending_object_rest_params.is_empty()
-            && self.pending_object_rest_param_defaults.is_empty()
+            && !self.pending_param_prologue.is_empty()
+            && !self.pending_param_prologue_forces_multiline()
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
@@ -64,8 +65,7 @@ impl<'a> Printer<'a> {
         if block.statements.nodes.is_empty()
             && !needs_this_capture
             && !self.has_pending_new_target_capture()
-            && self.pending_object_rest_params.is_empty()
-            && self.pending_object_rest_param_defaults.is_empty()
+            && self.pending_param_prologue.is_empty()
         {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
@@ -883,11 +883,8 @@ impl<'a> Printer<'a> {
         is_function_body_block: bool,
         inline: bool,
     ) -> bool {
-        if is_function_body_block && !self.pending_object_rest_params.is_empty() {
+        if is_function_body_block && !self.pending_param_prologue.is_empty() {
             self.emit_pending_object_rest_param_preamble(inline);
-            true
-        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
-            self.emit_pending_object_rest_param_defaults(inline);
             true
         } else {
             false
@@ -895,43 +892,104 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
-        let rest_params: Vec<(String, NodeIndex)> =
-            std::mem::take(&mut self.pending_object_rest_params);
-        for (temp_name, _) in &rest_params {
-            self.generated_temp_names.insert(temp_name.clone());
-        }
-        for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
-            if inline && i > 0 {
-                self.write(" ");
-            }
-            self.write("var ");
-            self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-            self.write(";");
-            if !inline {
-                self.write_line();
-            }
-        }
-        self.emit_pending_object_rest_param_defaults(inline);
+        let entries: Vec<ParamPrologueEntry> = std::mem::take(&mut self.pending_param_prologue);
+        self.emit_param_prologue_entries(&entries, inline);
     }
 
-    pub(in crate::emitter) fn emit_pending_object_rest_param_defaults(&mut self, inline: bool) {
-        let defaults: Vec<(String, NodeIndex)> =
-            std::mem::take(&mut self.pending_object_rest_param_defaults);
-        for (i, (name, initializer)) in defaults.iter().enumerate() {
+    /// Whether any pending prologue entry forces the body onto multiple lines
+    /// (only a plain-id `if (x === void 0)` default does).
+    pub(in crate::emitter) fn pending_param_prologue_forces_multiline(&self) -> bool {
+        self.pending_param_prologue
+            .iter()
+            .any(ParamPrologueEntry::forces_multiline)
+    }
+
+    /// Emit an ordered list of ES2018 object-rest parameter prologue entries as
+    /// the leading statements of a function body. `inline` writes them on a
+    /// single line separated by spaces (single-line source body); otherwise each
+    /// entry is written on its own line.
+    pub(in crate::emitter) fn emit_param_prologue_entries(
+        &mut self,
+        entries: &[ParamPrologueEntry],
+        inline: bool,
+    ) {
+        // Pre-register EVERY generated temp up front (a separate pass, not folded
+        // into the emit loop below) so that a nested flatten temp allocated while
+        // emitting entry `i` skips the param temps of entries `i+1..`. tsc
+        // allocates all parameter temps (`_a`, `_b`, `_c`) before any body-flatten
+        // temp (`_d`); merging the passes would let an earlier entry's nested temp
+        // collide with a later param temp.
+        for entry in entries {
+            if let Some(temp) = entry.temp() {
+                self.generated_temp_names.insert(temp.to_string());
+            }
+        }
+        for (i, entry) in entries.iter().enumerate() {
             if inline && i > 0 {
                 self.write(" ");
             }
-            self.write("if (");
-            self.write(name);
-            self.write(" === void 0) { ");
-            self.write(name);
-            self.write(" = ");
-            self.emit_expression(*initializer);
-            self.write("; }");
+            match entry {
+                ParamPrologueEntry::ObjectRest { temp, pattern } => {
+                    self.write("var ");
+                    self.emit_object_rest_var_decl(*pattern, NodeIndex::NONE, Some(temp));
+                    self.write(";");
+                }
+                ParamPrologueEntry::FollowingBinding {
+                    temp,
+                    pattern,
+                    initializer,
+                } => {
+                    self.emit_following_binding_param_prologue(temp, *pattern, *initializer);
+                }
+                ParamPrologueEntry::Default { name, initializer } => {
+                    self.write("if (");
+                    self.write(name);
+                    self.write(" === void 0) { ");
+                    self.write(name);
+                    self.write(" = ");
+                    self.emit_expression(*initializer);
+                    self.write("; }");
+                }
+            }
             if !inline {
                 self.write_line();
             }
         }
+    }
+
+    /// Emit a `var` statement flattening a binding-pattern parameter that follows
+    /// the leading object-rest parameter (ES2015-style, from its temp). A default
+    /// initializer introduces a `=== void 0` ternary source temp first, mirroring
+    /// `tsc`'s ES2015 destructuring transform.
+    fn emit_following_binding_param_prologue(
+        &mut self,
+        temp: &str,
+        pattern: NodeIndex,
+        initializer: NodeIndex,
+    ) {
+        let hoisted_start = self.hoisted_assignment_temps.len();
+        let hoist_anchor = self.capture_hoist_anchor();
+        let mut started = false;
+        if initializer.is_some() {
+            // `var _c = _b === void 0 ? <init> : _b, <flattened from _c>`
+            let source = self.get_temp_var_name();
+            self.emit_param_assignment_prefix(&mut started);
+            self.write(&source);
+            self.write(" = ");
+            self.write(temp);
+            self.write(" === void 0 ? ");
+            self.emit_expression(initializer);
+            self.write(" : ");
+            self.write(temp);
+            self.emit_param_binding_assignments(pattern, &source, &mut started);
+        } else {
+            // `var <flattened from _b>`
+            self.emit_param_binding_assignments(pattern, temp, &mut started);
+        }
+        if started {
+            self.write(";");
+        }
+        self.insert_param_binding_hoisted_temps(hoisted_start, hoist_anchor);
     }
 
     pub(in crate::emitter) fn emit_variable_statement(&mut self, node: &Node) {
