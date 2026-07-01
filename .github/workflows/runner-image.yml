@@ -1,142 +1,17 @@
-# Build (and, when explicitly requested, deploy) the self-hosted GitHub Actions
-# runner image for the Cloud Run fleet.
-#
-# This workflow is intentionally SEPARATE from ci.yml / bench.yml and is NOT a
-# required check. It cannot affect PR CI status. During emergency GCP cost
-# scale-down, build and deploy are both manual-only. The deploy step touches
-# live infrastructure and is therefore gated behind a manual workflow_dispatch
-# input AND the `runner-image-deploy` environment (configure it with required
-# reviewers for manual approval).
-#
-# Configuration: this workflow no-ops with a clear message unless the repo
-# variables below are configured by a maintainer (see
-# scripts/infra/cloud-run-gh-runner/README.md):
-#   vars.RUNNER_IMAGE_GCP_PROJECT          (required to build)
-#   vars.RUNNER_IMAGE_REPO                 (required to build; image repo path)
-#   vars.RUNNER_IMAGE_GCP_REGION           (optional; defaults to us-central1)
-#   vars.RUNNER_IMAGE_CLOUD_RUN_SERVICE    (required to deploy)
-#   vars.RUNNER_IMAGE_MIN_INSTANCES        (optional; defaults to 0)
-#   vars.RUNNER_IMAGE_MAX_INSTANCES        (optional; defaults to 1)
 name: runner-image
 
 on:
   workflow_dispatch:
-    inputs:
-      deploy:
-        description: "Deploy the freshly built SHA-tagged image to the Cloud Run runner service (requires the runner-image-deploy approval environment)."
-        type: boolean
-        default: false
-      reason:
-        description: "Provenance note: why are you rebuilding / deploying?"
-        type: string
-        default: "manual rebuild"
 
 permissions:
   contents: read
 
-concurrency:
-  group: runner-image-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
-  build:
-    name: build-runner-image
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 60
-    outputs:
-      configured: ${{ steps.config.outputs.configured }}
-      image_sha_tag: ${{ steps.build.outputs.image_sha_tag }}
+  disabled:
+    name: runner-image-disabled
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-
-      - id: config
-        name: Resolve GCP configuration
-        env:
-          GCP_PROJECT: ${{ vars.RUNNER_IMAGE_GCP_PROJECT }}
-          IMAGE_REPO: ${{ vars.RUNNER_IMAGE_REPO }}
+      - name: Explain GitHub Actions-only runner policy
         run: |
-          set -euo pipefail
-          if [[ -z "${GCP_PROJECT}" || -z "${IMAGE_REPO}" ]]; then
-            echo "::notice title=runner-image not configured::Set repo variables RUNNER_IMAGE_GCP_PROJECT and RUNNER_IMAGE_REPO (and optionally RUNNER_IMAGE_GCP_REGION / RUNNER_IMAGE_CLOUD_RUN_SERVICE) to enable runner-image builds. See scripts/infra/cloud-run-gh-runner/README.md. No-op for now."
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "runner-image build is configured (project=${GCP_PROJECT})."
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - id: build
-        if: steps.config.outputs.configured == 'true'
-        name: Build and push runner image (SHA-tagged for provenance)
-        env:
-          GCP_PROJECT: ${{ vars.RUNNER_IMAGE_GCP_PROJECT }}
-          GCP_REGION: ${{ vars.RUNNER_IMAGE_GCP_REGION || 'us-central1' }}
-          IMAGE_REPO: ${{ vars.RUNNER_IMAGE_REPO }}
-        run: |
-          set -euo pipefail
-          sha="${GITHUB_SHA}"
-          image_sha_tag="${IMAGE_REPO}:${sha}"
-          echo "Building runner image ${image_sha_tag} (region=${GCP_REGION})"
-          gcloud builds submit \
-            --project="${GCP_PROJECT}" \
-            --region="${GCP_REGION}" \
-            --config=scripts/cloudbuild/cloudbuild-runner-image.yaml \
-            --substitutions=_IMAGE="${IMAGE_REPO}",_SHA="${sha}" \
-            .
-          echo "image_sha_tag=${image_sha_tag}" >> "$GITHUB_OUTPUT"
-          echo "Built and pushed ${image_sha_tag} (and :latest)."
-
-  deploy:
-    name: deploy-runner-image
-    needs: build
-    # Deploy only on an explicit manual dispatch with deploy=true, and only when
-    # the build actually ran. The environment adds a manual-approval gate.
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      inputs.deploy == true &&
-      needs.build.outputs.configured == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 30
-    environment: runner-image-deploy
-    steps:
-      - id: config
-        name: Verify Cloud Run service is configured
-        env:
-          SERVICE: ${{ vars.RUNNER_IMAGE_CLOUD_RUN_SERVICE }}
-          IMAGE_SHA_TAG: ${{ needs.build.outputs.image_sha_tag }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${SERVICE}" ]]; then
-            echo "::error title=runner-image deploy not configured::Set repo variable RUNNER_IMAGE_CLOUD_RUN_SERVICE to the Cloud Run runner service name before deploying."
-            exit 1
-          fi
-          if [[ -z "${IMAGE_SHA_TAG}" ]]; then
-            echo "::error::No image tag was produced by the build job."
-            exit 1
-          fi
-
-      - name: Deploy SHA-tagged image to Cloud Run runner service
-        env:
-          GCP_PROJECT: ${{ vars.RUNNER_IMAGE_GCP_PROJECT }}
-          GCP_REGION: ${{ vars.RUNNER_IMAGE_GCP_REGION || 'us-central1' }}
-          SERVICE: ${{ vars.RUNNER_IMAGE_CLOUD_RUN_SERVICE }}
-          IMAGE_SHA_TAG: ${{ needs.build.outputs.image_sha_tag }}
-          MIN_INSTANCES: ${{ vars.RUNNER_IMAGE_MIN_INSTANCES || '0' }}
-          MAX_INSTANCES: ${{ vars.RUNNER_IMAGE_MAX_INSTANCES || '1' }}
-        run: |
-          set -euo pipefail
-          echo "Deploying ${IMAGE_SHA_TAG} to Cloud Run service ${SERVICE}"
-          # Update only the image and scaling policy; existing env vars and
-          # secret bindings on the service (e.g. GITHUB_TOKEN) are preserved.
-          # The scaling flags here mirror cloud-run-service.yaml so the live
-          # service tracks the version-controlled policy.
-          gcloud run deploy "${SERVICE}" \
-            --project="${GCP_PROJECT}" \
-            --region="${GCP_REGION}" \
-            --image="${IMAGE_SHA_TAG}" \
-            --concurrency=1 \
-            --timeout=3600 \
-            --min-instances="${MIN_INSTANCES}" \
-            --max-instances="${MAX_INSTANCES}"
-          echo "Deployed ${IMAGE_SHA_TAG} to ${SERVICE}."
+          echo "External runner image builds and deploys are disabled."
+          echo "TSZ CI must use GitHub-hosted Actions runners unless a future PR explicitly reintroduces another non-GCP runner."

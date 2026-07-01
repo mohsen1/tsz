@@ -55,26 +55,26 @@ assert.match(
 
 assert.match(
   workflow,
-  /Download latest benchmark data from GCS[\s\S]+bench-runs\/latest\.json[\s\S]+bench-vs-tsgo-gcs-latest\.json[\s\S]+bench-runs\/latest\.tsgo-winners\.json/,
-  "Pages deploy should use published GCS benchmark truth when credentials are available",
+  /Download latest benchmark data from GitHub artifact[\s\S]+actions\/download-artifact@\S+[\s\S]+name: bench-results-merged[\s\S]+path: artifacts/,
+  "Pages deploy should download benchmark data only from the GitHub Actions artifact",
+);
+
+assert.doesNotMatch(
+  workflow,
+  /Download latest benchmark data from GCS|Download latest suite metrics from GCS|SCCACHE_GCS_KEY_JSON|gcloud auth|gs:\/\/|bench-vs-tsgo-gcs-latest/,
+  "Pages deploy must not download benchmark or suite data from GCS",
 );
 
 assert.match(
   workflow,
-  /Download latest benchmark data from GCS[\s\S]+SCCACHE_GCS_KEY_JSON:[\s\S]+gcloud auth activate-service-account[\s\S]+gcloud auth print-access-token/,
-  "Pages deploy should activate the GCS service-account secret before downloading benchmark truth",
+  /No benchmark artifact downloaded; bench charts will use repository\/local fallback data\./,
+  "Pages deploy should fall back to repository/local benchmark data when no GitHub artifact is available",
 );
 
 assert.match(
   workflow,
-  /Download latest suite metrics from GCS[\s\S]+SCCACHE_GCS_KEY_JSON:[\s\S]+gcloud auth activate-service-account[\s\S]+metrics\/latest\/\$\{suite\}\.json/,
-  "Pages deploy should activate the GCS service-account secret before downloading suite metrics",
-);
-
-assert.match(
-  workflow,
-  /selectLatestBenchmarkArtifact[\s\S]+bench-vs-tsgo-github-latest\.json[\s\S]+bench-vs-tsgo-gcs-latest\.json/,
-  "Pages readiness status should describe the selected fresh benchmark artifact",
+  /selectLatestBenchmarkArtifact[\s\S]+bench-vs-tsgo-github-latest\.json/,
+  "Pages readiness status should describe the selected GitHub artifact",
 );
 
 assert.match(

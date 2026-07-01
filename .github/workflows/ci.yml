@@ -8,12 +8,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      full_ci:
-        description: "Run the expensive Cloud Run / Cloud Build suites despite emergency cost scale-down."
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -30,13 +24,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
-  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
-  TSZ_CI_RUNNER_LABEL: tsz-cloud-run
-  # Emergency GCP bill guard: automatic PR/push/merge_queue events publish the
-  # required light summary but do not fan out Cloud Run runners or Cloud Build
-  # jobs. Use workflow_dispatch with full_ci=true after re-enabling the runner
-  # fleet when a full validation pass is worth the spend.
+  # GCP bill guard: CI publishes the required light summary on GitHub-hosted
+  # runners only. Heavy compiler validation moves to the local signoff status
+  # and scheduled/manual benchmark workflows that run only on GitHub Actions.
   TSZ_CI_EMERGENCY_SCALE_DOWN: "1"
 
 jobs:
@@ -99,9 +89,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_EVENT_NAME: ${{ github.event_name }}
           METADATA_ACTIVE_SUITE_FOUND: ${{ steps.metadata-active-suite.outputs.active_suite_found }}
-          TSZ_CI_MANUAL_FULL_CI: ${{ github.event_name == 'workflow_dispatch' && inputs.full_ci || false }}
         shell: bash
         run: |
+          # shellcheck disable=SC2129
           set -euo pipefail
           should_run=true
           full_run=true
@@ -115,10 +105,10 @@ jobs:
           compiler_checks_required=true
           if [[ "${{ github.event_name }}" == "merge_group" ]]; then
             # Native merge queue validates a GitHub-owned synthetic merge
-            # commit. Run the same Cloud Run-backed compiler suite here so
+            # commit. Outside cost-control mode, run the same compiler suite so
             # branch protection is checking the actual queued commit, not only
             # the PR head that entered the queue.
-            echo "Native merge queue group - running full Cloud Run CI for the queued merge commit."
+            echo "Native merge queue group - exact-head compiler validation requested for the queued merge commit."
           elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             if [[ "${{ github.event.action }}" == "edited" ]]; then
               echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
@@ -247,8 +237,8 @@ jobs:
             # Draft-phase unit narrowing removed with the two-phase CI: every
             # open PR runs the full unit suite. Path-based skips above still apply.
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
-              # Fork PRs cannot use self-hosted runners by default (untrusted
-              # code on shared infra). A maintainer must add the
+              # Fork PRs cannot run expensive compiler validation by default
+              # (untrusted code on shared infra). A maintainer must add the
               # `ci-approved` label after reviewing the diff to opt the PR
               # into full CI. Without that label, only the lightweight
               # ubuntu-latest checks run, which means heavy regressions
@@ -259,9 +249,9 @@ jobs:
                 --jq '.labels // [] | map(.name) | index("ci-approved") // empty' \
                 2>/dev/null || true)
               if [[ -n "$has_label" ]]; then
-                echo "Fork PR has ci-approved label — running full CI on self-hosted runners."
+                echo "Fork PR has ci-approved label — full compiler CI would be allowed outside cost-control mode."
               else
-                echo "Skipping self-hosted CI for fork PRs (add 'ci-approved' label to enable)."
+                echo "Skipping expensive compiler CI for fork PRs (add 'ci-approved' label to enable outside cost-control mode)."
                 should_run=false
                 required_summary=false
               fi
@@ -392,10 +382,9 @@ jobs:
               fi
             fi
           fi
-          if [[ "${TSZ_CI_EMERGENCY_SCALE_DOWN:-0}" == "1" &&
-                "${TSZ_CI_MANUAL_FULL_CI:-false}" != "true" ]]; then
-            echo "Emergency GCP cost scale-down is active — skipping Cloud Run / Cloud Build CI fanout."
-            echo "Dispatch this workflow manually with full_ci=true after intentionally re-enabling the runner fleet."
+          if [[ "${TSZ_CI_EMERGENCY_SCALE_DOWN:-0}" == "1" ]]; then
+            echo "GitHub Actions-only cost-control mode is active — skipping Cloud Run / Cloud Build CI fanout."
+            echo "Run scripts/ci/signoff.sh locally to post the required PR signoff status after testing."
             should_run=false
             full_run=false
             rust_cache_refresh=false
@@ -419,6 +408,31 @@ jobs:
           echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
           echo "metadata_active_suite_found=${METADATA_ACTIVE_SUITE_FOUND:-false}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
+
+  signoff-gate:
+    name: PR Signoff
+    needs: gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require local signoff status on PR head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/${REPOSITORY}/commits/${PR_HEAD_SHA}/status" \
+            --jq '.statuses[]? | select(.context == "signoff") | .state' \
+            | head -n 1)"
+          if [[ "${status}" == "success" ]]; then
+            echo "Found successful local signoff status for ${PR_HEAD_SHA}."
+            exit 0
+          fi
+          echo "::error title=Missing PR signoff::Run scripts/ci/signoff.sh locally from a clean checkout after testing. It posts the required 'signoff' commit status to ${PR_HEAD_SHA}."
+          exit 1
 
   pr-body-gate:
     name: pr-body-gate
@@ -632,7 +646,7 @@ jobs:
     name: dist-binaries
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       GITHUB_SHA: ${{ github.sha }}
@@ -679,7 +693,7 @@ jobs:
     name: lsp-e2e
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       TSZ_CI_CACHE_SAVE: "0"
@@ -701,7 +715,7 @@ jobs:
     name: project-compile-guard
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile
@@ -748,8 +762,8 @@ jobs:
 
   project-compile-canary:
     # Canary rows run serially per shard. Sharding the row set 3-way (mirrors
-    # the conformance shard fan-out) lets three self-hosted runners share the
-    # canary set in parallel, cutting ~9-10 min off the wave-2 CI tail. The
+    # the conformance shard fan-out) keeps shard sizing stable when this suite is
+    # re-enabled outside cost-control mode. The
     # per-shard partition is keyed on each row's stable index in
     # TSZ_COMPILE_GUARD_CANARY_ROWS (see scripts/ci/project-compile-guard.sh),
     # so the union of all shards is the full set with no overlap. The
@@ -759,7 +773,7 @@ jobs:
     name: project-compile-canary-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: true
     strategy:
@@ -846,7 +860,7 @@ jobs:
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.project-compile-canary.result != 'skipped' && needs.project-compile-canary.result != 'cancelled'
     # Pure-IO aggregate: consumes ONLY the downloaded .canary-shards artifacts
     # (project-compile-canary-aggregate.sh reads no GCS and no dist binary), so a
-    # free ubuntu-latest runner is sufficient and frees a scarce Cloud Run slot.
+    # free ubuntu-latest runner is sufficient.
     runs-on: ubuntu-latest
     timeout-minutes: 15
     continue-on-error: true
@@ -960,7 +974,7 @@ jobs:
     name: premerge-microbench
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
     env:
@@ -1042,7 +1056,7 @@ jobs:
     name: forced-parallel-determinism
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
     env:
@@ -1108,7 +1122,7 @@ jobs:
     name: wasm
     needs: gate
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
@@ -1135,7 +1149,7 @@ jobs:
     name: node-harness-prep
     needs: gate
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       GITHUB_SHA: ${{ github.sha }}
@@ -1178,7 +1192,7 @@ jobs:
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1207,7 +1221,7 @@ jobs:
     name: unit-checker-integration
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1232,12 +1246,12 @@ jobs:
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
     # tsz-conformance harness; they do not need unit's test outputs. Each
-    # shard runs on its own self-hosted 8-vCPU runner, so concurrent fanout
-    # does not compete with Rust build/test jobs for rustc capacity.
+    # shard runs independently, so concurrent fanout does not compete with Rust
+    # build/test jobs for rustc capacity when this suite is re-enabled.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 75
     strategy:
       fail-fast: false
@@ -1289,7 +1303,7 @@ jobs:
     # the shard_count/coverage checks (return 1 — fail-safe, no false green), so
     # the GCS recovery is not load-bearing and a stock runner without gsutil
     # cannot weaken the conformance floor. A free ubuntu-latest runner suffices
-    # and frees a scarce Cloud Run slot (mirrors emit-aggregate /
+    # and keeps aggregate work separate from shard execution (mirrors emit-aggregate /
     # project-compile-canary-aggregate, #13745).
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1411,7 +1425,7 @@ jobs:
     name: emit-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1472,7 +1486,7 @@ jobs:
     # and since the download-artifact step below always populates it, the GCS
     # path is never taken. The GCS env is best-effort CI cache that gracefully
     # no-ops when gsutil is absent. A free ubuntu-latest runner is sufficient
-    # and frees a scarce Cloud Run slot (mirrors conformance-aggregate /
+    # and keeps aggregate work separate from shard execution (mirrors conformance-aggregate /
     # project-compile-canary-aggregate, #13745).
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1556,7 +1570,7 @@ jobs:
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1603,16 +1617,10 @@ jobs:
     name: fourslash-aggregate
     needs: [gate, fourslash]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
-    # Stays self-hosted (unlike conformance/emit/canary aggregates): the
-    # fourslash shards hand their results off over GCS (run_fourslash_shard
-    # uploads via `gsutil cp` to fourslash-runs/<sha>/), NOT as GitHub Actions
-    # artifacts, and run_fourslash_aggregate downloads them with a mandatory
-    # `gsutil cp` that hard-fails without a bucket/run key (no artifact-
-    # preferring fallback like emit/conformance). ubuntu-latest has no gsutil
-    # or GCS auth by default, so migrating this job would require re-plumbing
-    # the shard->aggregate handoff to download-artifact first. Left on Cloud
-    # Run until that handoff change lands (#13745).
-    runs-on: [self-hosted, tsz-cloud-run]
+    # Skipped in cost-control mode along with the fourslash shards. Re-enabling
+    # hosted fourslash requires replacing the old GCS shard handoff with
+    # download-artifact first (#13745).
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
@@ -1636,6 +1644,7 @@ jobs:
       - lint
       - cargo-shear
       - cargo-deny
+      - signoff-gate
       - pr-body-gate
       - dist-binaries
       - lsp-e2e
@@ -1690,6 +1699,11 @@ jobs:
           gate_result = gate.get("result")
           if gate_result != "success":
               print(f"gate did not pass: {gate_result}")
+              sys.exit(1)
+
+          signoff = needs.get("signoff-gate")
+          if signoff and signoff.get("result") not in ("success", "skipped"):
+              print(f"PR Signoff did not pass: {signoff.get('result')}")
               sys.exit(1)
 
           pr_body = needs.get("pr-body-gate")
