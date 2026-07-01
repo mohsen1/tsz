@@ -241,7 +241,7 @@ impl<'a> LoweringPass<'a> {
                     {
                         if method.asterisk_token {
                             // Async generator method: needs __asyncGenerator + __await
-                            self.mark_async_generator_helpers();
+                            self.mark_async_generator_helpers(method.body);
                         } else {
                             // Non-generator async method: needs __awaiter
                             // (ES2015/ES2016 use __awaiter + generators via yield,

@@ -321,6 +321,104 @@ fn async_generator_yield_uses_async_helpers() {
     );
 }
 
+/// Emit `source` at `target` with helper definitions inlined (no
+/// `import_helpers`), returning the full output including the preamble.
+fn emit_with_inline_helpers(source: &'static str, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn downleveled_async_generator_delegating_yield_registers_iteration_helpers() {
+    // A delegating `yield* x` in a down-leveled `async function*` lowers to
+    // `yield __await(yield* __asyncDelegator(__asyncValues(x)))`, so both the
+    // `__asyncValues` and `__asyncDelegator` helper definitions must appear in
+    // the preamble alongside `__await`/`__asyncGenerator`.
+    for target in [
+        ScriptTarget::ES5,
+        ScriptTarget::ES2015,
+        ScriptTarget::ES2017,
+    ] {
+        let output =
+            emit_with_inline_helpers("async function* f(g) { yield* g; yield 1; }\n", target);
+        for helper in [
+            "var __await =",
+            "var __asyncGenerator =",
+            "var __asyncValues =",
+            "var __asyncDelegator =",
+        ] {
+            assert!(
+                output.contains(helper),
+                "delegating yield* at {target:?} must register `{helper}`.\nOutput:\n{output}"
+            );
+        }
+    }
+}
+
+#[test]
+fn downleveled_async_generator_method_delegating_yield_registers_iteration_helpers() {
+    let output = emit_with_inline_helpers(
+        "class C { async *m(g) { yield* g; } }\n",
+        ScriptTarget::ES2017,
+    );
+    assert!(
+        output.contains("var __asyncValues =") && output.contains("var __asyncDelegator ="),
+        "delegating yield* in an async-generator method must register the iteration helpers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn downleveled_async_generator_without_delegation_omits_iteration_helpers() {
+    // A plain (non-delegating) async generator only needs `__await` and
+    // `__asyncGenerator`; the two async-iteration helpers must stay out.
+    let output = emit_with_inline_helpers(
+        "async function* f() { yield 1; await 2; }\n",
+        ScriptTarget::ES2015,
+    );
+    assert!(
+        output.contains("var __await =") && output.contains("var __asyncGenerator ="),
+        "async generator still needs the base helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__asyncValues") && !output.contains("__asyncDelegator"),
+        "async generator without a delegating yield* must not register iteration helpers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_sync_generator_delegation_does_not_leak_into_async_generator() {
+    // The `yield*` belongs to the nested sync generator, not the outer async
+    // generator, so the outer generator must not register the async-iteration
+    // helpers. (The nested `function*` at ES2015+ is native and needs none.)
+    let output = emit_with_inline_helpers(
+        "async function* outer() { function* inner() { yield* [1]; } yield 2; }\n",
+        ScriptTarget::ES2015,
+    );
+    assert!(
+        output.contains("var __asyncGenerator ="),
+        "outer async generator still lowers.\nOutput:\n{output}"
+    );
+    // The outer async generator owns no delegating `yield*`, so it must not
+    // register the async-iteration helper *definitions* in the preamble. (A
+    // separate, pre-existing emit-context bug — `emit_await_as_yield_await`
+    // leaking into the nested sync `function*` — can still write the delegator
+    // call in the body; that is tracked apart from helper registration.)
+    assert!(
+        !output.contains("var __asyncDelegator =") && !output.contains("var __asyncValues ="),
+        "a nested sync generator's yield* must not register async-iteration helpers for the outer generator.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn async_generator_es2017_lowers_and_forwards_parameters() {
     let source = "async function* f1(x, y = z) {}\nasync function* f2({ [z]: x }) {}\n";

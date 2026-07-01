@@ -7,6 +7,7 @@ use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
 use tsz_common::ScriptTarget;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -460,14 +461,68 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    /// Mark helpers needed for async generator functions (async function*).
-    pub(super) fn mark_async_generator_helpers(&mut self) {
+    /// Mark helpers needed for async generator functions (`async function*`).
+    ///
+    /// Every down-leveled async generator pulls in `__await` and
+    /// `__asyncGenerator` (plus `__generator` at ES5). A **delegating** `yield*`
+    /// inside the generator body additionally lowers to
+    /// `yield __await(yield* __asyncDelegator(__asyncValues(x)))`, so it also
+    /// needs the two async-iteration helpers. The decision keys purely on the
+    /// structural presence of a delegating `yield*` that binds to this
+    /// generator, never on identifier spelling or rendered output.
+    pub(super) fn mark_async_generator_helpers(&mut self, body: NodeIndex) {
+        let delegates = self.async_generator_body_has_delegating_yield(body);
         let helpers = self.transforms.helpers_mut();
         helpers.mark_await_helper();
         helpers.mark_async_generator();
         if self.ctx.target_es5 {
             helpers.generator = true;
         }
+        if delegates {
+            helpers.mark_async_values();
+            helpers.mark_async_delegator();
+        }
+    }
+
+    /// Returns `true` when the async-generator body contains a delegating
+    /// `yield* x` that binds to *this* generator (i.e. not nested inside another
+    /// function-like or class member, which own their own `yield` scope).
+    fn async_generator_body_has_delegating_yield(&self, body: NodeIndex) -> bool {
+        if body.is_none() {
+            return false;
+        }
+        let mut stack = vec![body];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::YIELD_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr_ex(node)
+                && unary.asterisk_token
+                && self.arena.get(unary.expression).is_some()
+            {
+                return true;
+            }
+            // Do not descend into nested scopes that own their own `yield`
+            // binding (or introduce none): inner functions/arrows, methods,
+            // constructors, accessors, and class bodies. The generator's own
+            // body is a block, which is never a boundary, so it is traversed.
+            if self.is_yield_scope_boundary(node) {
+                continue;
+            }
+            stack.extend(self.arena.get_children(current));
+        }
+        false
+    }
+
+    /// A node that introduces its own `yield` binding scope (or none), so a
+    /// `yield*` beneath it does not belong to an enclosing generator.
+    fn is_yield_scope_boundary(&self, node: &Node) -> bool {
+        self.arena.get_function(node).is_some()
+            || self.arena.get_method_decl(node).is_some()
+            || self.arena.get_constructor(node).is_some()
+            || self.arena.get_accessor(node).is_some()
+            || self.arena.get_class(node).is_some()
     }
 
     pub(super) fn has_class_member_modifier(
