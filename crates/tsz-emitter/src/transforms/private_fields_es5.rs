@@ -732,17 +732,18 @@ pub fn collect_private_accessors_with_reserved(
             }) {
                 idx
             } else {
+                // Helper var names are reserved lazily, only when the matching
+                // getter/setter is actually seen (see below). A getter-only or
+                // setter-only private accessor reserves a single helper var, and
+                // `tsc` reserves in source order — so a `set`-before-`get` pair
+                // reserves `_set` first. Eagerly minting both here would emit a
+                // dead `_C_x_set`/`_C_x_get` and force a fixed get-before-set
+                // reservation order that diverges from `tsc`.
                 accessors.push(PrivateAccessorInfo {
                     member_indices: Vec::new(),
                     name: clean_name.to_string(),
-                    get_var_name: Some(make_unique_private_name(
-                        &format!("{}_get", private_helper_base(class_name, clean_name)),
-                        used_names,
-                    )),
-                    set_var_name: Some(make_unique_private_name(
-                        &format!("{}_set", private_helper_base(class_name, clean_name)),
-                        used_names,
-                    )),
+                    get_var_name: None,
+                    set_var_name: None,
                     has_getter: false,
                     has_setter: false,
                     getter_body: None,
@@ -758,16 +759,31 @@ pub fn collect_private_accessors_with_reserved(
             entry.member_indices.push(member_idx);
             let is_async = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AsyncKeyword);
 
-            // Update based on accessor type
+            // Update based on accessor type. The helper var name is reserved
+            // here, at the accessor's source position, so declaration and
+            // reservation order match `tsc` and only present accessors reserve a
+            // name.
             if is_getter {
                 entry.has_getter = true;
                 entry.getter_is_async = is_async;
+                if entry.get_var_name.is_none() {
+                    entry.get_var_name = Some(make_unique_private_name(
+                        &format!("{}_get", private_helper_base(class_name, clean_name)),
+                        used_names,
+                    ));
+                }
                 if accessor_data.body.is_some() {
                     entry.getter_body = Some(accessor_data.body);
                 }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
                 entry.has_setter = true;
                 entry.setter_is_async = is_async;
+                if entry.set_var_name.is_none() {
+                    entry.set_var_name = Some(make_unique_private_name(
+                        &format!("{}_set", private_helper_base(class_name, clean_name)),
+                        used_names,
+                    ));
+                }
                 if accessor_data.body.is_some() {
                     entry.setter_body = Some(accessor_data.body);
                 }
