@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "class_interface_merge_member_type_tests"
 path = "tests/class_interface_merge_member_type_tests.rs"
 [[test]]
+name = "extends_value_min_type_arg_base_union_tests"
+path = "tests/extends_value_min_type_arg_base_union_tests.rs"
+[[test]]
 name = "namespace_import_export_equals_passthrough_tests"
 path = "tests/namespace_import_export_equals_passthrough_tests.rs"
 [[test]]
