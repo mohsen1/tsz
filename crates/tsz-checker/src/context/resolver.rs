@@ -928,7 +928,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         if let Some(sym_id) = sym_id {
             // If this is a fallback from a raw SymbolId-based DefId, check if there's
             // a proper DefId registered for this symbol and redirect through it.
-            if self.def_to_symbol.borrow().get(&def_id).is_none()
+            let def_has_symbol_mapping = self.def_to_symbol.borrow().contains_key(&def_id);
+            if !def_has_symbol_mapping
                 && let Some(real_def_id) = self.get_existing_def_id(sym_id)
                 && real_def_id != def_id
             {
