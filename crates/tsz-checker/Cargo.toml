@@ -2358,3 +2358,7 @@ path = "tests/typeof_object_literal_widened_display_tests.rs"
 [[test]]
 name = "class_duplicate_member_implicit_any_tests"
 path = "tests/class_duplicate_member_implicit_any_tests.rs"
+
+[[test]]
+name = "readonly_alias_display_14826_tests"
+path = "tests/readonly_alias_display_14826_tests.rs"

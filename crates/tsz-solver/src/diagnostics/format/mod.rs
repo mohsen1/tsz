@@ -1522,18 +1522,12 @@ impl<'a> TypeFormatter<'a> {
         //
         // Restricted to composite shapes to avoid false positives where a primitive
         // or literal type coincidentally matches an alias body (e.g. `type U = 1`).
-        // When `skip_object_display_alias` is set, do not redirect Object/
-        // ObjectWithIndex types to a named definition (e.g. a JS constructor's
-        // `prototype` property def whose body is this literal). Diagnostics
-        // that opt into this mode want the literal's structural shape.
-        // The user wrote this object as a literal annotation (`{ a: number }`).
-        // Object types are content-interned, so it shares its `TypeId` with the
-        // structural result of any utility application / type-alias body of the
-        // same shape; `find_def_for_type` (and the `display_alias` chase below)
-        // would otherwise repaint the hand-written annotation with that unrelated
-        // declaration's name (`P`, `Pick<...>`). `tsc` always renders a literal
-        // object annotation structurally and never stamps an alias symbol on it,
-        // so render the structural shape here.
+        // Object types are content-interned, so a hand-written literal annotation
+        // (`{ a: number }`) shares its `TypeId` with any utility/type-alias body of
+        // the same shape; `find_def_for_type` (and the `display_alias` chase below)
+        // would repaint it with that unrelated name (`P`, `Pick<...>`). `tsc` never
+        // stamps an alias symbol on a literal annotation or a `skip_object_display_alias`
+        // receiver (e.g. a JS constructor `prototype`), so force the structural shape.
         let key_is_object = matches!(&key, TypeData::Object(_) | TypeData::ObjectWithIndex(_));
         let is_literal_object_annotation =
             key_is_object && self.interner.is_literal_object_annotation(type_id);
@@ -1551,6 +1545,11 @@ impl<'a> TypeFormatter<'a> {
                 | TypeData::Mapped(_)
                 | TypeData::Conditional(_)
                 | TypeData::IndexAccess(_, _)
+                // A `readonly` tuple/array through a non-generic alias keeps its
+                // `aliasSymbol` in tsc; recover the outer name (`R`) here. Its
+                // synthetic inner is rendered via `format_key` (which skips this
+                // lookup), so a coincidental mutable twin never leaks as `readonly M`.
+                | TypeData::ReadonlyType(_)
         );
         if !skip_object_def_lookup
             && key_is_composite_for_def_lookup
@@ -1988,11 +1987,7 @@ impl<'a> TypeFormatter<'a> {
         }
 
         self.current_depth += 1;
-        let inserted_visiting = self.format_visiting.insert(type_id);
-        let result = self.format_key(type_id, &key);
-        if inserted_visiting {
-            self.format_visiting.remove(&type_id);
-        }
+        let result = self.format_key_guarded(type_id, &key);
         self.current_depth -= 1;
         result
     }
