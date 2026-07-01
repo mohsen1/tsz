@@ -81,7 +81,6 @@ impl<'a> CheckerState<'a> {
                 // a variable or a property access.
                 // E.g. `{ ...expr + expr } = source` is invalid.
                 if !self.is_valid_rest_assignment_target(spread_expr) {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                                 spread_expr,
                                 diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
@@ -92,7 +91,6 @@ impl<'a> CheckerState<'a> {
                 // TS2778: The target of an object rest assignment may not be
                 // an optional property access. E.g. `{ ...obj?.a } = source`
                 else if self.is_optional_chain_access(spread_expr) {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                                 spread_expr,
                                 diagnostic_messages::THE_TARGET_OF_AN_OBJECT_REST_ASSIGNMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,

@@ -544,6 +544,39 @@ impl<'a> CheckerState<'a> {
         self.emit_render_request(anchor_idx, request);
     }
 
+    fn rewrite_variadic_tuple_structural_ts2322(
+        &mut self,
+        diag: &mut Diagnostic,
+        failure_reason: &tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        if diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            || !matches!(
+                failure_reason,
+                tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
+                    | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
+            )
+        {
+            return;
+        }
+
+        let Some(target_str) = self.variadic_tuple_alias_structural_display(target, source) else {
+            return;
+        };
+        let source_str = self.format_type_for_diagnostic_role(
+            source,
+            DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
+        );
+        let (source_str, target_str) =
+            self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        diag.message_text = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+    }
+
     /// Internal helper that reports a detailed assignability failure using an
     /// already-resolved diagnostic anchor.
     pub(super) fn diagnose_assignment_failure_with_anchor(
@@ -842,30 +875,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let use_structural_variadic_tuple_display = matches!(
-                    &failure_reason,
-                    tsz_solver::SubtypeFailureReason::TupleElementTypeMismatch { .. }
-                        | tsz_solver::SubtypeFailureReason::TupleVariadicPositionMismatch { .. }
-                );
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                    && use_structural_variadic_tuple_display
-                    && let Some(target_str) =
-                        self.variadic_tuple_alias_structural_display(target, source)
-                {
-                    let source_str = self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
-                    );
-                    let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                        source, target, source_str, target_str,
-                    );
-                    diag.message_text = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&source_str, &target_str],
-                    );
-                }
+                self.rewrite_variadic_tuple_structural_ts2322(
+                    &mut diag,
+                    failure_reason,
+                    source,
+                    target,
+                    anchor_idx,
+                );
                 let has_static_schema_display = self
                     .static_schema_array_structural_display(source, target)
                     .is_some()
