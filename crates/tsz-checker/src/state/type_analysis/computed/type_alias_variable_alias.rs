@@ -256,6 +256,16 @@ impl<'a> CheckerState<'a> {
                 // a plain element or an array spread (`...T[]`), which defer.
                 let is_tuple_self_spread_cycle = params.is_empty()
                     && self.tuple_alias_body_forces_resolution_chain(sym_id, type_alias.type_node);
+                // `keyof` forces its operand's apparent type, so a self-reference
+                // reached through `keyof` re-enters the alias mid-resolution and is
+                // circular (`type A = keyof A`), unlike a deferred array element or
+                // object property. The `body_is_deferred` suppression below treats a
+                // top-level `keyof` (a TYPE_OPERATOR) as deferred, so exempt this
+                // eager self-cycle just like the mapped/tuple self-cycles.
+                let is_keyof_eager_self_cycle = params.is_empty()
+                    && self
+                        .keyof_operand_reaches_resolution_chain_alias(alias_type)
+                        .is_some();
                 let is_jsx_runtime_bridge_alias = self
                     .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
@@ -272,7 +282,8 @@ impl<'a> CheckerState<'a> {
                         || (self.is_simple_type_reference(type_alias.type_node)
                             && self.is_cross_file_circular_alias(sym_id, alias_type))
                         || is_non_generic_mapped_cycle
-                        || is_tuple_self_spread_cycle);
+                        || is_tuple_self_spread_cycle
+                        || is_keyof_eager_self_cycle);
                 if is_circular && !self.has_parse_errors() {
                     use crate::diagnostics::{
                         diagnostic_codes, diagnostic_messages, format_message,
@@ -306,6 +317,7 @@ impl<'a> CheckerState<'a> {
                     let body_is_deferred = self.alias_ast_is_deferred(sym_id)
                         && !is_non_generic_mapped_cycle
                         && !is_tuple_self_spread_cycle
+                        && !is_keyof_eager_self_cycle
                         && !generic_self_circular;
                     if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;
