@@ -61,6 +61,14 @@ fn chain_has<P: Fn(&str) -> bool>(chain: &[(u8, u32, String)], depth: u8, predic
         .any(|(d, _, msg)| *d == depth && predicate(msg))
 }
 
+/// Whether any elaboration line (at any depth) is the leaf relation
+/// `Type '<from>' is not assignable to type '<to>'`.
+fn chain_has_leaf(chain: &[(u8, u32, String)], from: &str, to: &str) -> bool {
+    chain
+        .iter()
+        .any(|(_, _, m)| m.contains(&format!("Type '{from}' is not assignable to type '{to}'")))
+}
+
 /// Tuple union member failing on an element type mismatch elaborates the member
 /// header, the TS2626 positional line, and the leaf relation, each one indent
 /// deeper than the last.
@@ -192,6 +200,94 @@ const t: Target = s;
                 && m.contains("'number'")),
         "reversed union should select its first failing member at position 1 \
          (string -> number); got {reversed:?}"
+    );
+}
+
+/// Nullish member priority matches `tsc`'s relation order. `tsc`'s
+/// `eachTypeRelatedToType` walks the source union in ascending *type-id* order,
+/// where the intrinsic `undefined` and `null` types (allocated before any user
+/// type) sort first — so when a nullish member and a non-nullish member both
+/// fail, `tsc` elaborates the *nullish* one, regardless of where it appears in
+/// the union's *printed* order (which keeps `undefined`/`null` last). tsz stores
+/// union members in that printer order, so without restoring the relation order
+/// it would elaborate the non-nullish member (`number`) instead of the nullish
+/// one (`undefined`/`null`).
+#[test]
+fn union_member_selection_prioritizes_nullish_like_tsc() {
+    // `number | undefined` -> `string`: both members fail; tsc reports `undefined`.
+    let undef = ts2322_chain(&diagnostics(
+        r#"
+declare const x: number | undefined;
+const y: string = x;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&undef, "undefined", "string"),
+        "expected the `undefined` member to be elaborated; got {undef:?}"
+    );
+    assert!(
+        !chain_has_leaf(&undef, "number", "string"),
+        "the non-nullish `number` member must not be the elaborated member \
+         when `undefined` is present; got {undef:?}"
+    );
+
+    // Reversed print/source order must not change the pick — still `undefined`.
+    let undef_rev = ts2322_chain(&diagnostics(
+        r#"
+declare const x: undefined | number;
+const y: string = x;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&undef_rev, "undefined", "string")
+            && !chain_has_leaf(&undef_rev, "number", "string"),
+        "reversed union must still elaborate `undefined`; got {undef_rev:?}"
+    );
+
+    // With no `undefined`, `null` takes priority over the non-nullish member.
+    let null_chain = ts2322_chain(&diagnostics(
+        r#"
+declare const x: number | null;
+const y: string = x;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&null_chain, "null", "string")
+            && !chain_has_leaf(&null_chain, "number", "string"),
+        "expected the `null` member to be elaborated; got {null_chain:?}"
+    );
+
+    // When both `null` and `undefined` are present, `undefined` (the earlier
+    // intrinsic) wins over `null`, and both win over the non-nullish member.
+    let both = ts2322_chain(&diagnostics(
+        r#"
+declare const x: null | undefined | boolean;
+const y: string = x;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&both, "undefined", "string")
+            && !chain_has_leaf(&both, "null", "string")
+            && !chain_has_leaf(&both, "boolean", "string"),
+        "expected `undefined` to win over `null` and the non-nullish member; got {both:?}"
+    );
+}
+
+/// A failing nullish member that is *assignable* to the target must be skipped,
+/// falling through to the first failing non-nullish member — matching tsc.
+#[test]
+fn union_member_selection_skips_assignable_nullish_member() {
+    // `null` is assignable to `string | null`, so the elaboration must drill the
+    // non-nullish `number` member rather than the (assignable) `null` member.
+    let chain = ts2322_chain(&diagnostics(
+        r#"
+declare const x: number | null;
+const y: string | null = x;
+"#,
+    ));
+    assert!(
+        !chain_has_leaf(&chain, "null", "string"),
+        "an assignable `null` member must not be elaborated as a failure; got {chain:?}"
     );
 }
 
