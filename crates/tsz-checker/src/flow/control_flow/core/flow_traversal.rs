@@ -1755,6 +1755,14 @@ impl<'a> FlowAnalyzer<'a> {
         // CONDITION must defer through the assignment to the merge. Only
         // conditional-EXPRESSION merges qualify — statement merges (`if`/`switch`/
         // `try`) are excluded to avoid re-ordering targeting-assignment chains.
+        // A non-targeting initializer whose value is produced *after* a
+        // suspension point (`const data = await c.r.text();`) parents to an
+        // `AWAIT_POINT`/`YIELD_POINT`, which in turn sits behind the targeting
+        // assignment that carries the narrowing (`c.r = f(); await …; const
+        // data = …; if (cond) { c.r }`). Including the suspension flags here
+        // (alongside `CALL`, which an `await`ed call already contributes) lets
+        // the following CONDITION defer through the initializer to the
+        // suspension point, whose own handler resolves the narrowed antecedent.
         let ant_is_passthrough_assignment = !ant_is_targeting_assignment
             && ant_is_assignment
             && ant_flow.antecedent.first().is_some_and(|&grandparent| {
@@ -1763,7 +1771,9 @@ impl<'a> FlowAnalyzer<'a> {
                         flow_flags::CONDITION
                             | flow_flags::CALL
                             | flow_flags::ASSIGNMENT
-                            | flow_flags::LOOP_LABEL,
+                            | flow_flags::LOOP_LABEL
+                            | flow_flags::AWAIT_POINT
+                            | flow_flags::YIELD_POINT,
                     )
                 }) || self.is_conditional_expression_merge(grandparent)
             });
@@ -1773,6 +1783,21 @@ impl<'a> FlowAnalyzer<'a> {
         // mutations). See `array_mutation_chain_requires_defer`.
         let ant_is_deferring_array_mutation =
             self.array_mutation_chain_requires_defer(antecedent, reference, symbol_id);
+        // An `await`/`yield` suspension point is a pure value pass-through (it
+        // carries no narrowing of its own) but, exactly like the pass-through
+        // ASSIGNMENT case above, it must force a defer when its OWN antecedent
+        // carries narrowing that must reach this CONDITION merge — e.g.
+        // `c.r = f(); await p; if (cond) { c.r._data }`, where the targeting
+        // assignment sits behind the suspension point. Without this the
+        // CONDITION finalizes with the un-narrowed pre-type before the
+        // suspension point's antecedent is resolved and the narrowing is
+        // dropped. Mirrors the sibling `antecedent_requires_defer`'s
+        // `ant_is_deferring_suspension` handling for the worklist/chase path.
+        let ant_is_deferring_suspension =
+            (ant_flags & (flow_flags::AWAIT_POINT | flow_flags::YIELD_POINT)) != 0
+                && ant_flow.antecedent.first().is_some_and(|&grandparent| {
+                    self.condition_antecedent_requires_defer(grandparent, reference, symbol_id)
+                });
         (ant_flags & flow_flags::CONDITION) != 0
             // Closure START nodes may carry the enclosing flow
             // that preserves narrowing for effectively-const captures.
@@ -1784,6 +1809,7 @@ impl<'a> FlowAnalyzer<'a> {
             || ant_is_targeting_assignment
             || ant_is_passthrough_assignment
             || ant_is_deferring_array_mutation
+            || ant_is_deferring_suspension
     }
 
     /// Whether an `ARRAY_MUTATION` flow node `antecedent` carries narrowing of
