@@ -207,9 +207,12 @@ impl RelationEvaluationResult {
         self.type_id
     }
 
+    pub(crate) const fn is_stable_for_depth_agnostic_cache(self) -> bool {
+        self.cache_stability.is_stable_for_depth_agnostic_cache()
+    }
+
     pub(crate) fn is_unstable_unknown(self) -> bool {
-        self.type_id == TypeId::UNKNOWN
-            && !self.cache_stability.is_stable_for_depth_agnostic_cache()
+        self.type_id == TypeId::UNKNOWN && !self.is_stable_for_depth_agnostic_cache()
     }
 }
 
@@ -226,6 +229,7 @@ mod relation_evaluation_result_tests {
         let stable = RelationEvaluationResult::stable(TypeId::STRING);
         assert_eq!(stable.type_id(), TypeId::STRING);
         assert_eq!(stable.cache_stability, RelationEvaluationStability::Stable);
+        assert!(stable.is_stable_for_depth_agnostic_cache());
         assert!(!stable.is_unstable_unknown());
 
         let unstable_unknown = RelationEvaluationResult::unstable(TypeId::UNKNOWN);
@@ -233,6 +237,7 @@ mod relation_evaluation_result_tests {
             unstable_unknown.cache_stability,
             RelationEvaluationStability::Unstable
         );
+        assert!(!unstable_unknown.is_stable_for_depth_agnostic_cache());
         assert!(unstable_unknown.is_unstable_unknown());
 
         let unstable_string = RelationEvaluationResult::unstable(TypeId::STRING);
@@ -251,6 +256,7 @@ mod relation_evaluation_result_tests {
             complete.cache_stability,
             RelationEvaluationStability::Stable
         );
+        assert!(complete.is_stable_for_depth_agnostic_cache());
 
         let incomplete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
             EvaluationResult::incomplete(TypeId::UNKNOWN, TerminationKind::DepthExceeded),
@@ -262,6 +268,7 @@ mod relation_evaluation_result_tests {
             incomplete.cache_stability,
             RelationEvaluationStability::Unstable
         );
+        assert!(!incomplete.is_stable_for_depth_agnostic_cache());
         assert!(incomplete.is_unstable_unknown());
     }
 }

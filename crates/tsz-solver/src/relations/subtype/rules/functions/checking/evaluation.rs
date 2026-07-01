@@ -54,7 +54,9 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             return RelationEvaluationResult::unstable(type_id);
         };
         let entry = RelationEvaluationResult::from_depth_agnostic_memo(memo_result);
-        self.eval_cache.insert(cache_key, entry);
+        if entry.is_stable_for_depth_agnostic_cache() {
+            self.eval_cache.insert(cache_key, entry);
+        }
         entry
     }
 
