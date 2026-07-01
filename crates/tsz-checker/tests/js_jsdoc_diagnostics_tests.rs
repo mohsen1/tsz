@@ -3,6 +3,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::check_source;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
@@ -99,6 +100,51 @@ function f(x) {
     assert!(
         !has_error(&diagnostics, 7006),
         "Did not expect TS7006 in checked JS when noImplicitAny is disabled. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr() {
+    // Mirrors the checked-JS shape from
+    // `asyncArrowFunction_allowJs`: expression-bodied async arrows still get
+    // the return-expression TS2322, while block-bodied async arrows keep tsc's
+    // non-drilling behavior.
+    let source = r#"
+/** @type {function(): string} */
+const expr = async () => 0;
+
+/** @type {function(): string} */
+const block = async () => {
+    return 0;
+};
+"#;
+
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2017,
+            ..CheckerOptions::default()
+        },
+    );
+    let expr_zero = source.find("=> 0").expect("expression body") + "=> ".len();
+    let block_zero = source.find("return 0").expect("block return") + "return ".len();
+
+    let ts2322_starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.start)
+        .collect();
+    assert!(
+        ts2322_starts.contains(&(expr_zero as u32)),
+        "async expression-body JSDoc TS2322 should anchor on returned `0` at {expr_zero}, got: {diagnostics:#?}"
+    );
+    assert!(
+        !ts2322_starts.contains(&(block_zero as u32)),
+        "async block-body JSDoc return should not drill to returned `0` at {block_zero}, got: {diagnostics:#?}"
     );
 }
 
