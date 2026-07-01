@@ -181,6 +181,18 @@ impl<'a> Printer<'a> {
         // that genuinely needs hoisted line-leading declarations (`var _this =
         // this;`, captured `new.target`, hoisted assignment/for-of temps) forces
         // multi-line.
+        // A block that lowers `using`/`await using` into a block-level
+        // try/catch/finally (any target below ES2025) can never take the
+        // single-line fast path: that path emits statements inline and skips
+        // the block-level env + try wrapper set up further below, so each
+        // `using` declaration would instead be wrapped individually (with its
+        // binding hoisted to a `var`) and any statements following it in the
+        // same body would land *outside* the disposal `try`, disposing the
+        // resource before they run. tsc always expands such bodies multi-line.
+        // Computed once here and reused for the wrapper setup below.
+        let block_using_lowered = !self.ctx.options.target.supports_es2025()
+            && self.block_has_using_declarations(&block.statements);
+
         let should_emit_single_line = !block.statements.nodes.is_empty()
             && !force_multiline
             && self.is_single_line(node)
@@ -189,7 +201,8 @@ impl<'a> Printer<'a> {
             && is_function_body_block
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
-            && self.hoisted_for_of_temps.is_empty();
+            && self.hoisted_for_of_temps.is_empty()
+            && !block_using_lowered;
 
         if should_emit_single_line {
             let private_static_shadow = self.block_shadows_private_static_class_alias(
@@ -368,12 +381,8 @@ impl<'a> Printer<'a> {
         // Block-level using-declaration lowering below ES2025.
         // When a block contains `using`/`await using` declarations, tsc wraps ALL
         // statements in the block inside a single try/catch/finally, not just the
-        // using declarations. We detect this here and set up the env + try wrapper.
-        let block_using_lowered = if !self.ctx.options.target.supports_es2025() {
-            self.block_has_using_declarations(&block.statements)
-        } else {
-            false
-        };
+        // using declarations. `block_using_lowered` (computed above, and used to
+        // suppress the single-line fast path) drives the env + try wrapper here.
         let prev_block_using_env = self.block_using_env.take();
         let block_using_names: Option<(String, String, String, bool)> = if block_using_lowered {
             let using_async = self.block_has_await_using(&block.statements);
