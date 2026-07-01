@@ -33,7 +33,7 @@ fn failing_analysis() -> CachedAssignabilityAnalysis {
 #[test]
 fn memo_serves_entries_under_unchanged_stamp() {
     let mut memo = AssignabilityFailureMemo::default();
-    let stamp = (1, 1, 0, 0);
+    let stamp = (1, 0, 0);
     let key = (TypeId::STRING, TypeId::NUMBER, 0b11, false);
     memo.insert(stamp, key, failing_analysis());
     let served = memo.get(stamp, key).expect("entry must be served");
@@ -47,7 +47,7 @@ fn memo_serves_entries_under_unchanged_stamp() {
 #[test]
 fn memo_misses_on_different_flags_or_sound_mode() {
     let mut memo = AssignabilityFailureMemo::default();
-    let stamp = (1, 1, 0, 0);
+    let stamp = (1, 0, 0);
     memo.insert(
         stamp,
         (TypeId::STRING, TypeId::NUMBER, 0b11, false),
@@ -68,9 +68,9 @@ fn memo_misses_on_different_flags_or_sound_mode() {
 #[test]
 fn memo_drops_entries_when_any_stamp_component_moves() {
     let key = (TypeId::STRING, TypeId::NUMBER, 0, false);
-    for moved in [(2, 1, 0, 0), (1, 2, 0, 0), (1, 1, 1, 0), (1, 1, 0, 1)] {
+    for moved in [(2, 0, 0), (1, 1, 0), (1, 0, 1)] {
         let mut memo = AssignabilityFailureMemo::default();
-        memo.insert((1, 1, 0, 0), key, failing_analysis());
+        memo.insert((1, 0, 0), key, failing_analysis());
         assert!(
             memo.get(moved, key).is_none(),
             "stamp {moved:?} must invalidate"

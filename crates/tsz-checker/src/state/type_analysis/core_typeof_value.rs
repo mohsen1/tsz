@@ -93,14 +93,14 @@ impl CheckerState<'_> {
     /// Register a merged interface+value symbol's `typeof` value-space type in
     /// both resolver environments (`type_env` for the evaluator, `type_environment`
     /// for the flow analyzer) so `resolve_type_query` returns it consistently.
-    pub(crate) fn register_typeof_value_type_in_envs(
+    pub(crate) fn register_typeof_value_type_in_env(
         &mut self,
         sym_id: SymbolId,
         value_type: TypeId,
     ) {
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
         self.ctx
-            .register_typeof_value_type_in_envs(symbol_ref, value_type);
+            .register_typeof_value_type_in_env(symbol_ref, value_type);
     }
 
     /// When a resolved type is a bare deferred `typeof X` whose symbol is a
@@ -130,7 +130,7 @@ impl CheckerState<'_> {
         let sym_id =
             crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref);
         if let Some(value_type) = self.merged_interface_value_typeof_type(sym_id) {
-            self.register_typeof_value_type_in_envs(sym_id, value_type);
+            self.register_typeof_value_type_in_env(sym_id, value_type);
         }
     }
 }

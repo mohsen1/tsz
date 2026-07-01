@@ -1735,7 +1735,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.definition_store.set_instance_shape(def_id, shape);
             }
             self.ctx
-                .register_augmented_def_in_envs(def_id, result, false);
+                .register_augmented_def_in_env(def_id, result, false);
         }
         result
     }
@@ -1799,7 +1799,7 @@ impl<'a> CheckerState<'a> {
         // BEFORE symbol_types for INTERFACE symbols, so an un-augmented entry there
         // would shadow the updated symbol_types value.
         // Collect def IDs first (get_or_create_def_id borrows ctx mutably),
-        // then publish them through the context-owned dual-env authority.
+        // then publish them through the context-owned env authority.
         let def_ids: Vec<_> = matching_sym_ids
             .iter()
             .map(|&aug_sym_id| {
@@ -1812,7 +1812,7 @@ impl<'a> CheckerState<'a> {
             .collect();
         for aug_def_id in def_ids {
             self.ctx
-                .register_augmented_def_in_envs(aug_def_id, merged_type, false);
+                .register_augmented_def_in_env(aug_def_id, merged_type, false);
         }
     }
 }

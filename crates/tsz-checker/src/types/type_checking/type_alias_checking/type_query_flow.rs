@@ -286,6 +286,6 @@ impl CheckerState<'_> {
         }
         let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
         self.ctx
-            .register_typeof_value_type_in_envs(symbol_ref, value_type);
+            .register_typeof_value_type_in_env(symbol_ref, value_type);
     }
 }

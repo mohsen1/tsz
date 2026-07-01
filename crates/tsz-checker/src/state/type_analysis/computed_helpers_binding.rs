@@ -850,7 +850,7 @@ impl<'a> CheckerState<'a> {
             let parent_sym_id = symbol.parent;
             let parent_def_id = self.ctx.get_or_create_def_id(parent_sym_id);
             self.ctx
-                .register_enum_parent_in_envs(member_def_id, parent_def_id);
+                .register_enum_parent_in_env(member_def_id, parent_def_id);
         }
 
         let literal_type = self.enum_member_type_from_decl(value_decl);

@@ -562,7 +562,7 @@ impl<'a> CheckerState<'a> {
 
         // Register as numeric enum if it's numeric (not string-only)
         if saw_numeric && !saw_string {
-            self.ctx.register_numeric_enum_in_envs(def_id);
+            self.ctx.register_numeric_enum_in_env(def_id);
         }
     }
 }

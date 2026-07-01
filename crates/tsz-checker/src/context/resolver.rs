@@ -187,7 +187,7 @@ impl<'a> CheckerContext<'a> {
         // (non-generic: no params). Then drop any evaluation-cache entries that
         // were computed while the def was still an unresolved `Lazy`, so a later
         // re-evaluation observes the freshly-registered body (#13981).
-        self.register_def_auto_params_in_envs(def_id, body, Vec::new());
+        self.register_def_auto_params_in_env(def_id, body, Vec::new());
         self.invalidate_env_eval_reachable_from(body);
         self.clear_type_evaluation_caches_for_def(def_id);
         tracing::trace!(
@@ -718,13 +718,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// solver-facing generation.
     fn resolver_generation(&self) -> u64 {
         let env_generation = self.type_env.try_borrow().map_or(0, |env| env.generation());
-        let environment_generation = self
-            .type_environment
-            .try_borrow()
-            .map_or(0, |env| env.generation());
 
         env_generation
-            .saturating_add(environment_generation)
             .saturating_add(self.symbol_types.version())
             .saturating_add(self.symbol_instance_types.version())
     }
@@ -751,11 +746,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     /// `resolve_ref` for all other symbols.
     fn resolve_type_query(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         if let Ok(env) = self.type_env.try_borrow()
-            && let Some(value_ty) = env.get_typeof_value_type(symbol)
-        {
-            return Some(value_ty);
-        }
-        if let Ok(env) = self.type_environment.try_borrow()
             && let Some(value_ty) = env.get_typeof_value_type(symbol)
         {
             return Some(value_ty);
@@ -1511,12 +1501,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .try_borrow()
             .ok()
             .and_then(|env| env.get_class_extends_def(def_id))
-            .or_else(|| {
-                self.type_environment
-                    .try_borrow()
-                    .ok()
-                    .and_then(|env| env.get_class_extends_def(def_id))
-            })
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
@@ -1524,12 +1508,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             .try_borrow()
             .ok()
             .and_then(|env| env.class_def_for_instance(type_id))
-            .or_else(|| {
-                self.type_environment
-                    .try_borrow()
-                    .ok()
-                    .and_then(|env| env.class_def_for_instance(type_id))
-            })
             .or_else(|| {
                 let def_id = self.definition_store.find_def_for_type(type_id)?;
                 matches!(self.definition_store.get_kind(def_id), Some(DefKind::Class))

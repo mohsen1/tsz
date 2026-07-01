@@ -734,15 +734,13 @@ impl SymbolTypeCache {
 
 /// Session-state stamp guarding [`AssignabilityEvalMemo`] entries.
 ///
-/// Captures the generations of the two checker `TypeEnvironment`s — `type_env`
-/// (relation/evaluation bindings) and `type_environment` (flow-narrowing
-/// bindings) are independently mutated, so both generations are needed; each
-/// already folds in the shared `DefinitionStore` generation — plus the
+/// Captures the generation of the checker `TypeEnvironment` (`type_env`,
+/// which already folds in the shared `DefinitionStore` generation) plus the
 /// mutation versions of the symbol-type caches. Evaluating a type for
 /// assignability is deterministic while none of these change: every mutable
 /// input the evaluation consults (def/type-env bindings, resolved symbol
 /// types, class instance types) bumps one of the components.
-pub type AssignabilityEvalStamp = (u64, u64, u64, u64);
+pub type AssignabilityEvalStamp = (u64, u64, u64);
 
 /// Result memo for `evaluate_type_for_assignability`.
 ///
@@ -985,8 +983,8 @@ mod tests {
     #[test]
     fn generic_constraint_proof_memo_rolls_on_stamp_change() {
         let key = GenericConstraintProofKey::new(TypeId::STRING, TypeId::NUMBER, 0, false);
-        let stamp_a = (1, 2, 3, 4);
-        let stamp_b = (1, 2, 3, 5);
+        let stamp_a = (1, 2, 3);
+        let stamp_b = (1, 2, 4);
         let mut memo = GenericConstraintProofMemo::default();
 
         memo.insert(stamp_a, key, true);

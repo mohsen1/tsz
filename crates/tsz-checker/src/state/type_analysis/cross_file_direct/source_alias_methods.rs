@@ -266,7 +266,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.definition_store.set_instance_shape(def_id, shape);
         }
         self.ctx
-            .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+            .register_def_auto_params_in_env(def_id, alias_type, params.clone());
         self.ctx
             .definition_store
             .register_type_to_def(alias_type, def_id);
@@ -339,7 +339,7 @@ impl<'a> CheckerState<'a> {
                 );
                 if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
                     self.ctx
-                        .register_def_auto_params_in_envs(def_id, alias_type, params);
+                        .register_def_auto_params_in_env(def_id, alias_type, params);
                     self.ctx
                         .definition_store
                         .register_type_to_def(alias_type, def_id);

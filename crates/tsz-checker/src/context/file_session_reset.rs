@@ -308,13 +308,10 @@ impl<'a> CheckerContext<'a> {
 
         // Per-file type/evaluation state. `build_type_environment()` rebuilds
         // these for the next file before statement checking.
-        self.type_environment.replace(TypeEnvironment::new());
         self.type_env.replace(TypeEnvironment::new());
-        // Discard any flow-analyzer-env writes deferred under the previous file;
-        // they reference that file's now-cleared environment.
-        self.deferred_flow_env_writes.borrow_mut().clear();
-        // Likewise discard evaluator-env writes deferred under the previous file.
-        self.deferred_eval_env_writes.borrow_mut().clear();
+        // Discard any env writes deferred under the previous file; they
+        // reference that file's now-cleared environment.
+        self.deferred_env_writes.borrow_mut().clear();
         self.application_eval_set.clear();
         self.mapped_eval_set.clear();
         self.type_resolution_visiting.clear();

@@ -75,15 +75,15 @@ fn test_module_augmentation_publishes_merged_defs_through_context_authority() {
         .collect::<String>();
 
     assert!(
-        compact_source.contains("register_augmented_def_in_envs(def_id,result,false)"),
+        compact_source.contains("register_augmented_def_in_env(def_id,result,false)"),
         "global augmentation merged bodies must publish through CheckerContext"
     );
     assert!(
-        compact_source.contains("register_augmented_def_in_envs(aug_def_id,merged_type,false)"),
+        compact_source.contains("register_augmented_def_in_env(aug_def_id,merged_type,false)"),
         "augmentation-local self-reference bodies must publish through CheckerContext"
     );
     assert!(
-        compact_source.contains("register_def_in_envs(home_def_id,merged_type)"),
+        compact_source.contains("register_def_in_env(home_def_id,merged_type)"),
         "augmented base-body redirects must publish through CheckerContext"
     );
     let raw_type_env_mut_borrows = non_comment_source.lines().filter(|line| {
@@ -112,13 +112,13 @@ fn test_lazy_type_env_symbol_publication_uses_context_authority_on_contention() 
         .expect("failed to isolate insert_type_env_symbol");
 
     assert!(
-        insert_type_env_symbol_src.contains("register_symbol_type_in_envs(")
-            && insert_type_env_symbol_src.contains("register_def_auto_params_in_envs("),
+        insert_type_env_symbol_src.contains("register_symbol_type_in_env(")
+            && insert_type_env_symbol_src.contains("register_def_auto_params_in_env("),
         "insert_type_env_symbol must queue symbol/def writes through CheckerContext on evaluator-env borrow contention"
     );
     assert!(
-        source.contains("register_class_instance_in_envs(def_id, resolved)")
-            && source.contains("register_def_in_envs(def_id, resolved)"),
+        source.contains("register_class_instance_in_env(def_id, resolved)")
+            && source.contains("register_def_in_env(def_id, resolved)"),
         "lazy import-alias def remaps must publish through CheckerContext instead of raw env writes"
     );
 }

@@ -1539,7 +1539,7 @@ impl<'a> CheckerState<'a> {
                         && lib_type != TypeId::ANY
                     {
                         // Register the mapping so future lookups succeed
-                        self.ctx.register_def_in_envs(def_id, lib_type);
+                        self.ctx.register_def_in_env(def_id, lib_type);
                         constructor_type = lib_type;
                     }
                 }

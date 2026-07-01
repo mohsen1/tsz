@@ -21,10 +21,10 @@ fn symbol_env_registration_uses_deferred_env_helpers() {
     }
 
     for required in [
-        "register_symbol_type_in_envs(",
-        "register_def_auto_params_in_envs(",
-        "register_class_instance_in_envs(",
-        "register_enum_parent_in_envs(",
+        "register_symbol_type_in_env(",
+        "register_def_auto_params_in_env(",
+        "register_class_instance_in_env(",
+        "register_enum_parent_in_env(",
     ] {
         assert!(
             source.contains(required),

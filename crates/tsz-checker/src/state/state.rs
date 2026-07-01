@@ -371,7 +371,7 @@ impl<'a> CheckerState<'a> {
         for &id in &parent.ctx.class_constructor_resolution_set {
             self.ctx.class_constructor_resolution_set.insert(id);
         }
-        self.ctx.ensure_both_envs_have_definition_store();
+        self.ctx.ensure_env_has_definition_store();
     }
 
     /// Thread-local guard for cross-arena delegation depth.

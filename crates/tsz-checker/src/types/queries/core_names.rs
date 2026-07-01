@@ -603,7 +603,7 @@ impl<'a> CheckerState<'a> {
         let name_key = name.to_string();
 
         self.ctx
-            .register_well_known_symbol_name_in_envs(name_key, symbol_ref);
+            .register_well_known_symbol_name_in_env(name_key, symbol_ref);
     }
 
     pub(crate) fn register_well_known_symbol_name_from_canonical(

@@ -20,16 +20,16 @@ use tsz_solver::TypeId;
 #[test]
 fn memo_serves_entries_under_unchanged_stamp() {
     let mut memo = AssignabilityEvalMemo::default();
-    let stamp = (1, 1, 0, 0);
+    let stamp = (1, 1, 0);
     memo.insert(stamp, TypeId::STRING, TypeId::NUMBER);
     assert_eq!(memo.get(stamp, TypeId::STRING), Some(TypeId::NUMBER));
 }
 
 #[test]
 fn memo_drops_entries_when_any_stamp_component_moves() {
-    for moved in [(2, 1, 0, 0), (1, 2, 0, 0), (1, 1, 1, 0), (1, 1, 0, 1)] {
+    for moved in [(2, 1, 0), (1, 2, 0), (1, 1, 1)] {
         let mut memo = AssignabilityEvalMemo::default();
-        memo.insert((1, 1, 0, 0), TypeId::STRING, TypeId::NUMBER);
+        memo.insert((1, 1, 0), TypeId::STRING, TypeId::NUMBER);
         assert_eq!(
             memo.get(moved, TypeId::STRING),
             None,

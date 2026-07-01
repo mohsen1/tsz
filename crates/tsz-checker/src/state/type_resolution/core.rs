@@ -739,7 +739,7 @@ impl CheckerState<'_> {
                     self.ctx.symbol_instance_types.insert(sym_id, result);
                     let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
                     self.ctx
-                        .register_def_auto_params_in_envs(def_id, result, type_params);
+                        .register_def_auto_params_in_env(def_id, result, type_params);
                 }
 
                 // For simple name type refs like `import { Foo } from "./m"; type T = Foo`,
@@ -1380,22 +1380,19 @@ impl CheckerState<'_> {
                 }
 
                 // Ensure Application types from lib types have their base DefId
-                // fully registered (body + params) in BOTH type environments.
+                // fully registered (body + params) in the type environment.
                 // NarrowingContext (used for flow analysis) needs both body and params
                 // to instantiate generics like ArrayLike<any> during narrowing.
-                // type_env and type_environment are separate TypeEnvironment instances:
-                // type_env is the working copy modified during type resolution,
-                // type_environment is the snapshot used by FlowAnalyzer.
                 if let Some((app_base, _app_args)) =
                     query::get_application_info(self.ctx.types, result)
                     && let Some(app_def_id) = query::get_lazy_def_id(self.ctx.types, app_base)
                     && !self.ctx.lib_contexts.is_empty()
                 {
-                    // Check if body+params are fully registered in type_environment
-                    // (the one used by FlowAnalyzer/NarrowingContext)
+                    // Check if body+params are fully registered in the env
+                    // (also read by FlowAnalyzer/NarrowingContext).
                     let needs_flow_env_fix = self
                         .ctx
-                        .type_environment
+                        .type_env
                         .try_borrow()
                         .map(|env| {
                             env.get_def(app_def_id).is_none()
@@ -1432,10 +1429,8 @@ impl CheckerState<'_> {
                             .or_else(|| self.ctx.get_def_type_params(app_def_id));
 
                         if let (Some(body), Some(params)) = (body, params) {
-                            // Register in both envs so evaluator and flow
-                            // analyzer see the same Application body + params.
                             self.ctx
-                                .register_def_with_params_in_envs(app_def_id, body, params);
+                                .register_def_with_params_in_env(app_def_id, body, params);
                         }
                     }
                 }
@@ -1721,7 +1716,7 @@ impl CheckerState<'_> {
                                 if augmented != body {
                                     // Update both envs so evaluator and flow
                                     // analyzer see the augmented type.
-                                    self.ctx.register_augmented_def_in_envs(
+                                    self.ctx.register_augmented_def_in_env(
                                         base_def_id,
                                         augmented,
                                         base_is_class,

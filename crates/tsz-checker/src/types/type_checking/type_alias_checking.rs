@@ -492,7 +492,7 @@ impl<'a> CheckerState<'a> {
 
                 // Register body temporarily for evaluation
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, body_type, type_params);
+                    .register_def_auto_params_in_env(def_id, body_type, type_params);
 
                 // Evaluate with TS2589 detection flag
                 let depth_exceeded = (has_stable_recursive_ref || has_recursive_wrapper_arg)

@@ -113,26 +113,28 @@ Phase-3-excluded-module-scoped-flag exposure).
 
 ---
 
-### 3. ⏳ Dual type environments synced by patches
+### 3. ✅ Dual type environments synced by patches
 
 **Files**
 
-- `crates/tsz-checker/src/context/def_mapping.rs:871-917` (`register_resolved_type`)
+- `crates/tsz-checker/src/context/def_mapping.rs` (`register_resolved_type`,
+  `register_in_env`)
 
-**Failure mode** Both `type_env` and `type_environment` are mutable
-representations of the same semantic facts. Many call sites must remember
-which to write to, and helper functions still recover via silent
-`try_borrow_mut`. Comments admit prior versions wrote to only one environment,
-breaking `resolve_lazy(DefId)`.
+**Failure mode** Both `type_env` and `type_environment` were mutable
+representations of the same semantic facts. Many call sites had to remember
+which to write to, and helper functions recovered via silent
+`try_borrow_mut`. Comments admitted prior versions wrote to only one
+environment, breaking `resolve_lazy(DefId)`.
 
-**Fix plan**
+**Status** Collapsed (#14348): `type_env` is the single authoritative
+`TypeEnvironment`; the flow analyzer reads the same cell. The dual-write
+mirror helpers, both deferred-mirror queues, `overlay_missing_from`, and
+the file-prep divergence reconciliation were deleted; a single
+race-safe deferred-write queue (`deferred_env_writes`) replays any write
+that loses the `RefCell` borrow race.
 
-- **PR #C** (after PR #A): collapse the two environments into one
-  authoritative semantic environment with read-only snapshots for flow
-  analysis. If two views must persist, synchronize via a versioned snapshot
-  with explicit authority instead of dual writes.
-
-**Verification** Single-environment must pass full unit tests + conformance.
+**Verification** Single-environment passes full unit tests + conformance
+(exact-head CI on the #14348 PR).
 
 ---
 

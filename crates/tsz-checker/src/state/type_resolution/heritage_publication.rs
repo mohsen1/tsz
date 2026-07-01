@@ -19,7 +19,7 @@ impl<'a> CheckerState<'a> {
     /// register the merged body in the shared `DefinitionStore` so importing
     /// files — whose local heritage merges cannot see this module's bases —
     /// resolve inherited members instead of re-deriving a memberless body.
-    /// `register_def_auto_params_in_envs` invalidates def-dependent
+    /// `register_def_auto_params_in_env` invalidates def-dependent
     /// evaluation caches when the body changes, so results computed before
     /// this registration cannot shadow it.
     ///
@@ -49,7 +49,7 @@ impl<'a> CheckerState<'a> {
             && self.ctx.definition_store.get_body(def_id) != Some(merged)
         {
             self.ctx
-                .register_def_auto_params_in_envs(def_id, merged, reg_params);
+                .register_def_auto_params_in_env(def_id, merged, reg_params);
         }
     }
 
@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .insert_def_type_params(def_id, owner_params.clone());
         self.ctx
-            .register_def_auto_params_in_envs(def_id, published, owner_params.clone());
+            .register_def_auto_params_in_env(def_id, published, owner_params.clone());
         self.ctx.clear_type_evaluation_caches_for_def(def_id);
         self.ctx
             .types

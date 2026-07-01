@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(instance_type, def_id);
         self.ctx
-            .register_class_instance_in_envs(def_id, instance_type);
+            .register_class_instance_in_env(def_id, instance_type);
 
         let factory = self.ctx.types.factory();
         Some(factory.application(factory.lazy(def_id), resolved_args))

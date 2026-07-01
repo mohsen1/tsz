@@ -1,7 +1,7 @@
-//! Deferred flow-environment writes.
+//! Deferred type-environment writes.
 //!
-//! Captures dual-environment registrations that must be applied to the
-//! flow-analyzer environment (`type_environment`) but lost the `RefCell` borrow
+//! Captures registrations that must be applied to the context's single
+//! authoritative `TypeEnvironment` (`type_env`) but lost the `RefCell` borrow
 //! race when first attempted, so they can be replayed later without holding any
 //! borrow of the originating `CheckerContext`.
 
@@ -13,17 +13,16 @@ use tsz_solver::def::DefId;
 
 use crate::query_boundaries::common::TypeEnvironment;
 
-/// A dual-environment registration that must be applied to the flow-analyzer
-/// environment (`type_environment`) but lost the `RefCell` borrow race when it
-/// was first attempted.
+/// A type-environment registration that must be applied to the authoritative
+/// environment (`type_env`) but lost the `RefCell` borrow race when it was
+/// first attempted.
 ///
 /// Each variant carries fully-owned data so the operation can be replayed later
 /// without holding any borrow of the originating `CheckerContext`. Replaying a
 /// deferred write reproduces exactly the same `TypeEnvironment` mutation the
-/// direct dual-write would have performed, which is why the previous full
-/// per-file `clone()` repair is no longer required.
+/// direct write would have performed, so a borrow race never loses a write.
 #[derive(Clone, Debug)]
-pub enum DeferredFlowEnvWrite {
+pub enum DeferredEnvWrite {
     /// `set_definition_store` — wire the shared `DefinitionStore` fallback.
     SetDefinitionStore(Arc<tsz_solver::def::DefinitionStore>),
     /// `insert_def` — register a non-generic definition body.
@@ -117,16 +116,15 @@ pub enum DeferredFlowEnvWrite {
     },
 }
 
-impl DeferredFlowEnvWrite {
+impl DeferredEnvWrite {
     /// Build the body-registration variant for a definition, selecting
     /// [`Self::InsertDef`] when `params` is empty and
     /// [`Self::InsertDefWithParams`] otherwise.
     ///
     /// The "empty params -> non-generic insert, else generic insert" choice is
     /// the single rule every body-registration site shares; expressing it once
-    /// here keeps the resolved-body (`register_resolved_def_in_envs`) and
-    /// flow-mirror (`mirror_def_in_type_environment`) construction paths from
-    /// drifting apart. `variances` is threaded through unchanged so callers that
+    /// here keeps every body-registration construction path from drifting
+    /// apart. `variances` is threaded through unchanged so callers that
     /// already computed declared variances keep them and callers that do not
     /// pass `None`, exactly as before.
     pub(crate) fn insert_def_choosing_params(
@@ -147,7 +145,7 @@ impl DeferredFlowEnvWrite {
         }
     }
 
-    /// Apply this deferred registration to a flow-analyzer `TypeEnvironment`.
+    /// Apply this deferred registration to a `TypeEnvironment`.
     pub(crate) fn apply(&self, env: &mut TypeEnvironment) {
         match self {
             Self::SetDefinitionStore(store) => env.set_definition_store(Arc::clone(store)),
@@ -238,11 +236,10 @@ impl DeferredFlowEnvWrite {
     }
 }
 
-/// Apply an augmentation merge to a single environment.
+/// Apply an augmentation merge to the environment.
 ///
-/// Shared by the live dual-write path and deferred replay so both produce
-/// identical results: class-like defs update the instance-type slot, other defs
-/// re-insert the body while preserving any existing type parameters.
+/// Class-like defs update the instance-type slot; other defs re-insert the
+/// body while preserving any existing type parameters.
 fn apply_augmented_def(
     env: &mut TypeEnvironment,
     def_id: DefId,

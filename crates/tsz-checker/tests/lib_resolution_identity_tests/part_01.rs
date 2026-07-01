@@ -1130,7 +1130,7 @@ const desc: string | undefined = sym.description;
 // =========================================================================
 // These tests exercise the consolidated `register_lib_def_resolved` helper
 // that replaced the separate get_lib_def_id + insert_def_type_params +
-// register_def_auto_params_in_envs three-step pattern.
+// register_def_auto_params_in_env three-step pattern.
 
 #[test]
 fn test_register_lib_def_resolved_interface_path() {

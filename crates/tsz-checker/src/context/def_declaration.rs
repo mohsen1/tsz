@@ -140,7 +140,7 @@ impl CheckerContext<'_> {
             .register_for_symbol(sym_id.0, file_idx, info);
         self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
         self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
-        self.register_def_kind_in_envs(def_id, kind);
+        self.register_def_kind_in_env(def_id, kind);
         def_id
     }
 }

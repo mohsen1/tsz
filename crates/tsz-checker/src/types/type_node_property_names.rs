@@ -30,7 +30,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let name_key = name.to_string();
 
         self.ctx
-            .register_well_known_symbol_name_in_envs(name_key, symbol_ref);
+            .register_well_known_symbol_name_in_env(name_key, symbol_ref);
     }
 
     fn register_well_known_symbol_name_mapping(&mut self, name: &str, sym_id: SymbolId) {

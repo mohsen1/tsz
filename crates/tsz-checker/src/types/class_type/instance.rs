@@ -454,7 +454,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = current_sym {
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     self.ctx
-                        .register_class_instance_in_envs(def_id, prescan_type);
+                        .register_class_instance_in_env(def_id, prescan_type);
                     self.ctx.register_resolved_type(
                         sym_id,
                         prescan_type,

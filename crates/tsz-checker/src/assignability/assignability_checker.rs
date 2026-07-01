@@ -810,16 +810,14 @@ impl<'a> CheckerState<'a> {
     /// Session-state stamp for the [`crate::context::AssignabilityEvalMemo`]
     /// and the [`crate::context::AssignabilityFailureMemo`].
     ///
-    /// `None` when either type environment is currently mutably borrowed; the
+    /// `None` when the type environment is currently mutably borrowed; the
     /// memos are skipped entirely for such re-entrant calls.
     pub(crate) fn assignability_eval_memo_stamp(
         &self,
     ) -> Option<crate::context::AssignabilityEvalStamp> {
         let env_generation = self.ctx.type_env.try_borrow().ok()?.generation();
-        let environment_generation = self.ctx.type_environment.try_borrow().ok()?.generation();
         Some((
             env_generation,
-            environment_generation,
             self.ctx.symbol_types.version(),
             self.ctx.symbol_instance_types.version(),
         ))

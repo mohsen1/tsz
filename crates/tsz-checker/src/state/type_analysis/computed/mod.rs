@@ -1160,7 +1160,7 @@ impl<'a> CheckerState<'a> {
             // hot paths such as large enum property-access switches.
             //
             // Collect (member_sym_id, member_def_id, member_enum_type) tuples and
-            // apply the env writes after this loop. The dual-env registration
+            // apply the env writes after this loop. The env registration
             // wrappers take `&self.ctx` and manage their own race-safe borrows,
             // so we must not hold a `type_env` borrow across the wrapper calls.
             let mut member_env_entries: Vec<(tsz_solver::SymbolRef, tsz_solver::DefId, TypeId)> =
@@ -1186,19 +1186,19 @@ impl<'a> CheckerState<'a> {
                     ));
                 }
             }
-            // Apply the per-member env writes through the dual-env deferral
+            // Apply the per-member env writes through the env-write deferral
             // discipline (mirrors to both `type_env` and `type_environment`,
             // replaying instead of dropping on a borrow conflict). The order
             // preserves the prior per-member sequence: symbol type, then def
             // body, then enum-parent.
             for &(member_ref, member_def_id, member_enum_type) in &member_env_entries {
                 self.ctx
-                    .register_symbol_type_in_envs(member_ref, member_enum_type, Vec::new());
+                    .register_symbol_type_in_env(member_ref, member_enum_type, Vec::new());
                 if member_def_id != tsz_solver::DefId::INVALID {
                     self.ctx
-                        .register_def_in_envs(member_def_id, member_enum_type);
+                        .register_def_in_env(member_def_id, member_enum_type);
                     // Register parent-child relationship for enum member widening.
-                    self.ctx.register_enum_parent_in_envs(member_def_id, def_id);
+                    self.ctx.register_enum_parent_in_env(member_def_id, def_id);
                 }
             }
 
@@ -1216,7 +1216,7 @@ impl<'a> CheckerState<'a> {
 
             // Cache the structural type in both environments for compatibility.
             // Note: Enum types now use TypeData::Enum(def_id, member_type) directly.
-            self.ctx.register_def_in_envs(def_id, structural_type);
+            self.ctx.register_def_in_env(def_id, structural_type);
 
             // CRITICAL: Return TypeData::Enum(def_id, structural_type) NOT Lazy(def_id)
             // - Lazy(def_id) creates infinite recursion in ensure_refs_resolved
@@ -1233,10 +1233,10 @@ impl<'a> CheckerState<'a> {
             self.ctx.enum_namespace_types.insert(sym_id, ns_type);
             // Register in both TypeEnvironment instances so the solver's evaluator
             // and the flow analyzer can both access enum namespace types. Routed
-            // through the dual-env deferral discipline so a borrow conflict
+            // through the env-write deferral discipline so a borrow conflict
             // replays the write instead of dropping it.
             self.ctx
-                .register_enum_namespace_type_in_envs(def_id, ns_type);
+                .register_enum_namespace_type_in_env(def_id, ns_type);
             // Register DefId <-> SymbolId mapping for enum type resolution
             self.ctx
                 .register_resolved_type(sym_id, enum_type, Vec::new());

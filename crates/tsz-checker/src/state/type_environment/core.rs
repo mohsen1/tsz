@@ -1328,25 +1328,16 @@ impl CheckerState<'_> {
                 // Populate local DefId caches.
                 s2d.insert(sym_id, def_id);
                 d2s.insert(def_id, sym_id);
-                // Seed both local envs with the DefId -> body mapping through
-                // the shared dual-env write helper. This keeps warm-up on the
-                // same authoritative/mirror path as ordinary body publication
-                // while preserving the long-lived evaluator-env borrow.
-                //
-                // The global/boxed-type registration may already have seeded the
-                // flow env with a differently-interned materialization of this
-                // same def (e.g. a symbol-less object shape vs the symbol-bearing
-                // body the shared store published). The helper rewrites both
-                // envs with the same body (deferring flow-env writes on a borrow
-                // race), avoiding a present-but-different `DefId -> TypeId`
-                // divergence that the vacancy-only `overlay_missing_from`
-                // cannot reconcile.
+                // Seed the env with the DefId -> body mapping through the
+                // shared write helper. This keeps warm-up on the same
+                // race-safe path as ordinary body publication while
+                // preserving the long-lived env borrow.
                 let type_params = self
                     .ctx
                     .definition_store
                     .get_type_params(def_id)
                     .unwrap_or_default();
-                self.ctx.seed_shared_store_def_in_envs(
+                self.ctx.seed_shared_store_def_in_env(
                     env_opt.as_deref_mut(),
                     def_id,
                     body,
@@ -1434,7 +1425,7 @@ impl CheckerState<'_> {
         }
 
         // type_env and type_environment are already populated in-place by
-        // get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
+        // get_type_of_symbol -> compute_type_of_symbol -> register_def_in_env.
         // No clone needed.
     }
 }

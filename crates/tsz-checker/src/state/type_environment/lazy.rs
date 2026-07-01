@@ -421,7 +421,7 @@ impl CheckerState<'_> {
                 params
             };
             self.ctx
-                .register_def_auto_params_in_envs(def_id, body, params);
+                .register_def_auto_params_in_env(def_id, body, params);
         }
     }
 
@@ -1484,34 +1484,36 @@ impl CheckerState<'_> {
         // walk before the evaluator env has replayed the deferred write.
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
             if type_params.is_empty() {
-                self.ctx
-                    .insert_symbol_type_and_mirror(&mut env, symbol_ref, resolved, Vec::new());
+                env.insert(symbol_ref, resolved);
                 if let Some(def_id) = def_id {
                     env.insert_def(def_id, resolved);
                 }
             } else {
-                self.ctx.insert_symbol_type_and_mirror(
-                    &mut env,
-                    symbol_ref,
-                    resolved,
-                    type_params.clone(),
-                );
+                env.insert_with_params(symbol_ref, resolved, type_params.clone());
                 if let Some(def_id) = def_id {
                     env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
             }
-            drop(env);
-            self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
             self.ctx
-                .register_symbol_type_in_envs(symbol_ref, resolved, type_params.clone());
+                .register_symbol_type_in_env(symbol_ref, resolved, type_params.clone());
             if let Some(def_id) = def_id {
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, resolved, type_params);
+                    .register_def_auto_params_in_env(def_id, resolved, type_params);
             }
             false
         }
+    }
+
+    /// Insert `type_id` for `def_id` into the type environment through the
+    /// race-safe deferred-write path.
+    pub(super) fn try_insert_def_in_type_env(
+        &mut self,
+        def_id: tsz_solver::DefId,
+        type_id: TypeId,
+    ) {
+        self.ctx.register_resolved_def_in_env(def_id, type_id);
     }
 
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
@@ -1904,12 +1906,12 @@ impl CheckerState<'_> {
             // resolves correctly during property access.
             if was_alias_resolved {
                 if is_class {
-                    self.ctx.register_class_instance_in_envs(def_id, resolved);
+                    self.ctx.register_class_instance_in_env(def_id, resolved);
                 }
                 // Register the original alias `DefId` through the same
                 // evaluator/flow authority so a recursive borrow queues the
                 // write instead of dropping it (#14348).
-                self.ctx.register_def_in_envs(def_id, resolved);
+                self.ctx.register_def_in_env(def_id, resolved);
             }
 
             Some((inserted, resolved))

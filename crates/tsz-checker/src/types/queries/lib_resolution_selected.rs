@@ -64,6 +64,6 @@ pub(crate) fn register_selected_lib_def_resolved(
 
     let def_id = ctx.get_canonical_lib_def_id(name, sym_id);
     ctx.insert_def_type_params(def_id, params.clone());
-    ctx.register_def_auto_params_in_envs(def_id, ty, params);
+    ctx.register_def_auto_params_in_env(def_id, ty, params);
     def_id
 }

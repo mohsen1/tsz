@@ -682,7 +682,7 @@ impl<'a> FlowAnalyzer<'a> {
     pub fn from_ctx(ctx: &'a crate::context::CheckerContext<'a>) -> Self {
         let analyzer = Self::with_node_types(ctx.arena, ctx.binder, ctx.types, &ctx.node_types)
             .with_shared_caches(&ctx.flow_shared)
-            .with_type_environment(&ctx.type_environment)
+            .with_type_environment(&ctx.type_env)
             .with_checker_context(ctx)
             .with_destructured_bindings(&ctx.destructured_bindings);
 

@@ -953,7 +953,7 @@ impl CheckerState<'_> {
 
             // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
             // so inner DefId→TypeId mappings survive child-checker teardown.
-            checker.ctx.ensure_both_envs_have_definition_store();
+            checker.ctx.ensure_env_has_definition_store();
 
             // Track this alias on the cross-arena resolution stack so a nested
             // delegation that comes back to it is recognized as a cross-file
@@ -1602,7 +1602,7 @@ impl CheckerState<'_> {
         // IConfig's properties) are written through to the shared store. Without
         // this, the parent checker cannot resolve Lazy(DefId) references for
         // types nested inside the cross-file interface after the child is dropped.
-        checker.ctx.ensure_both_envs_have_definition_store();
+        checker.ctx.ensure_env_has_definition_store();
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.

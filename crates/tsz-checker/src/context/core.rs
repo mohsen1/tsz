@@ -1573,7 +1573,7 @@ impl<'a> CheckerContext<'a> {
     /// Extract the persistent cache from this context.
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {
-        let type_env = self.type_environment.into_inner();
+        let type_env = self.type_env.into_inner();
         let boxed_types = type_env.snapshot_boxed_types();
         let boxed_def_ids = type_env.snapshot_boxed_def_ids();
         let mut def_to_symbol = self.def_to_symbol.into_inner();

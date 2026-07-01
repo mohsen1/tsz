@@ -352,7 +352,7 @@ impl<'a> CheckerState<'a> {
                         .definition_store
                         .register_type_to_def(alias_type, def_id);
                     self.ctx
-                        .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+                        .register_def_auto_params_in_env(def_id, alias_type, params.clone());
                     // Preserve the raw alias body so downstream consumers can
                     // continue to reason about the surrounding type graph (for
                     // example, recursive base-type diagnostics) without
@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
                 // return, but pre-registering avoids subtle order-of-init
                 // gaps for nested lookups (#6014).
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+                    .register_def_auto_params_in_env(def_id, alias_type, params.clone());
                 // If the value declaration mentions this alias from a type
                 // position (for example `(): Alias => ...`), compute the
                 // value side after the alias body is available.

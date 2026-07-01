@@ -111,7 +111,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return None;
             }
             let mut type_id = {
-                let env = self.ctx.type_environment.borrow();
+                let env = self.ctx.type_env.borrow();
                 TypeResolver::resolve_type_query(
                     &*env,
                     tsz_solver::SymbolRef(sym_id.0),
@@ -293,10 +293,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
         let params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
         if params.is_empty() {
-            self.ctx.register_def_in_envs(def_id, body);
+            self.ctx.register_def_in_env(def_id, body);
         } else {
             self.ctx
-                .register_def_with_params_in_envs(def_id, body, params);
+                .register_def_with_params_in_env(def_id, body, params);
         }
         body
     }

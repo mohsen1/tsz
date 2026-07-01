@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
         // surfaces the merged members for the index-reduction redirect. Route
         // the body through the checker env authority so evaluator/flow env
         // writes are deferred instead of dropped on recursive borrow races.
-        self.ctx.register_def_in_envs(home_def_id, merged_type);
+        self.ctx.register_def_in_env(home_def_id, merged_type);
         if let Some(shape) = type_environment::object_shape(self.ctx.types, merged_type) {
             self.ctx
                 .definition_store

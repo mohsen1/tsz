@@ -431,7 +431,7 @@ impl<'a> CheckerState<'a> {
             (IntrinsicKind::Function, function_type),
         ] {
             if let Some(ty) = ty {
-                self.ctx.register_boxed_type_in_envs(kind, ty);
+                self.ctx.register_boxed_type_in_env(kind, ty);
             }
         }
 
@@ -439,7 +439,7 @@ impl<'a> CheckerState<'a> {
         // the instance type (Array<T> interface), not the constructor (Callable).
         if let Some(ty) = array_instance_type {
             self.ctx
-                .register_array_base_type_in_envs(ty, array_type_params);
+                .register_array_base_type_in_env(ty, array_type_params);
         }
 
         // Register DefId mappings for non-generic boxed types in both envs too.
@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
         // def_types. Without this registration, Lazy(DefId) for Function can't
         // be resolved, causing false TS2345/TS2322 errors.
         for &(kind, ty, def_id) in &boxed_def_entries {
-            self.ctx.register_boxed_def_in_envs(kind, ty, def_id);
+            self.ctx.register_boxed_def_in_env(kind, ty, def_id);
         }
     }
 

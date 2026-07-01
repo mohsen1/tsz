@@ -38,7 +38,7 @@ impl CheckerState<'_> {
             type_params.to_vec()
         };
         self.ctx
-            .register_symbol_type_in_envs(symbol_ref, result, env_params.clone());
+            .register_symbol_type_in_env(symbol_ref, result, env_params.clone());
 
         if let Some(def_id) = def_id {
             let def_params = if class_env_entry.is_some() {
@@ -47,18 +47,18 @@ impl CheckerState<'_> {
                 env_params
             };
             self.ctx
-                .register_def_auto_params_in_envs(def_id, result, def_params);
+                .register_def_auto_params_in_env(def_id, result, def_params);
 
             if let Some((instance_type, _instance_params)) = &class_env_entry {
                 self.ctx
-                    .register_class_instance_in_envs(def_id, *instance_type);
+                    .register_class_instance_in_env(def_id, *instance_type);
 
                 let parents = self.ctx.inheritance_graph.get_parents(sym_id);
                 if let Some(&parent_sym) = parents.first()
                     && let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym)
                 {
                     self.ctx
-                        .register_class_extends_in_envs(def_id, parent_def_id);
+                        .register_class_extends_in_env(def_id, parent_def_id);
                 }
             }
 
@@ -69,18 +69,18 @@ impl CheckerState<'_> {
             {
                 let parent_sym_id = symbol.parent;
                 if let Some(parent_def_id) = self.ctx.get_existing_def_id(parent_sym_id) {
-                    self.ctx.register_enum_parent_in_envs(def_id, parent_def_id);
+                    self.ctx.register_enum_parent_in_env(def_id, parent_def_id);
                 }
             }
         }
 
         if let Some(value_type) = merged_interface_value_typeof {
-            self.register_typeof_value_type_in_envs(sym_id, value_type);
+            self.register_typeof_value_type_in_env(sym_id, value_type);
         }
         if class_env_entry.is_some()
             && let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
         {
-            self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+            self.ctx.register_def_symbol_mapping_in_env(def_id, sym_id);
         }
     }
 }

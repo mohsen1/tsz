@@ -874,12 +874,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     } else {
                         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
                         if type_params.is_empty() {
-                            self.ctx.register_def_in_envs(def_id, type_id);
+                            self.ctx.register_def_in_env(def_id, type_id);
                         } else {
                             self.ctx
-                                .register_def_with_params_in_envs(def_id, type_id, type_params);
+                                .register_def_with_params_in_env(def_id, type_id, type_params);
                         }
-                        self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+                        self.ctx.register_def_symbol_mapping_in_env(def_id, sym_id);
                         return;
                     }
                 }
@@ -1394,19 +1394,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let body = lowering.lower_type(type_alias.type_node);
             let _ = self.ctx.types.take_union_too_complex();
 
-            // Register body in both type environments so `resolve_lazy`
+            // Register body in the type environment so `resolve_lazy`
             // and flow-analysis narrowing can both find it. Generic aliases
             // must publish body + params through the single-entry store write:
             // a body-only publication lets sibling parallel checkers observe
             // the alias as arity-zero while this checker is still filling in
             // its parameter list (#13255).
             if params.is_empty() {
-                self.ctx.register_def_in_envs(def_id, body);
+                self.ctx.register_def_in_env(def_id, body);
             } else {
                 self.ctx
-                    .register_def_with_params_in_envs(def_id, body, params);
+                    .register_def_with_params_in_env(def_id, body, params);
             }
-            self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+            self.ctx.register_def_symbol_mapping_in_env(def_id, sym_id);
         }
     }
 

@@ -364,12 +364,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn typeof_switch_domain_from_operand_type(&self, operand_type: TypeId) -> Option<TypeId> {
-        let env = self.ctx.type_environment.borrow();
+        let env = self.ctx.type_env.borrow();
         query::typeof_switch_domain(self.ctx.types, Some(&env), operand_type)
     }
 
     fn switch_exhaustive_with_types(&self, switch_type: TypeId, case_types: &[TypeId]) -> bool {
-        let env = self.ctx.type_environment.borrow();
+        let env = self.ctx.type_env.borrow();
         query::cases_exhaust_type(self.ctx.types, Some(&env), switch_type, case_types)
     }
 
@@ -479,7 +479,7 @@ impl<'a> CheckerState<'a> {
             .map(|ty| self.normalize_enum_union_members(ty))
             .collect();
         let cases_union = query::union_types(self.ctx.types, normalized_cases);
-        let env = self.ctx.type_environment.borrow();
+        let env = self.ctx.type_env.borrow();
         query::flow_assignability_outcome(
             self.ctx.types,
             Some(&env),

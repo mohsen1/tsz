@@ -321,7 +321,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let def_mapping_src = fs::read_to_string("src/context/def_mapping.rs")
         .expect("failed to read src/context/def_mapping.rs for architecture guard");
     assert!(
-        def_mapping_src.contains("register_def_auto_params_in_envs("),
+        def_mapping_src.contains("register_def_auto_params_in_env("),
         "register_resolved_type should use dual-env helper for DefId registration (not single-env insert_def)"
     );
 
@@ -329,7 +329,7 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let type_node_resolution_src = fs::read_to_string("src/types/type_node_resolution.rs")
         .expect("failed to read src/types/type_node_resolution.rs for architecture guard");
     assert!(
-        type_node_resolution_src.contains("register_def_in_envs("),
+        type_node_resolution_src.contains("register_def_in_env("),
         "type_node_resolution should use dual-env helpers for DefId registration"
     );
 
@@ -337,8 +337,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let symbol_types_src = fs::read_to_string("src/state/type_resolution/symbol_types.rs")
         .expect("failed to read src/state/type_resolution/symbol_types.rs for architecture guard");
     assert!(
-        symbol_types_src.contains("register_def_in_envs(")
-            || symbol_types_src.contains("register_def_auto_params_in_envs("),
+        symbol_types_src.contains("register_def_in_env(")
+            || symbol_types_src.contains("register_def_auto_params_in_env("),
         "symbol_types should use dual-env helpers for interface DefId registration"
     );
 
@@ -347,9 +347,9 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let global_src = fs::read_to_string("src/types/type_checking/global.rs")
         .expect("failed to read src/types/type_checking/global.rs for architecture guard");
     for required in [
-        "register_boxed_type_in_envs(",
-        "register_array_base_type_in_envs(",
-        "register_boxed_def_in_envs(",
+        "register_boxed_type_in_env(",
+        "register_array_base_type_in_env(",
+        "register_boxed_def_in_env(",
     ] {
         assert!(
             global_src.contains(required),
@@ -570,7 +570,7 @@ fn test_env_eval_cache_access_routes_through_context_helpers() {
 }
 
 #[test]
-fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
+fn test_register_def_in_env_skips_invalidation_for_unchanged_body() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
@@ -587,7 +587,7 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
     ctx.definition_store.set_body(def_id, TypeId::STRING);
     ctx.cache_env_eval_result(cache_key, TypeId::NUMBER, false);
 
-    ctx.register_def_in_envs(def_id, TypeId::STRING);
+    ctx.register_def_in_env(def_id, TypeId::STRING);
 
     assert_eq!(
         ctx.lookup_env_eval_cache(cache_key)
@@ -596,7 +596,7 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
         "unchanged definition bodies should not invalidate evaluator caches",
     );
 
-    ctx.register_def_in_envs(def_id, TypeId::BOOLEAN);
+    ctx.register_def_in_env(def_id, TypeId::BOOLEAN);
 
     assert!(
         ctx.lookup_env_eval_cache(cache_key).is_none(),
@@ -611,7 +611,7 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
         .set_type_params(generic_def, vec![param]);
     ctx.cache_env_eval_result(generic_cache_key, TypeId::NUMBER, false);
 
-    ctx.register_def_with_params_in_envs(generic_def, TypeId::STRING, vec![param]);
+    ctx.register_def_with_params_in_env(generic_def, TypeId::STRING, vec![param]);
 
     assert_eq!(
         ctx.lookup_env_eval_cache(generic_cache_key)
@@ -624,7 +624,7 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
         constraint: Some(TypeId::BOOLEAN),
         ..TypeParamInfo::simple(types.intern_string("T"))
     };
-    ctx.register_def_with_params_in_envs(generic_def, TypeId::STRING, vec![changed_param]);
+    ctx.register_def_with_params_in_env(generic_def, TypeId::STRING, vec![changed_param]);
 
     assert!(
         ctx.lookup_env_eval_cache(generic_cache_key).is_none(),
@@ -633,7 +633,7 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
 }
 
 #[test]
-fn test_register_def_symbol_mapping_in_envs_writes_both_environments() {
+fn test_register_def_symbol_mapping_in_env_writes_environment() {
     let arena = NodeArena::new();
     let binder = BinderState::new();
     let types = TypeInterner::new();
@@ -648,22 +648,15 @@ fn test_register_def_symbol_mapping_in_envs_writes_both_environments() {
     let def_id = DefId(10_005);
     let sym_id = tsz_binder::SymbolId(20_005);
 
-    ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+    ctx.register_def_symbol_mapping_in_env(def_id, sym_id);
 
-    {
-        let env = ctx.type_env.borrow();
-        assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
-        assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
-    }
-    {
-        let env = ctx.type_environment.borrow();
-        assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
-        assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
-    }
+    let env = ctx.type_env.borrow();
+    assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
+    assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
 }
 
 #[test]
-fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
+fn test_def_symbol_bridge_writes_route_through_env_helper() {
     let mut files = Vec::new();
     collect_checker_rs_files(Path::new("src"), &mut files);
 
@@ -686,7 +679,7 @@ fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
 
     assert!(
         offenders.is_empty(),
-        "DefId <-> SymbolId bridge writes must use CheckerContext::register_def_symbol_mapping_in_envs; direct writes found at {}",
+        "DefId <-> SymbolId bridge writes must use CheckerContext::register_def_symbol_mapping_in_env; direct writes found at {}",
         offenders.join(", ")
     );
 }
@@ -705,8 +698,8 @@ fn test_shared_store_warmup_routes_env_seeds_through_context_helper() {
         .expect("failed to isolate shared-store warm-up block");
 
     assert!(
-        warmup.contains("seed_shared_store_def_in_envs("),
-        "shared-store TypeEnvironment warm-up must route body seeding through CheckerContext::seed_shared_store_def_in_envs"
+        warmup.contains("seed_shared_store_def_in_env("),
+        "shared-store TypeEnvironment warm-up must route body seeding through CheckerContext::seed_shared_store_def_in_env"
     );
     for forbidden in [
         "mirror_def_in_type_environment(",

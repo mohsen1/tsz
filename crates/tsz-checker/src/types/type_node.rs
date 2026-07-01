@@ -1412,7 +1412,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         // `PropertyKey` => `string | number | symbol`), then ask
                         // structurally whether it is a valid key type.
                         let resolved_key = {
-                            let env = self.ctx.type_environment.borrow();
+                            let env = self.ctx.type_env.borrow();
                             crate::query_boundaries::flow::resolve_lazy_def_with_env(
                                 self.ctx.types,
                                 Some(&env),

@@ -822,7 +822,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let factory = self.ctx.types.factory();
             factory.readonly_type(factory.array(TypeId::ANY))
         };
-        let env = self.ctx.type_environment.borrow();
+        let env = self.ctx.type_env.borrow();
         !type_utils::rest_element_array_like_relation_outcome(
             self.ctx.types,
             &*env,
@@ -885,7 +885,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         type_id: tsz_solver::TypeId,
     ) -> tsz_solver::TypeId {
         let next = {
-            let env = self.ctx.type_environment.borrow();
+            let env = self.ctx.type_env.borrow();
             let resolved = crate::query_boundaries::flow::resolve_lazy_def_with_env(
                 self.ctx.types,
                 Some(&env),
@@ -965,7 +965,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // application (`Application(Lazy(_), [T])`) to its resolved body so both
         // the aliased and inline forms are covered.
         let resolved_base = if q::is_generic_application(self.ctx.types, base) {
-            let env = self.ctx.type_environment.borrow();
+            let env = self.ctx.type_env.borrow();
             crate::query_boundaries::flow_analysis::evaluate_application_type(
                 self.ctx.types,
                 &env,
@@ -1065,7 +1065,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
         let indexed = self.ctx.types.index_access(base, index);
         {
-            let env = self.ctx.type_environment.borrow();
+            let env = self.ctx.type_env.borrow();
             let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
                 self.ctx.types,
                 &env,
@@ -1087,7 +1087,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use crate::query_boundaries::common as q;
         use crate::query_boundaries::conditional_constraints as conditional_query;
         let expand_once = |ty: tsz_solver::TypeId| -> tsz_solver::TypeId {
-            let env = self.ctx.type_environment.borrow();
+            let env = self.ctx.type_env.borrow();
             let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
                 self.ctx.types,
                 &env,

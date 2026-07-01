@@ -6,7 +6,6 @@ mod application;
 mod core;
 mod formatting;
 pub(crate) mod lazy;
-mod lazy_flow_mirror;
 mod lazy_fuel;
 pub(crate) mod lazy_guard_state;
 mod lazy_impossible_pruning;

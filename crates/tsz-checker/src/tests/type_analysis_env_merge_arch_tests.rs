@@ -22,9 +22,9 @@ fn type_analysis_env_merges_use_deferred_helpers() {
     }
 
     for required in [
-        "merge_def_if_missing_in_envs(",
-        "merge_class_instance_if_missing_in_envs(",
-        "merge_class_extends_if_missing_in_envs(",
+        "merge_def_if_missing_in_env(",
+        "merge_class_instance_if_missing_in_env(",
+        "merge_class_extends_if_missing_in_env(",
     ] {
         assert!(
             cross_file.contains(required),
@@ -39,7 +39,7 @@ fn type_analysis_env_merges_use_deferred_helpers() {
         );
     }
     assert!(
-        enum_member.contains("register_enum_parent_in_envs("),
-        "enum member parent publication should route through register_enum_parent_in_envs"
+        enum_member.contains("register_enum_parent_in_env("),
+        "enum member parent publication should route through register_enum_parent_in_env"
     );
 }

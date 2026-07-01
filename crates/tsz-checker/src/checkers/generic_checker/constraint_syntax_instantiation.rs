@@ -339,7 +339,7 @@ impl<'a> CheckerState<'a> {
         }
         let def_id = self.ctx.get_or_create_def_id(target_sym_id);
         self.ctx
-            .register_def_auto_params_in_envs(def_id, body_type, params.clone());
+            .register_def_auto_params_in_env(def_id, body_type, params.clone());
         self.ctx
             .definition_store
             .register_type_to_def(body_type, def_id);

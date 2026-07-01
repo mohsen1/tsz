@@ -78,42 +78,21 @@ impl CheckerState<'_> {
         }
 
         // Build TypeEnvironment with all type-defining symbols.
-        // This populates both ctx.type_env and ctx.type_environment in-place
-        // via get_type_of_symbol -> compute_type_of_symbol -> register_def_in_envs.
+        // This populates ctx.type_env in-place via
+        // get_type_of_symbol -> compute_type_of_symbol -> register_def_in_env.
         self.build_type_environment();
 
         // Wire up DefinitionStore so TypeEnvironment::get_def_kind can fall
         // back to it when the local def_kinds map is incomplete.
-        self.ctx.ensure_both_envs_have_definition_store();
+        self.ctx.ensure_env_has_definition_store();
 
-        // Replay any authoritative evaluator-env (`type_env`) registrations that
-        // lost the `RefCell` borrow race during recursive resolution (e.g. a
-        // class-instance type registered while `type_env` was already borrowed
-        // by the recursive heritage resolution that triggered it). These were
-        // previously dropped, collapsing the instance/def body to `never` for
-        // every later consumer. Replay them before the flow-analyzer env is
-        // reconciled below so `overlay_missing_from` copies a complete env.
-        self.ctx.flush_deferred_eval_env_writes();
-
-        // Reconcile the flow-analyzer environment (`type_environment`) with the
-        // evaluator environment (`type_env`) before flow analysis reads it.
-        //
-        // Dual-env registration helpers (`register_*_in_envs`) write the
-        // evaluator env directly and mirror into the flow-analyzer env; a mirror
-        // that loses the `RefCell` borrow race during recursive resolution is
-        // deferred rather than dropped (issue #8269), so first replay the
-        // deferred queue. A few local fields can still arrive via evaluator-env
-        // setup or shared-store/scalar wiring; fill those into the flow-analyzer
-        // env with a vacancy-only overlay. Unlike
-        // the previous unconditional full `clone()`, this neither reallocates
-        // already-mirrored maps nor discards flow-analyzer-env-only entries.
-        self.ctx.flush_deferred_flow_env_writes();
-        self.reconcile_flow_and_evaluator_envs();
-        debug_assert_eq!(
-            self.ctx.deferred_flow_env_write_count(),
-            0,
-            "flow-analyzer env writes must be fully reconciled at file preparation"
-        );
+        // Replay any `type_env` registrations that lost the `RefCell` borrow
+        // race during recursive resolution (e.g. a class-instance type
+        // registered while `type_env` was already borrowed by the recursive
+        // heritage resolution that triggered it). These were previously
+        // dropped, collapsing the instance/def body to `never` for every later
+        // consumer. Replay them before flow analysis reads the env.
+        self.ctx.flush_deferred_env_writes();
 
         // Register boxed types (String, Number, Boolean, etc.) from lib.d.ts
         // This enables primitive property access to use lib definitions instead of hardcoded lists

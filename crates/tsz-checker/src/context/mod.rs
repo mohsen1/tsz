@@ -43,12 +43,11 @@ pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, Wor
 mod def_declaration;
 mod def_mapping;
 mod def_mapping_env_writes;
-mod def_mapping_flow_mirror;
 mod def_mapping_formatters;
 mod def_mapping_resolved_env;
-mod deferred_flow_env_write;
+mod deferred_env_write;
 mod unresolved_import;
-pub use deferred_flow_env_write::DeferredFlowEnvWrite;
+pub use deferred_env_write::DeferredEnvWrite;
 mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
 mod import_alias_resolution;
@@ -847,46 +846,17 @@ pub struct CheckerContext<'a> {
     /// Internal counters for request-aware cache usage and cache-clear churn.
     pub request_cache_counters: RequestCacheCounters,
 
-    /// Flow-analyzer `TypeEnvironment` (#13086).
-    ///
-    /// One of the context's two `TypeEnvironment` instances. This one is owned
-    /// by the flow analyzer: `FlowAnalyzer::from_ctx` borrows it via
-    /// `with_type_environment(&ctx.type_environment)` and holds that borrow live
-    /// while narrowing reads types. It also carries the legacy `SymbolRef`-keyed
-    /// entries the evaluator env never uses.
-    ///
-    /// It is *not* a redundant copy of [`Self::type_env`]: the two are separate
-    /// `RefCell`s on purpose. While the flow analyzer holds this env borrowed,
-    /// the evaluator must still be able to `try_borrow_mut` [`Self::type_env`] to
-    /// publish freshly resolved `DefId -> TypeId` bodies; collapsing both into
-    /// one cell would make that mutable borrow fail and silently drop writes.
-    /// The dual-write registration helpers (`register_*_in_envs`) mirror every
-    /// `DefId`-keyed registration into both envs (deferring the mirror when this
-    /// cell is borrowed, never dropping it), and `overlay_missing_from` performs
-    /// a vacancy-fill reconciliation at the file-preparation boundary. After
-    /// that boundary the two envs must agree on every shared `DefId` entry; the
-    /// debug assertion in `prepare_source_file_for_checking` enforces it.
-    pub type_environment: RefCell<TypeEnvironment>,
-
-    /// Dual-env registrations whose mirror-write into `type_environment` lost
-    /// the `RefCell` borrow race (the flow-analyzer env was already borrowed
-    /// during recursive resolution). Rather than silently dropping the write
-    /// and repairing the divergence with a full per-file `clone()`, the missed
-    /// operation is reified here and replayed the next time `type_environment`
-    /// is borrowable. This eliminates borrow-conflict misses at their source.
-    pub deferred_flow_env_writes: RefCell<Vec<DeferredFlowEnvWrite>>,
-
-    /// Dual-env registrations whose authoritative write into `type_env` (the
-    /// evaluator env) lost the `RefCell` borrow race because `type_env` was
-    /// already borrowed during recursive resolution. Previously such a write was
-    /// silently dropped with only a `warn!`, which left the entry absent from
-    /// both the local cache and (since the shared-store write-through lives
-    /// inside the env mutator) the shared `DefinitionStore` — collapsing a
-    /// class-instance / def body to `never` for every later consumer (xstate
-    /// `Actor` `this` collapse). The missed operation is reified here and
-    /// replayed the next time `type_env` is borrowable, exactly as
-    /// `deferred_flow_env_writes` does for the flow-analyzer env.
-    pub deferred_eval_env_writes: RefCell<Vec<DeferredFlowEnvWrite>>,
+    /// Registrations into [`Self::type_env`] that lost the `RefCell` borrow
+    /// race because the environment was already borrowed (recursive resolution
+    /// publishing a body, or flow analysis holding a read borrow while
+    /// narrowing). Previously such a write was silently dropped with only a
+    /// `warn!`, which left the entry absent from both the local cache and
+    /// (since the shared-store write-through lives inside the env mutator) the
+    /// shared `DefinitionStore` — collapsing a class-instance / def body to
+    /// `never` for every later consumer (xstate `Actor` `this` collapse). The
+    /// missed operation is reified here and replayed the next time the
+    /// environment is borrowable, so it is never lost (#14348).
+    pub deferred_env_writes: RefCell<Vec<DeferredEnvWrite>>,
 
     /// Recursion guard for application evaluation.
     pub application_eval_set: FxHashSet<TypeId>,
@@ -1544,14 +1514,15 @@ pub struct CheckerContext<'a> {
     /// enclosing class in the inheritance hierarchy when code is inside nested classes.
     pub enclosing_class_chain: Vec<NodeIndex>,
 
-    /// Evaluator `TypeEnvironment` (#13086) — the authoritative env.
+    /// The context's single authoritative `TypeEnvironment` (#13086, #14348).
     ///
-    /// The second of the context's two `TypeEnvironment` instances. The
-    /// evaluator/`state`/`types`/`assignability` paths use this one to resolve
-    /// symbols and expand `Application` types; it is the source of truth for
-    /// `DefId -> TypeId` resolution. `register_*_in_envs` write it directly and
-    /// mirror into [`Self::type_environment`]. See that field's doc for why the
-    /// two are kept as separate `RefCell`s rather than unified into one.
+    /// The evaluator/`state`/`types`/`assignability` paths use it to resolve
+    /// symbols and expand `Application` types, and `FlowAnalyzer::from_ctx`
+    /// wires it into narrowing; it is the source of truth for
+    /// `DefId -> TypeId` resolution. Writes that lose the `RefCell` borrow
+    /// race during recursive resolution are queued in
+    /// [`Self::deferred_env_writes`] and replayed on the next successful
+    /// mutable borrow, so they are never dropped.
     pub type_env: RefCell<TypeEnvironment>,
 
     // --- DefId Migration Infrastructure ---

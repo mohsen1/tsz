@@ -227,7 +227,7 @@ impl<'a> CheckerState<'a> {
             .resolve_actual_lib_name_to_def_id_for_lowering(&name)
             .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
         self.ctx
-            .register_def_auto_params_in_envs(def_id, direct_type, params.clone());
+            .register_def_auto_params_in_env(def_id, direct_type, params.clone());
         let lazy_type = self.ctx.types.lazy(def_id);
         self.ctx.symbol_types.insert(sym_id, lazy_type);
         self.ctx

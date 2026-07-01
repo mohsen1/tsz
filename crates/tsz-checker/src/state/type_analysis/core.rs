@@ -1449,7 +1449,7 @@ impl CheckerState<'_> {
 
         // Fold cross-file `declare module` augmentations into an exported
         // interface's materialized body at this canonical resolution point, so
-        // every downstream cache (symbol_types, both type environments, the
+        // every downstream cache (symbol_types, the type environment, the
         // shared def store) observes the SAME augmented body. Doing it only on
         // the type-reference path (`type_reference_symbol_type`) left this path —
         // reached for the solver's def-store registration and cross-file

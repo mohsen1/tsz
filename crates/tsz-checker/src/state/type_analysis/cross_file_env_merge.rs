@@ -14,17 +14,17 @@ impl<'a> CheckerState<'a> {
 
         for (def_id_raw, type_id) in child_defs {
             self.ctx
-                .merge_def_if_missing_in_envs(DefId(def_id_raw), type_id);
+                .merge_def_if_missing_in_env(DefId(def_id_raw), type_id);
         }
 
         for (def_id_raw, instance_type) in child_class_instances {
             self.ctx
-                .merge_class_instance_if_missing_in_envs(DefId(def_id_raw), instance_type);
+                .merge_class_instance_if_missing_in_env(DefId(def_id_raw), instance_type);
         }
 
         for (def_id_raw, parent_def_id) in child_class_extends {
             self.ctx
-                .merge_class_extends_if_missing_in_envs(DefId(def_id_raw), parent_def_id);
+                .merge_class_extends_if_missing_in_env(DefId(def_id_raw), parent_def_id);
         }
     }
 }

@@ -1046,7 +1046,7 @@ impl<'a> CheckerState<'a> {
         }
         let def_id = self.ctx.get_canonical_lib_def_id(&name, base_sym_id);
         self.ctx
-            .register_def_auto_params_in_envs(def_id, lib_type, params.clone());
+            .register_def_auto_params_in_env(def_id, lib_type, params.clone());
         Some(self.instantiate_base_instance_type_with_args(lib_type, &params, type_arguments))
     }
 

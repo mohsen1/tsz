@@ -73,7 +73,7 @@ fn rest_tuple_element_array_like_probe_uses_relation_outcome_boundary() {
         .collect();
 
     assert!(
-        compact_helper.contains("letenv=self.ctx.type_environment.borrow();")
+        compact_helper.contains("letenv=self.ctx.type_env.borrow();")
             && compact_helper.contains(
                 "rest_element_array_like_relation_outcome(self.ctx.types,&*env,t,readonly_any_array,).related"
             ),

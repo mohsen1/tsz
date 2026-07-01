@@ -545,7 +545,7 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(instance_type, def_id);
         self.ctx
-            .register_class_instance_in_envs(def_id, instance_type);
+            .register_class_instance_in_env(def_id, instance_type);
         self.ctx
             .register_resolved_type(sym_id, instance_type, class_type_params.to_vec());
         if !class_type_params.is_empty() {

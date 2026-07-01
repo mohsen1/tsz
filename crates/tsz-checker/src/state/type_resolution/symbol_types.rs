@@ -123,7 +123,7 @@ impl<'a> CheckerState<'a> {
                             .insert(instance_type, class_idx);
                     }
                     self.ctx
-                        .register_class_instance_in_envs(def_id, instance_type);
+                        .register_class_instance_in_env(def_id, instance_type);
 
                     self.ctx.leave_recursion();
                     return instance_type;
@@ -254,10 +254,10 @@ impl<'a> CheckerState<'a> {
                         }
                         // Always register even when an entry exists: evicts stale
                         // `Lazy(DefId)` entries in resolve_cache (via body-change
-                        // detection inside `register_def_in_envs`) that cause false
+                        // detection inside `register_def_in_env`) that cause false
                         // TS2353 for inherited properties of F-bounded interfaces.
                         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                        self.ctx.register_def_auto_params_in_envs(
+                        self.ctx.register_def_auto_params_in_env(
                             def_id,
                             structural_type,
                             type_params,
@@ -873,7 +873,7 @@ impl<'a> CheckerState<'a> {
                         .insert(instance_type, class_idx);
                 }
                 self.ctx
-                    .register_class_instance_in_envs(def_id, instance_type);
+                    .register_class_instance_in_env(def_id, instance_type);
                 return Some(instance_type);
             }
             if let Some(delegate_type) = self.delegate_cross_arena_interface_type(member_sym_id) {
@@ -1829,7 +1829,7 @@ impl<'a> CheckerState<'a> {
                         let alias_type = self.get_type_from_type_node(type_alias.type_node);
                         self.pop_type_parameters(updates);
                         if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                            self.ctx.register_def_auto_params_in_envs(
+                            self.ctx.register_def_auto_params_in_env(
                                 def_id,
                                 alias_type,
                                 params.clone(),
@@ -1970,7 +1970,7 @@ impl<'a> CheckerState<'a> {
                         let (alias_type, params) =
                             lowering.lower_type_alias_declaration(type_alias);
                         if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
-                            self.ctx.register_def_auto_params_in_envs(
+                            self.ctx.register_def_auto_params_in_env(
                                 def_id,
                                 alias_type,
                                 params.clone(),

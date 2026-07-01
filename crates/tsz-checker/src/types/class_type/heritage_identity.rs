@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
         let child_def_id = self.ctx.get_or_create_def_id(current_sym);
         if child_def_id != parent_def_id {
             self.ctx
-                .register_class_extends_in_envs(child_def_id, parent_def_id);
+                .register_class_extends_in_env(child_def_id, parent_def_id);
         }
     }
 

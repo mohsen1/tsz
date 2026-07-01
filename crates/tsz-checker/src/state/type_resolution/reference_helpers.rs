@@ -1630,13 +1630,13 @@ impl CheckerState<'_> {
                         .insert(active_class_sym, instance_type);
                 }
 
-                // Register the class instance type in both type environments
+                // Register the class instance type in the type environment
                 // immediately so that Lazy(DefId) fallbacks (created by the
                 // recursion guard above) can resolve via resolve_lazy during
                 // property access checks and flow-analyzer narrowing.
                 let def_id = self.ctx.get_or_create_def_id(active_class_sym);
                 self.ctx
-                    .register_class_instance_in_envs(def_id, instance_type);
+                    .register_class_instance_in_env(def_id, instance_type);
             }
 
             self.pop_type_parameters(updates);
@@ -1699,7 +1699,7 @@ impl CheckerState<'_> {
             .definition_store
             .register_type_to_def(instance_type, def_id);
         self.ctx
-            .register_class_instance_in_envs(def_id, instance_type);
+            .register_class_instance_in_env(def_id, instance_type);
     }
 
     fn class_instance_def_id_for_symbol(&self, sym_id: SymbolId) -> Option<tsz_solver::def::DefId> {

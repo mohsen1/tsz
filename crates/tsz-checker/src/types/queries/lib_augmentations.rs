@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         self.ctx
-            .register_def_auto_params_in_envs(def_id, published, type_params);
+            .register_def_auto_params_in_env(def_id, published, type_params);
     }
 
     /// Mutation-isolation campaign: freeze `name`'s lib def body in the
