@@ -197,22 +197,30 @@ impl QueryCache<'_> {
 
         let props = match key {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                self.interner.object_shape(shape_id).properties.to_vec()
+                let mut props = self.interner.object_shape(shape_id).properties.to_vec();
+                crate::types::normalize_display_property_order(&mut props);
+                props
             }
             TypeData::Callable(shape_id) => {
                 self.interner.callable_shape(shape_id).properties.to_vec()
             }
             TypeData::Intersection(members_id) => {
                 let members = self.interner.type_list(members_id);
-                let mut merged: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+                let mut positions: FxHashMap<Atom, usize> = FxHashMap::default();
+                let mut merged: Vec<PropertyInfo> = Vec::new();
 
                 for &member in members.iter() {
                     for prop in self.collect_object_spread_properties_inner(member, traversal) {
-                        merged.insert(prop.name, prop);
+                        if let Some(&idx) = positions.get(&prop.name) {
+                            merged[idx] = prop;
+                        } else {
+                            positions.insert(prop.name, merged.len());
+                            merged.push(prop);
+                        }
                     }
                 }
 
-                merged.into_values().collect()
+                merged
             }
             TypeData::Union(members_id) => {
                 let members = self.interner.type_list(members_id);
@@ -239,24 +247,27 @@ impl QueryCache<'_> {
                     // members where it appears. It is optional if it doesn't
                     // appear in all non-nullish members or if any nullish member
                     // exists (since the spread could be null/undefined → {}).
-                    let mut merged: FxHashMap<Atom, (TypeId, bool, usize)> = FxHashMap::default();
+                    let mut positions: FxHashMap<Atom, usize> = FxHashMap::default();
+                    let mut merged: Vec<(Atom, TypeId, bool, usize)> = Vec::new();
                     for member_props in &all_props {
                         for prop in member_props {
-                            let entry =
-                                merged
-                                    .entry(prop.name)
-                                    .or_insert((prop.type_id, prop.optional, 0));
-                            if entry.0 != prop.type_id {
-                                entry.0 = self.interner.union2(entry.0, prop.type_id);
+                            if let Some(&idx) = positions.get(&prop.name) {
+                                let entry = &mut merged[idx];
+                                if entry.1 != prop.type_id {
+                                    entry.1 = self.interner.union2(entry.1, prop.type_id);
+                                }
+                                entry.2 = entry.2 && prop.optional;
+                                entry.3 += 1;
+                            } else {
+                                positions.insert(prop.name, merged.len());
+                                merged.push((prop.name, prop.type_id, prop.optional, 1));
                             }
-                            entry.1 = entry.1 && prop.optional;
-                            entry.2 += 1;
                         }
                     }
 
                     merged
                         .into_iter()
-                        .map(|(name, (type_id, was_optional, count))| {
+                        .map(|(name, type_id, was_optional, count)| {
                             let optional = was_optional || has_nullish || count < non_nullish_count;
                             PropertyInfo {
                                 name,

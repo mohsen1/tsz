@@ -934,8 +934,10 @@ impl TypeInterner {
                         merge_intersection_visibility(existing.visibility, prop.visibility);
                 } else {
                     let new_idx = merged_props.len();
-                    prop_index.insert(prop.name, new_idx);
-                    merged_props.push(prop.clone());
+                    let mut new_prop = prop.clone();
+                    new_prop.declaration_order = new_idx as u32 + 1;
+                    prop_index.insert(new_prop.name, new_idx);
+                    merged_props.push(new_prop);
                 }
             }
 
