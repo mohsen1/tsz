@@ -338,17 +338,34 @@ impl<'a> FlowGraphBuilder<'a> {
                         self.add_antecedent(merge, true_condition);
                         self.current_flow = merge;
                     }
-                } else {
-                    // Regular binary expression
-                    if Self::is_assignment_operator_token(binary.operator_token) {
-                        let flow = self.create_flow_node(
-                            flow_flags::ASSIGNMENT,
-                            self.current_flow,
-                            expr_idx,
-                        );
-                        self.current_flow = flow;
-                    }
+                } else if Self::is_assignment_operator_token(binary.operator_token) {
+                    // Assignment (`a = b`, `a += b`, destructuring `[a] = b`).
+                    //
+                    // Bind the RHS with the *pre-assignment* flow and only then
+                    // create the ASSIGNMENT flow node — matching TypeScript's
+                    // binder, which binds the operands before
+                    // `bindAssignmentTargetFlow`. A reference read on the RHS must
+                    // observe the variable's value from *before* this write.
+                    // Critically for a self-referential assignment inside a loop
+                    // (`x = x.p`), the RHS `x` must keep its pre-write, condition-
+                    // narrowed flow type; resolving it through the ASSIGNMENT node
+                    // instead treats the read as the post-write value and drops the
+                    // loop-body narrowing, producing a false TS2339.
+                    //
+                    // A reference's flow node is resolved by walking up to the
+                    // nearest recorded ancestor, so record the RHS node with the
+                    // pre-assignment flow; otherwise the RHS reads fall through to
+                    // the statement's post-assignment flow.
+                    self.handle_expression_for_assignments(binary.right);
+                    self.record_node_flow(binary.right);
 
+                    let flow =
+                        self.create_flow_node(flow_flags::ASSIGNMENT, self.current_flow, expr_idx);
+                    self.current_flow = flow;
+
+                    self.handle_expression_for_assignments(binary.left);
+                } else {
+                    // Regular (non-assignment) binary expression.
                     self.handle_expression_for_assignments(binary.left);
                     self.handle_expression_for_assignments(binary.right);
                 }
