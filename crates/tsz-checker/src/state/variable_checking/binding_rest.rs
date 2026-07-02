@@ -406,22 +406,20 @@ impl<'a> CheckerState<'a> {
         parent_type: TypeId,
         rest_index: usize,
     ) -> TypeId {
-        // Resolve each member's tuple elements once. A plain array member (or a
-        // non-array-like member) makes the union not all-tuple, so we stop and
-        // fall back to the single-array form.
+        // Classify each member once: collect tuple elements, and note plain
+        // arrays and non-array-like members (string, `Iterable<T>`, `Set`, ...).
         let mut member_elements: Vec<Vec<TupleElement>> = Vec::with_capacity(members.len());
         let mut every_tuple = true;
+        let mut saw_non_array_like = false;
         for &member in members {
             let member = query::unwrap_readonly_deep(self.ctx.types, member);
-            if query::array_element_type(self.ctx.types, member).is_some() {
-                every_tuple = false;
-                break;
-            }
             if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
                 member_elements.push(elems);
             } else {
                 every_tuple = false;
-                break;
+                if query::array_element_type(self.ctx.types, member).is_none() {
+                    saw_non_array_like = true;
+                }
             }
         }
         if every_tuple {
@@ -434,6 +432,17 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.ctx.types.factory().union(slices)
             };
+        }
+        // All-array-like members distribute numeric indexed access; a
+        // non-array-like member switches the whole union to its iterated
+        // element type, mirroring tsc's `checkIteratedTypeOrElementType`.
+        // ANY/ERROR mean the union could not be iterated, so keep the
+        // indexed-access fallback.
+        if saw_non_array_like {
+            let iterated = self.for_of_element_type(parent_type, false);
+            if iterated != TypeId::ANY && iterated != TypeId::ERROR {
+                return self.ctx.types.factory().array(iterated);
+            }
         }
         let element_type = self.get_element_access_type(parent_type, TypeId::NUMBER, None);
         self.ctx.types.factory().array(element_type)
