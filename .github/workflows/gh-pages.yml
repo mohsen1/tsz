@@ -230,7 +230,7 @@ jobs:
 
       # Benchmarks run in bench.yml and publish a merged GitHub Actions artifact.
       # Pull the latest successful artifact into the Pages build so the public
-      # site and local previews can fetch benchmark data without GCS credentials.
+      # site and local previews can fetch benchmark data without external credentials.
       - name: Find latest benchmark artifact run
         id: latest-benchmark
         env:
@@ -302,62 +302,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
         continue-on-error: true
 
-      - name: Download latest benchmark data from GCS
-        env:
-          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-        run: |
-          set -euo pipefail
-          BUCKET="thirdface-ai-oauth_cloudbuild"
-
-          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
-            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
-            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
-          fi
-          TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
-
-          if [[ -z "$TOKEN" ]]; then
-            echo "No OAuth token — GCP auth step may have failed or secret is missing"
-            exit 0
-          fi
-
-          mkdir -p artifacts
-          download_object() {
-            local object="$1"
-            local out="$2"
-            local label="$3"
-            local url="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${object//\//%2F}?alt=media"
-            local http status
-            http=$(curl -s -w "\n%{http_code}" -o "${out}.tmp" \
-              -H "Authorization: Bearer ${TOKEN}" "$url")
-            status=$(echo "$http" | tail -1)
-            if [[ "$status" == "200" ]] && jq -e type "${out}.tmp" >/dev/null 2>&1; then
-              mv "${out}.tmp" "$out"
-              echo "Downloaded ${label} from GCS"
-              return 0
-            fi
-            rm -f "${out}.tmp"
-            echo "No ${label} from GCS (HTTP ${status})"
-            return 1
-          }
-
-          if download_object \
-            "tsz-ci-cache/bench-runs/latest.json" \
-            "artifacts/bench-vs-tsgo-gcs-latest.json" \
-            "latest benchmark data"; then
-            rows=$(jq '[.results[]?] | length' artifacts/bench-vs-tsgo-gcs-latest.json 2>/dev/null || echo "0")
-            if [[ "${rows}" -le 0 ]]; then
-              rm -f artifacts/bench-vs-tsgo-gcs-latest.json
-              echo "GCS benchmark artifact has no result rows; skipping it."
-            fi
-          fi
-
-          download_object \
-            "tsz-ci-cache/bench-runs/latest.tsgo-winners.json" \
-            "artifacts/bench-vs-tsgo-gcs-latest.tsgo-winners.json" \
-            "latest benchmark winner report" || true
-        continue-on-error: true
-
       - name: Prepare benchmark data for website
         run: |
           snapshot="crates/tsz-website/bench-snapshot.json"
@@ -372,11 +316,7 @@ jobs:
 
           if [[ ! -f artifacts/bench-results.json ]]; then
             rm -f artifacts/bench-results-tsgo-winners.json
-            if [[ -f artifacts/bench-vs-tsgo-gcs-latest.json ]]; then
-              echo "No GitHub benchmark artifact downloaded; bench charts will use GCS latest data."
-            else
-              echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
-            fi
+            echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
             exit 0
           fi
 
@@ -404,7 +344,6 @@ jobs:
 
           const selected = selectLatestBenchmarkArtifact([
             "artifacts/bench-vs-tsgo-github-latest.json",
-            "artifacts/bench-vs-tsgo-gcs-latest.json",
           ]);
           process.stdout.write(selected?.file ?? "artifacts/bench-vs-tsgo-github-latest.json");
           NODE
@@ -414,43 +353,6 @@ jobs:
             --expect-source-commit="${GITHUB_SHA}" \
             > "${readiness_out}" || true
           echo "Wrote $(wc -c < "${readiness_out}") bytes to ${readiness_out}."
-        continue-on-error: true
-
-      - name: Download latest suite metrics from GCS
-        env:
-          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-        run: |
-          set -euo pipefail
-          BUCKET="thirdface-ai-oauth_cloudbuild"
-
-          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
-            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
-            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
-          fi
-          TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
-
-          if [[ -z "$TOKEN" ]]; then
-            echo "No OAuth token — GCP auth step may have failed or secret is missing"
-            exit 0
-          fi
-
-          mkdir -p ci-metrics
-          for suite in conformance emit fourslash; do
-            OBJECT="tsz-ci-cache/metrics/latest/${suite}.json"
-            URL="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${OBJECT//\//%2F}?alt=media"
-            out="ci-metrics/${suite}.json"
-            HTTP=$(curl -s -w "\n%{http_code}" -o "$out.tmp" \
-              -H "Authorization: Bearer ${TOKEN}" "$URL")
-            STATUS=$(echo "$HTTP" | tail -1)
-            if [[ "$STATUS" == "200" ]] && jq -e type "$out.tmp" >/dev/null 2>&1; then
-              mv "$out.tmp" "$out"
-              echo "Downloaded latest ${suite} metrics"
-            else
-              rm -f "$out.tmp"
-              echo "No latest ${suite} metrics from GCS (HTTP ${STATUS}); website will use repository snapshot/README fallback"
-            fi
-          done
         continue-on-error: true
 
       - name: Download WASM

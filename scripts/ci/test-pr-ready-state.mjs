@@ -173,8 +173,18 @@ assert.match(
 
 assert.match(
   ciWorkflow,
-  /full_ci:[\s\S]+?TSZ_CI_EMERGENCY_SCALE_DOWN: "1"[\s\S]+?TSZ_CI_MANUAL_FULL_CI:[\s\S]+?inputs\.full_ci[\s\S]+?Emergency GCP cost scale-down is active[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false/,
-  "CI should default to emergency light-only mode and require explicit manual full_ci dispatch for Cloud Run / Cloud Build fanout",
+  /TSZ_CI_EMERGENCY_SCALE_DOWN: "1"[\s\S]+?GitHub Actions-only cost-control mode is active[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false/,
+  "CI should force GitHub Actions-only cost-control mode and skip Cloud Run / Cloud Build fanout",
+);
+assert.doesNotMatch(
+  ciWorkflow,
+  /full_ci|TSZ_CI_MANUAL_FULL_CI|inputs\.full_ci/,
+  "CI should not expose a manual full-CI escape hatch while GCP spend is shut down",
+);
+assert.match(
+  ciWorkflow,
+  /signoff-gate:[\s\S]+name: PR Signoff[\s\S]+context == "signoff"[\s\S]+Run scripts\/ci\/signoff\.sh locally/,
+  "PR CI should require the local signoff commit status instead of starting heavy GCP-backed jobs",
 );
 
 assert.match(
@@ -186,7 +196,7 @@ assert.match(
 assert.match(
   gateClassifier,
   /\.github\\\/workflows\\\/\(ci\|bench\)\\\.yml/,
-  "CI workflow changes must require compiler CI because they route native merge queue and Cloud Run jobs",
+  "CI workflow changes should continue to be classified as compiler-sensitive paths",
 );
 
 assert.doesNotMatch(
@@ -221,49 +231,9 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
   );
 }
 
-assert.match(
-  ciWorkflow,
-  /\n\s{2}unit:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit unit suite to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-unit\.yaml/,
-  "unit should submit its linker-heavy compile to the Cloud Build pool: a single rustc compiling a workspace lib-test exceeds the 32 GiB Cloud Run budget even at the forced -j1, SIGKILLing the runner. The Cloud Run runner only orchestrates the submit, mirroring unit-checker-integration.",
-);
-
-assert.doesNotMatch(
-  ciWorkflow,
-  /\n\s{2}unit:\n[\s\S]+?Run unit suite on Cloud Run runner[\s\S]+?scripts\/ci\/github-suite\.sh unit/,
-  "unit must not compile the linker-heavy slice directly on the 32 GiB Cloud Run runner — it OOM-SIGKILLs the runner and wedges the queue (see scripts/cloudbuild/cloudbuild-unit.yaml)",
-);
-
-assert.match(
-  ciWorkflow,
-  /\n\s{2}unit-checker-integration:\n[\s\S]+?Submit checker integration suite to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-checker-integration\.yaml/,
-  "checker integration linking should stay on Cloud Build as the heavy unit exception",
-);
-
-assert.match(
-  ciWorkflow,
-  /\n\s{2}dist-binaries:\n[\s\S]+?runs-on: \[self-hosted, tsz-cloud-run\][\s\S]+?Submit dist-fast build to Cloud Build pool[\s\S]+?--config=scripts\/cloudbuild\/cloudbuild-dist-binaries\.yaml[\s\S]+?Download dist-fast binaries[\s\S]+?Upload dist-fast binaries/,
-  "dist-binaries should compile on the highmem Cloud Build pool and only use the Cloud Run runner to publish the small GitHub artifact",
-);
-
-const distCloudBuild = fs.readFileSync(
-  path.join(ROOT, "scripts", "cloudbuild", "cloudbuild-dist-binaries.yaml"),
-  "utf8",
-);
 const gcpFullCi = fs.readFileSync(
   path.join(ROOT, "scripts", "ci", "gcp-full-ci.sh"),
   "utf8",
-);
-
-assert.match(
-  distCloudBuild,
-  /'CARGO_INCREMENTAL=0'/,
-  "dist-binaries must disable incremental compilation so restored target caches cannot ship stale semantic code into conformance artifacts",
-);
-
-assert.match(
-  distCloudBuild,
-  /'GITHUB_WORKSPACE=\/home\/runner\/_work\/tsz\/tsz'[\s\S]+?tar -C \/workspace -cf - \. \| tar -C "\$GITHUB_WORKSPACE" -xf -[\s\S]+?cd "\$GITHUB_WORKSPACE"[\s\S]+?git init --quiet/,
-  "dist-binaries Cloud Build should compile from the same workspace path used by GitHub Actions shards before creating synthetic git metadata",
 );
 
 assert.match(
@@ -274,14 +244,14 @@ assert.match(
 
 assert.doesNotMatch(
   ciWorkflow,
-  /\n\s{2}dist-binaries:\n[\s\S]+?Build dist-fast binaries[\s\S]+?scripts\/ci\/github-suite\.sh dist-binaries/,
-  "dist-binaries must not compile directly on the 32 GiB Cloud Run runner; cold or stale target restores can SIGKILL the runner before logs are persisted",
+  /TSZ_CI_EMERGENCY_SCALE_DOWN: "0"|manual full CI|manual_full_ci/,
+  "CI should not contain a documented switch that re-enables GCP-backed heavy jobs",
 );
 
 assert.match(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- unit\s*\n\s+- unit-checker-integration[\s\S]+?required\.update\(\{"dist-binaries", "unit", "unit-checker-integration"\}\)/,
-  "CI Summary should require both the Cloud Run unit slice and checker integration heavy slice",
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- signoff-gate[\s\S]+?PR Signoff did not pass/,
+  "CI Summary should include PR Signoff so missing local testing fails the required summary",
 );
 
 assert.match(
