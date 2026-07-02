@@ -784,6 +784,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         checker.ctx.shared_constraint_proofs = Some(Arc::clone(&shared_constraint_proofs));
         program_context.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
+        checker.prime_module_augmentation_bodies();
     }
 
     // PERF: the post-merge default-lib recheck (collect baseline + per-lib

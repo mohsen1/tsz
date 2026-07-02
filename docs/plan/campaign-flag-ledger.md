@@ -21,10 +21,9 @@ activated only through their process-global env vars.
   `scripts/bench/campaign-gauge/run.sh` (see that dir's `README.md`).
 - **Scheduled lane**: `.github/workflows/campaign-flag-lane.yml` runs the gauge
   nightly and on demand (and on PRs labeled `campaign-flag-lane`). It forces
-  `TSZ_DETERMINISTIC_STORE_ELECTION=1`, un-`#[ignore]`s the three
-  `hkt_cross_file_augmentation_13653_repro.rs` tests that require
-  `TSZ_MODULE_AUG_BODY_PUBLISH=1`, asserts run-to-run determinism, and prints a
-  non-gating **census** of the full solver suite under the composed stack. The
+  `TSZ_DETERMINISTIC_STORE_ELECTION=1`, runs the module-augmentation
+  body-publication HKT tests, asserts run-to-run determinism, and prints a
+  non-gating **census** of the full solver suite. The
   census is non-gating on purpose: the 2^13 flag composition space is not
   parity-clean (many unit tests encode flag-OFF expectations), so the lane
   prints the pass/fail envelope into the job log as a crash/hang smoke plus
@@ -48,7 +47,7 @@ deterministic `DefId` store election (see "Determinism derivation" below).
 | `TSZ_TYPEOF_URI_SELFLOOP` | #15095 | `def/core.rs` | Publication channel; was already in the pre-#15317 election derivation. Needs lane data. |
 | `TSZ_AUGMENTED_BODY_SYMBOL_REDIRECT` | #15220 | `def/core.rs` | Publication channel; in the pre-#15317 election derivation. Interacts with `MODULE_AUG_BODY_PUBLISH`. |
 | `TSZ_MODULE_AUG_SYMBOL_EDGE` | #15119 | `def/core/augmentation_symbols.rs` | Publication channel; in the pre-#15317 election derivation. |
-| `TSZ_MODULE_AUG_BODY_PUBLISH` | #15131 | `def/core/augmentation_symbols.rs` | Publication channel; in the pre-#15317 election derivation. Exercised by the three `#[ignore]`d `hkt_cross_file_augmentation_13653_repro.rs` tests inside the lane. |
+| `TSZ_MODULE_AUG_BODY_PUBLISH` | #15131 | `def/core/augmentation_symbols.rs` | Opt-in demand-driven publication channel; in the pre-#15317 election derivation. The three `hkt_cross_file_augmentation_13653_repro.rs` body-publication tests now run in the default focused suite through Mode B priming. |
 | `TSZ_ALPHA_NAME_PAIR` | #14933 | `relations/.../functions/checking/name_pairing.rs` | Alpha-renaming name pairing; no individual flip verdict recorded. |
 | `TSZ_LAZY_REF_RELATION` | #14661 | `relations/subtype/rules/generics.rs` | Lazy-ref relation fast path; no individual flip verdict recorded. |
 

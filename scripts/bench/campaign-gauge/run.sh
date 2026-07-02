@@ -6,8 +6,8 @@
 # script (issue #15317). This script is the single source of truth for the
 # composed substrate stack: it exports the exact flag set once, then
 #   - flag-tests (GATING): runs the flag-ON tests designed to pass under the
-#     stack — the three `TSZ_MODULE_AUG_BODY_PUBLISH`-gated hkt tests (via
-#     --ignored) plus the channel-registry / election-ordering unit tests;
+#     stack — the hkt body-publication tests plus the channel-registry /
+#     election-ordering unit tests;
 #   - determinism (GATING): compiles a committed cross-file HKT-augmentation
 #     fixture N times and asserts byte-identical diagnostics (the flap guard);
 #   - census (NON-GATING): runs the full solver suite under the stack and banks
@@ -66,14 +66,12 @@ export_stack() {
 have_nextest() { command -v cargo-nextest >/dev/null 2>&1; }
 
 # GATING: the flag-ON tests that are designed to pass under the composed stack.
-# The three hkt augmentation tests are #[ignore]d in the default suite because
-# they require TSZ_MODULE_AUG_BODY_PUBLISH; the stack sets it, so we run them
-# explicitly with --ignored. A regression here means a landed flag's own parity
-# contract broke.
+# The hkt augmentation body-publication tests also run in the default suite via
+# the deterministic Mode B priming pass; keep them here so the campaign stack
+# continues exercising the same witness.
 run_flag_tests() {
   echo "== campaign-gauge: designed-green flag-ON tests =="
-  cargo test -p tsz-checker \
-    --test hkt_cross_file_augmentation_13653_repro -- --ignored
+  cargo test -p tsz-checker --test hkt_cross_file_augmentation_13653_repro
   # The campaign channel registry + the deterministic-election ordering
   # invariants (def::core::tests::from_semantic_defs_*). cargo test accepts a
   # single filter substring, so run the two families separately.
