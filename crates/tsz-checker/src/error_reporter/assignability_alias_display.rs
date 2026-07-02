@@ -407,12 +407,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// True when `ty` is a concrete (already-reduced) type whose display-alias
-    /// provenance points at a generic application of a conditional-bodied type
-    /// alias. `tsc` drops the alias name in this case (showing the resolved
-    /// structural form), but the provenance must stay in the interner because
-    /// the solver's conditional evaluator reads it (the `Equal<X, Y>`
-    /// `any`-distinction trick depends on it); so the caller suppresses only the
-    /// application-alias chase when rendering.
+    /// provenance points at a generic application of a reducing-operator-bodied
+    /// type alias — a conditional, `keyof`, indexed access, template literal, or
+    /// string-mapping intrinsic. `tsc` drops the alias name in this case
+    /// (showing the resolved structural form), but the provenance must stay in
+    /// the interner because the solver's conditional evaluator reads it (the
+    /// `Equal<X, Y>` `any`-distinction trick depends on it); so the caller
+    /// suppresses only the application-alias chase when rendering.
     ///
     /// A still-deferred `Conditional`/`IndexAccess`/`Mapped`/generic-application
     /// `ty` is excluded: `tsc` keeps `Tail<T>` for an unreduced generic
@@ -434,7 +435,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+        crate::query_boundaries::diagnostics::application_base_has_reducing_operator_alias_body(
             self.ctx.types.as_type_database(),
             &self.ctx.definition_store,
             alias,

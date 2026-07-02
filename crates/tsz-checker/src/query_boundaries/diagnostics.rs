@@ -602,6 +602,23 @@ pub(crate) fn application_base_has_conditional_alias_body(
     tsz_solver::type_queries::application_base_has_conditional_alias_body(db, def_store, type_id)
 }
 
+/// Display gate: true when the application base alias reduces via *any* operator
+/// body — conditional, `keyof`, indexed access, template literal, or a
+/// string-mapping intrinsic — so the reduced structural form is rendered rather
+/// than the `Name<Args>` surface. Broader than
+/// [`application_base_has_conditional_alias_body`], which the JSX
+/// deferral-comparability gates keep narrow for their semantic (non-display)
+/// use.
+pub(crate) fn application_base_has_reducing_operator_alias_body(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_base_has_reducing_operator_alias_body(
+        db, def_store, type_id,
+    )
+}
+
 pub(crate) fn preserves_named_application_base(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,

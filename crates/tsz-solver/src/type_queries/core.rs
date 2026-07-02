@@ -156,24 +156,120 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
     atoms.into_iter().map(|a| db.resolve_atom(a)).collect()
 }
 
+/// Resolve the declared body of the generic alias that `type_id`'s application
+/// base names, or `None` when `type_id` is not an application over a named
+/// alias.
+fn application_base_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))?;
+    def_store.get(def_id).and_then(|def| def.body)
+}
+
+/// True when the application base alias' *direct* declared body is a
+/// conditional. Deliberately narrow — it does not follow forwarding and does not
+/// recognize the other reducing operators — because its callers are the JSX
+/// deferral-comparability gates, which need conditional-only *semantic*
+/// (non-display) behavior. It is therefore **not** expressible as
+/// `application_base_reducing_operator_body(..) == Some(Conditional)`: that
+/// classifier follows one layer of forwarding, which would silently pull
+/// forwarding-to-conditional aliases into the JSX deferral set. Display callers
+/// want [`application_base_has_reducing_operator_alias_body`] instead.
 pub fn application_base_has_conditional_alias_body(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    let Some(def_id) =
-        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
-    else {
-        return false;
-    };
-    def_store
-        .get(def_id)
-        .and_then(|def| def.body)
+    application_base_alias_body(db, def_store, type_id)
         .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
+}
+
+/// The kind of reducing operator that forms a generic alias' declared body.
+///
+/// A *reducing operator* resolves into a concrete result once the alias
+/// application is fully instantiated and never re-stamps the enclosing alias
+/// onto that result, so `tsc` renders the reduced structural form rather than
+/// the `Name<Args>` application surface. This mirrors the non-generic policy in
+/// [`crate::diagnostics::format::type_alias_displayed_as_underlying`], which
+/// already recognizes the same operator family for `Lazy` aliases.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ReducingAliasBody {
+    /// A conditional body (`T extends U ? X : Y`). `tsc` applies literal-union
+    /// display widening to a bare union/literal reduction of a conditional, so
+    /// the formatter keeps that carve-out for this kind only.
+    Conditional,
+    /// `keyof`, indexed access, template literal, or a string-mapping intrinsic
+    /// (`Uppercase`/`Lowercase`/…). These render their evaluated result for any
+    /// concrete shape — including a bare literal union such as `"a" | "b"` from
+    /// `keyof` — matching the `Lazy`-alias path.
+    Operator,
+}
+
+/// Classify a generic alias application's declared body as a reducing operator,
+/// following one layer of forwarding at a time (`type A<T> = B<T>`, or an alias
+/// that forwards through a bare `Lazy` reference) up to a bounded depth. Returns
+/// `None` when the base is not a reducing-operator alias (a mapped/object-bodied
+/// utility such as `Partial<T>` keeps its alias symbol).
+pub fn application_base_reducing_operator_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<ReducingAliasBody> {
+    let body = application_base_alias_body(db, def_store, type_id)?;
+    classify_reducing_alias_body(db, def_store, body, 0)
+}
+
+/// True when the application base alias reduces via an operator body (see
+/// [`ReducingAliasBody`]). Shared cheap structural gate for the diagnostic
+/// display pipelines.
+pub fn application_base_has_reducing_operator_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    application_base_reducing_operator_body(db, def_store, type_id).is_some()
+}
+
+fn classify_reducing_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    body: TypeId,
+    depth: usize,
+) -> Option<ReducingAliasBody> {
+    // Bound forwarding recursion to guard against a cyclic alias chain.
+    if depth > 64 {
+        return None;
+    }
+    match db.lookup(body) {
+        Some(TypeData::Conditional(_)) => Some(ReducingAliasBody::Conditional),
+        Some(
+            TypeData::KeyOf(_)
+            | TypeData::IndexAccess(_, _)
+            | TypeData::TemplateLiteral(_)
+            | TypeData::StringIntrinsic { .. },
+        ) => Some(ReducingAliasBody::Operator),
+        // Forwarding through a nested generic application (`type A<T> = B<T>`):
+        // the surface reduces exactly as its forwarded target does.
+        Some(TypeData::Application(inner_id)) => {
+            let inner = db.type_application(inner_id);
+            let inner_def = get_lazy_def_id(db, inner.base)
+                .or_else(|| def_store.find_def_for_type(inner.base))?;
+            let inner_body = def_store.get(inner_def).and_then(|def| def.body)?;
+            classify_reducing_alias_body(db, def_store, inner_body, depth + 1)
+        }
+        // Forwarding through a bare `Lazy` alias reference (`type A<T> = R`).
+        Some(TypeData::Lazy(next_def)) => {
+            let next_body = def_store.get(next_def).and_then(|def| def.body)?;
+            classify_reducing_alias_body(db, def_store, next_body, depth + 1)
+        }
+        _ => None,
+    }
 }
 
 /// When `type_id` is a plain mutable array of a boolean literal element

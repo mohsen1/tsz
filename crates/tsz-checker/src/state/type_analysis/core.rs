@@ -1687,7 +1687,7 @@ impl CheckerState<'_> {
                 // name-display gate stays conservative; the formatter owns the
                 // broader shape reduction where no reverse lookup intervenes.
                 let reducing_object_application = alias_is_non_generic
-                    && diagnostic_query::application_base_has_conditional_alias_body(
+                    && diagnostic_query::application_base_has_reducing_operator_alias_body(
                         self.ctx.types.as_type_database(),
                         &self.ctx.definition_store,
                         result,

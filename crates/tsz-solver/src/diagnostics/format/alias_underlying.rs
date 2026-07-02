@@ -181,14 +181,56 @@ fn alias_application_underlying(
     // tsc only drops the alias symbol once the application is fully instantiated;
     // a still-generic application stays deferred as `Name<Args>` even when the
     // display-time evaluator collapses an unconstrained conditional to `never`.
-    if crate::type_queries::application_base_has_conditional_alias_body(interner, def_store, body)
-        && !crate::type_queries::contains_type_parameters_db(interner, body)
-        && application_reduces_to_displayable_shape(interner, evaluated)
+    // The per-operator render decision is shared with the solver formatter so the
+    // two display pipelines cannot drift (see `reducing_operator_render_verdict`).
+    if !crate::type_queries::contains_type_parameters_db(interner, body)
+        && let Some(operator) =
+            crate::type_queries::application_base_reducing_operator_body(interner, def_store, body)
+        && let Some(rendered) = reducing_operator_render_verdict(interner, operator, evaluated)
     {
-        return Some(evaluated);
+        return Some(rendered);
     }
     (crate::visitor::is_primitive_type(interner, evaluated) || evaluated == TypeId::NEVER)
         .then_some(evaluated)
+}
+
+/// Whether a reduced reducing-operator alias application renders its evaluated
+/// result structurally (dropping the alias name), returning the type to display
+/// or `None` to keep the `Name<Args>` / alias-name surface. Shared by the solver
+/// `TypeFormatter` and this non-generic `Lazy`-alias path so both reach the same
+/// per-kind decision:
+/// * a **conditional** keeps tsc's literal-union display-widening carve-out
+///   (`application_reduces_to_displayable_shape`), so a bare literal/union result
+///   stays on the application surface;
+/// * `keyof` / indexed access / template literal / string-mapping render their
+///   evaluated result for any concrete shape, including a bare literal union
+///   (`keyof { a: 1; b: 2 }` → `"a" | "b"`), except a non-converged recursive
+///   reduction, which would render as a truncated cycle.
+///
+/// The caller is responsible for the shared preconditions (fully instantiated,
+/// non-error, not a still-deferred conditional/indexed node).
+pub(crate) fn reducing_operator_render_verdict(
+    interner: &dyn TypeDatabase,
+    operator: crate::type_queries::ReducingAliasBody,
+    evaluated: TypeId,
+) -> Option<TypeId> {
+    let renders_structurally = match operator {
+        crate::type_queries::ReducingAliasBody::Conditional => {
+            application_reduces_to_displayable_shape(interner, evaluated)
+        }
+        crate::type_queries::ReducingAliasBody::Operator => {
+            !contains_recursive(interner, evaluated)
+        }
+    };
+    renders_structurally.then_some(evaluated)
+}
+
+/// True when `evaluated` contains a nested `Recursive` cycle marker — a
+/// non-converged recursive reduction that would render as a truncated cycle.
+fn contains_recursive(interner: &dyn TypeDatabase, evaluated: TypeId) -> bool {
+    crate::visitor::contains_type_matching(interner, evaluated, |key| {
+        matches!(key, TypeData::Recursive(_))
+    })
 }
 
 /// The set of evaluated shapes that a reduced conditional-bodied alias
@@ -213,9 +255,7 @@ pub(crate) fn application_reduces_to_displayable_shape(
 ) -> bool {
     // A non-converged recursive reduction leaves a nested `Recursive` cycle
     // marker that renders as a truncated cycle; keep the alias name instead.
-    if crate::visitor::contains_type_matching(interner, evaluated, |key| {
-        matches!(key, TypeData::Recursive(_))
-    }) {
+    if contains_recursive(interner, evaluated) {
         return false;
     }
     if evaluated == TypeId::NEVER

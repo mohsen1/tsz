@@ -331,3 +331,126 @@ fn lazy_index_access_alias_renders_underlying_object() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     assert_eq!(fmt.format(lazy), "{ a: 1; }");
 }
+
+#[test]
+fn generic_keyof_alias_application_renders_underlying_literal_union() {
+    // `type Keys<T> = keyof T; type R = Keys<{ p: 1; q: 2 }>` → tsc renders
+    // `"p" | "q"`, never the `Keys<{ p: 1; q: 2; }>` application surface
+    // (issue #15391). `keyof` builds its result without stamping the enclosing
+    // alias, exactly as the non-generic `type K = keyof { … }` alias does — the
+    // generic Application path must reach the same verdict as the `Lazy` path.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = crate::types::TypeParamInfo::simple(db.intern_string("T"));
+    let body = db.keyof(db.type_param(t_param));
+    let keys_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Keys"),
+        vec![t_param],
+        body,
+    ));
+    let arg = db.object(vec![
+        PropertyInfo::new(db.intern_string("p"), db.literal_number(1.0)),
+        PropertyInfo::new(db.intern_string("q"), db.literal_number(2.0)),
+    ]);
+    let app = db.application(db.lazy(keys_def), vec![arg]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(app),
+        "\"p\" | \"q\"",
+        "A resolved generic `keyof` alias application renders the literal union"
+    );
+}
+
+#[test]
+fn generic_index_access_alias_application_renders_underlying_object() {
+    // `type Prop<T> = T["p"]; type R = Prop<{ p: { a: 1 } }>` → tsc renders
+    // `{ a: 1; }`, never `Prop<{ p: { a: 1; }; }>`: the indexed access resolves
+    // to its element type with no alias symbol. A distinct binder name keeps the
+    // assertion independent of any specific identifier (anti-hardcoding rule).
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = crate::types::TypeParamInfo::simple(db.intern_string("T"));
+    let body = db.index_access(db.type_param(t_param), db.literal_string("p"));
+    let prop_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Prop"),
+        vec![t_param],
+        body,
+    ));
+    let inner = db.object(vec![PropertyInfo::new(
+        db.intern_string("a"),
+        db.literal_number(1.0),
+    )]);
+    let arg = db.object(vec![PropertyInfo::new(db.intern_string("p"), inner)]);
+    let app = db.application(db.lazy(prop_def), vec![arg]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(app), "{ a: 1; }");
+}
+
+#[test]
+fn forwarding_generic_keyof_alias_application_renders_underlying() {
+    // A generic alias that *forwards* to a reducing-operator alias
+    // (`type Ring<T> = Halo<T>; type Halo<T> = keyof T`) drops its alias symbol
+    // just as the forwarded target does: `Ring<{ p: 1; q: 2 }>` → `"p" | "q"`.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = crate::types::TypeParamInfo::simple(db.intern_string("T"));
+    let halo_body = db.keyof(db.type_param(t_param));
+    let halo_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Halo"),
+        vec![t_param],
+        halo_body,
+    ));
+    // `type Ring<T> = Halo<T>` — the body forwards through a nested application.
+    let ring_body = db.application(db.lazy(halo_def), vec![db.type_param(t_param)]);
+    let ring_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Ring"),
+        vec![t_param],
+        ring_body,
+    ));
+    let arg = db.object(vec![
+        PropertyInfo::new(db.intern_string("p"), db.literal_number(1.0)),
+        PropertyInfo::new(db.intern_string("q"), db.literal_number(2.0)),
+    ]);
+    let app = db.application(db.lazy(ring_def), vec![arg]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(app),
+        "\"p\" | \"q\"",
+        "A forwarding alias reduces exactly as its reducing-operator target"
+    );
+}
+
+#[test]
+fn generic_mapped_alias_application_keeps_its_name() {
+    // Guard the negative half of the policy: an *object*-bodied generic alias is
+    // not a reducing operator, so `tsc` keeps its alias symbol and renders
+    // `Boxed<number>`, never the structural object. This must not be swept up by
+    // the broadened reducing-operator gate.
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+
+    let t_param = crate::types::TypeParamInfo::simple(db.intern_string("T"));
+    let body = db.object(vec![PropertyInfo::new(
+        db.intern_string("value"),
+        db.type_param(t_param),
+    )]);
+    let boxed_def = def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Boxed"),
+        vec![t_param],
+        body,
+    ));
+    let app = db.application(db.lazy(boxed_def), vec![TypeId::NUMBER]);
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(
+        fmt.format(app),
+        "Boxed<number>",
+        "An object-bodied generic alias keeps its alias name"
+    );
+}

@@ -698,7 +698,7 @@ impl<'a> CheckerState<'a> {
                     })
                 });
         if let Some(application_display) = application_display
-            && !diagnostic_query::application_base_has_conditional_alias_body(
+            && !diagnostic_query::application_base_has_reducing_operator_alias_body(
                 self.ctx.types,
                 &self.ctx.definition_store,
                 application_display,
