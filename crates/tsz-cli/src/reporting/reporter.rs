@@ -1,5 +1,6 @@
 use colored::Colorize;
 use rustc_hash::FxHashMap;
+use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::locale;
@@ -108,7 +109,7 @@ impl Reporter {
         let mut has_location_prefix = false;
 
         if let Some((line, col)) = self.position_for(&diagnostic.file, diagnostic.start) {
-            out.push_str(&format!("{file_display}({line},{col})"));
+            let _ = write!(out, "{file_display}({line},{col})");
             has_location_prefix = true;
         } else if !diagnostic.file.is_empty() {
             out.push_str(&file_display);
@@ -155,7 +156,7 @@ impl Reporter {
                 out.push(':');
                 out.push_str(&col.to_string().bright_yellow().to_string());
             } else {
-                out.push_str(&format!("{file_display}:{line}:{col}"));
+                let _ = write!(out, "{file_display}:{line}:{col}");
             }
             has_location_prefix = true;
         } else if !diagnostic.file.is_empty() {
@@ -180,7 +181,7 @@ impl Reporter {
                         .to_string(),
                 );
             } else {
-                out.push_str(&format!(" TS{}: ", diagnostic.code));
+                let _ = write!(out, " TS{}: ", diagnostic.code);
             }
         } else {
             out.push_str(": ");
@@ -341,7 +342,7 @@ impl Reporter {
                 out.push(':');
                 out.push_str(&col.to_string().bright_yellow().to_string());
             } else {
-                out.push_str(&format!("{file_display}:{line}:{col}"));
+                let _ = write!(out, "{file_display}:{line}:{col}");
             }
         } else if !related.file.is_empty() {
             if self.color {
@@ -482,36 +483,40 @@ impl Reporter {
             if error_count == 1 {
                 // "Found 1 error in file:line\n\n" (tsc adds trailing blank line)
                 if self.color {
-                    out.push_str(&format!(
-                        "Found 1 error in {}{}\n",
+                    let _ = writeln!(
+                        out,
+                        "Found 1 error in {}{}",
                         file,
                         format!(":{first_line}").bright_black()
-                    ));
+                    );
                 } else {
-                    out.push_str(&format!("Found 1 error in {file}:{first_line}\n"));
+                    let _ = writeln!(out, "Found 1 error in {file}:{first_line}");
                 }
             } else {
                 // "Found N errors in the same file, starting at: file:line\n\n"
                 if self.color {
-                    out.push_str(&format!(
-                        "Found {} errors in the same file, starting at: {}{}\n",
+                    let _ = writeln!(
+                        out,
+                        "Found {} errors in the same file, starting at: {}{}",
                         error_count,
                         file,
                         format!(":{first_line}").bright_black()
-                    ));
+                    );
                 } else {
-                    out.push_str(&format!(
-                        "Found {error_count} errors in the same file, starting at: {file}:{first_line}\n"
-                    ));
+                    let _ = writeln!(
+                        out,
+                        "Found {error_count} errors in the same file, starting at: {file}:{first_line}"
+                    );
                 }
             }
             // tsc adds a trailing blank line after single-file summaries
             out.push('\n');
         } else {
             // "Found N errors in M files." + file table (no trailing blank line)
-            out.push_str(&format!(
+            let _ = write!(
+                out,
                 "Found {error_count} {error_word} in {unique_file_count} files."
-            ));
+            );
             out.push('\n');
             out.push('\n');
 
@@ -522,12 +527,13 @@ impl Reporter {
                 let first_line = first_error_lines.get(file).copied().unwrap_or(1);
                 out.push('\n');
                 if self.color {
-                    out.push_str(&format!(
+                    let _ = write!(
+                        out,
                         "{count:>6}  {file}{}",
                         format!(":{first_line}").bright_black()
-                    ));
+                    );
                 } else {
-                    out.push_str(&format!("{count:>6}  {file}:{first_line}"));
+                    let _ = write!(out, "{count:>6}  {file}:{first_line}");
                 }
             }
             out.push('\n');
