@@ -283,11 +283,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
             }
+            (Some(TypeData::Conditional(s_cond_id)), Some(TypeData::Conditional(t_cond_id))) => {
+                self.constrain_conditional_pair(
+                    ctx, var_map, source, s_cond_id, target, t_cond_id, priority,
+                );
+            }
             (Some(TypeData::Conditional(cond_id)), _) => {
                 let cond = self.interner.get_conditional(cond_id);
                 let evaluated = self.interner.evaluate_conditional(&cond);
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
+                } else {
+                    self.constrain_stuck_conditional_source(ctx, var_map, source, target, priority);
                 }
             }
             (_, Some(TypeData::Conditional(cond_id))) => {
@@ -296,33 +303,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 } else {
-                    // Match tsc's `inferToConditionalType`: if the target conditional
-                    // cannot be evaluated yet, infer against both branch types. Direct
-                    // naked type-parameter branches are fallback evidence; structured
-                    // branches should win when they can infer more specific candidates.
-                    let contains_placeholder = with_placeholder_visited(|visited| {
-                        self.type_contains_placeholder(target, var_map, visited)
-                    });
-                    if contains_placeholder {
-                        if var_map.contains_key(&cond.check_type)
-                            && cond.true_type != TypeId::NEVER
-                            && cond.false_type != TypeId::NEVER
-                        {
-                            return;
-                        }
-                        let true_priority = if var_map.contains_key(&cond.true_type) {
-                            crate::types::InferencePriority::LowPriority
-                        } else {
-                            priority
-                        };
-                        let false_priority = if var_map.contains_key(&cond.false_type) {
-                            crate::types::InferencePriority::LowPriority
-                        } else {
-                            priority
-                        };
-                        self.constrain_types(ctx, var_map, source, cond.true_type, true_priority);
-                        self.constrain_types(ctx, var_map, source, cond.false_type, false_priority);
-                    }
+                    self.constrain_to_stuck_conditional_target(
+                        ctx, var_map, source, target, &cond, priority,
+                    );
                 }
             }
             (Some(TypeData::Mapped(mapped_id)), _) => {

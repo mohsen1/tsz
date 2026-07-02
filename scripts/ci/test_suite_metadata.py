@@ -25,6 +25,21 @@ def suite_names(scope: str) -> list[str]:
     return [line for line in result.stdout.splitlines() if line]
 
 
+def suite_caches(suite: str) -> set[str]:
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            f"source scripts/ci/suite-metadata.sh; ci_suite_caches {suite}",
+        ],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+    return set(result.stdout.split())
+
+
 class SuiteMetadataTests(unittest.TestCase):
     def test_github_suites_match_workflow_invocations(self):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
@@ -32,8 +47,21 @@ class SuiteMetadataTests(unittest.TestCase):
 
         self.assertEqual(set(suite_names("github")), invoked)
 
-    def test_full_suites_are_github_entry_points(self):
-        self.assertEqual(set(suite_names("full")), set(suite_names("github")))
+    def test_github_suites_are_full_suite_entry_points(self):
+        self.assertTrue(set(suite_names("github")).issubset(set(suite_names("full"))))
+
+    def test_heavy_helper_suites_are_not_pr_entry_points(self):
+        removed_from_pr = {
+            "dist-binaries",
+            "node-harness-prep",
+            "lint",
+            "checker-integration",
+            "lsp-e2e",
+            "wasm-all",
+        }
+
+        self.assertTrue(removed_from_pr.isdisjoint(suite_names("github")))
+        self.assertTrue(removed_from_pr.issubset(set(suite_names("full"))))
 
     def test_removed_local_fanout_suites_are_not_entry_points(self):
         removed = {
@@ -50,6 +78,9 @@ class SuiteMetadataTests(unittest.TestCase):
 
         self.assertTrue(removed.isdisjoint(suite_names("full")))
         self.assertTrue(removed.isdisjoint(suite_names("github")))
+
+    def test_fourslash_shard_initializes_typescript_source(self):
+        self.assertIn("typescript-source", suite_caches("fourslash-shard"))
 
 
 if __name__ == "__main__":
