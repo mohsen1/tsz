@@ -45,6 +45,12 @@ pub(crate) struct RelatedInformationPolicy {
     include_primary: bool,
     dedupe: bool,
     limit: Option<usize>,
+    /// Keep the reporter's insertion order instead of applying the
+    /// `(file, start, depth, message)` sort. Required for multi-chain
+    /// elaborations that share one anchor (e.g. the per-overload `TS2772`
+    /// chains), where the depth-keyed sort would interleave every chain's
+    /// header ahead of every chain's body and destroy the nesting.
+    preserve_order: bool,
 }
 
 impl RelatedInformationPolicy {
@@ -52,6 +58,7 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
     /// Demote a diagnostic's primary message into the related chain, keeping any
@@ -61,12 +68,29 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
+    /// Flat overload-failure list (1 or >3 candidates, or callback-body sets):
+    /// one related line per failure, deduped and sorted as before.
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
         dedupe: true,
         limit: None,
+        preserve_order: false,
+    };
+
+    /// Per-overload `TS2772` elaboration (the 2-3 candidate case): each
+    /// candidate contributes a depth-0 `Overload N of M, '...', gave the
+    /// following error.` header immediately followed by its applicability
+    /// error at depth 1+. Insertion order is declaration order and must be
+    /// preserved; dedupe is off so two overloads that fail identically still
+    /// each keep their own nested body under their distinct header.
+    pub(crate) const OVERLOAD_CHAINS: Self = Self {
+        include_primary: false,
+        dedupe: false,
+        limit: None,
+        preserve_order: true,
     };
 }
 
@@ -981,13 +1005,21 @@ impl<'a> CheckerState<'a> {
         // main message and its note. Within the same depth the message-text
         // tiebreaker still gives deterministic order when distinct code paths
         // append items in different sequences.
-        normalized.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then(a.start.cmp(&b.start))
-                .then(a.depth.cmp(&b.depth))
-                .then(a.message_text.cmp(&b.message_text))
-        });
+        //
+        // `preserve_order` policies (per-overload `TS2772` chains) opt out: they
+        // build several outer-to-inner chains at one anchor, so a global
+        // depth-keyed sort would pull every chain's depth-0 header ahead of the
+        // bodies and scramble the nesting. Their insertion order is already the
+        // correct declaration order.
+        if !policy.preserve_order {
+            normalized.sort_by(|a, b| {
+                a.file
+                    .cmp(&b.file)
+                    .then(a.start.cmp(&b.start))
+                    .then(a.depth.cmp(&b.depth))
+                    .then(a.message_text.cmp(&b.message_text))
+            });
+        }
 
         normalized
     }

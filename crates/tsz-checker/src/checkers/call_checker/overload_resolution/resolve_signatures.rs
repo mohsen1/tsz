@@ -1062,6 +1062,23 @@ impl<'a> CheckerState<'a> {
                 contextual_type
             };
             let func_type = factory.function(sig_shape.clone());
+            // The candidate signature the reporter renders in tsc's per-overload
+            // `TS2772` wrapper. Built from the *declared* signature (not the
+            // inference-instantiated `sig`) so a generic overload elaborates with
+            // its written type parameters, exactly as tsc's `signatureToString`.
+            // Built lazily: only failing candidates push a diagnostic, so a
+            // candidate that matches or is skipped never interns this.
+            let overload_signature = || {
+                factory.function(FunctionShape {
+                    params: original_sig.params.clone(),
+                    this_type: original_sig.this_type,
+                    return_type: original_sig.return_type,
+                    type_params: original_sig.type_params.clone(),
+                    type_predicate: original_sig.type_predicate,
+                    is_constructor: false,
+                    is_method: original_sig.is_method,
+                })
+            };
             self.ctx.rollback_full(&overload_snap);
             let sig_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
@@ -1595,7 +1612,8 @@ impl<'a> CheckerState<'a> {
                         }
                         failures.push(
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
-                                .with_optional_span(self.arg_source_span(args, index)),
+                                .with_optional_span(self.arg_source_span(args, index))
+                                .with_overload_signature(overload_signature()),
                         );
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
@@ -1833,7 +1851,8 @@ impl<'a> CheckerState<'a> {
                         }
                         failures.push(
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
-                                .with_optional_span(self.arg_source_span(args, index)),
+                                .with_optional_span(self.arg_source_span(args, index))
+                                .with_overload_signature(overload_signature()),
                         );
                     }
                 }
@@ -1850,11 +1869,14 @@ impl<'a> CheckerState<'a> {
                     let max = expected_max.unwrap_or(expected_min);
                     min_expected = min_expected.min(expected_min);
                     max_expected = max_expected.max(max);
-                    failures.push(PendingDiagnosticBuilder::argument_count_mismatch(
-                        expected_min,
-                        max,
-                        actual,
-                    ));
+                    failures.push(
+                        PendingDiagnosticBuilder::argument_count_mismatch(
+                            expected_min,
+                            max,
+                            actual,
+                        )
+                        .with_overload_signature(overload_signature()),
+                    );
                 }
                 _ => {
                     all_arg_count_mismatches = false;

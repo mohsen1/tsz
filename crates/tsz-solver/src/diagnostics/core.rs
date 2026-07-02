@@ -567,6 +567,12 @@ pub struct PendingDiagnostic {
     pub severity: DiagnosticSeverity,
     /// Related information (additional locations)
     pub related: Vec<Self>,
+    /// The candidate signature type this diagnostic describes, when it is one
+    /// overload's applicability failure within a `NoOverloadMatch` set. The
+    /// checker reporter uses it to render tsc's per-overload `TS2772`
+    /// (`Overload N of M, '<signature>', gave the following error.`) wrapper.
+    /// `None` for every non-overload diagnostic.
+    pub overload_signature: Option<TypeId>,
 }
 
 impl PendingDiagnostic {
@@ -578,7 +584,15 @@ impl PendingDiagnostic {
             span: None,
             severity: DiagnosticSeverity::Error,
             related: Vec::new(),
+            overload_signature: None,
         }
+    }
+
+    /// Tag this diagnostic with the overload candidate signature it describes,
+    /// so the reporter can wrap it in the `TS2772` per-overload elaboration.
+    pub const fn with_overload_signature(mut self, signature: TypeId) -> Self {
+        self.overload_signature = Some(signature);
+        self
     }
 
     /// Attach a source span to this diagnostic.
