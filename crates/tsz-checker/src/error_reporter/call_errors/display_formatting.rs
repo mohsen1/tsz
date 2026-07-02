@@ -1359,6 +1359,33 @@ impl<'a> CheckerState<'a> {
         prop_name_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<(TypeId, TypeId)> {
+        // Mirror tsc `getBestMatchIndexedAccessTypeOrUndefined` /
+        // `findBestTypeForObjectLiteral`: object-literal elaboration only drills
+        // into a property when the whole union — or the best-matching union
+        // member — exposes it. For a fresh object-literal source against a union
+        // target that contains an array-like member (e.g. the recursive JSON
+        // alias `string | number | ... | Json[] | { [k: string]: Json }`), the
+        // best match is the FIRST non-array-like member in union order. When a
+        // primitive member (or any member that lacks the key) is the best match,
+        // `tsc` skips the property drill-in and reports the outer relation error
+        // with its per-member chain instead of an inner property TS2322. Without
+        // this gate, tsz resolves the key through an arbitrary index-signature
+        // member and elaborates into the property, losing the outer frame.
+        let prefer_number_index = self
+            .ctx
+            .arena
+            .get(prop_name_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::NumericLiteral as u16);
+        let prefer_symbol_index = self.is_symbol_property_name(prop_name_idx);
+        if self.object_literal_union_skips_property_drill_in(
+            target_type,
+            prop_name,
+            prefer_number_index,
+            prefer_symbol_index,
+        ) {
+            return None;
+        }
+
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let evaluated_target = self.judge_evaluate(resolved_target);
         let contextual_target = self.evaluate_contextual_type(target_type);
@@ -1529,6 +1556,137 @@ impl<'a> CheckerState<'a> {
             })?;
 
         Some((index_value_type, index_value_type))
+    }
+
+    /// tsc `findBestTypeForObjectLiteral` gate for object-literal elaboration,
+    /// shared by the property drill-in resolver and the union index-signature
+    /// per-property check.
+    ///
+    /// `tsc` resolves a drilled-in property type through
+    /// `getBestMatchIndexedAccessTypeOrUndefined`: indexed access over the whole
+    /// union, and — when that fails — indexed access into the best-matching
+    /// union member. For a fresh object-literal source,
+    /// `findBestTypeForObjectLiteral` picks the FIRST non-array-like member
+    /// whenever the union contains an array-like member (so a recursive alias
+    /// like `Json = string | number | ... | Json[] | { [k: string]: Json }`
+    /// resolves the key against a leading primitive, not the trailing index
+    /// signature).
+    ///
+    /// Returns `true` when object-literal elaboration must SKIP drilling into
+    /// `prop_name` — i.e. the union has an array-like member and its best-match
+    /// member (the first non-array-like member) does not expose the key — so the
+    /// outer relation error is reported instead of an inner property TS2322.
+    /// Returns `false` when the gate does not apply (no array-like member, or
+    /// every member already exposes the key) or the best-match member exposes
+    /// the key, leaving the existing drill-in behavior intact.
+    pub(crate) fn object_literal_union_skips_property_drill_in(
+        &mut self,
+        target_type: TypeId,
+        prop_name: &str,
+        prefer_number_index: bool,
+        prefer_symbol_index: bool,
+    ) -> bool {
+        use crate::query_boundaries::common::union_members;
+        // Reveal a union hidden behind a type-alias/application (e.g. `Json`)
+        // before testing for the array-like member pattern. Resolve/evaluate
+        // lazily so a target that is already a union avoids the extra work.
+        let members = if let Some(members) = union_members(self.ctx.types, target_type) {
+            members
+        } else {
+            let resolved = self.resolve_type_for_property_access(target_type);
+            if let Some(members) = union_members(self.ctx.types, resolved) {
+                members
+            } else if let Some(members) =
+                union_members(self.ctx.types, self.judge_evaluate(resolved))
+            {
+                members
+            } else {
+                return false;
+            }
+        };
+        // `members` is an owned `TypeIdList` (`Arc<[TypeId]>`) that derefs to a
+        // slice and does not borrow `self`, so no copy is needed here.
+        if !members
+            .iter()
+            .any(|&member| self.is_array_like_type(member))
+        {
+            return false;
+        }
+        // `tsc` first tries indexed access over the whole union, which succeeds
+        // only when every member exposes the key; then the drill-in is valid.
+        if members.iter().all(|&member| {
+            self.union_member_exposes_object_literal_key(
+                member,
+                prop_name,
+                prefer_number_index,
+                prefer_symbol_index,
+            )
+        }) {
+            return false;
+        }
+        // findBestTypeForObjectLiteral: the first non-array-like member. Skip the
+        // drill-in unless that member genuinely exposes the key; otherwise the
+        // best match is a primitive (or a lacking object) and the outer relation
+        // error stands.
+        match members
+            .iter()
+            .copied()
+            .find(|&member| !self.is_array_like_type(member))
+        {
+            Some(best_member) => !self.union_member_exposes_object_literal_key(
+                best_member,
+                prop_name,
+                prefer_number_index,
+                prefer_symbol_index,
+            ),
+            None => true,
+        }
+    }
+
+    /// Whether a union member exposes `prop_name` the way tsc's
+    /// `getIndexedAccessTypeOrUndefined` would resolve it for a fresh
+    /// object-literal source: a named property, or an index signature applicable
+    /// to the key's kind. Primitive members (`string`, `number`, `boolean`,
+    /// `null`, `undefined`, literals) never expose a key here — tsc returns
+    /// `undefined` for `primitive["a"]` even though the apparent `String`/
+    /// `Number` interfaces carry numeric index signatures.
+    fn union_member_exposes_object_literal_key(
+        &mut self,
+        member: TypeId,
+        prop_name: &str,
+        prefer_number_index: bool,
+        prefer_symbol_index: bool,
+    ) -> bool {
+        if member == TypeId::NULL
+            || member == TypeId::UNDEFINED
+            || crate::query_boundaries::common::is_primitive_type(self.ctx.types, member)
+        {
+            return false;
+        }
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let resolved = self.resolve_type_for_property_access(member);
+        let evaluated = self.judge_evaluate(resolved);
+        for candidate in [member, resolved, evaluated] {
+            let Some(shape) =
+                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, candidate)
+            else {
+                continue;
+            };
+            if shape.properties.iter().any(|p| p.name == prop_atom) {
+                return true;
+            }
+            let has_applicable_index = if prefer_symbol_index {
+                shape.symbol_index_signature().is_some()
+            } else if prefer_number_index {
+                shape.number_index.is_some() || shape.string_index_signature().is_some()
+            } else {
+                shape.string_index_signature().is_some()
+            };
+            if has_applicable_index {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check whether a target type has a named property matching ANY property

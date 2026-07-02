@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn try_union_index_signature_value_check(
@@ -11,6 +12,7 @@ impl<'a> CheckerState<'a> {
         obj_literal_idx: NodeIndex,
         union_shapes: &[std::sync::Arc<tsz_solver::ObjectShape>],
         explicit_property_names: Option<&HashSet<Atom>>,
+        union_target: TypeId,
     ) -> bool {
         let diag_count_before = self.ctx.diagnostics.len();
 
@@ -37,6 +39,22 @@ impl<'a> CheckerState<'a> {
 
             let prop_name = self.ctx.types.resolve_atom(source_prop.name);
             let is_numeric_name = tsz_solver::utils::is_numeric_literal_name(&prop_name);
+
+            // tsc `findBestTypeForObjectLiteral`: when the union target has an
+            // array-like member, elaboration resolves the key against the first
+            // non-array-like member. If that best match does not expose the key
+            // (e.g. a leading primitive in a `Json`-style union), tsc reports the
+            // outer relation error rather than checking the value against a
+            // trailing index-signature member. Skip the index-signature drill-in
+            // for those keys so the outer TS2322 with its member chain stands.
+            if self.object_literal_union_skips_property_drill_in(
+                union_target,
+                prop_name.as_ref(),
+                is_numeric_name,
+                source_prop.is_symbol_named,
+            ) {
+                continue;
+            }
             let mut applicable_index_value_types = Vec::new();
             let mut accepted_by_index = false;
             let mut has_deferred_index_value_type = false;

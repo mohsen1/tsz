@@ -567,6 +567,7 @@ impl<'a> CheckerState<'a> {
                 idx,
                 &target_shapes,
                 explicit_property_names.as_ref(),
+                target,
             ) {
                 return;
             }
@@ -1028,6 +1029,7 @@ impl<'a> CheckerState<'a> {
                     idx,
                     std::slice::from_ref(&target_shape),
                     explicit_property_names.as_ref(),
+                    target,
                 ) {
                     return;
                 }
