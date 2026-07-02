@@ -1656,6 +1656,13 @@ const TS2538: u32 = diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE;
 const TS7015: u32 =
     diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE;
 
+fn ts2538_messages_for_ts(source: &str) -> Vec<String> {
+    check_source_code_messages(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == TS2538).then_some(message))
+        .collect()
+}
+
 #[test]
 fn wide_symbol_value_access_on_string_index_reports_ts2538() {
     let codes = diagnostic_codes_for_ts(
@@ -1676,6 +1683,24 @@ strIdx[sym];
 }
 
 #[test]
+fn wide_symbol_value_access_on_string_index_reports_exact_ts2538_message() {
+    let messages = ts2538_messages_for_ts(
+        r#"
+declare const token: symbol;
+declare const store: { [entry: string]: number };
+store[token];
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message == "Type 'symbol' cannot be used as an index type."),
+        "expected exact TS2538 message for wide symbol key, got {messages:?}",
+    );
+}
+
+#[test]
 fn wide_symbol_value_access_on_string_index_reports_ts2538_renamed_binders() {
     // Anti-hardcoding: identical structural shape, different binder names.
     let codes = diagnostic_codes_for_ts(
@@ -1688,6 +1713,30 @@ WEIRD_9[banana];
     assert!(
         codes.contains(&TS2538),
         "the rule must be structural, not name-driven; expected TS2538, got {codes:?}",
+    );
+}
+
+#[test]
+fn callable_interface_string_index_indexed_by_symbol_reports_ts2538() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const channel: symbol;
+interface Dispatcher {
+    (): void;
+    [slot: string]: unknown;
+}
+declare const dispatch: Dispatcher;
+dispatch[channel];
+"#,
+    );
+
+    assert!(
+        codes.contains(&TS2538),
+        "callable interface with only a string index must reject symbol access as TS2538, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "callable string-index fallthrough is TS2538, not TS7053, got {codes:?}",
     );
 }
 
@@ -1713,6 +1762,40 @@ noProp[us];
 }
 
 #[test]
+fn unique_symbol_value_access_on_string_index_reports_exact_ts2538_message() {
+    let messages = ts2538_messages_for_ts(
+        r#"
+declare const privateKey: unique symbol;
+declare const slots: { [entry: string]: number };
+slots[privateKey];
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message == "Type 'unique symbol' cannot be used as an index type."),
+        "expected exact TS2538 message for unique symbol key, got {messages:?}",
+    );
+}
+
+#[test]
+fn unique_symbol_value_access_on_string_index_reports_ts2538_renamed_binders() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Lexeme: unique symbol;
+declare const registry: { [slotName: string]: boolean };
+registry[Lexeme];
+"#,
+    );
+
+    assert!(
+        codes.contains(&TS2538),
+        "renamed unique-symbol/string-index case should still report TS2538, got {codes:?}",
+    );
+}
+
+#[test]
 fn wide_symbol_value_access_on_class_string_index_reports_ts2538() {
     let codes = diagnostic_codes_for_ts(
         r#"
@@ -1725,6 +1808,26 @@ bag[sym];
     assert!(
         codes.contains(&TS2538),
         "a class instance with a string index signature must report TS2538, got {codes:?}",
+    );
+}
+
+#[test]
+fn real_unique_symbol_member_with_string_index_stays_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const precise: unique symbol;
+declare const holder: { [slot: string]: number; [precise]: string };
+const value: string = holder[precise];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&TS2538),
+        "a real unique-symbol member must win over the string index, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "a real unique-symbol member is not an implicit-any access, got {codes:?}",
     );
 }
 
@@ -1759,6 +1862,67 @@ const bad: string = strIdx[sym];
     assert!(
         incompatible.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "the resolved value type `number` is not assignable to `string`; expected TS2322, got {incompatible:?}",
+    );
+}
+
+#[test]
+fn record_symbol_and_property_key_accept_symbol_values() {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    if libs.is_empty() {
+        return;
+    }
+    let record_diags = check_source_with_libs(
+        r#"
+declare const mark: symbol;
+declare const symbolRecord: Record<symbol, number>;
+const a: number = symbolRecord[mark];
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let record_codes: Vec<u32> = record_diags
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        !record_codes.contains(&TS2538),
+        "Record<symbol, V> accepts symbol keys, got {record_codes:?}",
+    );
+    assert!(
+        !record_codes.contains(&TS7053),
+        "Record<symbol, V> must not degrade to implicit any, got {record_codes:?}",
+    );
+
+    let property_key_diags = check_source_with_libs(
+        r#"
+declare const mark: symbol;
+declare const allKeys: { [key: PropertyKey]: string };
+const b: string = allKeys[mark];
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let property_key_codes: Vec<u32> = property_key_diags
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert!(
+        !property_key_codes.contains(&TS2538),
+        "PropertyKey index accepts symbol keys, got {property_key_codes:?}",
+    );
+    assert!(
+        !property_key_codes.contains(&TS7053),
+        "PropertyKey index must not degrade to implicit any, got {property_key_codes:?}",
     );
 }
 
