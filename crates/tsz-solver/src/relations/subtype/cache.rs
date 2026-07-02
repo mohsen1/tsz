@@ -1307,7 +1307,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// at a frame entry. `weak_sensitivity` is passed in because the frame
     /// entry already read it under the consolidated
     /// `crate::limits::enter_subtype_frame` TLS resolution.
-    pub(crate) fn relation_taint_snapshot(&self, weak_sensitivity: u64) -> RelationTaintSnapshot {
+    pub(crate) const fn relation_taint_snapshot(
+        &self,
+        weak_sensitivity: u64,
+    ) -> RelationTaintSnapshot {
         RelationTaintSnapshot {
             unresolved_lazy_events: self.unresolved_lazy_relation_event_count(),
             incomplete_evaluation_events: self.incomplete_evaluation_relation_event_count(),
