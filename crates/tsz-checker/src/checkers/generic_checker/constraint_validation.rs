@@ -1922,6 +1922,35 @@ impl CheckerState<'_> {
                     is_satisfied = false;
                 }
                 if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    // A TS2344 satisfaction decision requires a fully-resolved
+                    // constraint. When the instantiated constraint is still an
+                    // unresolved `Lazy(DefId)` (e.g. a lib alias like `PropertyKey`
+                    // / `keyof any` whose body could not be resolved here because
+                    // the cross-file lazy-resolution budget was exhausted while a
+                    // sibling deeply-recursive type argument was evaluated), the
+                    // checker cannot know what the constraint is. Make one more
+                    // genuine resolution attempt; if it stays opaque, defer rather
+                    // than fail closed against the reference — tsc always has the
+                    // resolved constraint here, so an unresolved `Lazy` is a tsz
+                    // resolution limitation, not a real violation (#14337).
+                    if crate::query_boundaries::common::is_lazy_type(
+                        self.ctx.types,
+                        instantiated_constraint,
+                    ) {
+                        self.ensure_relation_input_ready(instantiated_constraint);
+                        let reresolved = self.resolve_lazy_type(instantiated_constraint);
+                        if crate::query_boundaries::common::is_lazy_type(self.ctx.types, reresolved)
+                        {
+                            continue;
+                        }
+                        let reresolved = self.evaluate_type_for_assignability(reresolved);
+                        if self
+                            .type_arg_constraint_no_weak_relation_outcome(type_arg, reresolved)
+                            .related
+                        {
+                            continue;
+                        }
+                    }
                     if self.type_argument_is_narrowed_by_conditional_true_branch(
                         arg_idx,
                         instantiated_constraint,
