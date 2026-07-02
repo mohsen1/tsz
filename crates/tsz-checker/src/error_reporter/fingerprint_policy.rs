@@ -180,6 +180,113 @@ impl DiagnosticRenderRequest {
     }
 }
 
+/// Normalize a diagnostic's flat related-information list one elaboration
+/// *block* at a time.
+///
+/// A block is a single root-anchored elaboration chain: it opens on a `depth ==
+/// 0` line and runs through every deeper (`depth > 0`) line up to the next
+/// `depth == 0` line. `tsc` keeps each chain contiguous, in construction order,
+/// and never dedupes across chains — chains live inside `messageText`, not in
+/// `relatedInformation`. A flat per-line pass cannot represent that: at one
+/// `(file, start)` anchor a `(file, start, depth, message)` sort interleaves
+/// sibling chains by depth (all depth-0 headers, then all depth-1 leaves, …),
+/// and a global dedup merges an identical leaf line that legitimately sits under
+/// two *different* headers. Both failures vanish once normalization is scoped to
+/// a block:
+///
+/// * **Blocks stay whole and ordered by their head anchor.** The block ordering
+///   sort keys on the head line's `(file, start)` and is *stable*, so
+///   different-anchor chains keep their former positional order while sibling
+///   chains sharing one anchor — which the global sort used to interleave — now
+///   render in the order they were built. That build order is the order `tsc`
+///   emits them (e.g. overload candidates in declaration order), generalizing
+///   the `preserve_order` special case into the default.
+/// * **Dedup is per block.** A block-local `seen` set drops exact duplicate
+///   lines within a chain (as before) but never merges a shared leaf across
+///   chains, so both leaves survive under their respective headers.
+///
+/// Within a block the former depth-major sort is retained, so a header stays
+/// above its leaves and single-chain output is byte-identical to the previous
+/// per-line normalization.
+pub(crate) fn normalize_related_information_blocks(
+    items: Vec<DiagnosticRelatedInformation>,
+    policy: RelatedInformationPolicy,
+) -> Vec<DiagnosticRelatedInformation> {
+    // Partition into elaboration blocks. A depth-0 line is a chain head, so it
+    // opens a new block — but only once the block currently open already holds a
+    // head. That guard keeps the partition insensitive to intra-chain ordering:
+    // any leading deeper (`depth > 0`) lines that arrive before the first head
+    // attach to that head's block rather than orphaning into their own, so a
+    // chain whose lines are not appended head-first still lands in one block
+    // (the deeper-major sort below then seats the head above them). Genuine
+    // sibling chains — a second head after a block already has one — still split.
+    let mut blocks: Vec<Vec<DiagnosticRelatedInformation>> = Vec::new();
+    let mut open_block_has_head = false;
+    for item in items {
+        let is_head = item.depth == 0;
+        if blocks.is_empty() || (is_head && open_block_has_head) {
+            blocks.push(Vec::new());
+            open_block_has_head = false;
+        }
+        open_block_has_head |= is_head;
+        blocks
+            .last_mut()
+            .expect("a block was just ensured to exist")
+            .push(item);
+    }
+
+    for block in &mut blocks {
+        if policy.dedupe {
+            let mut seen = FxHashSet::default();
+            block.retain(|item| {
+                seen.insert((
+                    item.category as u8,
+                    item.code,
+                    item.file.clone(),
+                    item.start,
+                    item.length,
+                    item.message_text.clone(),
+                ))
+            });
+        }
+
+        // Keep the header above its leaves within the chain. `depth` precedes
+        // the textual tiebreaker so a depth-0 header (e.g. "Types of property
+        // 'p' are incompatible.") always precedes its depth-1+ leaves (e.g.
+        // "Type 'X' is not assignable to type 'Y'."). Without the depth key the
+        // alphabetic compare reverses chains because "Type " (trailing space)
+        // sorts before "Types". Within the same depth the message-text
+        // tiebreaker still gives deterministic order when distinct code paths
+        // append items in different sequences.
+        block.sort_by(|a, b| {
+            a.file
+                .cmp(&b.file)
+                .then(a.start.cmp(&b.start))
+                .then(a.depth.cmp(&b.depth))
+                .then(a.message_text.cmp(&b.message_text))
+        });
+    }
+
+    // Order the chains by their head anchor. The sort is stable, so chains that
+    // share a `(file, start)` head keep construction order — sibling
+    // elaboration chains at one anchor render in the order they were built
+    // (which is the order `tsc` emits them), while different-anchor chains keep
+    // their former positional ordering.
+    blocks.sort_by(|a, b| {
+        let (a_head, b_head) = (&a[0], &b[0]);
+        a_head
+            .file
+            .cmp(&b_head.file)
+            .then(a_head.start.cmp(&b_head.start))
+    });
+
+    let mut normalized: Vec<DiagnosticRelatedInformation> = blocks.into_iter().flatten().collect();
+    if let Some(limit) = policy.limit {
+        normalized.truncate(limit);
+    }
+    normalized
+}
+
 impl<'a> CheckerState<'a> {
     fn widen_display_property_literals_for_related_info(&mut self, type_id: TypeId) -> TypeId {
         if self.ctx.types.get_display_properties(type_id).is_none() {
@@ -945,51 +1052,7 @@ impl<'a> CheckerState<'a> {
         items: Vec<DiagnosticRelatedInformation>,
         policy: RelatedInformationPolicy,
     ) -> Vec<DiagnosticRelatedInformation> {
-        let mut normalized = Vec::new();
-        let mut seen = FxHashSet::default();
-
-        for item in items {
-            if policy.dedupe {
-                let key = (
-                    item.category as u8,
-                    item.code,
-                    item.file.clone(),
-                    item.start,
-                    item.length,
-                    item.message_text.clone(),
-                );
-                if !seen.insert(key) {
-                    continue;
-                }
-            }
-            normalized.push(item);
-            if let Some(limit) = policy.limit
-                && normalized.len() >= limit
-            {
-                break;
-            }
-        }
-
-        // Sort related information for consistent, deterministic fingerprint
-        // ordering. `depth` precedes the textual tiebreaker so a chain stays in
-        // outer-to-inner order: at the same anchor (file, start) a depth-0
-        // header (e.g. "Types of property 'p' are incompatible.") always
-        // precedes its depth-1+ leaves (e.g. "Type 'X' is not assignable to
-        // type 'Y'."). Without the depth key, the alphabetic compare reverses
-        // chains because "Type " (with a trailing space) sorts before "Types"
-        // — swapping the displayed type/interface output order between the
-        // main message and its note. Within the same depth the message-text
-        // tiebreaker still gives deterministic order when distinct code paths
-        // append items in different sequences.
-        normalized.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then(a.start.cmp(&b.start))
-                .then(a.depth.cmp(&b.depth))
-                .then(a.message_text.cmp(&b.message_text))
-        });
-
-        normalized
+        normalize_related_information_blocks(items, policy)
     }
 
     /// Returns true when a contextual object-literal call mismatch is only caused by
