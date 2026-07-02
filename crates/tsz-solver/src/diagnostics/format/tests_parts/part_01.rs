@@ -438,9 +438,12 @@ fn format_string_intrinsic_uncapitalize() {
 
 #[test]
 fn format_error_type() {
+    // tsc renders its `errorType` sentinel as `any` in every diagnostic; the
+    // internal "error" spelling is never surfaced to users. See
+    // `error_type_display_tests` for the structural-position coverage.
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(TypeId::ERROR), "error");
+    assert_eq!(fmt.format(TypeId::ERROR), "any");
 }
 
 // =================================================================

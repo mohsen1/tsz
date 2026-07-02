@@ -16,6 +16,8 @@ mod property_names;
 // release-mode test build doesn't try to run (or compile) tests that have
 // nothing to capture.
 #[cfg(test)]
+mod error_type_display_tests;
+#[cfg(test)]
 mod keyof_alias_display_tests;
 #[cfg(all(test, debug_assertions))]
 pub mod test_tracing;
@@ -1455,7 +1457,13 @@ impl<'a> TypeFormatter<'a> {
         match type_id {
             TypeId::NEVER => return Cow::Borrowed("never"),
             TypeId::UNKNOWN => return Cow::Borrowed("unknown"),
-            TypeId::ANY => return Cow::Borrowed("any"),
+            // The error sentinel is tsc's `errorType`: an `Any`-flagged
+            // intrinsic whose internal name is "error" but which the printer
+            // renders as `any` in every diagnostic, exactly like `ANY` itself.
+            // Surfacing the raw "error" token (e.g. `(e: {...}) => error`,
+            // `error[]`, `{ r: error; }`) leaks a compiler-internal spelling
+            // users never see from tsc.
+            TypeId::ANY | TypeId::ERROR => return Cow::Borrowed("any"),
             TypeId::VOID => return Cow::Borrowed("void"),
             TypeId::UNDEFINED => return Cow::Borrowed("undefined"),
             TypeId::NULL => return Cow::Borrowed("null"),
@@ -1466,7 +1474,6 @@ impl<'a> TypeFormatter<'a> {
             TypeId::SYMBOL => return Cow::Borrowed("symbol"),
             TypeId::OBJECT => return Cow::Borrowed("object"),
             TypeId::FUNCTION => return Cow::Borrowed("Function"),
-            TypeId::ERROR => return Cow::Borrowed("error"),
             _ => {}
         }
 

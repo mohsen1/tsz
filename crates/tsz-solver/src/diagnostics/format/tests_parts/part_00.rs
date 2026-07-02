@@ -322,7 +322,8 @@ fn format_all_primitive_type_ids() {
     assert_eq!(fmt.format(TypeId::SYMBOL), "symbol");
     assert_eq!(fmt.format(TypeId::OBJECT), "object");
     assert_eq!(fmt.format(TypeId::FUNCTION), "Function");
-    assert_eq!(fmt.format(TypeId::ERROR), "error");
+    // The error sentinel renders as tsc's `any`, not the internal "error".
+    assert_eq!(fmt.format(TypeId::ERROR), "any");
 }
 
 // =================================================================

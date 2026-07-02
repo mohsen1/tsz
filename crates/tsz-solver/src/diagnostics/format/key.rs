@@ -239,10 +239,11 @@ impl<'a> TypeFormatter<'a> {
                 // If the application's base resolved to an error type,
                 // rendering `error<args>` produces unreadable cascades in
                 // diagnostics (e.g. `error<error<error<...>>>`). Collapse to
-                // the bare "error" token — the caller's parent diagnostic
-                // already signals the underlying failure.
+                // the error sentinel's display form — tsc renders `errorType`
+                // as `any` — while the caller's parent diagnostic already
+                // signals the underlying failure.
                 if app.base == TypeId::ERROR || matches!(base_key, Some(TypeData::Error)) {
-                    return Cow::Borrowed("error");
+                    return Cow::Borrowed("any");
                 }
 
                 // A generic `Application` may lose its alias symbol and render
@@ -873,7 +874,11 @@ impl<'a> TypeFormatter<'a> {
                 let name = Self::strip_module_extension(&name);
                 format!("typeof import(\"{name}\")").into()
             }
-            TypeData::Error => Cow::Borrowed("error"),
+            // tsc renders its `errorType` sentinel (and the `NONE` placeholder,
+            // which shares `TypeData::Error`) as `any`, never the raw internal
+            // "error" token. Kept in lock-step with the `TypeId::ERROR` fast
+            // path in `format`.
+            TypeData::Error => Cow::Borrowed("any"),
             // A substitution type displays as its underlying variable (tsc
             // prints `T`, not the narrowed `T & C`).
             TypeData::Substitution { base_type, .. } => self.format(*base_type),
