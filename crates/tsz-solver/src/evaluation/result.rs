@@ -271,6 +271,13 @@ impl EvaluationMemoResult {
         self.result
     }
 
+    /// Whether the underlying evaluation walk was cut short by a guard
+    /// ([`Termination::Incomplete`]), independent of the request-state taints
+    /// that only affect memo publication.
+    pub(crate) const fn is_incomplete_termination(self) -> bool {
+        self.result.is_incomplete()
+    }
+
     pub(crate) const fn type_id(self) -> TypeId {
         self.result.type_id()
     }

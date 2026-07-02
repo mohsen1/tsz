@@ -61,6 +61,26 @@ pub(crate) struct MaybeRelationEntry {
     fuel_band: Option<u32>,
 }
 
+/// Frame-entry snapshot of the counters that taint a definitive relation
+/// verdict out of the caches when they move mid-frame:
+///
+/// - the checker-local unresolved-`Lazy` counter (a body was not yet
+///   registered, so the verdict is a registration-window artifact);
+/// - the checker-local guard-truncated evaluation counter (#14346 verdict
+///   consumption: a meta-type evaluation bailed on a depth/fuel/stack budget,
+///   so the verdict is a budget artifact);
+/// - the thread-local weak-type sensitivity counter (the verdict depended on
+///   TS2559 enforcement state the flag-agnostic key does not encode).
+///
+/// Suppression only skips a cache write — the pair is recomputed later —
+/// never changes the returned verdict.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct RelationTaintSnapshot {
+    unresolved_lazy_events: u64,
+    incomplete_evaluation_events: u64,
+    weak_sensitivity: u64,
+}
+
 /// Frame-entry snapshot captured by `check_subtype` and consumed by
 /// `finish_relation_frame` at every frame exit: the maybe-stack watermark,
 /// the promotability of this frame's verdicts, whether the budget chain was
@@ -71,8 +91,7 @@ struct RelationFrameSnapshot {
     maybe_start: usize,
     frame_promotable: bool,
     pristine_budget_chain: bool,
-    unresolved_lazy_events_at_entry: u64,
-    weak_sensitivity_at_entry: u64,
+    taint_at_entry: RelationTaintSnapshot,
 }
 
 /// Whether a visiting `DefId` pair represents the same recursive relation by
@@ -501,16 +520,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   must not be cached. Unrelated fresh/nested relation checkers cannot
         //   poison this snapshot, while subcheckers whose verdict contributes to
         //   this result explicitly propagate their event.
+        // - The guard-truncated-evaluation snapshot is likewise checker-local
+        //   (#14346 verdict consumption): if it changes, a meta-type evaluation
+        //   feeding this verdict was cut short by a depth/fuel/stack budget, so
+        //   the verdict is an artifact of the ambient budget state rather than
+        //   a pure function of the pair.
         // - The weak-type-sensitivity snapshot: if it changes, the result
         //   depended on weak-type enforcement state (TS2559), which the
         //   flag-agnostic `RelationCacheKey` does not encode. Caching it would
         //   let a result computed under one enforcement state be served to a
         //   sibling check under another.
+        //
+        // The three counters travel as one `RelationTaintSnapshot`.
         let frame_entry = crate::limits::enter_subtype_frame();
         let global_depth = frame_entry.global_depth;
         let fuel = frame_entry.fuel;
-        let unresolved_lazy_events_at_entry = self.unresolved_lazy_relation_event_count();
-        let weak_sensitivity_at_entry = frame_entry.weak_sensitivity;
+        let taint_at_entry = self.relation_taint_snapshot(frame_entry.weak_sensitivity);
 
         // ── Limit-hit maybe-stack (tsc `maybeKeys` parity, issue #13241) ────
         // Frame-entry snapshot of the maybe stack. Every completion path of
@@ -548,8 +573,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             maybe_start,
             frame_promotable,
             pristine_budget_chain,
-            unresolved_lazy_events_at_entry,
-            weak_sensitivity_at_entry,
+            taint_at_entry,
         };
 
         // Helper macro: run the maybe-stack completion protocol for this
@@ -1085,8 +1109,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     target,
                     result,
                     can_use_shared_relation_cache,
-                    unresolved_lazy_events_at_entry,
-                    weak_sensitivity_at_entry,
+                    taint_at_entry,
                 );
                 finish_frame!(result);
                 leave_global!();
@@ -1149,8 +1172,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target,
                 result,
                 can_use_shared_relation_cache,
-                unresolved_lazy_events_at_entry,
-                weak_sensitivity_at_entry,
+                taint_at_entry,
             );
             finish_frame!(result);
             leave_global!();
@@ -1175,8 +1197,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 target,
                 result,
                 can_use_shared_relation_cache,
-                unresolved_lazy_events_at_entry,
-                weak_sensitivity_at_entry,
+                taint_at_entry,
             );
             finish_frame!(result);
             leave_global!();
@@ -1270,8 +1291,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             target,
             result,
             can_use_shared_relation_cache,
-            unresolved_lazy_events_at_entry,
-            weak_sensitivity_at_entry,
+            taint_at_entry,
         );
 
         finish_frame!(result);
@@ -1281,6 +1301,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::limits::leave_subtype_frame(global_depth == 0);
 
         result
+    }
+
+    /// Snapshot the taint counters that gate definitive relation cache writes
+    /// at a frame entry. `weak_sensitivity` is passed in because the frame
+    /// entry already read it under the consolidated
+    /// `crate::limits::enter_subtype_frame` TLS resolution.
+    pub(crate) fn relation_taint_snapshot(&self, weak_sensitivity: u64) -> RelationTaintSnapshot {
+        RelationTaintSnapshot {
+            unresolved_lazy_events: self.unresolved_lazy_relation_event_count(),
+            incomplete_evaluation_events: self.incomplete_evaluation_relation_event_count(),
+            weak_sensitivity,
+        }
+    }
+
+    /// Whether any taint counter moved since `snapshot` was taken — i.e. the
+    /// in-flight relation verdict depended on an unresolved `Lazy` body, a
+    /// guard-truncated meta-type evaluation, or weak-type enforcement state,
+    /// and must not be published as a pure function of its cache key.
+    pub(crate) fn relation_taint_changed_since(&self, snapshot: RelationTaintSnapshot) -> bool {
+        self.unresolved_lazy_relation_event_count() != snapshot.unresolved_lazy_events
+            || self.incomplete_evaluation_relation_event_count()
+                != snapshot.incomplete_evaluation_events
+            || crate::limits::weak_type_sensitivity_count() != snapshot.weak_sensitivity
     }
 
     /// Record a definitive subtype verdict for later reuse.
@@ -1303,10 +1346,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// promotion path.
     ///
     /// This mirrors the discipline of the former `cache_definitive!` macro. The
-    /// unresolved-`Lazy` snapshot is checker-local, so only misses observed by
-    /// this relation checker suppress this frame's write; fresh/nested checker
-    /// probes only propagate when their verdict contributes to the outer
-    /// relation. The weak-type
+    /// unresolved-`Lazy` and guard-truncated-evaluation snapshots are
+    /// checker-local, so only events observed by this relation checker suppress
+    /// this frame's write; fresh/nested checker probes only propagate when
+    /// their verdict contributes to the outer relation. The weak-type
     /// sentinel remains thread-local because weak enforcement state is still
     /// operation-local and absent from the cache key. Suppression only skips a write
     /// (correctness-preserving: the result is recomputed later), never
@@ -1321,8 +1364,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         result: SubtypeResult,
         can_use_shared_relation_cache: bool,
-        unresolved_lazy_events_at_entry: u64,
-        weak_sensitivity_at_entry: u64,
+        taint_at_entry: RelationTaintSnapshot,
     ) {
         let related = match result {
             SubtypeResult::True => true,
@@ -1331,8 +1373,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         if self.bypass_evaluation
             || !self.type_param_equivalences.is_empty()
-            || self.unresolved_lazy_relation_event_count() != unresolved_lazy_events_at_entry
-            || crate::limits::weak_type_sensitivity_count() != weak_sensitivity_at_entry
+            || self.relation_taint_changed_since(taint_at_entry)
         {
             return;
         }
@@ -1373,10 +1414,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   success — cycle entries to definitive `true` (the coinductive
     ///   assumption set is self-consistent), fuel entries to band-conditional
     ///   `LimitTrue` — or discarded on failure. Promotion is additionally
-    ///   gated on the checker-local unresolved-`Lazy` counter and thread-local
-    ///   weak-type-sensitivity counter having been stable across the whole
-    ///   outermost window, the same discipline `record_definitive_verdict`
-    ///   applies to definitive writes.
+    ///   gated on the frame's [`RelationTaintSnapshot`] (checker-local
+    ///   unresolved-`Lazy` and guard-truncated-evaluation counters plus the
+    ///   thread-local weak-type-sensitivity counter) having been stable across
+    ///   the whole outermost window, the same discipline
+    ///   `record_definitive_verdict` applies to definitive writes.
     fn finish_relation_frame(
         &mut self,
         result: SubtypeResult,
@@ -1411,9 +1453,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
             let entries = std::mem::take(&mut self.maybe_keys);
             if result.is_true()
-                && self.unresolved_lazy_relation_event_count()
-                    == frame.unresolved_lazy_events_at_entry
-                && crate::limits::weak_type_sensitivity_count() == frame.weak_sensitivity_at_entry
+                && !self.relation_taint_changed_since(frame.taint_at_entry)
                 && let Some(db) = self.query_db
             {
                 for entry in entries {
@@ -1677,18 +1717,11 @@ mod tests {
         let source = TypeId::STRING;
         let target = TypeId::NUMBER;
         let key = checker.make_cache_key(source, target);
-        let lazy_entry = checker.unresolved_lazy_relation_event_count();
-        let weak_entry = crate::limits::weak_type_sensitivity_count();
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
 
         sibling.note_unresolved_lazy_relation_event();
-        checker.record_definitive_verdict(
-            source,
-            target,
-            SubtypeResult::False,
-            true,
-            lazy_entry,
-            weak_entry,
-        );
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
 
         assert_eq!(
             db.lookup_subtype_cache(key),
@@ -1708,18 +1741,11 @@ mod tests {
         let source = TypeId::STRING;
         let target = TypeId::NUMBER;
         let key = checker.make_cache_key(source, target);
-        let lazy_entry = checker.unresolved_lazy_relation_event_count();
-        let weak_entry = crate::limits::weak_type_sensitivity_count();
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
 
         checker.note_unresolved_lazy_relation_event();
-        checker.record_definitive_verdict(
-            source,
-            target,
-            SubtypeResult::False,
-            true,
-            lazy_entry,
-            weak_entry,
-        );
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
 
         assert_eq!(
             db.lookup_subtype_cache(key),
@@ -1768,16 +1794,9 @@ mod tests {
             "active alpha-pairing must recompute instead of replaying a flagless cached false"
         );
 
-        let lazy_entry = checker.unresolved_lazy_relation_event_count();
-        let weak_entry = crate::limits::weak_type_sensitivity_count();
-        checker.record_definitive_verdict(
-            source,
-            target,
-            SubtypeResult::True,
-            true,
-            lazy_entry,
-            weak_entry,
-        );
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
+        checker.record_definitive_verdict(source, target, SubtypeResult::True, true, taint_entry);
         assert_eq!(
             db.lookup_subtype_cache(cache_key),
             Some(false),
@@ -1797,20 +1816,13 @@ mod tests {
         let source = TypeId::STRING;
         let target = TypeId::NUMBER;
         let key = checker.make_cache_key(source, target);
-        let lazy_entry = checker.unresolved_lazy_relation_event_count();
-        let weak_entry = crate::limits::weak_type_sensitivity_count();
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
         let subchecker_entry = subchecker.unresolved_lazy_relation_event_count();
 
         subchecker.note_unresolved_lazy_relation_event();
         checker.absorb_unresolved_lazy_relation_events_from(&subchecker, subchecker_entry);
-        checker.record_definitive_verdict(
-            source,
-            target,
-            SubtypeResult::False,
-            true,
-            lazy_entry,
-            weak_entry,
-        );
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
 
         assert_eq!(
             db.lookup_subtype_cache(key),
@@ -1818,5 +1830,144 @@ mod tests {
             "a contributing subchecker Lazy miss must keep the outer frame non-cacheable"
         );
         crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_skips_same_checker_incomplete_evaluation_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
+
+        checker.note_incomplete_evaluation_relation_event();
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            None,
+            "a guard-truncated evaluation must keep the frame's verdict non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_ignores_sibling_checker_incomplete_evaluation_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+        let sibling = SubtypeChecker::new(&interner);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
+
+        sibling.note_incomplete_evaluation_relation_event();
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            Some(false),
+            "sibling checker truncation events must not poison this relation frame"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_skips_contributing_subchecker_incomplete_evaluation_event() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let db = QueryCache::new(&interner);
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
+        let subchecker = SubtypeChecker::new(&interner);
+
+        let source = TypeId::STRING;
+        let target = TypeId::NUMBER;
+        let key = checker.make_cache_key(source, target);
+        let taint_entry =
+            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
+        let subchecker_entry = subchecker.incomplete_evaluation_relation_event_count();
+
+        subchecker.note_incomplete_evaluation_relation_event();
+        checker.absorb_incomplete_evaluation_relation_events_from(&subchecker, subchecker_entry);
+        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
+
+        assert_eq!(
+            db.lookup_subtype_cache(key),
+            None,
+            "a contributing subchecker truncation must keep the outer frame non-cacheable"
+        );
+        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    /// End-to-end #14346 verdict-consumption witness: a relation whose
+    /// meta-type evaluation seat truncates (the divergent alias
+    /// `Rec<T> = Rec<T[]>` grows its argument every step, so the evaluator
+    /// bails with `Termination::Incomplete { DepthExceeded }`) must not
+    /// publish its verdict to the shared relation cache. Before the typed
+    /// verdict was consumed, the budget-truncated comparison was memoized as
+    /// a definitive answer for the pair — an artifact of the ambient depth
+    /// state, not a pure function of the `RelationCacheKey`.
+    ///
+    /// Structural axis: keyed on recursion state, not a spelling — the def id
+    /// and the type-parameter name both vary.
+    #[test]
+    fn truncated_meta_type_evaluation_taints_relation_verdict_out_of_caches() {
+        use crate::def::DefKind;
+        use crate::relations::subtype::TypeEnvironment;
+
+        for (def_raw, param_name) in [(821u32, "T"), (947u32, "Item")] {
+            crate::limits::reset_subtype_thread_local_state();
+            let interner = TypeInterner::new();
+            let def_id = DefId(def_raw);
+            let t_param = TypeParamInfo::simple(interner.intern_string(param_name));
+            let t_type = interner.fresh_type_param(t_param);
+            // Body: `Rec<T[]>` — the alias re-applies itself to an
+            // ever-growing argument, so evaluation diverges and a guard bails.
+            let grown_arg = interner.array(t_type);
+            let body = interner.application(interner.lazy(def_id), vec![grown_arg]);
+
+            let mut env = TypeEnvironment::new();
+            env.insert_def_with_params(def_id, body, vec![t_param]);
+            env.insert_def_kind(def_id, DefKind::TypeAlias);
+            let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+
+            let db = QueryCache::new(&interner);
+            let mut checker = SubtypeChecker::with_resolver(&interner, &env).with_query_db(&db);
+            let key = checker.make_cache_key(app, TypeId::NUMBER);
+            let events_at_entry = checker.incomplete_evaluation_relation_event_count();
+
+            // The verdict itself is unchanged by this fix; only its cache
+            // publication is suppressed.
+            let _ = checker.check_subtype(app, TypeId::NUMBER);
+
+            assert_ne!(
+                checker.incomplete_evaluation_relation_event_count(),
+                events_at_entry,
+                "the truncated meta-type evaluation must be consumed as a taint event"
+            );
+            assert_eq!(
+                db.lookup_subtype_cache(key),
+                None,
+                "a verdict computed from a guard-truncated evaluation must not be \
+                 memoized in the shared relation cache"
+            );
+
+            checker.reset();
+            assert_eq!(
+                checker.incomplete_evaluation_relation_event_count(),
+                0,
+                "reset must clear the guard-truncated evaluation counter"
+            );
+            crate::limits::reset_subtype_thread_local_state();
+        }
     }
 }

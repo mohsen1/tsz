@@ -643,6 +643,20 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// checkers keep their own scoped counters without poisoning this relation
     /// verdict.
     pub(crate) unresolved_lazy_relation_events: Cell<u64>,
+    /// Monotonic count of guard-truncated meta-type evaluations
+    /// ([`crate::evaluation::result::Termination::Incomplete`]) consumed while
+    /// computing relation answers for this checker.
+    ///
+    /// First verdict-aware consumer of the #14346 typed termination channel:
+    /// a relation verdict computed from a budget-truncated evaluation is a
+    /// function of the ambient depth/fuel state, not a pure function of the
+    /// `RelationCacheKey`, so definitive cache writes and maybe-key promotion
+    /// treat a change in this counter exactly like an unresolved-`Lazy` event:
+    /// skip the write (the pair is recomputed later), never publish the
+    /// approximation. Scoped to one [`SubtypeChecker`] instance; subcheckers
+    /// whose verdicts contribute propagate through
+    /// [`SubtypeChecker::absorb_incomplete_evaluation_relation_events_from`].
+    pub(crate) incomplete_evaluation_relation_events: Cell<u64>,
     /// Instance-local fallback memo for definitive relation verdicts that the
     /// cross-checker shared cache must skip (issue #13828).
     ///
@@ -757,6 +771,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: Cell::new(0),
+            incomplete_evaluation_relation_events: Cell::new(0),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -814,6 +829,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: Cell::new(0),
+            incomplete_evaluation_relation_events: Cell::new(0),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -884,6 +900,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) {
         if subchecker.unresolved_lazy_relation_event_count() != subchecker_events_at_entry {
             self.note_unresolved_lazy_relation_event();
+        }
+    }
+
+    /// Record that a meta-type evaluation consumed by this relation checker was
+    /// cut short by an evaluation guard
+    /// ([`crate::evaluation::result::Termination::Incomplete`]).
+    ///
+    /// The checker-local counter gates definitive relation cache writes and
+    /// maybe-key promotion the same way the unresolved-`Lazy` counter does: a
+    /// verdict that leaned on a budget-truncated evaluation is recomputed later
+    /// instead of being published as a pure function of its key.
+    #[inline]
+    pub(crate) fn note_incomplete_evaluation_relation_event(&self) {
+        self.incomplete_evaluation_relation_events.set(
+            self.incomplete_evaluation_relation_events
+                .get()
+                .wrapping_add(1),
+        );
+    }
+
+    /// Current checker-local guard-truncated evaluation event count.
+    #[inline]
+    pub(crate) const fn incomplete_evaluation_relation_event_count(&self) -> u64 {
+        self.incomplete_evaluation_relation_events.get()
+    }
+
+    /// Propagate guard-truncated evaluation events from a subchecker whose
+    /// verdict was consumed by this checker.
+    #[inline]
+    pub(crate) fn absorb_incomplete_evaluation_relation_events_from<S: TypeResolver>(
+        &self,
+        subchecker: &SubtypeChecker<'_, S>,
+        subchecker_events_at_entry: u64,
+    ) {
+        if subchecker.incomplete_evaluation_relation_event_count() != subchecker_events_at_entry {
+            self.note_incomplete_evaluation_relation_event();
         }
     }
 
@@ -998,6 +1050,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.eval_cache.clear();
         self.maybe_keys.clear();
         self.unresolved_lazy_relation_events.set(0);
+        self.incomplete_evaluation_relation_events.set(0);
         self.local_relation_cache.clear();
         self.explain_eval_fuel = None;
     }

@@ -53,6 +53,14 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         let Some(memo_result) = memo_result else {
             return RelationEvaluationResult::unstable(type_id);
         };
+        // #14346 verdict consumption: a guard-truncated evaluation makes any
+        // relation verdict computed from it a budget artifact. Note the event
+        // on the checker-local taint counter so `record_definitive_verdict`
+        // and maybe-key promotion keep the enclosing frames out of the
+        // relation caches.
+        if memo_result.is_incomplete_termination() {
+            self.note_incomplete_evaluation_relation_event();
+        }
         let entry = RelationEvaluationResult::from_depth_agnostic_memo(memo_result);
         if entry.is_stable_for_depth_agnostic_cache() {
             self.eval_cache.insert(cache_key, entry);
