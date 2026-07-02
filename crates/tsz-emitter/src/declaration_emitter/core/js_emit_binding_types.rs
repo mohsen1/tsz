@@ -70,6 +70,25 @@ impl<'a> DeclarationEmitter<'a> {
         array_element_type.map(|element_type| interner.array(element_type))
     }
 
+    /// Resolve the declaration type for an object-rest binding element
+    /// (`{ a, ...rest } = obj`).
+    ///
+    /// `tsc` types the rest as `Omit<Source, K>` where `K` is the union of the
+    /// non-rest sibling keys bound in the same pattern (its `getRestType`), so
+    /// the emitted `.d.ts` must drop those keys — not re-surface the whole source
+    /// object. The checker already computed that omission via
+    /// `omit_properties_from_type` and cached it on the rest symbol, so defer to
+    /// that computed type rather than re-deriving the omission semantics here.
+    /// Falls back to the caller's `source_type` only when the checker left no
+    /// cached type (e.g. an untyped/`any` source).
+    pub(in crate::declaration_emitter) fn object_rest_binding_element_type(
+        &self,
+        element: &tsz_parser::parser::node::BindingElementData,
+    ) -> Option<tsz_solver::types::TypeId> {
+        self.get_symbol_cached_type(element.name)
+            .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+    }
+
     pub(in crate::declaration_emitter) fn object_binding_element_type(
         &self,
         source_type: Option<tsz_solver::types::TypeId>,
@@ -205,7 +224,8 @@ impl<'a> DeclarationEmitter<'a> {
                             continue;
                         };
                         let element_type = if element.dot_dot_dot_token {
-                            source_type
+                            self.object_rest_binding_element_type(element)
+                                .or(source_type)
                         } else {
                             self.object_binding_element_type(source_type, element)
                         };
