@@ -787,6 +787,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // If an inferred type contains transient placeholders from source functions (e.g. __infer_src_U),
         // we must resolve them using the full inference context substitution.
         // Example: B -> Array(__infer_src_U) where __infer_src_U -> T. We want B -> Array(T).
+        // The current call's own placeholders (`__infer_N` for this call's type
+        // parameters) are legitimate and preserved; only placeholders leaked from
+        // a *nested* generic call must be defaulted. Shared by the `final_subst`
+        // cleanup below and the argument-display normalization further down.
+        let own_placeholder_atoms: FxHashSet<tsz_common::Atom> =
+            type_param_placeholder_atoms.iter().copied().collect();
         {
             let mut full_subst = infer_ctx.get_current_substitution();
             self.remove_unresolved_source_placeholders_from_substitution(&mut full_subst);
@@ -810,9 +816,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 resolved_subst.insert(*name, current);
             }
-            // Update final_subst with fully resolved types
+            // Update final_subst with fully resolved types, defaulting any
+            // inference placeholder that leaked in from a nested generic call
+            // (uninferable curried-callback parameter) to its constraint or
+            // `unknown` so no internal `__infer_N` survives into the finalized
+            // result type (issue #15461).
             for (name, ty) in resolved_subst.map().iter() {
-                final_subst.insert(*name, *ty);
+                let cleaned =
+                    self.default_leaked_inference_placeholders(*ty, &own_placeholder_atoms);
+                final_subst.insert(*name, cleaned);
             }
         }
 
@@ -1312,6 +1324,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 } else {
                     self.normalize_inferred_placeholder_type(arg, &final_arg_subst)
                 };
+                // Symmetric with the source-placeholder (`__infer_src_*`) defaulting
+                // that `normalize_inferred_placeholder_type` already performs: a
+                // call-local placeholder leaked from a nested generic call must not
+                // ride into a displayed argument type either (issue #15461).
+                let normalized =
+                    self.default_leaked_inference_placeholders(normalized, &own_placeholder_atoms);
                 let Some(param_type) =
                     self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
                 else {

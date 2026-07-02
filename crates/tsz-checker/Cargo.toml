@@ -408,6 +408,9 @@ path = "tests/new_generic_construct_signature_type_arg_display_tests.rs"
 name = "new_generic_callback_contextual_infer_tests"
 path = "tests/new_generic_callback_contextual_infer_tests.rs"
 [[test]]
+name = "curried_callback_uninferable_type_param_tests"
+path = "tests/curried_callback_uninferable_type_param_tests.rs"
+[[test]]
 name = "nolib_user_array_union_member_access_tests"
 path = "tests/nolib_user_array_union_member_access_tests.rs"
 [[test]]
