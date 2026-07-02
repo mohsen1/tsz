@@ -205,7 +205,14 @@ impl<'a> DeclarationEmitter<'a> {
                             continue;
                         };
                         let element_type = if element.dot_dot_dot_token {
-                            source_type
+                            // An object-rest binding (`{ a, ...rest }`) is NOT the full
+                            // source object: `tsc` types it as `Omit<Source, "a" | ...>`,
+                            // dropping every sibling-bound key. Passing the raw
+                            // `source_type` here re-surfaced those keys in the emitted
+                            // `.d.ts`. Defer to the checker's already-computed rest type
+                            // (the canonical `omit_properties_from_type` result bound to
+                            // the rest symbol) instead of re-deriving the semantics here.
+                            None
                         } else {
                             self.object_binding_element_type(source_type, element)
                         };
