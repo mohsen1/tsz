@@ -69,6 +69,45 @@ write_emit_metric "{out}" 13401 13530 1 0 1619 1669 11862
         self.assertLess(validate_idx, write_idx)
         self.assertLess(write_idx, publish_idx)
 
+    def test_emit_js_and_dts_accepted_floors_cap_snapshot_baselines(self):
+        helper = self.function_body("cap_positive_baseline", "\nHOST_CPUS=")
+        validate = self.function_body("validate_emit_aggregate_counts", "\nrun_emit_shard() {")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / "scripts" / "emit").mkdir(parents=True)
+            (temp / "scripts" / "emit" / "emit-snapshot.json").write_text(
+                '{"summary":{"jsPass":10,"dtsPass":8}}\n',
+                encoding="utf-8",
+            )
+            runner = temp / "run.sh"
+            runner.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+TSZ_CI_JS_ACCEPTED_FLOOR=9
+TSZ_CI_DTS_ACCEPTED_FLOOR=7
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+{helper}
+{validate}
+validate_emit_aggregate_counts 9 10 0 0 7 8 0 1 1
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(runner)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Emit OK: JS 9/10, DTS 7/8", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
