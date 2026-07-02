@@ -563,13 +563,13 @@ impl<'a> CheckerState<'a> {
             return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
         }
 
-        // When the parameter is a union mixing a non-primitive member (e.g.
-        // `object`) with `null`/`undefined`, tsc strips the nullish members in
-        // the TS2345 target display (`object | null` → `object`). When every
-        // remaining member after stripping is a primitive (e.g.
-        // `boolean | null | undefined` → `boolean`), tsc preserves the full
-        // union — the structural rule is "strip only when the result contains
-        // at least one non-primitive member."
+        // When the parameter is a union of a single non-primitive member (e.g.
+        // `object`) plus `null`/`undefined`, tsc strips the nullish members in
+        // the TS2345 target display (`object | null` → `object`). A single
+        // primitive survivor (`boolean | null | undefined` → `boolean`) keeps
+        // its full union, and unions with two or more real members never reach
+        // this gate (the helper returns `None`) — so the surviving structural
+        // rule is "strip only when the lone remaining member is non-primitive."
         if let Some(stripped) =
             self.strip_nullish_for_non_primitive_union_target(param_type, arg_type)
         {
@@ -712,19 +712,14 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_type: TypeId,
     ) -> Option<TypeId> {
+        // `strip_nullish_for_assignability_display` only collapses a nullable
+        // union to a *single* surviving member (returning `None` once two or
+        // more non-nullish members remain), so `stripped` is never itself a
+        // union. Keep the parameter display stripped only when that single
+        // member is non-primitive (`object | null` -> `object`); a primitive
+        // survivor keeps the full union via the caller's preserving fallback.
         let stripped = self.strip_nullish_for_assignability_display(param_type, arg_type)?;
-        let stripped_members = query_common::union_members(self.ctx.types, stripped);
-        let has_non_primitive = match stripped_members {
-            Some(members) => members
-                .iter()
-                .any(|&m| !query_common::is_primitive_type(self.ctx.types, m)),
-            None => !query_common::is_primitive_type(self.ctx.types, stripped),
-        };
-        if has_non_primitive {
-            Some(stripped)
-        } else {
-            None
-        }
+        (!query_common::is_primitive_type(self.ctx.types, stripped)).then_some(stripped)
     }
 
     /// When the argument is a non-tuple spread (e.g. `...mixed` where

@@ -1301,18 +1301,28 @@ impl<'a> CheckerState<'a> {
         if other_base == TypeId::NULL || other_base == TypeId::UNDEFINED {
             return None;
         }
-        let filtered: Vec<TypeId> = members
+        // tsc only collapses a nullable union to its non-nullish part in an
+        // assignability message when a *single* real member remains — e.g.
+        // `string | undefined` renders as `string`, and the source widens
+        // accordingly. When two or more non-nullish members survive the
+        // strip, tsc keeps the full union — including the nullish members —
+        // on the line (`string | number | undefined`, `A | B | null`,
+        // `"a" | "b" | undefined` all stay intact), matching tsc's
+        // `getBestMatchingType` single-real-member drill; returning `None`
+        // then lets the caller display the original union.
+        //
+        // The early `has_null || has_undefined` guard above guarantees at
+        // least one nullish member, and a union always has >= 2 members, so a
+        // lone non-nullish survivor is exactly the single-member case — probed
+        // here without allocating the intermediate `Vec`.
+        let mut non_nullish = members
             .iter()
             .copied()
-            .filter(|&m| m != TypeId::NULL && m != TypeId::UNDEFINED)
-            .collect();
-        if filtered.is_empty() || filtered.len() == members.len() {
-            return None;
+            .filter(|&m| m != TypeId::NULL && m != TypeId::UNDEFINED);
+        match (non_nullish.next(), non_nullish.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
         }
-        if filtered.len() == 1 {
-            return Some(filtered[0]);
-        }
-        Some(self.ctx.types.factory().union(filtered))
     }
 
     pub(crate) fn should_strip_nullish_for_property_display(&self, target: TypeId) -> bool {
