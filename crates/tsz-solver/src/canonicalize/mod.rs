@@ -86,11 +86,20 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     /// `canonical_id` probe builds a fresh canonicalizer and re-walks the whole
     /// interior of the type `DAG`, so N probes over roots sharing a large
     /// subgraph of size S cost O(N·S) instead of O(N + S) — the super-linear
-    /// wall on large evaluated types (#13508). Entries are read and written
-    /// only when both scope stacks are empty and the subtree walk was clean
-    /// (no recursion-guard bail, no unresolved def, no tainted local reuse), so
-    /// a shared entry is exactly the value a fresh empty-stack canonicalizer
-    /// would compute for that `TypeId`.
+    /// wall on large evaluated types (#13508).
+    ///
+    /// The purity discipline is deliberately asymmetric:
+    /// - **Writes** are gated on *closedness* + cleanliness: the subtree
+    ///   resolved nothing through scopes that existed at its entry (see
+    ///   `param_hit_floor` / `def_hit_floor`) and saw no guard bail or
+    ///   unresolved def, so the stored value is ambient-independent — a
+    ///   closed subtree nested under a binder scope is still shareable, which
+    ///   is what the floor tracking buys over a bare empty-stack gate.
+    /// - **Reads** happen only when both scope stacks are empty, because the
+    ///   *query's* meaning is ambient-dependent: a free `TypeParameter` could
+    ///   bind to an ambient scope and an in-flight alias could fold to
+    ///   `Recursive(n)`, so only an empty-stack lookup is guaranteed to want
+    ///   exactly the stored (fresh-walk-equivalent) value.
     shared_cache: Option<&'a RefCell<FxHashMap<TypeId, TypeId>>>,
     /// Optional cross-instance memo of *artifact* results: empty-stack
     /// subtrees whose walk was dirty (recursion-guard truncation or a

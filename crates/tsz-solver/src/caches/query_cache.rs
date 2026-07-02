@@ -1967,16 +1967,18 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
         // Check the stable tier first, then the artifact tier.
-        let cached = self.canonical_cache.borrow().get(&type_id).copied();
-        if let Some(canonical) = cached {
-            return canonical;
-        }
-        let cached_artifact = self
-            .canonical_artifact_cache
+        if let Some(canonical) = self
+            .canonical_cache
             .borrow()
             .get(&type_id)
-            .copied();
-        if let Some(canonical) = cached_artifact {
+            .copied()
+            .or_else(|| {
+                self.canonical_artifact_cache
+                    .borrow()
+                    .get(&type_id)
+                    .copied()
+            })
+        {
             return canonical;
         }
 

@@ -193,8 +193,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends_type: TypeId,
     ) -> bool {
         use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-        let mut params = self.extract_type_params_from_type(check_type);
-        for param in self.extract_type_params_from_type(extends_type) {
+        let mut params = self.extract_type_params_from_type(check_type).to_vec();
+        for &param in self.extract_type_params_from_type(extends_type).iter() {
             if !params.iter().any(|existing| existing.name == param.name) {
                 params.push(param);
             }
@@ -1463,7 +1463,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let type_params = def_id_opt
             .and_then(|def_id| self.resolver().get_lazy_type_params(def_id))
             .filter(|params| params.len() == app.args.len())
-            .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
+            .unwrap_or_else(|| self.extract_type_params_from_type(resolved).to_vec());
         if type_params.len() != app.args.len() {
             return None;
         }

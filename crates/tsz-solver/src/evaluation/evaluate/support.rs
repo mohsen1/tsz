@@ -147,12 +147,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// drives that re-walk thousands of times because each unwrap step mints a
     /// fresh `TypeId`. The memo collapses the repeats to O(1) and is shared
     /// across the many fresh evaluators created during instantiation (#14330).
-    pub(crate) fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
-        // Bare intrinsics carry no type parameters; skip the memo round-trip.
-        if type_id.is_intrinsic() {
-            return Vec::new();
-        }
-        self.type_params_of(type_id).to_vec()
+    pub(crate) fn extract_type_params_from_type(
+        &self,
+        type_id: TypeId,
+    ) -> std::sync::Arc<[TypeParamInfo]> {
+        self.type_params_of(type_id)
     }
 
     /// Per-node reachable-parameter list, memoized on the shared interner.
