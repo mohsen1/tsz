@@ -215,3 +215,133 @@ const stays: 0 = r; // OK — const U preserves 0
             .collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Overload-resolution variant of the same widening rule (kysely #10663 TS2769
+// family). When the generic accumulator overload is NOT the unique arity match
+// — `Array.prototype.reduce` ships a competing non-generic `(cb, init: T): T`
+// overload of the same arity — the competing overload contextually types the
+// callback first, so `U` acquires a *usable* contravariant candidate. Direct
+// parameter inference then wrongly narrowed the already-widened accumulator
+// (`number`) back to the fresh literal seed (`0`), and the callback's widened
+// body no longer matched the fixed `0`, producing a false TS2769. The widened
+// `inferred` must own the type parameter regardless of the competing overload.
+// ---------------------------------------------------------------------------
+
+/// `Array.prototype.reduce`-shaped overload set (two non-generic overloads plus
+/// the generic accumulator overload). Summing an object field into a fresh
+/// literal `0` seed — accumulator type `number` differs from element type `Row`,
+/// so overload #2 (`init: T = Row`) cannot match and the generic overload is
+/// forced — must infer `U = number`. The positive assignment (`: number`) must
+/// be clean; the negative one (`: 0`) must be the sole TS2322, proving `U`
+/// widened to `number` rather than staying the fixed seed `0`, even with the
+/// competing non-generic overload present.
+#[test]
+fn reduce_overload_set_seed_widens_to_number() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Row { id: number }
+interface MyArr<T> {
+  reduce(cb: (p: T, c: T, i: number, a: T[]) => T): T;
+  reduce(cb: (p: T, c: T, i: number, a: T[]) => T, init: T): T;
+  reduce<U>(cb: (p: U, c: T, i: number, a: T[]) => U, init: U): U;
+}
+declare const rows: MyArr<Row>;
+const total = rows.reduce((acc, x) => acc + x.id, 0);
+const widened: number = total; // OK — U widened to number
+const narrowed: 0 = total;     // TS2322 — number not assignable to 0
+"#,
+    );
+
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322 (on `const narrowed: 0`, proving U widened to number), got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Renamed binders: the fix is structural, not keyed to `reduce`/`U`/`acc`.
+#[test]
+fn reduce_overload_set_renamed_binders_widen() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Item { value: number }
+interface Seq<E> {
+  fold(step: (a: E, e: E, n: number, all: E[]) => E): E;
+  fold(step: (a: E, e: E, n: number, all: E[]) => E, seed: E): E;
+  fold<Acc>(step: (a: Acc, e: E, n: number, all: E[]) => Acc, seed: Acc): Acc;
+}
+declare const items: Seq<Item>;
+const sum = items.fold((a, e) => a + e.value, 0);
+const ok: number = sum; // OK — Acc widened to number
+"#,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "expected no diagnostics with renamed binders, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The seed's primitive family is not special-cased: a fresh *string* literal
+/// seed widens to `string` through the same path.
+#[test]
+fn reduce_overload_set_string_seed_widens() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Row { id: number }
+interface MyArr<T> {
+  reduce(cb: (p: T, c: T, i: number, a: T[]) => T): T;
+  reduce(cb: (p: T, c: T, i: number, a: T[]) => T, init: T): T;
+  reduce<U>(cb: (p: U, c: T, i: number, a: T[]) => U, init: U): U;
+}
+declare const rows: MyArr<Row>;
+const joined = rows.reduce((acc, x) => acc + x.id, "");
+const ok: string = joined; // OK — U widened to string
+"#,
+    );
+
+    assert!(
+        diags.is_empty(),
+        "expected no diagnostics for the string-seed reduce, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Negative control for the widening guard above (independent of overloads):
+/// heterogeneous direct arguments with conflicting literal bases must still
+/// surface a genuine mismatch. The `"don't narrow below inferred"` guard must
+/// not swallow the real `"x"` vs `1` error — this path is gated out by the
+/// `has_conflicting_literal_bases` check, so the mismatch is preserved.
+#[test]
+fn conflicting_direct_literals_still_error() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function pair<T>(cb: (t: T) => void, a: T, b: T): T;
+const r = pair((t) => {}, 1, "x"); // TS2345 — "x" not assignable to 1
+"#,
+    );
+
+    let ts2345 = diagnostics_with_code(&diags, 2345);
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected the genuine conflicting-literal TS2345 to survive, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

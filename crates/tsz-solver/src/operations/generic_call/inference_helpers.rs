@@ -83,31 +83,45 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // argument information. This prevents over-narrowing from first-wins in
                 // co/contra scenarios such as callback predicates over union arrays.
                 //
-                // ANY / UNKNOWN / ERROR bounds are not meaningful inference evidence —
-                // they usually leak in from unresolved callback parameters or error
-                // recovery. Filter them out before unioning so one stray ANY doesn't
-                // widen every concrete candidate back to ANY (which would silence
-                // downstream diagnostics like TS2488/TS2769).
+                // `concrete_lower_bounds` (computed above) already drops the
+                // ANY/UNKNOWN/ERROR bounds, which are not meaningful inference
+                // evidence — they usually leak in from an unresolved callback
+                // parameter and would widen every concrete candidate back to ANY,
+                // silencing downstream diagnostics like TS2488/TS2769.
                 if has_usable_contra_candidates && !inferred_is_union {
-                    let concrete_bounds: Vec<TypeId> = lower_bounds
-                        .iter()
-                        .copied()
-                        .filter(|ty| !ty.is_any_unknown_or_error())
-                        .collect();
                     // A widened direct argument, e.g. `[1, 2, 3]` -> `number`,
                     // should continue to own T. Folding a conflicting callback
                     // return into the direct lower-bound union would mask the
                     // later callback-return assignability error.
                     if has_array_element_candidates
                         && !inferred.is_any_unknown_or_error()
-                        && concrete_bounds
+                        && concrete_lower_bounds
                             .iter()
                             .any(|&bound| self.checker.is_assignable_to(bound, inferred))
                     {
                         return inferred;
                     }
-                    if !concrete_bounds.is_empty() {
-                        return crate::utils::union_or_single(self.interner, concrete_bounds);
+                    if !concrete_lower_bounds.is_empty() {
+                        let union =
+                            crate::utils::union_or_single(self.interner, concrete_lower_bounds);
+                        // A widened direct argument keeps ownership of the type
+                        // parameter: `inferred` is the resolved best-common supertype
+                        // with tsc's literal widening applied (a fresh literal `0` seed
+                        // for `init: U` resolves to `number`). When the raw bounds union
+                        // to a type strictly narrower than `inferred` (un-widened `0` vs
+                        // `number`), returning it would reintroduce the literal and the
+                        // callback's widened body no longer matches — a false TS2769 on
+                        // `arr.reduce((acc, x) => acc + x.f, 0)`. Genuinely wider or
+                        // heterogeneous unions are not assignable to `inferred`, so they
+                        // still flow through unchanged.
+                        if union != inferred
+                            && !inferred.is_any_unknown_or_error()
+                            && self.checker.is_assignable_to(union, inferred)
+                            && !self.checker.is_assignable_to(inferred, union)
+                        {
+                            return inferred;
+                        }
+                        return union;
                     }
                 }
                 return inferred;
