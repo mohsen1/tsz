@@ -1007,6 +1007,14 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         let mut failures = Vec::new();
+        // Index (into `signatures`) of the owning overload for each entry in
+        // `failures`, kept parallel to it so the error reporter can build tsc's
+        // TS2772 `Overload {n} of {total}, ..., gave the following error.`
+        // elaboration. Recording bare indices keeps the loop allocation-free;
+        // the owning signatures are cloned once, only when the `NoOverloadMatch`
+        // result is actually built. Every `failures.push`/`clear` below has a
+        // mirroring push/clear here.
+        let mut failing_overload_indices: Vec<usize> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();
@@ -1596,6 +1604,7 @@ impl<'a> CheckerState<'a> {
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index)),
                         );
+                        failing_overload_indices.push(idx);
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
                                 Self::should_preserve_speculative_call_diagnostic(diag)
@@ -1667,6 +1676,7 @@ impl<'a> CheckerState<'a> {
                                 };
                             callback_body_failure_return.get_or_insert(recovery_return);
                             failures.clear();
+                            failing_overload_indices.clear();
                             failures.push(
                                 PendingDiagnosticBuilder::argument_not_assignable(
                                     return_type,
@@ -1674,6 +1684,7 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .with_span(span),
                             );
+                            failing_overload_indices.push(idx);
                             type_mismatch_count = type_mismatch_count.max(1);
                             best_type_mismatch = Some((
                                 OverloadResolution {
@@ -1834,6 +1845,7 @@ impl<'a> CheckerState<'a> {
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index)),
                         );
+                        failing_overload_indices.push(idx);
                     }
                 }
                 CallResult::ArgumentCountMismatch {
@@ -1854,6 +1866,7 @@ impl<'a> CheckerState<'a> {
                         max,
                         actual,
                     ));
+                    failing_overload_indices.push(idx);
                 }
                 _ => {
                     all_arg_count_mismatches = false;
@@ -1982,6 +1995,11 @@ impl<'a> CheckerState<'a> {
                 func_type: TypeId::ANY,
                 arg_types,
                 failures,
+                overload_signatures: failing_overload_indices
+                    .iter()
+                    .map(|&i| signatures[i].clone())
+                    .collect(),
+                overload_total: signatures.len(),
                 fallback_return,
             },
             selected_type_predicate: None,

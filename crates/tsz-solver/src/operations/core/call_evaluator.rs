@@ -193,6 +193,18 @@ pub enum CallResult {
         func_type: TypeId,
         arg_types: Vec<TypeId>,
         failures: Vec<PendingDiagnostic>,
+        /// Owning overload signature for each entry in `failures`, in the same
+        /// order (so `overload_signatures[i]` is the signature `failures[i]`
+        /// failed against). Same length as `failures` when populated; empty when
+        /// the producer did not record grouping, in which case the error
+        /// reporter renders the flat fallback. Used to build tsc's TS2772
+        /// `Overload {n} of {total}, '{signature}', gave the following error.`
+        /// elaboration; see `error_no_overload_matches_at`.
+        overload_signatures: Vec<CallSignature>,
+        /// Total number of overload signatures — the `{total}` in the TS2772
+        /// header. (The `{n}` ordinal is the 1-based position within
+        /// `overload_signatures`.)
+        overload_total: usize,
         fallback_return: TypeId,
     },
 }

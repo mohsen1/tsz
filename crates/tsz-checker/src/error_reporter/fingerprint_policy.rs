@@ -45,6 +45,14 @@ pub(crate) struct RelatedInformationPolicy {
     include_primary: bool,
     dedupe: bool,
     limit: Option<usize>,
+    /// When `true`, keep the related items in the order the reporter appended
+    /// them instead of applying the deterministic `(file, start, depth,
+    /// message)` sort. The sort is correct for chains anchored at distinct
+    /// positions, but it interleaves incorrectly when several outer-to-inner
+    /// chains share a single anchor (e.g. the per-overload TS2772 headers and
+    /// their nested applicability errors, which must stay grouped
+    /// header-then-child in declaration order).
+    preserve_order: bool,
 }
 
 impl RelatedInformationPolicy {
@@ -52,6 +60,7 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
     /// Demote a diagnostic's primary message into the related chain, keeping any
@@ -61,12 +70,27 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
         dedupe: true,
         limit: None,
+        preserve_order: false,
+    };
+
+    /// Per-overload TS2769 elaboration: each failing candidate contributes an
+    /// outer `Overload {n} of {total}, '{signature}', gave the following error.`
+    /// (TS2772) header followed by its nested applicability error. Ordering is
+    /// significant (declaration order, header before child) and the headers are
+    /// intentionally distinct, so ordering and de-duplication are both
+    /// disabled — the reporter already appends exactly the wanted sequence.
+    pub(crate) const OVERLOAD_ELABORATION: Self = Self {
+        include_primary: false,
+        dedupe: false,
+        limit: None,
+        preserve_order: true,
     };
 }
 
@@ -981,13 +1005,15 @@ impl<'a> CheckerState<'a> {
         // main message and its note. Within the same depth the message-text
         // tiebreaker still gives deterministic order when distinct code paths
         // append items in different sequences.
-        normalized.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then(a.start.cmp(&b.start))
-                .then(a.depth.cmp(&b.depth))
-                .then(a.message_text.cmp(&b.message_text))
-        });
+        if !policy.preserve_order {
+            normalized.sort_by(|a, b| {
+                a.file
+                    .cmp(&b.file)
+                    .then(a.start.cmp(&b.start))
+                    .then(a.depth.cmp(&b.depth))
+                    .then(a.message_text.cmp(&b.message_text))
+            });
+        }
 
         normalized
     }

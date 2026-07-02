@@ -139,6 +139,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Handle overloads (similar to resolve_callable_call)
         let mut failures = Vec::new();
+        // Index (into `construct_signatures`) of the owning overload for each
+        // entry in `failures`, so the checker's error reporter can build tsc's
+        // per-overload TS2772 elaboration for `new` calls just as it does for
+        // ordinary calls. Owning signatures are cloned once, only when the
+        // `NoOverloadMatch` result is built.
+        let mut failing_overload_indices: Vec<usize> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -157,7 +163,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
         let mut all_this_mismatches_identical = true;
 
-        for sig in &shape.construct_signatures {
+        for (sig_index, sig) in shape.construct_signatures.iter().enumerate() {
             let func = FunctionShape {
                 params: sig.params.clone(),
                 this_type: sig.this_type,
@@ -200,6 +206,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual, expected,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 CallResult::ArgumentCountMismatch {
                     expected_min,
@@ -221,6 +228,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 // Track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
                 // when all count-compatible overloads fail with the same this-type mismatch)
@@ -242,6 +250,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual_this,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 _ => {
                     all_arg_count_mismatches = false;
@@ -323,6 +332,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             func_type: self.interner.callable(shape.clone()),
             arg_types: arg_types.to_vec(),
             failures,
+            overload_signatures: failing_overload_indices
+                .iter()
+                .map(|&i| shape.construct_signatures[i].clone())
+                .collect(),
+            overload_total: shape.construct_signatures.len(),
             fallback_return: shape
                 .construct_signatures
                 .first()

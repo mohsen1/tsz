@@ -1562,6 +1562,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Try each call signature
         let mut failures = Vec::with_capacity(callable.call_signatures.len());
+        // Index (into `call_signatures`) of the owning overload for each entry
+        // in `failures`, so the checker's error reporter can build tsc's
+        // per-overload TS2772 elaboration for calls routed through this solver
+        // path too. Owning signatures are cloned once, only when the
+        // `NoOverloadMatch` result is built.
+        let mut failing_overload_indices: Vec<usize> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -1583,7 +1589,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Snapshot incoming generic-instantiation params so a *failed* overload attempt's `cache_generic_result` `unknown[]` params can't leak into the winner/caller; a generic winner re-populates them (#14963).
         let saved_instantiated_params = self.last_instantiated_params.clone();
 
-        for sig in &callable.call_signatures {
+        for (sig_index, sig) in callable.call_signatures.iter().enumerate() {
             self.last_instantiated_params
                 .clone_from(&saved_instantiated_params);
             // Convert CallSignature to FunctionShape
@@ -1617,6 +1623,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual, expected,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 CallResult::ArgumentCountMismatch {
                     expected_min,
@@ -1638,6 +1645,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 // Track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
                 // when all count-compatible overloads fail with the same this-type mismatch)
@@ -1659,6 +1667,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual_this,
                         ),
                     );
+                    failing_overload_indices.push(sig_index);
                 }
                 _ => {
                     all_arg_count_mismatches = false;
@@ -1742,6 +1751,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
             failures,
+            overload_signatures: failing_overload_indices
+                .iter()
+                .map(|&i| callable.call_signatures[i].clone())
+                .collect(),
+            overload_total: callable.call_signatures.len(),
             fallback_return,
         }
     }

@@ -415,7 +415,14 @@ impl<'a> TypeFormatter<'a> {
         format!("{{ {}; }}", parts.join("; "))
     }
 
-    fn format_call_signature(
+    /// Render a call/construct signature in tsc's `signatureToString` colon form
+    /// (e.g. `(x: number): number`, or `new (x: number): C` when `is_construct`).
+    ///
+    /// This is the form tsc uses in the `Overload {n} of {total}, '{signature}',
+    /// gave the following error.` (TS2772) elaboration, and it forwards the
+    /// signature's type predicate (`v is T` / `asserts v is T`) — unlike the
+    /// `=>` function-type form produced by [`TypeFormatter::format`].
+    pub fn format_call_signature(
         &mut self,
         sig: &CallSignature,
         is_construct: bool,

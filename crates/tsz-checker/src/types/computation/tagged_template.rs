@@ -488,12 +488,17 @@ impl<'a> CheckerState<'a> {
             );
         let full_resolution_succeeded =
             matches!(result, tsz_solver::operations::CallResult::Success(_));
-        if let tsz_solver::operations::CallResult::NoOverloadMatch { failures, .. } = &result
+        if let tsz_solver::operations::CallResult::NoOverloadMatch {
+            failures,
+            overload_signatures,
+            overload_total,
+            ..
+        } = &result
             && selected_callee_type != callee_type
             && let Some(selected_return) = self
                 .selected_tagged_template_nullish_overload_return(selected_callee_type, &arg_types)
         {
-            self.error_no_overload_matches_at(idx, failures);
+            self.error_no_overload_matches_at(idx, failures, overload_signatures, *overload_total);
             return selected_return;
         }
 

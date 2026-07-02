@@ -757,10 +757,20 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report "No overload matches this call" with related overload failures.
+    ///
+    /// When `overload_signatures` aligns 1:1 with `failures` and there are 2 or 3
+    /// failing candidates, the related information reproduces tsc's per-overload
+    /// elaboration — each failure is wrapped in an `Overload {n} of {total},
+    /// '{signature}', gave the following error.` (TS2772) header (see
+    /// `resolveCall` in the TypeScript checker), where `overload_signatures[i]`
+    /// is the signature `failures[i]` failed against and `overload_total` is the
+    /// `{total}`. Otherwise the failures are rendered as the flat related list.
     pub fn error_no_overload_matches_at(
         &mut self,
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
+        overload_signatures: &[tsz_solver::CallSignature],
+        overload_total: usize,
     ) {
         tracing::debug!(
             "error_no_overload_matches_at: File name: {}",
@@ -1067,7 +1077,19 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        for failure in failures {
+        // tsc's `resolveCall` groups a no-overload-match by candidate when 2 or 3
+        // candidates reached argument checking: each failure is wrapped in an
+        // `Overload {n} of {total}, '{signature}', gave the following error.`
+        // (TS2772) header, with the applicability error nested one level deeper.
+        // Outside that count (a single or >3 candidates) tsc uses a different
+        // top-level shape, so we keep the existing flat related list there to
+        // avoid changing the top-level diagnostic. The metadata must align 1:1
+        // with the failures (a defensive guard for producers that do not record
+        // it — the flat fallback then applies).
+        let use_overload_elaboration = overload_signatures.len() == failures.len()
+            && matches!(overload_signatures.len(), 2 | 3);
+
+        for (position, failure) in failures.iter().enumerate() {
             let mut pending: PendingDiagnostic = PendingDiagnostic {
                 span: Some(span.clone()),
                 ..failure.clone()
@@ -1098,18 +1120,53 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let diag = formatter.render(&pending);
-            if let Some(diag_span) = diag.span.as_ref() {
+            let Some(diag_span) = diag.span.as_ref() else {
+                continue;
+            };
+            // In the per-overload elaboration, each failure gets an
+            // `Overload {n} of {total}, '{signature}', gave the following error.`
+            // (TS2772) header at depth 0, and the applicability error nests one
+            // level deeper (depth 1) so it renders indented beneath its header.
+            // In the flat fallback there is no header and the error stays at
+            // depth 0. The ordinal is the 1-based position among the failing
+            // candidates.
+            if use_overload_elaboration {
+                let signature =
+                    formatter.format_call_signature(&overload_signatures[position], false, false);
+                let header = format_message(
+                    diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                    &[
+                        &(position + 1).to_string(),
+                        &overload_total.to_string(),
+                        &signature,
+                    ],
+                );
                 related.push(DiagnosticRelatedInformation {
                     file: diag_span.file.to_string(),
                     start: diag_span.start,
                     length: diag_span.length,
-                    message_text: diag.message.clone(),
+                    message_text: header,
                     category: DiagnosticCategory::Message,
-                    code: diag.code,
+                    code: diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
                     depth: 0,
                 });
             }
+            related.push(DiagnosticRelatedInformation {
+                file: diag_span.file.to_string(),
+                start: diag_span.start,
+                length: diag_span.length,
+                message_text: diag.message.clone(),
+                category: DiagnosticCategory::Message,
+                code: diag.code,
+                depth: u8::from(use_overload_elaboration),
+            });
         }
+
+        let related_policy = if use_overload_elaboration {
+            RelatedInformationPolicy::OVERLOAD_ELABORATION
+        } else {
+            RelatedInformationPolicy::OVERLOAD_FAILURES
+        };
 
         self.emit_render_request_at_anchor(
             anchor,
@@ -1118,7 +1175,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
                 diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
                 related,
-                RelatedInformationPolicy::OVERLOAD_FAILURES,
+                related_policy,
             ),
         );
     }
