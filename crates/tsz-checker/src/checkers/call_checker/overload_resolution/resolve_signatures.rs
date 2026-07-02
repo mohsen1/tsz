@@ -1007,6 +1007,12 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         let mut failures = Vec::new();
+        // Overload signatures that matched arity but failed argument-type checks,
+        // aligned 1:1 with the TS2345 entries in `failures` (declaration order).
+        // Carried on `NoOverloadMatch` so the checker can render tsc's
+        // `Overload {i} of {N}` TS2769 elaboration chain. Held as borrows and
+        // cloned only when a `NoOverloadMatch` is actually built.
+        let mut arg_error_sig_refs: Vec<&tsz_solver::CallSignature> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();
@@ -1834,6 +1840,7 @@ impl<'a> CheckerState<'a> {
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index)),
                         );
+                        arg_error_sig_refs.push(original_sig);
                     }
                 }
                 CallResult::ArgumentCountMismatch {
@@ -1983,6 +1990,8 @@ impl<'a> CheckerState<'a> {
                 arg_types,
                 failures,
                 fallback_return,
+                arg_error_signatures: arg_error_sig_refs.into_iter().cloned().collect(),
+                overload_count: signatures.len(),
             },
             selected_type_predicate: None,
         })

@@ -1518,6 +1518,8 @@ impl<'a> CheckerState<'a> {
             CallResult::NoOverloadMatch {
                 failures,
                 fallback_return,
+                arg_error_signatures,
+                overload_count,
                 ..
             } => {
                 self.ctx.no_overload_call_nodes.insert(call_idx.0);
@@ -1543,7 +1545,12 @@ impl<'a> CheckerState<'a> {
                     && !self.should_suppress_weak_key_no_overload(callee_expr, args);
 
                 if should_emit_no_overload_error {
-                    self.error_no_overload_matches_at(call_idx, &failures);
+                    self.error_no_overload_matches_at(
+                        call_idx,
+                        &failures,
+                        &arg_error_signatures,
+                        overload_count,
+                    );
                 }
                 // `fallback_return` is the intersection of the candidate
                 // signatures' return types (see `overload_failure_return_type`):

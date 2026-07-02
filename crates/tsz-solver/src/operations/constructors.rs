@@ -5,7 +5,7 @@
 //! but with construct-specific semantics (e.g., union strictness, mixin pattern).
 
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{CallableShape, FunctionShape, TypeData, TypeId, TypeListId};
+use crate::types::{CallSignature, CallableShape, FunctionShape, TypeData, TypeId, TypeListId};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -139,6 +139,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Handle overloads (similar to resolve_callable_call)
         let mut failures = Vec::new();
+        // Construct signatures that matched arity but failed argument-type checks,
+        // aligned 1:1 with the TS2345 entries in `failures` (declaration order).
+        // Held as borrows and cloned only when a `NoOverloadMatch` is built.
+        let mut arg_error_sig_refs: Vec<&CallSignature> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -200,6 +204,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual, expected,
                         ),
                     );
+                    arg_error_sig_refs.push(sig);
                 }
                 CallResult::ArgumentCountMismatch {
                     expected_min,
@@ -328,6 +333,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .first()
                 .map(|s| s.return_type)
                 .unwrap_or(TypeId::ANY),
+            arg_error_signatures: arg_error_sig_refs.into_iter().cloned().collect(),
+            overload_count: shape.construct_signatures.len(),
         }
     }
 

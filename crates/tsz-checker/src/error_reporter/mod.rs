@@ -61,3 +61,7 @@ pub(crate) use fingerprint_policy::{
 #[cfg(test)]
 #[path = "render_request_tests.rs"]
 mod render_request_tests;
+
+#[cfg(test)]
+#[path = "ts2769_overload_chain_tests.rs"]
+mod ts2769_overload_chain_tests;

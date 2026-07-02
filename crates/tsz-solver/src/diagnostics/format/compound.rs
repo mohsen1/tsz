@@ -143,6 +143,20 @@ impl<'a> TypeFormatter<'a> {
         rendered
     }
 
+    /// Render a single overload signature the way tsc's `signatureToString`
+    /// does for the `Overload {i} of {N}, '{sig}', gave the following error.`
+    /// (TS2772) header: the colon-return form `(a: string): void`.
+    ///
+    /// tsc uses this exact form for both call and construct overloads — the
+    /// call form (never the `=>` arrow form, and never a `new ` prefix for
+    /// construct overloads) — and it does surface an explicit `this` parameter
+    /// and any return-type predicate. This is exactly the shared
+    /// `format_call_signature` colon-form renderer with `is_construct`/
+    /// `is_abstract` off, so it delegates rather than re-deriving the call.
+    pub fn format_overload_signature_header(&mut self, sig: &CallSignature) -> String {
+        self.format_call_signature(sig, false, false)
+    }
+
     /// Format a signature with the given separator between params and return type.
     pub(super) fn format_signature(
         &mut self,

@@ -757,10 +757,22 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report "No overload matches this call" with related overload failures.
+    ///
+    /// `arg_error_signatures` holds the overload signatures that matched arity
+    /// but failed argument-type checks (declaration order, aligned 1:1 with the
+    /// TS2345 entries in `failures`), and `overload_count` is the total number
+    /// of overloads. Together they drive tsc's structured TS2769 elaboration:
+    /// `Overload {i} of {N}, '<sig>', gave the following error.` (TS2772) for
+    /// two or three argument-error candidates, or `The last overload gave the
+    /// following error.` (TS2770) for four or more. When they are empty (a
+    /// construction site could not supply them) the reporter falls back to a
+    /// flat elaboration over every failure.
     pub fn error_no_overload_matches_at(
         &mut self,
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
+        arg_error_signatures: &[tsz_solver::CallSignature],
+        overload_count: usize,
     ) {
         tracing::debug!(
             "error_no_overload_matches_at: File name: {}",
@@ -1067,18 +1079,22 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        for failure in failures {
+        // Render one failure (typically an argument mismatch) into a related
+        // entry at `depth`, re-anchoring it at the call-site span and mirroring
+        // tsc's `reportRelationError` literal-source generalization: a fresh
+        // literal source (`true`, `1`) widens to its base (`boolean`, `number`)
+        // unless the parameter target could hold a top-level singleton. The
+        // solver diagnostic carries the raw literal source, so without this the
+        // overload elaboration diverges from the single-overload TS2345 display.
+        let types = self.ctx.types;
+        let render_leaf = |formatter: &mut crate::query_boundaries::common::TypeFormatter<'_>,
+                           failure: &PendingDiagnostic,
+                           depth: u8|
+         -> Option<DiagnosticRelatedInformation> {
             let mut pending: PendingDiagnostic = PendingDiagnostic {
                 span: Some(span.clone()),
                 ..failure.clone()
             };
-            // Mirror tsc's `reportRelationError` source generalization for each
-            // overload's argument failure, matching the single-signature TS2345
-            // path: a fresh literal source (`true`, `1`) is widened to its base
-            // (`boolean`, `number`) unless the parameter target could hold a
-            // top-level singleton type. The pre-built solver diagnostic carries
-            // the raw literal source, so without this the overload elaboration
-            // diverges from tsc (and from the single-overload TS2345 display).
             if pending.code
                 == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
                 && let (
@@ -1089,25 +1105,103 @@ impl<'a> CheckerState<'a> {
                 let (source, target) = (*source, *target);
                 let display_source =
                     crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                        self.ctx.types,
-                        source,
-                        target,
+                        types, source, target,
                     );
                 if display_source != source {
                     pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
                 }
             }
             let diag = formatter.render(&pending);
-            if let Some(diag_span) = diag.span.as_ref() {
-                related.push(DiagnosticRelatedInformation {
+            diag.span
+                .as_ref()
+                .map(|diag_span| DiagnosticRelatedInformation {
                     file: diag_span.file.to_string(),
                     start: diag_span.start,
                     length: diag_span.length,
                     message_text: diag.message.clone(),
                     category: DiagnosticCategory::Message,
                     code: diag.code,
-                    depth: 0,
-                });
+                    depth,
+                })
+        };
+        // A depth-0 elaboration header ("Overload {i} of {N}, ..." / "The last
+        // overload ...") anchored at the call site.
+        let make_header = |code: u32, message: String| DiagnosticRelatedInformation {
+            file: span.file.to_string(),
+            start: span.start,
+            length: span.length,
+            message_text: message,
+            category: DiagnosticCategory::Message,
+            code,
+            depth: 0,
+        };
+
+        // tsc renders the TS2769 body as a structured elaboration keyed on the
+        // number of overloads that matched arity but failed argument types
+        // (`candidatesForArgumentError`), not the raw failure list — arity
+        // mismatches never appear in the chain. We reproduce that shape when the
+        // solver supplied the per-candidate signatures (aligned 1:1 with the
+        // TS2345 failures); otherwise we fall back to a flat elaboration.
+        let use_overload_chain =
+            !argument_failures.is_empty() && argument_failures.len() == arg_error_signatures.len();
+        if use_overload_chain {
+            // The "of {N}" count is the total number of overloads. Every
+            // construction site sets it to the full signature-list length, and
+            // the argument-error candidates are a subset, so it always covers
+            // them; the assert documents that invariant.
+            debug_assert!(overload_count >= arg_error_signatures.len());
+            // tsc lists an individual `Overload {i} of {N}` header for at most
+            // this many argument-error candidates; beyond it, it collapses to
+            // the single "last overload" form.
+            const MAX_LISTED_OVERLOAD_CANDIDATES: usize = 3;
+            let candidate_count = argument_failures.len();
+            if candidate_count > MAX_LISTED_OVERLOAD_CANDIDATES {
+                // More candidates than tsc lists individually: it shows only the
+                // last one, headed by "The last overload gave the following error."
+                related.push(make_header(
+                    diagnostic_codes::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR,
+                    diagnostic_messages::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR.to_string(),
+                ));
+                if let Some(last) = argument_failures.last()
+                    && let Some(leaf) = render_leaf(&mut formatter, last, 1)
+                {
+                    related.push(leaf);
+                }
+            } else if candidate_count == 1 {
+                // A lone argument-error candidate: tsc reports its error directly
+                // with no "Overload i of N" header (reachable here only when the
+                // solver still routed to TS2769 alongside other failure kinds).
+                if let Some(leaf) = render_leaf(&mut formatter, argument_failures[0], 0) {
+                    related.push(leaf);
+                }
+            } else {
+                // Two or three candidates: one "Overload {i} of {N}, '<sig>',
+                // gave the following error." header per candidate, each followed
+                // by its nested argument error.
+                for (i, (failure, sig)) in argument_failures
+                    .iter()
+                    .zip(arg_error_signatures.iter())
+                    .enumerate()
+                {
+                    let sig_str = formatter.format_overload_signature_header(sig);
+                    let header_msg = format_message(
+                        diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                        &[&(i + 1).to_string(), &overload_count.to_string(), &sig_str],
+                    );
+                    related.push(make_header(
+                        diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                        header_msg,
+                    ));
+                    if let Some(leaf) = render_leaf(&mut formatter, failure, 1) {
+                        related.push(leaf);
+                    }
+                }
+            }
+        } else {
+            for failure in failures {
+                if let Some(leaf) = render_leaf(&mut formatter, failure, 0) {
+                    related.push(leaf);
+                }
             }
         }
 

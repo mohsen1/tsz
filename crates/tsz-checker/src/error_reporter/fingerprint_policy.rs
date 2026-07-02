@@ -45,6 +45,15 @@ pub(crate) struct RelatedInformationPolicy {
     include_primary: bool,
     dedupe: bool,
     limit: Option<usize>,
+    /// Keep the related entries in the order the reporter appended them instead
+    /// of applying the deterministic `(file, start, depth, message_text)` sort.
+    /// Required when a single diagnostic carries several sibling elaboration
+    /// chains anchored at the same span (e.g. the `Overload {i} of {N}` TS2769
+    /// chain): the sort would group all headers, then all leaves, breaking the
+    /// interleaved `header → its argument error` structure and reordering the
+    /// overloads by message text. The reporter builds these entries in a
+    /// deterministic order itself, so skipping the sort stays deterministic.
+    preserve_order: bool,
 }
 
 impl RelatedInformationPolicy {
@@ -52,6 +61,7 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
     /// Demote a diagnostic's primary message into the related chain, keeping any
@@ -61,12 +71,19 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        preserve_order: false,
     };
 
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
-        dedupe: true,
+        // The structured TS2769 chain intentionally repeats an identical
+        // argument-mismatch leaf under each overload header (tsc shows the same
+        // "Argument of type ..." line once per candidate). Deduping would drop
+        // every candidate's leaf after the first, so it must stay off; the
+        // reporter builds the entries deterministically instead.
+        dedupe: false,
         limit: None,
+        preserve_order: true,
     };
 }
 
@@ -981,13 +998,15 @@ impl<'a> CheckerState<'a> {
         // main message and its note. Within the same depth the message-text
         // tiebreaker still gives deterministic order when distinct code paths
         // append items in different sequences.
-        normalized.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then(a.start.cmp(&b.start))
-                .then(a.depth.cmp(&b.depth))
-                .then(a.message_text.cmp(&b.message_text))
-        });
+        if !policy.preserve_order {
+            normalized.sort_by(|a, b| {
+                a.file
+                    .cmp(&b.file)
+                    .then(a.start.cmp(&b.start))
+                    .then(a.depth.cmp(&b.depth))
+                    .then(a.message_text.cmp(&b.message_text))
+            });
+        }
 
         normalized
     }

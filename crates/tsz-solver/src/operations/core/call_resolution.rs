@@ -1562,6 +1562,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Try each call signature
         let mut failures = Vec::with_capacity(callable.call_signatures.len());
+        // Signatures that matched arity but failed argument-type checks, aligned
+        // 1:1 with the TS2345 entries pushed into `failures` (declaration order).
+        // Carried to the checker to render tsc's `Overload {i} of {N}` chain.
+        // Held as borrows and cloned only when a `NoOverloadMatch` is actually
+        // built, so a call that resolves via a later overload pays nothing.
+        let mut arg_error_sig_refs: Vec<&CallSignature> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -1617,6 +1623,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual, expected,
                         ),
                     );
+                    arg_error_sig_refs.push(sig);
                 }
                 CallResult::ArgumentCountMismatch {
                     expected_min,
@@ -1743,6 +1750,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             arg_types: arg_types.to_vec(),
             failures,
             fallback_return,
+            arg_error_signatures: arg_error_sig_refs.into_iter().cloned().collect(),
+            overload_count: callable.call_signatures.len(),
         }
     }
 }

@@ -194,6 +194,17 @@ pub enum CallResult {
         arg_types: Vec<TypeId>,
         failures: Vec<PendingDiagnostic>,
         fallback_return: TypeId,
+        /// Overload signatures that matched arity but failed argument-type
+        /// checks, in declaration order and aligned 1:1 with the TS2345
+        /// (`argument not assignable`) entries in `failures`. This lets the
+        /// checker render tsc's structured `Overload {i} of {N}, '<sig>', gave
+        /// the following error.` (TS2772) elaboration chain under the TS2769
+        /// head. Empty when a construction site cannot supply them, in which
+        /// case the checker falls back to a flat elaboration.
+        arg_error_signatures: Vec<CallSignature>,
+        /// Total number of overload signatures considered (the `{N}` in the
+        /// `Overload {i} of {N}` header). `0` when unavailable.
+        overload_count: usize,
     },
 }
 
