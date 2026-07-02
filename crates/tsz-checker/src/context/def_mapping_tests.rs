@@ -1133,3 +1133,113 @@ fn resolved_def_mirror_is_deferred_under_borrow_then_envs_reconcile() {
         "envs must agree on every shared DefId -> TypeId after reconciliation"
     );
 }
+
+/// #14348: the unresolved-name resolution cache is authority-routed — it
+/// reaches BOTH environments, and a borrow race defers (never silently
+/// skips, which was the pre-#14348 behavior of the raw `try_borrow_mut`).
+#[test]
+fn unresolved_resolution_write_reaches_both_envs_and_defers_under_borrow() {
+    use tsz_common::interner::Atom;
+    use tsz_solver::TypeId;
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_a = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+    let def_b = ctx.definition_store.register(DefinitionInfo::type_alias(
+        Atom::default(),
+        vec![],
+        TypeId::UNKNOWN,
+    ));
+
+    // Uncontended: both envs receive the cache entry directly.
+    ctx.register_in_envs(
+        super::super::DeferredFlowEnvWrite::InsertUnresolvedResolution {
+            name: "AliasedName".to_string(),
+            def_id: def_a,
+        },
+    );
+    assert_eq!(
+        ctx.type_env.borrow().unresolved_resolution("AliasedName"),
+        Some(def_a),
+        "evaluator env must receive the resolution directly"
+    );
+    assert_eq!(
+        ctx.type_environment
+            .borrow()
+            .unresolved_resolution("AliasedName"),
+        Some(def_a),
+        "flow-analyzer env must receive the mirrored resolution"
+    );
+
+    // Contended: the flow-env write defers and replays instead of skipping.
+    {
+        let held = ctx.type_environment.borrow();
+        ctx.register_in_envs(
+            super::super::DeferredFlowEnvWrite::InsertUnresolvedResolution {
+                name: "RenamedBinder".to_string(),
+                def_id: def_b,
+            },
+        );
+        assert_eq!(
+            ctx.type_env.borrow().unresolved_resolution("RenamedBinder"),
+            Some(def_b),
+            "evaluator env must receive the resolution under flow-env borrow"
+        );
+        assert_eq!(
+            held.unresolved_resolution("RenamedBinder"),
+            None,
+            "flow-analyzer env must not observe the write mid-borrow"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "the mirror-write must queue for replay"
+        );
+    }
+    ctx.flush_deferred_flow_env_writes();
+    assert_eq!(
+        ctx.type_environment
+            .borrow()
+            .unresolved_resolution("RenamedBinder"),
+        Some(def_b),
+        "flow-analyzer env must receive the replayed resolution"
+    );
+}
+
+/// #14348: `overlay_missing_from` reports whether it had to repair anything —
+/// the deletion-readiness signal. A fully-authority-routed pair of envs must
+/// report `false`; a bypassing eval-env-only write must report `true`.
+#[test]
+fn overlay_missing_from_reports_repairs() {
+    let mut source = tsz_solver::computation::TypeEnvironment::new();
+    let mut target = tsz_solver::computation::TypeEnvironment::new();
+    assert!(
+        !target.overlay_missing_from(&source),
+        "identical empty envs need no repair"
+    );
+
+    source.insert_unresolved_resolution("OnlyInEval".to_string(), tsz_solver::def::DefId(7));
+    assert!(
+        target.overlay_missing_from(&source),
+        "an eval-only entry must be reported as a repair"
+    );
+    assert_eq!(
+        target.unresolved_resolution("OnlyInEval"),
+        Some(tsz_solver::def::DefId(7))
+    );
+    assert!(
+        !target.overlay_missing_from(&source),
+        "second overlay finds nothing left to repair"
+    );
+}

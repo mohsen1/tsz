@@ -33,11 +33,11 @@ impl<'a> CheckerState<'a> {
             let sym_id =
                 crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(symbol_ref);
             let value_type = self.get_type_of_symbol(sym_id);
-            if value_type != TypeId::ANY
-                && value_type != TypeId::ERROR
-                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-            {
-                env.insert(symbol_ref, value_type);
+            if value_type != TypeId::ANY && value_type != TypeId::ERROR {
+                // Route through the env-write authority (dual-write + defer on
+                // borrow race instead of silently skipping; #14348).
+                self.ctx
+                    .register_symbol_type_in_envs(symbol_ref, value_type, Vec::new());
             }
             if value_type != TypeId::ANY
                 && value_type != TypeId::ERROR

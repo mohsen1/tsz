@@ -556,10 +556,15 @@ impl CheckerState<'_> {
             } else {
                 value_type
             };
-            if effective_type != TypeId::ERROR
-                && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-            {
-                env.insert(tsz_solver::SymbolRef(sym_id.0), effective_type);
+            if effective_type != TypeId::ERROR {
+                // Route through the env-write authority: dual-writes the flow
+                // env and defers (instead of silently skipping) when either
+                // env is borrowed (#14348).
+                self.ctx.register_symbol_type_in_envs(
+                    tsz_solver::SymbolRef(sym_id.0),
+                    effective_type,
+                    Vec::new(),
+                );
             }
         }
     }

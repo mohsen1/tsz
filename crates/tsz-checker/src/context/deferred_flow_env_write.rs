@@ -68,6 +68,11 @@ pub enum DeferredFlowEnvWrite {
         def_id: DefId,
         kind: tsz_solver::def::DefKind,
     },
+    /// `insert_unresolved_resolution` — cache a resolved bare type-name so the
+    /// first-pass evaluator (which uses `TypeEnvironment` as its resolver) can
+    /// reduce `Application(UnresolvedTypeName(name), args)` without bouncing
+    /// back into the checker resolver.
+    InsertUnresolvedResolution { name: String, def_id: DefId },
     /// `insert_typeof_value_type` — register a merged interface+value symbol's
     /// `typeof` value-space type.
     InsertTypeofValueType {
@@ -201,6 +206,9 @@ impl DeferredFlowEnvWrite {
                 is_class,
             } => apply_augmented_def(env, *def_id, *augmented, *is_class),
             Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
+            Self::InsertUnresolvedResolution { name, def_id } => {
+                env.insert_unresolved_resolution(name.clone(), *def_id);
+            }
             Self::InsertTypeofValueType { symbol, value_type } => {
                 env.insert_typeof_value_type(*symbol, *value_type);
             }
