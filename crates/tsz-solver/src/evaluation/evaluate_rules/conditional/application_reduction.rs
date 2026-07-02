@@ -101,36 +101,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let next = match self.interner().lookup(substituted)? {
                 TypeData::Application(_) => substituted,
                 TypeData::Conditional(cond_id) => {
-                    let cond = self.interner().get_conditional(cond_id);
-                    if !self.type_contains_infer(cond.extends_type) {
+                    let Some(next) = self.with_optional_meta_rereduce_recursion_identity(
+                        current,
+                        current,
+                        |evaluator| {
+                            let cond = evaluator.interner().get_conditional(cond_id);
+                            if !evaluator.type_contains_infer(cond.extends_type) {
+                                return None;
+                            }
+                            let cond_extends = cond.extends_type;
+                            let cond_true = cond.true_type;
+                            let check_eval = evaluator.evaluate(cond.check_type);
+                            let mut checker = evaluator.conditional_subtype_checker();
+                            checker.allow_bivariant_rest = true;
+                            let mut bindings = FxHashMap::default();
+                            let mut visited = InferPatternVisited::default();
+                            if !evaluator.match_infer_pattern(
+                                check_eval,
+                                cond_extends,
+                                &mut bindings,
+                                &mut visited,
+                                &mut checker,
+                            ) {
+                                return None;
+                            }
+                            let result = evaluator.substitute_infer(cond_true, &bindings);
+                            let result = evaluator.evaluate(result);
+                            Some(
+                                evaluator
+                                    .try_recover_application_from_display_alias(result)
+                                    .filter(|&recovered| {
+                                        !evaluator.application_is_recursive_alias(recovered)
+                                    })
+                                    .unwrap_or(result),
+                            )
+                        },
+                    ) else {
+                        break;
+                    };
+                    if next == current {
                         break;
                     }
-                    let cond_extends = cond.extends_type;
-                    let cond_true = cond.true_type;
-                    let check_eval = self.evaluate(cond.check_type);
-                    let mut checker = self.conditional_subtype_checker();
-                    checker.allow_bivariant_rest = true;
-                    let mut bindings = FxHashMap::default();
-                    let mut visited = InferPatternVisited::default();
-                    if !self.match_infer_pattern(
-                        check_eval,
-                        cond_extends,
-                        &mut bindings,
-                        &mut visited,
-                        &mut checker,
-                    ) {
-                        break;
-                    }
-                    let result = self.substitute_infer(cond_true, &bindings);
-                    let result = self.evaluate(result);
-                    let result = self
-                        .try_recover_application_from_display_alias(result)
-                        .filter(|&recovered| !self.application_is_recursive_alias(recovered))
-                        .unwrap_or(result);
-                    if result == current {
-                        break;
-                    }
-                    result
+                    next
                 }
                 TypeData::Intersection(_)
                     if self.is_concrete_application_led_intersection(substituted) =>

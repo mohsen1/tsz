@@ -90,26 +90,82 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         deferred_fallback: TypeId,
         body: impl FnOnce(&mut Self) -> TypeId,
     ) -> TypeId {
-        let identity = self.meta_rereduce_recursion_identity(type_id);
-        let existing_count = self
-            .meta_recursion_identity_stack
-            .iter()
-            .filter(|&&entry| self.same_rereduce_recursion_identity(entry, identity))
-            .count();
-        if existing_count + 1 >= META_REREDUCE_RECURSION_IDENTITY_MAX_DEPTH {
-            self.record_request_limit_event(TerminationKind::IterationExceeded);
-            return deferred_fallback;
-        }
-
         let stack_len = self.meta_recursion_identity_stack.len();
-        self.meta_recursion_identity_stack.push(identity);
+        if let Some(fallback) =
+            self.enter_meta_rereduce_recursion_identity(type_id, deferred_fallback)
+        {
+            return fallback;
+        }
         let result = body(self);
-        debug_assert_eq!(
-            self.meta_recursion_identity_stack.get(stack_len).copied(),
-            Some(identity)
-        );
         self.meta_recursion_identity_stack.truncate(stack_len);
         result
+    }
+
+    pub(in crate::evaluation) fn with_optional_meta_rereduce_recursion_identity(
+        &mut self,
+        type_id: TypeId,
+        deferred_fallback: TypeId,
+        body: impl FnOnce(&mut Self) -> Option<TypeId>,
+    ) -> Option<TypeId> {
+        let stack_len = self.meta_recursion_identity_stack.len();
+        if let Some(fallback) =
+            self.enter_meta_rereduce_recursion_identity(type_id, deferred_fallback)
+        {
+            return Some(fallback);
+        }
+        let result = body(self);
+        self.meta_recursion_identity_stack.truncate(stack_len);
+        result
+    }
+
+    pub(in crate::evaluation) fn enter_meta_rereduce_recursion_identity(
+        &mut self,
+        type_id: TypeId,
+        deferred_fallback: TypeId,
+    ) -> Option<TypeId> {
+        if self.meta_rereduce_identity_count_for_type(type_id) + 1
+            >= META_REREDUCE_RECURSION_IDENTITY_MAX_DEPTH
+        {
+            self.record_request_limit_event(TerminationKind::IterationExceeded);
+            return Some(deferred_fallback);
+        }
+
+        self.meta_recursion_identity_stack
+            .push(self.meta_rereduce_recursion_identity(type_id));
+        None
+    }
+
+    pub(in crate::evaluation) fn meta_rereduce_recursion_identity_would_exceed_with_seen(
+        &self,
+        type_id: TypeId,
+        seen: &[TypeId],
+    ) -> bool {
+        self.meta_rereduce_identity_count_for_type(type_id)
+            + seen
+                .iter()
+                .filter(|&&entry| self.same_meta_rereduce_recursion_identity(entry, type_id))
+                .count()
+            + 1
+            >= META_REREDUCE_RECURSION_IDENTITY_MAX_DEPTH
+    }
+
+    pub(in crate::evaluation) fn same_meta_rereduce_recursion_identity(
+        &self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        self.same_rereduce_recursion_identity(
+            self.meta_rereduce_recursion_identity(left),
+            self.meta_rereduce_recursion_identity(right),
+        )
+    }
+
+    fn meta_rereduce_identity_count_for_type(&self, type_id: TypeId) -> usize {
+        let identity = self.meta_rereduce_recursion_identity(type_id);
+        self.meta_recursion_identity_stack
+            .iter()
+            .filter(|&&entry| self.same_rereduce_recursion_identity(entry, identity))
+            .count()
     }
 
     fn same_def_recursion_identity(&self, left: DefId, right: DefId) -> bool {
@@ -159,7 +215,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 )
             }
             Some(TypeData::Tuple(tuple_id)) => MetaRecursionIdentity::Tuple(tuple_id),
-            Some(TypeData::Conditional(cond_id)) => MetaRecursionIdentity::Conditional(cond_id),
+            Some(TypeData::Conditional(cond_id)) => self
+                .conditional_guard_recursion_identity(cond_id)
+                .unwrap_or(MetaRecursionIdentity::Conditional(cond_id)),
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
                 Self::type_param_rereduce_recursion_identity(type_id, info)
             }
@@ -188,6 +246,43 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             TypeParamOrigin::InferPlaceholder { id } => MetaRecursionIdentity::InferPlaceholder(id),
             TypeParamOrigin::InferSource { id, .. } => MetaRecursionIdentity::InferSource(id),
             TypeParamOrigin::User => MetaRecursionIdentity::Type(type_id),
+        }
+    }
+
+    fn conditional_guard_recursion_identity(
+        &self,
+        cond_id: ConditionalTypeId,
+    ) -> Option<MetaRecursionIdentity> {
+        let cond = self.interner.get_conditional(cond_id);
+        if self.type_contains_infer(cond.check_type) || self.type_contains_infer(cond.extends_type)
+        {
+            return None;
+        }
+
+        let check_identity = self.direct_named_meta_recursion_identity(cond.check_type)?;
+        let extends_identity = self.direct_named_meta_recursion_identity(cond.extends_type)?;
+        self.same_rereduce_recursion_identity(check_identity, extends_identity)
+            .then_some(check_identity)
+    }
+
+    fn direct_named_meta_recursion_identity(
+        &self,
+        type_id: TypeId,
+    ) -> Option<MetaRecursionIdentity> {
+        match self.interner.lookup(type_id)? {
+            TypeData::Application(app_id) => {
+                let app = self.interner.type_application(app_id);
+                self.direct_named_meta_recursion_identity(app.base)
+            }
+            TypeData::Lazy(def_id) => Some(MetaRecursionIdentity::Def(
+                self.resolver.canonical_def_id(def_id),
+            )),
+            TypeData::TypeQuery(symbol) => self
+                .resolver
+                .symbol_to_def_id(symbol)
+                .map(|def_id| MetaRecursionIdentity::Def(self.resolver.canonical_def_id(def_id)))
+                .or(Some(MetaRecursionIdentity::TypeQuery(symbol))),
+            _ => None,
         }
     }
 
