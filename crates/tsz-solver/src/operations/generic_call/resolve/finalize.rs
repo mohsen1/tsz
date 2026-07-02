@@ -1182,6 +1182,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.normalize_inferred_placeholder_type(raw_return_type, &final_arg_subst);
         let return_type =
             self.hoist_resolved_type_params_into_return_type(func, &final_subst, return_type);
+        // A type parameter reachable only through a nested/curried position that
+        // never receives an inference candidate can resolve to a bare
+        // self-referential placeholder and ride into another inferred parameter
+        // (`U = { x: number; y: __infer_N }`). Default any such leaked placeholder
+        // to its constraint-or-`unknown`, matching tsc's `getInferredType`.
+        let return_type = self.default_leaked_return_type_placeholders(return_type);
         if self.interner.get_display_alias(return_type).is_none()
             && let Some(app_id) =
                 crate::visitor::application_id(self.interner.as_type_database(), raw_return_type)
