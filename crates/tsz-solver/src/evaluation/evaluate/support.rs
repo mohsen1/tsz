@@ -282,13 +282,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // This handles `typeof ClassName<T>` where the constructor type is a
                 // Callable whose signatures own the class type parameters.
                 let shape = self.interner.callable_shape(cs_id);
-                let declared = shape
+                for sig in shape
                     .construct_signatures
                     .iter()
                     .chain(shape.call_signatures.iter())
-                    .flat_map(|sig| sig.type_params.iter().copied())
-                    .collect::<Vec<_>>();
-                merge_params(&mut out, &declared);
+                {
+                    merge_params(&mut out, &sig.type_params);
+                }
             }
             _ => {}
         }

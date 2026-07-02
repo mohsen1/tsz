@@ -42,7 +42,7 @@ use crate::types::{
     ConditionalType, IndexSignature, ObjectShapeId, ParamInfo, TemplateSpan, TupleElement,
     TypeData, TypeId, TypePredicate, TypePredicateTarget,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use std::mem::size_of;
 use tsz_common::interner::Atom;
@@ -71,8 +71,14 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     /// Stack of type parameter scopes (for BoundParameter(n))
     /// Each scope is a list of parameter names in order
     param_stack: Vec<Vec<Atom>>,
-    /// Cache to avoid re-canonicalizing the same type
-    cache: FxHashMap<TypeId, TypeId>,
+    /// Cache to avoid re-canonicalizing the same type. The flag marks entries
+    /// that must never reach `shared_cache` through reuse: guard-truncated or
+    /// unresolved-def artifacts, and *open* results (`Recursive(n)` /
+    /// `BoundParameter(n)` relative to a scope instance that may since have
+    /// been popped — scope indices cannot identify scope instances, so such a
+    /// value can never be proven equal to a fresh walk's). A hit on a flagged
+    /// entry dirties the enclosing subtree.
+    cache: FxHashMap<TypeId, (TypeId, bool)>,
     /// Guard against unbounded canonicalization recursion for expanding aliases.
     guard: RecursionGuard<TypeId>,
     /// Optional cross-instance memo of *stable* interior results, owned by the
@@ -86,14 +92,20 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     /// a shared entry is exactly the value a fresh empty-stack canonicalizer
     /// would compute for that `TypeId`.
     shared_cache: Option<&'a RefCell<FxHashMap<TypeId, TypeId>>>,
-    /// Local-cache entries whose values are recursion-guard-truncated or
-    /// unresolved-def artifacts (the canonicalization analogue of
-    /// `TypeEvaluator::tainted`). Reusing one taints the current subtree so
-    /// its result is never persisted to `shared_cache`.
-    tainted: FxHashSet<TypeId>,
+    /// Optional cross-instance memo of *artifact* results: empty-stack
+    /// subtrees whose walk was dirty (recursion-guard truncation or a
+    /// registration-window def). These values are deterministic per first
+    /// compute — exactly the class the query layer's root cache has always
+    /// memoized — but they are not proven equal to a fully-converged walk, so
+    /// reusing one dirties the consumer: every ancestor built on an artifact
+    /// lands in this tier too and can never be laundered into
+    /// [`Self::shared_cache`]. Read and written only under empty scope
+    /// stacks, like the clean tier.
+    shared_artifacts: Option<&'a RefCell<FxHashMap<TypeId, TypeId>>>,
     /// Whether the subtree currently being canonicalized saw a recursion-guard
-    /// bail, an unresolved `DefId`, or a tainted local-cache reuse. Saved and
-    /// restored around each node so the flag is subtree-scoped.
+    /// bail, an unresolved `DefId`, or reuse of a flagged local-cache or
+    /// shared-artifact entry. Saved and restored around each node so the flag
+    /// is subtree-scoped.
     walk_dirty: bool,
     /// Lowest absolute `param_stack` scope index the current subtree resolved
     /// a `TypeParameter` through (`usize::MAX` when none). A subtree whose
@@ -105,14 +117,6 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     /// `Recursive(n)` back-reference through. Same closedness role as
     /// [`Self::param_hit_floor`].
     def_hit_floor: usize,
-    /// Locally-cached entries that resolved through outer scopes when
-    /// computed (`Recursive(n)` / `BoundParameter(n)` relative to a scope
-    /// instance that may since have been popped). A later local-cache hit on
-    /// one dirties the current subtree: scope *indices* cannot identify scope
-    /// *instances*, so such a value can never be proven equal to a fresh
-    /// walk's and must not be laundered into `shared_cache` through a
-    /// "closed" ancestor. Absent = closed.
-    local_open: FxHashSet<TypeId>,
 }
 
 impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
@@ -126,11 +130,10 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             cache: FxHashMap::default(),
             guard: RecursionGuard::with_profile(RecursionProfile::SubtypeCheck),
             shared_cache: None,
-            tainted: FxHashSet::default(),
+            shared_artifacts: None,
             walk_dirty: false,
             param_hit_floor: usize::MAX,
             def_hit_floor: usize::MAX,
-            local_open: FxHashSet::default(),
         }
     }
 
@@ -142,6 +145,17 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         shared: &'a RefCell<FxHashMap<TypeId, TypeId>>,
     ) -> Self {
         self.shared_cache = Some(shared);
+        self
+    }
+
+    /// Memoize artifact (dirty, empty-stack) results through a caller-owned
+    /// map, tainting any walk that reuses one. See [`Self::shared_artifacts`].
+    #[must_use]
+    pub const fn with_shared_artifacts(
+        mut self,
+        artifacts: &'a RefCell<FxHashMap<TypeId, TypeId>>,
+    ) -> Self {
+        self.shared_artifacts = Some(artifacts);
         self
     }
 
@@ -165,9 +179,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         size_of::<Self>()
             + self.def_stack.capacity() * size_of::<DefId>()
             + param_stack_bytes
-            + self.cache.capacity() * size_of::<(TypeId, TypeId)>()
-            + self.tainted.capacity() * size_of::<TypeId>()
-            + self.local_open.capacity() * size_of::<TypeId>()
+            + self.cache.capacity() * size_of::<(TypeId, (TypeId, bool))>()
     }
 
     /// Canonicalize a type to its structural form.
@@ -185,13 +197,13 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             return type_id;
         }
 
-        // 1. Check cache. A hit on a guard-truncated or unresolved-def
-        // artifact, or on an *open* entry (one that resolved through outer
-        // scopes when computed), dirties the current subtree so it is never
-        // persisted to the shared memo (the value is still returned, matching
-        // the historical local reuse).
-        if let Some(&cached) = self.cache.get(&type_id) {
-            if self.tainted.contains(&type_id) || self.local_open.contains(&type_id) {
+        // 1. Check cache. A hit on a flagged entry (guard-truncated or
+        // unresolved-def artifact, or an *open* result — see the field doc)
+        // dirties the current subtree so it is never persisted to the shared
+        // memo; the value is still returned, matching the historical local
+        // reuse.
+        if let Some(&(cached, unshareable)) = self.cache.get(&type_id) {
+            if unshareable {
                 self.walk_dirty = true;
             }
             return cached;
@@ -207,7 +219,19 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             && let Some(shared) = self.shared_cache
             && let Some(&cached) = shared.borrow().get(&type_id)
         {
-            self.cache.insert(type_id, cached);
+            // Shared entries are clean and closed by construction.
+            self.cache.insert(type_id, (cached, false));
+            return cached;
+        }
+        if stacks_empty
+            && let Some(artifacts) = self.shared_artifacts
+            && let Some(&cached) = artifacts.borrow().get(&type_id)
+        {
+            // Artifact reuse: deterministic per first compute, but never
+            // proven converged — dirty the consumer so it stays out of the
+            // clean tier.
+            self.walk_dirty = true;
+            self.cache.insert(type_id, (cached, true));
             return cached;
         }
 
@@ -585,20 +609,21 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         };
 
         self.guard.leave(type_id);
-        self.cache.insert(type_id, result);
         let subtree_dirty = self.walk_dirty;
         let subtree_param_floor = self.param_hit_floor;
         let subtree_def_floor = self.def_hit_floor;
         // Closed: the subtree resolved nothing through scopes that existed at
         // entry, so its canonical form equals a fresh empty-stack walk's.
         let closed = subtree_param_floor >= entry_param_len && subtree_def_floor >= entry_def_len;
-        if subtree_dirty {
-            self.tainted.insert(type_id);
-        } else if closed && let Some(shared) = self.shared_cache {
+        let shareable = closed && !subtree_dirty;
+        self.cache.insert(type_id, (result, !shareable));
+        if shareable && let Some(shared) = self.shared_cache {
             shared.borrow_mut().insert(type_id, result);
-        }
-        if !closed {
-            self.local_open.insert(type_id);
+        } else if subtree_dirty
+            && stacks_empty
+            && let Some(artifacts) = self.shared_artifacts
+        {
+            artifacts.borrow_mut().insert(type_id, result);
         }
         self.walk_dirty = saved_dirty || subtree_dirty;
         self.param_hit_floor = saved_param_floor.min(subtree_param_floor);
