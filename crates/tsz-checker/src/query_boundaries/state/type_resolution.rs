@@ -3,8 +3,9 @@ use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::lazy_def_id as get_lazy_def_id;
 pub(crate) use super::super::common::{
-    callable_shape_for_type, intersection_members, is_tuple_like_type, is_tuple_type,
-    is_type_parameter_like, lazy_def_id, resolve_default_type_args, string_literal_value,
+    callable_shape_for_type, intersection_members, is_mapped_type, is_tuple_like_type,
+    is_tuple_type, is_type_parameter_like, lazy_def_id, resolve_default_type_args,
+    string_literal_value,
 };
 pub(crate) use super::super::generic_instantiation::instantiate_generic;
 pub(crate) use tsz_solver::type_queries::{

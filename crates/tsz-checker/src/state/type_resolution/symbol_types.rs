@@ -441,6 +441,13 @@ impl<'a> CheckerState<'a> {
                     && structural_type != TypeId::UNKNOWN
                     && !preserve_deferred_keyof
                     && !query::is_union_or_intersection(self.ctx.types, structural_type)
+                    // Keep a concrete mapped body (`{ [K in E]: V }`) structural.
+                    // Materializing it here erases the `Mapped` identity that
+                    // diagnostics and mapped-over-`keyof` property resolution
+                    // recover the iteration constraint from (#15392). Generic
+                    // mapped bodies are already preserved via the type-parameter
+                    // guard below; this keeps their concrete forms consistent.
+                    && !query::is_mapped_type(self.ctx.types, structural_type)
                     && !crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,
                         structural_type,

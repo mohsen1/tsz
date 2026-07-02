@@ -1424,6 +1424,62 @@ type Probe = Gen2<ABC.A>;
         assert_alias_property(source, "Probe", "v", true);
     }
 
+    /// Rule: a concrete (type-parameter-free) mapped body `{ [K in E]: V }`
+    /// keeps its `Mapped` structural identity through type-alias stabilization,
+    /// rather than being eagerly materialized to a plain object (#15392, culprit
+    /// #10522). Preserving the identity is what lets diagnostics recover the enum
+    /// key origin and lets mapped-over-`keyof` property resolution see the
+    /// iteration constraint. Binder names are varied (`Weekday`/`Schedule`, not
+    /// `E`/`M`) so the check is structural, not keyed on spelling. A wrapper alias
+    /// (`type S2 = Schedule`) must preserve it too, and a plain object alias is
+    /// the negative control that stays materialized.
+    #[test]
+    fn concrete_enum_key_mapped_alias_preserves_mapped_identity() {
+        let source = r#"
+enum Weekday { Mon = "mon", Tue = "tue" }
+type Schedule = { [K in Weekday]: number };
+type ScheduleAlias = Schedule;
+type Plain = { mon: number; tue: number };
+"#;
+        let (parser, root, binder, types) = build_checker(source);
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let db = checker.ctx.types.as_type_database();
+        let resolve = |c: &mut CheckerState, name: &str| -> tsz_solver::TypeId {
+            let sym = c.ctx.binder.file_locals.get(name).expect("symbol");
+            c.type_reference_symbol_type(sym)
+        };
+
+        let schedule = resolve(&mut checker, "Schedule");
+        assert!(
+            tsz_solver::type_queries::is_mapped_type(db, schedule),
+            "concrete enum-key mapped alias must stay a Mapped type, got {}",
+            checker.format_type(schedule),
+        );
+
+        let schedule_alias = resolve(&mut checker, "ScheduleAlias");
+        assert!(
+            tsz_solver::type_queries::is_mapped_type(db, schedule_alias),
+            "wrapper alias of a concrete mapped type must preserve Mapped identity, got {}",
+            checker.format_type(schedule_alias),
+        );
+
+        let plain = resolve(&mut checker, "Plain");
+        assert!(
+            !tsz_solver::type_queries::is_mapped_type(db, plain),
+            "plain object alias must not be a Mapped type (negative control), got {}",
+            checker.format_type(plain),
+        );
+    }
+
     /// Rule: when `T extends U ? A : B` is deferred (contains type parameters),
     /// property access uses `A | B` as the apparent type. Properties not on all
     /// branches must produce TS2339; properties on all branches must be accepted.
