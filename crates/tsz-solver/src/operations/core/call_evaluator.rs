@@ -1317,15 +1317,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // types currently on the visit stack and bail with None when we
             // re-enter.
             visiting: rustc_hash::FxHashSet<TypeId>,
+            memo: FxHashMap<TypeId, Option<FunctionShape>>,
+            truncations: usize,
         }
 
         impl<'a> ContextualSignatureVisitor<'a> {
             fn visit_guarded(&mut self, type_id: TypeId) -> Option<FunctionShape> {
+                if let Some(cached) = self.memo.get(&type_id) {
+                    return cached.clone();
+                }
                 if !self.visiting.insert(type_id) {
+                    self.truncations = self.truncations.saturating_add(1);
                     return None;
                 }
+                #[cfg(test)]
+                contextual_signature_test_probe::record_visit(type_id);
+                let entry_truncations = self.truncations;
                 let result = self.visit_type(self.db, type_id);
                 self.visiting.remove(&type_id);
+                if self.truncations == entry_truncations {
+                    self.memo.insert(type_id, result.clone());
+                }
                 result
             }
         }
@@ -1543,6 +1555,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             query_db,
             arg_count,
             visiting: rustc_hash::FxHashSet::default(),
+            memo: FxHashMap::default(),
+            truncations: 0,
         };
         visitor.visit_guarded(type_id)
     }
@@ -1644,5 +1658,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) mod contextual_signature_test_probe {
+    use crate::types::TypeId;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static VISITS: RefCell<Option<Vec<TypeId>>> = const { RefCell::new(None) };
+    }
+
+    struct VisitRecorderGuard;
+
+    impl Drop for VisitRecorderGuard {
+        fn drop(&mut self) {
+            VISITS.with(|visits| {
+                visits.borrow_mut().take();
+            });
+        }
+    }
+
+    pub(crate) fn record_visit(type_id: TypeId) {
+        VISITS.with(|visits| {
+            if let Some(recorded) = visits.borrow_mut().as_mut() {
+                recorded.push(type_id);
+            }
+        });
+    }
+
+    pub(crate) fn with_recorded_visits<R>(f: impl FnOnce() -> R) -> (R, Vec<TypeId>) {
+        VISITS.with(|visits| {
+            assert!(
+                visits.borrow().is_none(),
+                "nested contextual visit recorder"
+            );
+            *visits.borrow_mut() = Some(Vec::new());
+        });
+        let guard = VisitRecorderGuard;
+        let result = f();
+        let recorded = VISITS.with(|visits| visits.borrow_mut().take().unwrap_or_default());
+        drop(guard);
+        (result, recorded)
     }
 }
