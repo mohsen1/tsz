@@ -406,6 +406,24 @@ impl CheckerState<'_> {
             }
         }
 
+        // A cross-file (non-declare) generic interface/class base must be
+        // instantiated from the `DefinitionStore` body and parameters — the
+        // def is the identity authority. The raw-`SymbolId` route below
+        // resolves the symbol against the current binder, where per-file
+        // binders mint colliding raw ids (#14344), so a cross-file base can
+        // silently bind the wrong symbol and drop the argument substitution
+        // (a free `T` leaks — false TS2322). The property-access
+        // materializer already routes this shape through
+        // `resolve_application_base_body`; this makes the shared evaluator
+        // agree so every consumer (relation targets, contextual typing,
+        // member reads) observes the same instantiated body. Refs #13212.
+        if !args.is_empty()
+            && let Some(instantiated) =
+                self.instantiate_cross_file_interface_application(type_id, base, &args)
+        {
+            return instantiated;
+        }
+
         // Check if the base is a Lazy or Enum type
         let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
             return type_id;

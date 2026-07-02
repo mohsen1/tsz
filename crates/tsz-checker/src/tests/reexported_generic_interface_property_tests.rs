@@ -170,14 +170,15 @@ fn member_access_through_alias_over_local_interface_control() {
     );
 }
 
+// The assignment-target form routes through the shared evaluator (relation
+// path), not the property-access receiver materialization. The shared
+// evaluator now instantiates a cross-file generic interface application from
+// its `DefinitionStore` body and parameters
+// (`instantiate_cross_file_interface_application`), so the alias-wrapped
+// target materializes with its argument substituted. Previously `#[ignore]`d
+// as a #14344 residual; the def-store route sidesteps the raw-`SymbolId`
+// collision that dropped the substitution.
 #[test]
-#[ignore = "open follow-up: the assignment-target form (`const h: Wrap<number> = \
-            { value: 1 }`) does not route through the property-access receiver \
-            materialization, so the cross-arena interface application still drops \
-            its parameter substitution during relation evaluation. That is the \
-            general cross-file generic-interface instantiation root (#14344 \
-            type-parameter identity), not the property-access facet this slice \
-            fixes."]
 fn assignment_to_alias_over_reexport_target() {
     assert_clean(
         &[
@@ -189,6 +190,30 @@ fn assignment_to_alias_over_reexport_target() {
             ),
         ],
         "./main.ts",
+    );
+}
+
+#[test]
+fn assignment_to_alias_over_reexport_wrong_value_still_errors() {
+    // Negative control for the assignment-target form: the substitution is
+    // applied, not skipped, so a genuine mismatch keeps its TS2322.
+    let diags = check(
+        &[
+            ("./g.ts", "export interface Carrier<T> { load: T; }\n"),
+            ("./gateway.ts", "export type { Carrier } from './g';\n"),
+            (
+                "./bad.ts",
+                "import type { Carrier } from './gateway';\ntype Keep<Q> = Carrier<Q>;\nconst c: Keep<number> = { load: 'nope' };\n",
+            ),
+        ],
+        "./bad.ts",
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for string-vs-number mismatch through the alias-wrapped \
+         assignment target, got: {diags:?}"
     );
 }
 
