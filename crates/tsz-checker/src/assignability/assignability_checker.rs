@@ -739,10 +739,14 @@ impl<'a> CheckerState<'a> {
                 // TypeEvaluator::visit_type_query can resolve via TypeEnvironment::resolve_ref.
                 // Without this, resolve_ref returns None and the fallback resolve_lazy returns
                 // the INSTANCE type for classes, causing false TS2345 on `typeof ClassName` args.
-                if let Some(value_type) = self.ctx.symbol_types.get(&sym_id)
-                    && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
-                {
-                    env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
+                if let Some(value_type) = self.ctx.symbol_types.get(&sym_id) {
+                    // Route through the env-write authority (dual-write + defer
+                    // on borrow race instead of silently skipping; #14348).
+                    self.ctx.register_symbol_type_in_envs(
+                        tsz_solver::SymbolRef(sym_id.0),
+                        value_type,
+                        Vec::new(),
+                    );
                 }
             }
 

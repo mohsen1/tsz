@@ -1238,7 +1238,7 @@ impl TypeEnvironment {
     /// dual-written and therefore never reach the deferred-replay queue. When a
     /// new field is added to `TypeEnvironment`, add it here too or the
     /// flow-analyzer env will silently diverge from the evaluator env.
-    pub fn overlay_missing_from(&mut self, source: &Self) {
+    pub fn overlay_missing_from(&mut self, source: &Self) -> bool {
         use std::collections::hash_map::Entry;
         let mut changed = false;
 
@@ -1311,6 +1311,7 @@ impl TypeEnvironment {
         if changed {
             self.bump_generation();
         }
+        changed
     }
 
     /// Return the first `DefId`-keyed entry on which `self` and `other` disagree.
