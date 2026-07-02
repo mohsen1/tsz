@@ -20,7 +20,7 @@ const DOCS_ONLY_PATTERN =
   /(^|\/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs\/|^\.gitignore$|^\.editorconfig$/;
 
 const COMPILER_PATH_PATTERN =
-  /^(Cargo\.(lock|toml)|\.cargo\/|rust-toolchain|\.github\/workflows\/(ci|bench)\.yml|crates\/clippy\.toml|crates\/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(\/|$)|benches\/|tests\/|TypeScript\/|scripts\/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts\/ci\/gate-path-classifier\.mjs|scripts\/ci\/lib\/[^/]+\.sh|scripts\/ci\/(ci-resources|gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)/;
+  /^(Cargo\.(lock|toml)|\.cargo\/|rust-toolchain|\.github\/workflows\/(ci|bench)\.yml|crates\/clippy\.toml|crates\/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(\/|$)|benches\/|tests\/|TypeScript\/|scripts\/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts\/ci\/gate-path-classifier\.mjs|scripts\/ci\/lib\/[^/]+\.sh|scripts\/ci\/(ci-resources|full-ci|github-suite|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)/;
 
 const BENCH_SHELL_PATTERN = /^scripts\/bench\/[^/]+\.sh$/;
 const PERF_TOOL_PATTERN = /^scripts\/perf\/[^/]+\.(py|sh)$/;

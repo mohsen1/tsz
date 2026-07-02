@@ -24,8 +24,8 @@ const INCONCLUSIVE = new Set(["skipped", "cancelled", "neutral", "stale", null, 
 // Run/job conclusions that count as a red (failing) verdict on the tree.
 const RED_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
 // Step conclusions that mean the step was interrupted before it could report a
-// real verdict (the GitHub work step ends `null` when the Cloud Build
-// submission is interrupted or the orchestrating runner is preempted / "loses
+// real verdict (the GitHub work step ends `null` when the runner work is
+// interrupted or the orchestrating runner is preempted / "loses
 // communication"). A genuine test failure instead leaves the step `failure`.
 // See issue #14688.
 const INTERRUPTED_STEP_CONCLUSIONS = new Set([null, undefined, "", "cancelled"]);
@@ -213,8 +213,8 @@ function createdMs(run) {
 // Classify why a *failing* CI run failed, from its jobs+steps payload, so an
 // infra interruption can be told apart from a real conformance/parity-floor
 // regression (issue #14688). A genuine regression always surfaces as a step
-// that concluded `failure`/`timed_out`; an infra interruption (Cloud Build
-// submission interrupted, runner preempted / "lost communication") leaves the
+// that concluded `failure`/`timed_out`; an infra interruption (runner work
+// interrupted, runner preempted / "lost communication") leaves the
 // work step with `conclusion: null` while no step ever concluded `failure`.
 //
 //   "real"    — a failing job has a step that concluded failure/timed_out, or a
@@ -249,7 +249,7 @@ export function classifyJobsFailure(jobs) {
 //
 // `options.classifyRun(run) -> "real" | "infra" | "unknown"` (optional) lets the
 // caller inspect a red run's jobs/steps; a red run classified "infra" is treated
-// as inconclusive (skipped) so a Cloud Build / runner interruption with a `null`
+// as inconclusive (skipped) so a runner interruption with a `null`
 // work step never trips the parity-floor alert. Without it (fixtures / unit
 // tests) behavior is unchanged: the newest conclusive run is the verdict.
 export function mainCiHealth(runs, options = {}) {
@@ -518,7 +518,7 @@ function main() {
     ? readFixture(options.fixture)
     : readMainRuns(options.repository, options.maxRuns);
   // Live runs (not a static fixture) get per-run infra-interruption
-  // classification so a Cloud Build / runner interruption with a `null` work
+  // classification so a runner interruption with a `null` work
   // step is not mistaken for a parity-floor breach (issue #14688).
   const classifyRun = !options.fixture && options.repository
     ? makeRunClassifier(options.repository)

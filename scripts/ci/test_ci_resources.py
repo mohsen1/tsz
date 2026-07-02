@@ -1,7 +1,7 @@
 """Tests for scripts/ci/ci-resources.sh.
 
 The module provides hardware resource budget helpers (worker counts, build job
-limits) used by gcp-full-ci.sh.  These tests exercise the functions via
+limits) used by full-ci.sh.  These tests exercise the functions via
 subprocess so regressions (wrong arithmetic, division-by-zero on small hosts,
 out-of-range worker counts) fail closed in CI.
 """
@@ -121,8 +121,8 @@ class DefaultCargoBuildJobsTests(unittest.TestCase):
         )
         self.assertEqual(result_int(r), 1)
 
-    def test_dist_suite_cloud_run_shape_gets_eight_jobs(self):
-        # dist-binaries on the 8 vCPU / 32 GiB Cloud Run shape builds at -j8.
+    def test_dist_suite_hosted_runner_shape_gets_eight_jobs(self):
+        # dist-binaries on the 8 vCPU / 32 GiB hosted runner shape builds at -j8.
         # The dist budget is 3584 MiB/job: floor(32097 / 3584) = 8, capped by
         # the 8 host CPUs. Measurement (dist-fast workspace recompile) showed
         # peak RSS ~7.9 GiB flat across -j4/-j8/-j16, so -j8 is RSS-safe here.

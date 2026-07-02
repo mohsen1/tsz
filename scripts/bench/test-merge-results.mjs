@@ -1183,8 +1183,7 @@ withTempDir((dir) => {
   assert.equal(merged.totals.green_tsgo_wins, 1);
 });
 
-// Issue #14398: a failed shard writes an error stub ({results:[], error}) per
-// cloudbuild-bench-shard.yaml. It carries no timing data, so a
+// Issue #14398: a failed shard writes an error stub ({results:[], error}). It carries no timing data, so a
 // --require-runner-signature merge must DROP it (with a warning) and keep
 // merging the shards that succeeded — a single transient shard failure must not
 // crash the whole benchmark publish on the signature gate.

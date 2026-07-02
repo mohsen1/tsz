@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# bench-shard-prelude.sh — hardening helpers for self-hosted bench shards.
+# bench-shard-prelude.sh — hardening helpers for benchmark shards.
 #
-# Self-hosted bench shards on the tsz-cloud-run pool run sequentially on the
-# same machine. When one shard leaks memory or a heavy benchmark hits the
-# runner's OOM ceiling, the runner agent loses communication with GitHub and
-# subsequent shards fail with no usable diagnostics (issue #7601).
+# Benchmark shards can run sequentially on the same runner. When one shard leaks
+# memory or a heavy benchmark hits the runner's OOM ceiling, the runner agent
+# can lose communication with GitHub and subsequent shards fail with no usable
+# diagnostics (issue #7601).
 #
 # This helper:
 #   * `prelude`    — runs before each shard. Kills orphan tsz/tsgo/hyperfine

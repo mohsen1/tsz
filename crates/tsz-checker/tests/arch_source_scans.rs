@@ -5,7 +5,7 @@
 //! These ratchets previously lived as `#[cfg(test)]` lib-test mounts in
 //! `src/lib.rs`, but CI never builds the checker lib-test binary (it exceeds
 //! what the `32 GiB` runners can link; see `run_checker_integration_tests`
-//! in `scripts/ci/gcp-full-ci.sh`), so the invariants were silently
+//! in `scripts/ci/full-ci.sh`), so the invariants were silently
 //! unenforced.
 //!
 //! All scans are pure source-text checks over `$CARGO_MANIFEST_DIR/src` with
