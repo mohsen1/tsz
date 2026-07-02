@@ -1361,20 +1361,40 @@ impl<'a> CheckerState<'a> {
         reason: tsz_solver::SubtypeFailureReason,
     ) -> tsz_solver::SubtypeFailureReason {
         use crate::query_boundaries::common::SubtypeFailureReason as R;
-        // Excess-property and weak-type failures are not per-constituent
-        // elaborations in `tsc`. Missing-property failures against an
-        // intersection target are owned by a separate caller-side emission path
-        // (which anchors and words `TS2741`/`TS2739` itself), so leave them to
-        // that path rather than restructuring their reason here.
+        // Excess-property failures are never a per-constituent elaboration in
+        // `tsc` (they only arise from a fresh object literal source), and an
+        // already-framed reason must not be re-wrapped.
         if matches!(
             reason,
-            R::ExcessProperty { .. }
-                | R::NoCommonProperties { .. }
-                | R::MissingProperty { .. }
-                | R::MissingProperties { .. }
-                | R::IntersectionTargetMismatch { .. }
+            R::ExcessProperty { .. } | R::IntersectionTargetMismatch { .. }
         ) {
             return reason;
+        }
+        // Missing/no-common-property failures against an intersection target are
+        // owned by a separate caller-side emission path *for object-like
+        // sources* (which anchors and words `TS2741`/`TS2739`, naming the
+        // requiring constituent itself). `tsc` reaches that path only when the
+        // source has properties to compare; a primitive/non-object source
+        // (`number`, `string`, a literal, `symbol`, …) produces no such
+        // message, so `tsc` (`typeRelatedToEachType`) instead elaborates the
+        // first failing constituent frame — which tsz otherwise dropped. Wrap
+        // those here; leave the object-source path untouched. This object/
+        // primitive split must stay in sync with the missing-property render
+        // path (`render_failure_missing_property.rs`), which likewise emits the
+        // `TS2741`/`TS2739` line only for object-like sources.
+        //
+        // `resolve_lazy_type` is load-bearing: `is_object_like_type` treats a
+        // bare `Lazy` alias (e.g. `type N = number`) as object-like, so the
+        // source must be resolved to its concrete form before the check.
+        if matches!(
+            reason,
+            R::NoCommonProperties { .. } | R::MissingProperty { .. } | R::MissingProperties { .. }
+        ) {
+            let resolved_source = self.resolve_lazy_type(source);
+            if crate::query_boundaries::common::is_object_like_type(self.ctx.types, resolved_source)
+            {
+                return reason;
+            }
         }
         let members = match self.target_intersection_constituents(target) {
             Some(members) => members,
