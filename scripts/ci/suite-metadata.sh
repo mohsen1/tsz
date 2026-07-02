@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 
 _TSZ_CI_GITHUB_SUITES=(
+  unit
+  conformance
+  conformance-aggregate
+  emit-shard
+  emit-aggregate
+  fourslash-shard
+  fourslash-aggregate
+)
+
+_TSZ_CI_FULL_SUITES=(
   dist-binaries
   node-harness-prep
   lint
@@ -14,10 +24,6 @@ _TSZ_CI_GITHUB_SUITES=(
   emit-aggregate
   fourslash-shard
   fourslash-aggregate
-)
-
-_TSZ_CI_FULL_SUITES=(
-  "${_TSZ_CI_GITHUB_SUITES[@]}"
 )
 
 _TSZ_CI_CACHE_SUITES=(

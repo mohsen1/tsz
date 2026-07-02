@@ -32,8 +32,21 @@ class SuiteMetadataTests(unittest.TestCase):
 
         self.assertEqual(set(suite_names("github")), invoked)
 
-    def test_full_suites_are_github_entry_points(self):
-        self.assertEqual(set(suite_names("full")), set(suite_names("github")))
+    def test_github_suites_are_full_suite_entry_points(self):
+        self.assertTrue(set(suite_names("github")).issubset(set(suite_names("full"))))
+
+    def test_heavy_helper_suites_are_not_pr_entry_points(self):
+        removed_from_pr = {
+            "dist-binaries",
+            "node-harness-prep",
+            "lint",
+            "checker-integration",
+            "lsp-e2e",
+            "wasm-all",
+        }
+
+        self.assertTrue(removed_from_pr.isdisjoint(suite_names("github")))
+        self.assertTrue(removed_from_pr.issubset(set(suite_names("full"))))
 
     def test_removed_local_fanout_suites_are_not_entry_points(self):
         removed = {

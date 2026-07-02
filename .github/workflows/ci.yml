@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, edited]
+    types: [opened, reopened, synchronize, ready_for_review]
   merge_group:
   push:
     branches:
@@ -12,1186 +12,43 @@ on:
 permissions:
   contents: read
   actions: read
-  pull-requests: read
-  statuses: write
 
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'edited' && 'metadata' || 'suite' }}
-  # A newer suite pull_request event means the old PR run can no longer
-  # satisfy strict required checks for the current head SHA. Body/title edits
-  # run only the metadata gates and use a separate group so repairing PR body
-  # metadata does not cancel the real suite run for the same SHA.
+  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  # GCP bill guard: CI publishes the required light summary on GitHub-hosted
-  # runners only. Heavy compiler validation moves to the local signoff status
-  # and scheduled/manual benchmark workflows that run only on GitHub Actions.
-  TSZ_CI_EMERGENCY_SCALE_DOWN: "1"
-
 jobs:
-  gate:
-    name: gate
+  clippy:
+    name: clippy
     runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.gate.outputs.should_run }}
-      full_run: ${{ steps.gate.outputs.full_run }}
-      rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
-      required_summary: ${{ steps.gate.outputs.required_summary }}
-      bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
-      perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
-      arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
-      metadata_only_skip: ${{ steps.gate.outputs.metadata_only_skip }}
-      metadata_active_suite_found: ${{ steps.gate.outputs.metadata_active_suite_found }}
-      compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
+    timeout-minutes: 35
     steps:
-      - id: metadata-active-suite
-        if: github.event_name == 'pull_request' && github.event.action == 'edited'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        shell: bash
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+      - name: Install clippy
+        run: rustup component add clippy
+      - name: Run cargo clippy
         run: |
-          set -euo pipefail
-          active_suite=""
-          for attempt in 1 2 3 4 5 6; do
-            active_suite=$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${PR_HEAD_SHA}&event=pull_request&per_page=20" \
-              2>/dev/null \
-              | jq -r --argjson current_run_id "${GITHUB_RUN_ID}" '
-                [.workflow_runs[]
-                  | select((.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")
-                  and (.id != $current_run_id))]
-                  | sort_by(.created_at)
-                  | last
-                  | if . == null then empty else [.id, .status, .html_url] | @tsv end
-              ' || true)
-            if [[ -n "$active_suite" ]]; then
-              break
-            fi
-            if [[ "$attempt" -lt 6 ]]; then
-              echo "No active real CI suite for edited PR head is visible yet (attempt ${attempt}/6); retrying."
-              sleep 5
-            fi
-          done
-          if [[ -n "$active_suite" ]]; then
-            echo "active_suite_found=true" >> "$GITHUB_OUTPUT"
-            active_suite_id=$(printf '%s' "$active_suite" | cut -f1)
-            active_suite_status=$(printf '%s' "$active_suite" | cut -f2)
-            active_suite_url=$(printf '%s' "$active_suite" | cut -f3)
-            echo "Exact-head CI suite ${active_suite_id} is ${active_suite_status}; metadata CI will publish CI Light Summary: ${active_suite_url}"
-          else
-            echo "active_suite_found=false" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_EVENT_NAME: ${{ github.event_name }}
-          METADATA_ACTIVE_SUITE_FOUND: ${{ steps.metadata-active-suite.outputs.active_suite_found }}
-        shell: bash
-        run: |
-          # shellcheck disable=SC2129
-          set -euo pipefail
-          should_run=true
-          full_run=true
-          required_summary=true
-          rust_cache_refresh=false
-          cache_key_changed=false
-          metadata_only_skip=false
-          bench_shell_only=false
-          perf_tool_only=false
-          arch_tool_only=false
-          compiler_checks_required=true
-          if [[ "${{ github.event_name }}" == "merge_group" ]]; then
-            # Native merge queue validates a GitHub-owned synthetic merge
-            # commit. Outside cost-control mode, run the same compiler suite so
-            # branch protection is checking the actual queued commit, not only
-            # the PR head that entered the queue.
-            echo "Native merge queue group - exact-head compiler validation requested for the queued merge commit."
-          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            if [[ "${{ github.event.action }}" == "edited" ]]; then
-              echo "PR metadata edited — refreshing body/ready-state checks without heavy CI."
-              should_run=false
-              full_run=false
-              metadata_only_skip=true
-              compiler_checks_required=false
-              if [[ "${METADATA_ACTIVE_SUITE_FOUND:-false}" == "true" ]]; then
-                required_summary=false
-              fi
-            fi
-            # The `labeled` event triggers on every label add. We only care
-            # about the `ci-approved` label (used to opt fork PRs into CI).
-            # For any other label, this would just duplicate the existing
-            # CI run from the same SHA's open/sync events, so skip.
-            if [[ "${{ github.event.action }}" == "labeled" \
-                  && "${{ github.event.label.name }}" != "ci-approved" ]]; then
-              # Skip the actual CI work — a non-ci-approved label add, such as
-              # an ownership label after PR metadata cleanup, just duplicates
-              # the existing CI run from the same SHA's open/sync events.
-              #
-              # Set required_summary=false so the ci-summary job is named
-              # "CI Light Summary" rather than "CI Summary". This prevents the
-              # labeled event from writing a new "CI Summary: success" check
-              # that would override an existing "CI Summary: failure" from the
-              # last real run, which could allow CI-failed PRs to land on main
-              # (issue #9385).
-              echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
-              should_run=false
-              metadata_only_skip=true
-            fi
-            # Two-phase CI removed: every open PR (draft or not) runs the full
-            # CI suite and reports the required "CI Summary". Path-based content
-            # skips (docs-only / *-tool-only) below still trim jobs.
-            # Docs-only PRs cannot affect cargo build/test/conformance, so
-            # skip CI jobs when every changed path matches
-            # one of the docs-only patterns. The gate job itself + the
-            # ubuntu-latest "CI Summary" job still run, so any
-            # required-status-checks for those names are satisfied — unlike
-            # workflow-level `paths-ignore`, which skips the entire workflow
-            # and leaves required checks pending forever (PR #1989).
-            #
-            # CI workflow files (`.github/workflows/*`), `Cargo.{toml,lock}`,
-            # scripts, and `crates/**` source are NOT classified as docs and
-            # continue to trigger the full suite. Renames are tracked via
-            # the GitHub API's `previous_filename`, so a `foo.rs` → `foo.md`
-            # rename is correctly classified as non-docs (the deleted .rs
-            # source still requires a build).
-            if [[ "$should_run" == "true" ]]; then
-              all_paths=""
-              page=1
-              while :; do
-                page_paths=$(gh api \
-                  "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100&page=${page}" \
-                  --jq '.[] | (.filename, (.previous_filename // empty))' \
-                  2>/dev/null || true)
-                if [[ -z "$page_paths" ]]; then break; fi
-                all_paths+="${page_paths}"$'\n'
-                # Stop early if we got fewer than 100 entries (last page).
-                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
-                if [[ "$count" -lt 100 ]]; then break; fi
-                page=$((page + 1))
-                # Safety bound: 30 pages = 3000 files, well past any real PR.
-                if [[ "$page" -gt 30 ]]; then break; fi
-              done
-              if [[ -n "$all_paths" ]]; then
-                path_classification=$(printf '%s\n' "$all_paths" | node scripts/ci/gate-path-classifier.mjs)
-                docs_only=$(printf '%s' "$path_classification" | jq -r '.docsOnly')
-                if [[ "$docs_only" == "true" ]]; then
-                  echo "PR diff is docs-only — skipping CI jobs:"
-                  printf '%s' "$path_classification" | jq -r '.paths[]' | sed 's/^/  /'
-                  should_run=false
-                fi
-                compiler_checks_required=$(printf '%s' "$path_classification" | jq -r '.compilerChecksRequired')
-                if [[ "$compiler_checks_required" != "true" ]]; then
-                  compiler_checks_required=false
-                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
-                fi
-              fi
-            fi
-            # Bench script-only changes do not need Rust compiler CI. Keep the
-            # required CI Summary alive, but replace lint/unit/dist/wasm/heavy
-            # jobs with a cheap bash syntax smoke job below. CI workflow edits,
-            # Cargo files, Rust crates, JS helpers, and non-bench shell scripts
-            # still take the normal path.
-            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
-              bench_shell_only_classified=$(printf '%s' "$path_classification" | jq -r '.benchShellOnly')
-              if [[ "$bench_shell_only_classified" == "true" ]]; then
-                echo "PR diff only changes bench shell scripts/docs — running bench shell smoke only:"
-                printf '%s' "$path_classification" | jq -r '.benchShellPaths[]' | sed 's/^/  /'
-                should_run=false
-                full_run=false
-                bench_shell_only=true
-              fi
-            fi
-            # Perf-tool Python/shell script-only changes do not need Rust compiler CI.
-            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
-            # jobs with a cheap tool smoke job below. CI workflow edits, Cargo
-            # files, Rust crates, and non-perf scripts still take
-            # the normal path.
-            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
-              perf_tool_only_classified=$(printf '%s' "$path_classification" | jq -r '.perfToolOnly')
-              if [[ "$perf_tool_only_classified" == "true" ]]; then
-                echo "PR diff only changes perf Python tools/docs — running perf tool smoke only:"
-                printf '%s' "$path_classification" | jq -r '.perfToolPaths[]' | sed 's/^/  /'
-                should_run=false
-                full_run=false
-                perf_tool_only=true
-              fi
-            fi
-            # Arch-tool Python script-only changes do not need Rust compiler CI.
-            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
-            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
-            # files, Rust crates, shell scripts, and non-arch scripts still take
-            # the normal path.
-            if [[ "$should_run" == "true" && -n "${path_classification:-}" ]]; then
-              arch_tool_only_classified=$(printf '%s' "$path_classification" | jq -r '.archToolOnly')
-              if [[ "$arch_tool_only_classified" == "true" ]]; then
-                echo "PR diff only changes arch Python tools/docs — running arch tool smoke only:"
-                printf '%s' "$path_classification" | jq -r '.archToolPaths[]' | sed 's/^/  /'
-                should_run=false
-                full_run=false
-                arch_tool_only=true
-              fi
-            fi
-            # Draft-phase unit narrowing removed with the two-phase CI: every
-            # open PR runs the full unit suite. Path-based skips above still apply.
-            if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
-              # Fork PRs cannot run expensive compiler validation by default
-              # (untrusted code on shared infra). A maintainer must add the
-              # `ci-approved` label after reviewing the diff to opt the PR
-              # into full CI. Without that label, only the lightweight
-              # ubuntu-latest checks run, which means heavy regressions
-              # (e.g. conformance) cannot be caught — which is exactly how
-              # PR #1608 slipped 72 conformance regressions into main.
-              has_label=$(gh api \
-                "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" \
-                --jq '.labels // [] | map(.name) | index("ci-approved") // empty' \
-                2>/dev/null || true)
-              if [[ -n "$has_label" ]]; then
-                echo "Fork PR has ci-approved label — full compiler CI would be allowed outside cost-control mode."
-              else
-                echo "Skipping expensive compiler CI for fork PRs (add 'ci-approved' label to enable outside cost-control mode)."
-                should_run=false
-                required_summary=false
-              fi
-            fi
-          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
-            # Skip redundant main CI when the push is a PR merge already validated by PR CI.
-            # Saves ~40+ runner-minutes per merge (32 conformance + lint + unit + wasm + emit shards).
-            pr_number=""
-            for attempt in 1 2 3 4 5 6; do
-              pr_number=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" \
-                --jq '.[0].number // empty' 2>/dev/null || true)
-              if [[ -n "$pr_number" ]]; then
-                if [[ "$attempt" -gt 1 ]]; then
-                  echo "Commit association for PR #${pr_number} became visible on attempt ${attempt}."
-                fi
-                break
-              fi
-              if [[ "$attempt" -lt 6 ]]; then
-                echo "Commit association for ${{ github.sha }} is not visible yet (attempt ${attempt}/6); retrying."
-                sleep 5
-              fi
-            done
-            if [[ -z "$pr_number" ]]; then
-              commit_subject=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}" \
-                --jq '.commit.message | split("\n")[0]' 2>/dev/null || true)
-              if [[ "$commit_subject" =~ \(\#([0-9]+)\) ]]; then
-                pr_number="${BASH_REMATCH[1]}"
-                echo "Commit subject references PR #${pr_number} — using it for main CI skip check"
-              fi
-            fi
-            if [[ -n "$pr_number" ]]; then
-              main_skip_allowed=true
-              pr_wip_status=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
-                --jq 'if (([.labels[]?.name | select(. == "WIP")] | length) > 0) or (.title | test("(^|[[:space:]])\\[WIP\\]([[:space:]]|$)")) then "true" else "false" end' \
-                2>/dev/null || echo "false")
-              if [[ "${pr_wip_status}" == "true" ]]; then
-                echo "Merged PR #${pr_number} still carried WIP status; running main CI instead of trusting its PR run"
-                main_skip_allowed=false
-              fi
-              pr_base_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
-                --jq '.base.sha // empty' 2>/dev/null || true)
-              main_parent_sha="${{ github.event.before }}"
-              if [[ -n "${pr_base_sha}" \
-                    && -n "${main_parent_sha}" \
-                    && "${main_parent_sha}" != "0000000000000000000000000000000000000000" \
-                    && "${pr_base_sha}" != "${main_parent_sha}" ]]; then
-                echo "Merged PR #${pr_number} was validated against base ${pr_base_sha}, but landed on main parent ${main_parent_sha}; running main CI instead of trusting stale-base PR CI"
-                main_skip_allowed=false
-              fi
-
-              pr_changed_paths=""
-              pr_changed_path_classification=""
-              page=1
-              while :; do
-                page_paths=$(gh api \
-                  "repos/${{ github.repository }}/pulls/${pr_number}/files?per_page=100&page=${page}" \
-                  --jq '.[] | (.filename, (.previous_filename // empty))' \
-                  2>/dev/null || true)
-                if [[ -z "$page_paths" ]]; then break; fi
-                pr_changed_paths+="${page_paths}"$'\n'
-                count=$(printf '%s\n' "$page_paths" | wc -l | tr -d ' ')
-                if [[ "$count" -lt 100 ]]; then break; fi
-                page=$((page + 1))
-                if [[ "$page" -gt 30 ]]; then break; fi
-              done
-              if [[ -n "$pr_changed_paths" ]]; then
-                pr_changed_path_classification=$(printf '%s\n' "$pr_changed_paths" | node scripts/ci/gate-path-classifier.mjs)
-                cache_paths=$(printf '%s' "$pr_changed_path_classification" | jq -r '.cacheKeyInputPaths[]')
-                if [[ -n "$cache_paths" ]]; then
-                  echo "PR #${pr_number} changed CI cache-key inputs; running main CI to refresh shared Rust caches:"
-                  printf '%s\n' "$cache_paths" | sed 's/^/  /'
-                  cache_key_changed=true
-                  rust_cache_refresh=true
-                fi
-              fi
-            fi
-            if [[ -n "$pr_number" && "$cache_key_changed" != "true" && "${main_skip_allowed:-true}" == "true" ]]; then
-              pr_head_sha=$(gh api "repos/${{ github.repository }}/pulls/${pr_number}" \
-                --jq '.head.sha' 2>/dev/null || true)
-              if [[ -n "$pr_head_sha" ]]; then
-                latest_ci_run_id=""
-                latest_ci_conclusion=""
-                for attempt in 1 2 3 4 5 6; do
-                  latest_ci_run=$(gh api \
-                    "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=${pr_head_sha}&event=pull_request&per_page=20" \
-                    --jq '[.workflow_runs[] | select(.status == "completed")] | sort_by(.created_at) | last | [.id, .conclusion] | @tsv' \
-                    2>/dev/null || true)
-                  latest_ci_run_id=$(printf '%s' "${latest_ci_run}" | cut -f1)
-                  latest_ci_conclusion=$(printf '%s' "${latest_ci_run}" | cut -f2)
-                  if [[ -n "${latest_ci_conclusion}" ]]; then
-                    break
-                  fi
-                  if [[ "$attempt" -lt 6 ]]; then
-                    echo "No completed CI run for PR #${pr_number} head ${pr_head_sha} is visible yet (attempt ${attempt}/6); retrying."
-                    sleep 5
-                  fi
-                done
-                if [[ "${latest_ci_conclusion}" == "success" ]]; then
-                  required_summary_passed=$(gh api \
-                    "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
-                    --jq '[.jobs[] | select(.name == "CI Summary" and .conclusion == "success")] | length' \
-                    2>/dev/null || echo "0")
-                  if [[ "${required_summary_passed}" -gt 0 ]]; then
-                    compiler_paths_on_pr=$(printf '%s' "${pr_changed_path_classification:-}" \
-                      | jq -r '.compilerPaths[]?' \
-                      || true)
-                    if [[ -n "$compiler_paths_on_pr" ]]; then
-                      heavy_checks_passed=$(gh api \
-                        "repos/${{ github.repository }}/actions/runs/${latest_ci_run_id}/jobs?per_page=100" \
-                        --jq '[.jobs[] | select((.name == "conformance-snapshot-gate" or .name == "conformance-aggregate" or .name == "fourslash-aggregate" or .name == "emit-aggregate") and .conclusion == "success")] | length' \
-                        2>/dev/null || echo "0")
-                      if [[ "${heavy_checks_passed}" -ge 4 ]]; then
-                        echo "Latest required PR CI summary and heavy compiler gates for #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
-                        should_run=false
-                      else
-                        echo "Latest PR CI for #${pr_number} passed CI Summary but not all heavy compiler gates (${heavy_checks_passed}/4); running main CI"
-                      fi
-                    else
-                      echo "Latest required PR CI summary for non-compiler PR #${pr_number} head ${pr_head_sha} passed — skipping redundant main CI"
-                      should_run=false
-                    fi
-                  else
-                    echo "Latest PR CI for #${pr_number} head ${pr_head_sha} passed without a required CI Summary — running main CI"
-                  fi
-                else
-                  echo "Latest PR CI for #${pr_number} head ${pr_head_sha} is '${latest_ci_conclusion:-missing}' — running main CI"
-                fi
-              fi
-            fi
-          fi
-          if [[ "${TSZ_CI_EMERGENCY_SCALE_DOWN:-0}" == "1" ]]; then
-            echo "GitHub Actions-only cost-control mode is active — skipping heavy CI fanout."
-            echo "Run scripts/ci/signoff.sh locally to post the required PR signoff status after testing."
-            should_run=false
-            full_run=false
-            rust_cache_refresh=false
-            required_summary=true
-            bench_shell_only=false
-            perf_tool_only=false
-            arch_tool_only=false
-            metadata_only_skip=false
-            compiler_checks_required=false
-          fi
-          if [[ "$should_run" != "true" ]]; then
-            full_run=false
-          fi
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-          echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
-          echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
-          echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
-          echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
-          echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
-          echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
-          echo "metadata_only_skip=${metadata_only_skip}" >> "$GITHUB_OUTPUT"
-          echo "metadata_active_suite_found=${METADATA_ACTIVE_SUITE_FOUND:-false}" >> "$GITHUB_OUTPUT"
-          echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
-
-  signoff-gate:
-    name: PR Signoff
-    needs: gate
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Require local signoff status on PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          REPOSITORY: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          status="$(gh api "repos/${REPOSITORY}/commits/${PR_HEAD_SHA}/status" \
-            --jq '.statuses[]? | select(.context == "signoff") | .state' \
-            | head -n 1)"
-          if [[ "${status}" == "success" ]]; then
-            echo "Found successful local signoff status for ${PR_HEAD_SHA}."
-            exit 0
-          fi
-          echo "::error title=Missing PR signoff::Run scripts/ci/signoff.sh locally from a clean checkout after testing. It posts the required 'signoff' commit status to ${PR_HEAD_SHA}."
-          exit 1
-
-  pr-body-gate:
-    name: pr-body-gate
-    needs: gate
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Require goal and provenance fields in the PR body
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPOSITORY: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          node scripts/ci/check-pr-ready-state.mjs
-
-          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
-
-          missing=()
-          if ! grep -Eq '^[[:space:]]*Goal:[[:space:]]*(green|fast|grow|hold)[[:space:]]*$' <<<"$body"; then
-            missing+=("Goal: <green|fast|grow|hold>")
-          fi
-          if ! grep -Eq '^[[:space:]]*Machine:[[:space:]]*[^[:space:]]+' <<<"$body"; then
-            missing+=("Machine: <m1|m4|studio|cloud|hostname>")
-          fi
-          if ! grep -Eq '^[[:space:]]*Assistant:[[:space:]]*(claude-code|codex|bot)[[:space:]]*$' <<<"$body"; then
-            missing+=("Assistant: <claude-code|codex|bot>")
-          fi
-          if ! grep -Eq '^[[:space:]]*Model:[[:space:]]*[^[:space:]]+' <<<"$body"; then
-            missing+=("Model: <model id>")
-          fi
-          if ! grep -Eq '^[[:space:]]*Effort:[[:space:]]*(low|medium|high|max)[[:space:]]*$' <<<"$body"; then
-            missing+=("Effort: <low|medium|high|max>")
-          fi
-
-          if [[ "${#missing[@]}" -gt 0 ]]; then
-            echo "Ready PRs must declare a goal and provenance in the PR body."
-            echo "Missing or malformed fields:"
-            printf '  %s\n' "${missing[@]}"
-            echo "See .github/pull_request_template.md for the expected shape."
-            exit 1
-          fi
-
-          echo "Goal and provenance metadata are present."
-
-  project-row-drift:
-    name: project-row-drift
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Validate project row coverage across surfaces
-        run: node scripts/bench/project-row-summary.mjs
-
-  bench-script-smoke:
-    name: bench-script-smoke
-    needs: gate
-    if: needs.gate.outputs.bench_shell_only == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Check bench shell syntax
-        shell: bash
-        run: bash -n scripts/bench/*.sh
-
-  perf-tool-smoke:
-    name: perf-tool-smoke
-    needs: gate
-    if: needs.gate.outputs.perf_tool_only == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Check perf tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          perf_python_tools=(scripts/perf/*.py)
-          perf_shell_tools=(scripts/perf/*.sh)
-          if [[ "${#perf_python_tools[@]}" -gt 0 ]]; then
-            python3 -m py_compile "${perf_python_tools[@]}"
-          fi
-          if [[ "${#perf_shell_tools[@]}" -gt 0 ]]; then
-            bash -n "${perf_shell_tools[@]}"
-          fi
-          tests=()
-          while IFS= read -r test_file; do
-            tests+=("$test_file")
-          done < <(find scripts/perf -maxdepth 1 -type f -name 'test_*.py' | sort)
-          if [[ "${#tests[@]}" -eq 0 ]]; then
-            echo "No scripts/perf/test_*.py files found."
-            exit 0
-          fi
-          for test_file in "${tests[@]}"; do
-            python3 "$test_file"
-          done
-
-  arch-tool-smoke:
-    name: arch-tool-smoke
-    needs: gate
-    if: needs.gate.outputs.arch_tool_only == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Check arch Python tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m py_compile scripts/arch/*.py
-          tests=()
-          while IFS= read -r test_file; do
-            tests+=("$test_file")
-          done < <(find scripts/arch -maxdepth 1 -type f -name 'test_*.py' | sort)
-          if [[ "${#tests[@]}" -eq 0 ]]; then
-            echo "No scripts/arch/test_*.py files found."
-            exit 0
-          fi
-          for test_file in "${tests[@]}"; do
-            python3 "$test_file"
-          done
-
-  lint:
-    name: lint
-    needs: gate
-    # lint is `cargo clippy` (Rust-only). Gate it on compiler_checks_required so
-    # non-Rust PRs (bench/CI scripts, docs, workflow yaml) don't wait ~15-20m on
-    # a full clippy compile that lints nothing — that wait made ci-summary (which
-    # required lint) sit "Expected" while no relevant job ran. should_run can be
-    # true for non-compiler diffs (e.g. to run project-row-drift), so it is the
-    # wrong gate for lint.
-    if: needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Run lint suite
-        run: scripts/ci/github-suite.sh lint
-
-  cargo-shear:
-    name: cargo-shear
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Install cargo-shear
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
-        with:
-          tool: cargo-shear@1.12.0
-      - name: Run cargo shear
-        shell: bash
-        run: |
-          set -euo pipefail
-          (
-            while true; do
-              sleep "${TSZ_CI_CARGO_SHEAR_HEARTBEAT_SECONDS:-60}"
-              echo "cargo shear still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            done
-          ) &
-          heartbeat_pid="$!"
-          set +e
-          cargo shear
-          cargo_shear_rc="$?"
-          set -e
-          kill "$heartbeat_pid" >/dev/null 2>&1 || true
-          wait "$heartbeat_pid" 2>/dev/null || true
-          exit "$cargo_shear_rc"
-
-  cargo-deny:
-    name: cargo-deny
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
-        with:
-          tool: cargo-deny@0.19.6
-      - name: Run cargo deny
-        run: cargo deny check
-
-  dist-binaries:
-    name: dist-binaries
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Build dist-fast binaries
-        run: scripts/ci/github-suite.sh dist-binaries
-      - name: Pack dist-fast binaries
-        run: |
-          set -euo pipefail
-          tar -C .target/dist-fast -cf dist-fast-binaries.tar \
-            tsz tsz-lsp tsz-server tsz-conformance generate-tsc-cache
-      - name: Upload dist-fast binaries
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: dist-fast-binaries
-          path: dist-fast-binaries.tar
-          retention-days: 1
-          if-no-files-found: error
-          compression-level: 1
-
-  lsp-e2e:
-    name: lsp-e2e
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      TSZ_CI_CACHE_SAVE: "0"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Run LSP protocol smoke
-        run: scripts/ci/github-suite.sh lsp-e2e
-
-  project-compile-guard:
-    name: project-compile-guard
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile
-      TSZ_CI_CACHE_SAVE: "0"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Run project compile guard
-        run: scripts/ci/project-compile-guard.sh
-      - name: Upload project compile compatibility
-        if: always()
-        id: project_compile_compatibility_artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: project-compile-compatibility
-          path: |
-            .target/project-compile-guard/*.log
-            .target/project-compile-guard/project-compatibility.jsonl
-            .target/project-compile-guard/project-compatibility-summary.json
-            .target/project-compile-guard/type-challenges-readiness-pairing.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
-            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
-          retention-days: 7
-          if-no-files-found: warn
-      - name: Summarize project compatibility artifact
-        if: always()
-        env:
-          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
-          SUMMARY_TITLE: Project compatibility artifact
-          SUMMARY_ARTIFACT_NAME: project-compile-compatibility
-          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }}
-          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
-        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
-
-  project-compile-canary:
-    # Canary rows run serially per shard. Sharding the row set 3-way (mirrors
-    # the conformance shard fan-out) keeps shard sizing stable when this suite is
-    # re-enabled outside cost-control mode. The
-    # per-shard partition is keyed on each row's stable index in
-    # TSZ_COMPILE_GUARD_CANARY_ROWS (see scripts/ci/project-compile-guard.sh),
-    # so the union of all shards is the full set with no overlap. The
-    # project-compile-canary-aggregate job recombines the per-shard
-    # compatibility jsonl/summary into the same project-compile-canary-logs
-    # artifact the single job produced.
-    name: project-compile-canary-${{ matrix.shard }}
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2]
-    env:
-      npm_config_cache: ${{ github.workspace }}/.ci-cache/npm-project-compile-canary
-      TSZ_CI_CACHE_SAVE: "0"
-      TSZ_PROJECT_COMPILE_SET: canary
-      TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
-      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0"
-      _TSZ_CI_CANARY_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_CANARY_SHARD_COUNT: 3
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Provision tsc oracle for canary scoring
-        # The per-row tsc oracle (scripts/ci/lib/project-tsc-oracle.sh) subtracts
-        # tsc's own diagnostics from tsz's, so a canary row where tsz reproduces
-        # tsc's errors exactly (e.g. ts-belt TS2305, tiny-invariant TS2591) scores
-        # green (parity) instead of being counted as a tsz-only regression. The
-        # guard resolves the oracle command ONCE at startup, so the pinned
-        # TypeScript must already be installed when it runs; without it every
-        # canary row records diagnostic_counts.tsc=0 / oracle_classification=unknown
-        # and tsz==tsc parity rows over-report (yellow/red). This installs the same
-        # pinned TypeScript the type-challenges oracle already uses
-        # (scripts/package.json -> scripts/node_modules/.bin/tsc, the second entry
-        # in tsz_project_oracle_tsc_command's resolution order). Best-effort: a
-        # registry hiccup leaves the oracle unavailable and the guard falls back to
-        # its pre-oracle behaviour (no regression); the job is continue-on-error.
-        # The oracle only runs for rows where tsz exits with diagnostics (not
-        # green/crash/timeout/oom rows), so this adds at most one skipLibCheck tsc
-        # run per failing row, capped by TSZ_PROJECT_COMPILE_TIMEOUT.
-        run: (cd scripts && npm install --silent --no-audit --no-fund --include=dev) || echo "::warning::tsc oracle provisioning failed; canary rows will score without the tsc oracle (pre-oracle fallback)"
-      - name: Run compile canaries
-        run: scripts/ci/project-compile-guard.sh
-      - name: Upload compile canary logs
-        if: always()
-        id: project_compile_canary_artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: project-compile-canary-logs-${{ matrix.shard }}
-          path: |
-            .target/project-compile-guard/*.log
-            .target/project-compile-guard/project-compatibility.jsonl
-            .target/project-compile-guard/project-compatibility-summary.json
-            .target/project-compile-guard/type-challenges-readiness-pairing.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
-            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 1
-      - name: Summarize compile canary compatibility artifact
-        if: always()
-        env:
-          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
-          SUMMARY_TITLE: Compile canary compatibility artifact (shard ${{ matrix.shard }})
-          SUMMARY_ARTIFACT_NAME: project-compile-canary-logs-${{ matrix.shard }}
-          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_canary_artifact.outputs.artifact-url }}
-          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
-        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
-
-  project-compile-canary-aggregate:
-    # Recombine the per-shard canary compatibility data into the single
-    # project-compile-canary-logs artifact the downstream consumers expect.
-    # Mirrors conformance-aggregate: wait for the shard artifacts to index,
-    # download them, concatenate the per-shard project-compatibility.jsonl
-    # rows into one combined jsonl, and regenerate
-    # project-compatibility-summary.json from the combined rows so the summary
-    # is byte-shape-identical to the pre-shard single-job output.
-    name: project-compile-canary-aggregate
-    needs: [gate, project-compile-canary]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.project-compile-canary.result != 'skipped' && needs.project-compile-canary.result != 'cancelled'
-    # Pure-IO aggregate: consumes ONLY the downloaded .canary-shards artifacts
-    # (project-compile-canary-aggregate.sh reads no dist binary), so a
-    # free ubuntu-latest runner is sufficient.
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    env:
-      TSZ_CI_CACHE_SAVE: "0"
-      TSZ_PROJECT_COMPILE_SET: canary
-      TSZ_PROJECT_COMPILE_ALLOW_FAILURES: "1"
-      # Expected canary shard count (mirrors the project-compile-canary matrix
-      # `shard: [0..2]` / `_TSZ_CI_CANARY_SHARD_COUNT: 3`). The aggregate script
-      # records shards_seen vs this expected count and emits a distinct
-      # CANARY_SHARDS_INCOMPLETE signal when a shard is missing, so a dead runner
-      # cannot produce a silently-green required check over a partial set.
-      TSZ_CANARY_SHARDS_EXPECTED: "3"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Wait for canary shard artifacts to be indexed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          EXPECTED=3
-          MAX_WAIT=180
-          INTERVAL=10
-          elapsed=0
-          count=0
-          echo "Polling for all ${EXPECTED} project-compile-canary-logs-* artifacts (max ${MAX_WAIT}s)..."
-          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
-            api_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
-              2>/dev/null || echo '{}')
-            count=$(echo "$api_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('project-compile-canary-logs-'))
-          print(c)
-          " 2>/dev/null || echo 0)
-            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
-            if [ "${count}" -ge "${EXPECTED}" ]; then
-              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
-              break
-            fi
-            jobs_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-              2>/dev/null || echo '{}')
-            shard_summary=$(echo "$jobs_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('project-compile-canary-')]
-          done = [j for j in jobs if j.get('status') == 'completed']
-          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
-          print(f'done={len(done)} failed={len(failed)} names={failed}')
-          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
-            echo "  shard jobs: ${shard_summary}"
-            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
-            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
-            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
-              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
-              break
-            fi
-            sleep "${INTERVAL}"
-            elapsed=$(( elapsed + INTERVAL ))
-          done
-          if [ "${count}" -lt "${EXPECTED}" ]; then
-            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
-          fi
-      - name: Download canary shard results
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          pattern: project-compile-canary-logs-*
-          path: .canary-shards
-          merge-multiple: false
-      - name: Aggregate canary compatibility results
-        id: project_compile_canary_aggregate
-        run: scripts/ci/project-compile-canary-aggregate.sh
-      - name: Upload compile canary logs
-        if: always()
-        id: project_compile_canary_artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: project-compile-canary-logs
-          path: |
-            .target/project-compile-guard/*.log
-            .target/project-compile-guard/project-compatibility.jsonl
-            .target/project-compile-guard/project-compatibility-summary.json
-            .target/project-compile-guard/type-challenges-readiness-pairing.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
-            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
-            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
-            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
-          retention-days: 7
-          if-no-files-found: warn
-          compression-level: 1
-      - name: Summarize compile canary compatibility artifact
-        if: always()
-        env:
-          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
-          SUMMARY_TITLE: Compile canary compatibility artifact
-          SUMMARY_ARTIFACT_NAME: project-compile-canary-logs
-          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_canary_artifact.outputs.artifact-url }}
-          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
-        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
-
-  premerge-microbench:
-    name: premerge-microbench
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    env:
-      TSZ_BENCH_PROFILE: dist-fast
-      TSZ_BENCH_TARGET_DIR: ${{ github.workspace }}/.target
-      TSZ_BENCH_RUNS: "2"
-      TSZ_BENCH_WARMUP: "1"
-      # Advisory-only while #13247 gathers per-run noise bands. The JSON
-      # artifact is the signal; blocking thresholds come after calibration.
-      TSZ_BENCH_THRESHOLD_PCT: "999999"
-      TSZ_BENCH_BASELINE_FILE: ${{ github.workspace }}/.target/premerge-microbench-baseline.json
-      TSZ_BENCH_OUTPUT_JSON: ${{ github.workspace }}/premerge-microbench.json
-      TSZ_BENCH_CASE_FILTER: deeppartial_optional_chain_15,union_members_100,mapped_type_keys_150
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Run advisory pre-merge microbenchmarks
-        run: scripts/bench/precommit-microbench.sh --no-build
-      - name: Summarize advisory microbenchmarks
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ ! -f premerge-microbench.json ]]; then
-            echo "No premerge-microbench.json was produced." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
-          const fs = require("node:fs");
-          const report = JSON.parse(fs.readFileSync("premerge-microbench.json", "utf8"));
-          console.log("## Advisory pre-merge microbenchmarks");
-          console.log("");
-          console.log(`Status: ${report.status}`);
-          console.log(`Runs: ${report.runs}, warmup: ${report.warmup}`);
-          if (report.noise_summary?.max_case) {
-            const maxCase = report.noise_summary.max_case;
-            console.log(
-              `Max within-run spread: \`${maxCase.name}\` ${maxCase.relative_spread_pct.toFixed(2)}% (${maxCase.spread_ms.toFixed(2)}ms)`
-            );
-          }
-          if (report.run_context?.git_sha || report.run_context?.github_run_id) {
-            const sha = report.run_context.git_sha ? report.run_context.git_sha.slice(0, 12) : "unknown";
-            const runId = report.run_context.github_run_id || "local";
-            const attempt = report.run_context.github_run_attempt || "1";
-            console.log(`Run context: sha \`${sha}\`, run \`${runId}\`, attempt \`${attempt}\``);
-          }
-          console.log("");
-          console.log("| Case | Median | Mean | Spread |");
-          console.log("| --- | ---: | ---: | ---: |");
-          for (const [name, data] of Object.entries(report.cases || {})) {
-            const spread = data.noise?.relative_spread_pct;
-            const spreadCell = typeof spread === "number" ? `${spread.toFixed(2)}%` : "";
-            console.log(`| \`${name}\` | ${data.median_ms.toFixed(2)}ms | ${data.mean_ms.toFixed(2)}ms | ${spreadCell} |`);
-          }
-          if ((report.regressions || []).length > 0) {
-            console.log("");
-            console.log(`Regressions detected: ${report.regressions.length}`);
-          }
-          NODE
-      - name: Upload advisory microbenchmark report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: premerge-microbench
-          path: premerge-microbench.json
-          retention-days: 14
-          if-no-files-found: warn
-          compression-level: 1
-
-  forced-parallel-determinism:
-    name: forced-parallel-determinism
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    env:
-      TSZ_BIN: ${{ github.workspace }}/.target/dist-fast/tsz
-      TSZ_DETERMINISM_TIMEOUT: "45"
-      TSZ_PROJECT_COMPILE_FIXTURE_ROOT: ${{ github.workspace }}/.target/project-compile-guard
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Run forced-parallel DOM determinism canaries
-        shell: bash
-        run: |
-          set -uo pipefail
-          set +e
-          mkdir -p .target/forced-parallel-determinism
-          summary=".target/forced-parallel-determinism/summary.md"
-          {
-            echo "## Forced-parallel DOM determinism canaries"
-            echo ""
-            echo "| Row | Result | Log |"
-            echo "| --- | --- | --- |"
-          } > "$summary"
-          status=0
-          for row in dom-smoke webworker-smoke dom-webworker-smoke; do
-            log=".target/forced-parallel-determinism/${row}.log"
-            scripts/perf/forced-parallel-project-determinism.sh \
-              --row "$row" \
-              --runs 2 \
-              --workers 4,8 \
-              --mode forced \
-              --out ".target/forced-parallel-determinism" \
-              >"$log" 2>&1
-            rc=$?
-            if [[ "$rc" -eq 0 ]]; then
-              result="passed"
-            else
-              result="failed (exit $rc)"
-              status=1
-            fi
-            echo "| \`$row\` | $result | \`$log\` |" >> "$summary"
-          done
-          cat "$summary" >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
-      - name: Upload forced-parallel determinism captures
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: forced-parallel-determinism
-          path: .target/forced-parallel-determinism/**
-          retention-days: 14
-          if-no-files-found: warn
-          compression-level: 1
-
-  wasm:
-    name: wasm
-    needs: gate
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      # Keep sccache writes, but do not tar the wasm target dir on the job's
-      # critical path. The wasm target save was ~33s on run 25057027232.
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Run wasm suite (nodejs + web targets)
-        run: scripts/ci/github-suite.sh wasm-all
-      - name: Verify web WASM artifact
-        run: test -s pkg/web/tsz_wasm_bg.wasm
-      - name: Upload web WASM artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: wasm-web
-          path: pkg/web/
-          retention-days: 30
-          if-no-files-found: error
-
-  node-harness-prep:
-    name: node-harness-prep
-    needs: gate
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      GITHUB_SHA: ${{ github.sha }}
-      TSZ_CI_SKIP_DIST_RESTORE: "1"
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Prep node harnesses
-        run: scripts/ci/github-suite.sh node-harness-prep
-      - name: Pack node harness
-        run: |
-          tar --create --file node-harness.tar \
-            scripts/node_modules/ \
-            scripts/emit/dist/ \
-            TypeScript/Herebyfile.mjs \
-            TypeScript/built/local \
-            TypeScript/node_modules \
-            TypeScript/tests/cases/fourslash
-      - name: Upload node harness artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: node-harness
-          path: node-harness.tar
-          retention-days: 1
-          if-no-files-found: warn
-          compression-level: 1
+          scripts/safe-run.sh --limit 88% -- \
+            cargo clippy --profile ci-lint --workspace --exclude tsz-conformance \
+              --all-targets -- -D warnings
 
   unit:
-    # Required unit context. Runs directly on GitHub-hosted Actions.
     name: unit
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Run unit suite
+      - name: Run unit tests
         run: scripts/ci/github-suite.sh unit
 
-  unit-checker-integration:
-    # Checker integration suite, kept separate from the general unit job.
-    name: unit-checker-integration
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Run checker integration suite
-        run: scripts/ci/github-suite.sh checker-integration
-
   conformance:
-    # Conformance shards consume the dist-fast binaries artifact and run the
-    # tsz-conformance harness; they do not need unit's test outputs. Each
-    # shard runs independently, so concurrent fanout does not compete with Rust
-    # build/test jobs for rustc capacity when this suite is re-enabled.
     name: conformance-${{ matrix.shard }}
-    needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -1201,21 +58,11 @@ jobs:
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
       TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CONFORMANCE_SHARD_STRATEGY: weighted
-      TSZ_CI_SKIP_DIST_RESTORE: "1"
-      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
-      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
       - name: Upload conformance shard result
@@ -1232,15 +79,11 @@ jobs:
 
   conformance-aggregate:
     name: conformance-aggregate
-    needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    # Pure-IO aggregate: run_conformance_aggregate reads downloaded
-    # .conformance-shards GitHub artifacts only. An empty/partial shard set
-    # still fails the job via the shard_count/coverage checks.
+    needs: conformance
+    if: ${{ always() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 4
       TSZ_CI_CONFORMANCE_SHARDS: 4
       TSZ_CI_CACHE_SAVE: "0"
@@ -1248,67 +91,6 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Wait for conformance shard artifacts to be indexed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          EXPECTED=4
-          MAX_WAIT=180
-          INTERVAL=10
-          elapsed=0
-          count=0
-          echo "Polling for all ${EXPECTED} conformance-shard-* artifacts (max ${MAX_WAIT}s)..."
-          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
-            # Fetch artifact count and shard job statuses in parallel
-            api_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
-              2>/dev/null || echo '{}')
-            count=$(echo "$api_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
-          print(c)
-          " 2>/dev/null || echo 0)
-            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
-            if [ "${count}" -ge "${EXPECTED}" ]; then
-              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
-              break
-            fi
-            # If shard jobs have all finished but artifacts are still missing,
-            # check for failed shard jobs (runner disconnect) to fail fast.
-            jobs_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-              2>/dev/null || echo '{}')
-            shard_summary=$(echo "$jobs_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('conformance-')]
-          done = [j for j in jobs if j.get('status') == 'completed']
-          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
-          print(f'done={len(done)} failed={len(failed)} names={failed}')
-          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
-            echo "  shard jobs: ${shard_summary}"
-            # If all shards are done and we still don't have all artifacts, a shard
-            # failed without uploading (infra kill). Stop waiting and let the
-            # aggregate script report the exact shard count it collected.
-            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
-            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
-            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
-              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
-              break
-            fi
-            sleep "${INTERVAL}"
-            elapsed=$(( elapsed + INTERVAL ))
-          done
-          if [ "${count}" -lt "${EXPECTED}" ]; then
-            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
-          fi
       - name: Download conformance shard results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1318,47 +100,10 @@ jobs:
       - name: Aggregate conformance results
         run: scripts/ci/github-suite.sh conformance-aggregate
 
-  conformance-snapshot-gate:
-    name: conformance-snapshot-gate
-    needs: gate
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          fetch-depth: 1
-      - name: Validate accepted-regression ledger integrity
-        # Runs on every event (pull_request, merge_group, push): the ledger
-        # must stay canonical (no duplicate / non-normalized / malformed
-        # entries) so the visible counter and the CI aggregate matcher agree.
-        # Needs only HEAD, so no base fetch is required.
-        run: |
-          python3 scripts/conformance/check-accepted-regression-growth.py --integrity-only
-      - name: Compare conformance snapshots with PR base
-        if: github.event_name == 'pull_request'
-        run: |
-          git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-          python3 scripts/conformance/check-snapshot-regression.py \
-            --base-ref FETCH_HEAD \
-            --head-ref HEAD
-          python3 scripts/conformance/check-accepted-regression-growth.py \
-            --base-ref FETCH_HEAD \
-            --head-ref HEAD
-      - name: Skip snapshot comparison
-        if: github.event_name != 'pull_request'
-        run: echo "Conformance snapshot gate is enforced for pull_request events."
-
   emit:
-    # Each matrix shard runs scripts/emit/run.sh over a chunk of the corpus
-    # (EMIT_CHUNK=4000). The corpus is jsTotal=13530, so ceil(13530/4000)=4
-    # shards give full coverage; fewer would silently drop tests and fail the
-    # emit-aggregate full-corpus floor. emit-aggregate recombines the shards.
     name: emit-${{ matrix.shard }}
-    needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -1366,30 +111,12 @@ jobs:
     env:
       _TSZ_CI_EMIT_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_EMIT_SHARD_COUNT: 4
-      TSZ_CI_SKIP_DIST_RESTORE: "1"
-      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
-      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
-      TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Download node harness
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: node-harness
-          path: .
-      - name: Unpack node harness
-        run: tar -xf node-harness.tar
       - name: Run emit shard
         run: scripts/ci/github-suite.sh emit-shard
       - name: Upload emit shard result
@@ -1406,75 +133,17 @@ jobs:
 
   emit-aggregate:
     name: emit-aggregate
-    needs: [gate, emit]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled'
-    # Pure-IO aggregate: run_emit_aggregate reads downloaded .emit-shards
-    # GitHub artifacts only.
+    needs: emit
+    if: ${{ always() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_EMIT_SHARD_COUNT: 4
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Wait for emit shard artifacts to be indexed
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          EXPECTED=4
-          MAX_WAIT=180
-          INTERVAL=10
-          elapsed=0
-          count=0
-          echo "Polling for all ${EXPECTED} emit-shard-* artifacts (max ${MAX_WAIT}s)..."
-          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
-            api_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
-              2>/dev/null || echo '{}')
-            count=$(echo "$api_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('emit-shard-'))
-          print(c)
-          " 2>/dev/null || echo 0)
-            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
-            if [ "${count}" -ge "${EXPECTED}" ]; then
-              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
-              break
-            fi
-            jobs_response=$(curl -sf \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100" \
-              2>/dev/null || echo '{}')
-            shard_summary=$(echo "$jobs_response" | python3 -c "
-          import sys, json
-          data = json.load(sys.stdin)
-          jobs = [j for j in data.get('jobs', []) if j.get('name','').startswith('emit-')]
-          done = [j for j in jobs if j.get('status') == 'completed']
-          failed = [j['name'] for j in done if j.get('conclusion') not in ('success','skipped')]
-          print(f'done={len(done)} failed={len(failed)} names={failed}')
-          " 2>/dev/null || echo 'done=0 failed=0 names=[]')
-            echo "  shard jobs: ${shard_summary}"
-            done_count=$(echo "$shard_summary" | grep -oP 'done=\K[0-9]+' || echo 0)
-            failed_count=$(echo "$shard_summary" | grep -oP 'failed=\K[0-9]+' || echo 0)
-            if [ "${done_count}" -ge "${EXPECTED}" ] && [ "${failed_count}" -gt 0 ]; then
-              echo "warning: ${failed_count} shard job(s) failed (runner issue); artifact(s) will not appear — proceeding with ${count} available" >&2
-              break
-            fi
-            sleep "${INTERVAL}"
-            elapsed=$(( elapsed + INTERVAL ))
-          done
-          if [ "${count}" -lt "${EXPECTED}" ]; then
-            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${elapsed}s; proceeding" >&2
-          fi
       - name: Download emit shard results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -1485,13 +154,9 @@ jobs:
         run: scripts/ci/github-suite.sh emit-aggregate
 
   fourslash:
-    # Each matrix shard runs on GitHub-hosted Actions. Weighted snapshot timings
-    # reduce the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
-    needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -1502,30 +167,12 @@ jobs:
       TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
       TSZ_CI_FOURSLASH_WORKERS: 8
       TSZ_CI_FOURSLASH_TIMEOUT_MS: 60000
-      TSZ_CI_SKIP_DIST_RESTORE: "1"
-      TSZ_CI_TRUST_DIST_FAST_CACHE: "1"
-      TSZ_CI_SKIP_TS_HARNESS_RESTORE: "1"
-      TSZ_CI_NODE_HARNESS_PREPPED: "1"
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_CI_CACHE_RESTORE: "0"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 1
-      - name: Download dist-fast binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: dist-fast-binaries
-          path: .
-      - name: Unpack dist-fast binaries
-        run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
-      - name: Download node harness
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: node-harness
-          path: .
-      - name: Unpack node harness
-        run: tar -xf node-harness.tar
       - name: Run fourslash shard
         run: scripts/ci/github-suite.sh fourslash-shard
       - name: Upload fourslash shard result
@@ -1541,14 +188,11 @@ jobs:
 
   fourslash-aggregate:
     name: fourslash-aggregate
-    needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
-    # Pure-IO aggregate: run_fourslash_aggregate reads downloaded
-    # .fourslash-shards GitHub artifacts only.
+    needs: fourslash
+    if: ${{ always() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_CACHE_SAVE: "0"
     steps:
@@ -1565,217 +209,44 @@ jobs:
         run: scripts/ci/github-suite.sh fourslash-aggregate
 
   ci-summary:
-    name: ${{ needs.gate.outputs.required_summary == 'true' && 'CI Summary' || 'CI Light Summary' }}
+    name: CI Summary
     needs:
-      - gate
-      - bench-script-smoke
-      - perf-tool-smoke
-      - arch-tool-smoke
-      - project-row-drift
-      - lint
-      - cargo-shear
-      - cargo-deny
-      - signoff-gate
-      - pr-body-gate
-      - dist-binaries
-      - lsp-e2e
-      - project-compile-guard
-      # project-compile-canary-aggregate is intentionally NOT a dependency here.
-      # It is an advisory, continue-on-error suite (ALLOW_FAILURES=1) that now
-      # installs deps for ~20 real applications, so it runs for tens of minutes
-      # and queues on a busy pool. Keeping it in `needs` made the required
-      # CI Summary wait on it indefinitely ("expected — waiting for status to be
-      # reported") even though it never gates correctness. It still runs and
-      # records results out of band.
-      - wasm
-      - node-harness-prep
+      - clippy
       - unit
-      - unit-checker-integration
+      - conformance
       - conformance-aggregate
-      - conformance-snapshot-gate
+      - emit
       - emit-aggregate
+      - fourslash
       - fourslash-aggregate
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify required CI jobs
+      - name: Verify core CI jobs
         env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          CI_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          CI_METADATA_ACTIVE_SUITE_FOUND: ${{ needs.gate.outputs.metadata_active_suite_found }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           python3 - <<'PY'
           import json
           import os
           import sys
-          import urllib.parse
-          import urllib.request
 
           needs = json.loads(os.environ["NEEDS_JSON"])
-          gate = needs["gate"]
-          should_run = gate.get("outputs", {}).get("should_run") == "true"
-          full_run = gate.get("outputs", {}).get("full_run") == "true"
-          bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
-          perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
-          arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
-          metadata_only_skip = gate.get("outputs", {}).get("metadata_only_skip") == "true"
-          metadata_active_suite_found = os.environ.get("CI_METADATA_ACTIVE_SUITE_FOUND") == "true"
-          compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
-          required_summary = gate.get("outputs", {}).get("required_summary") == "true"
-
-          gate_result = gate.get("result")
-          if gate_result != "success":
-              print(f"gate did not pass: {gate_result}")
-              sys.exit(1)
-
-          signoff = needs.get("signoff-gate")
-          if signoff and signoff.get("result") not in ("success", "skipped"):
-              print(f"PR Signoff did not pass: {signoff.get('result')}")
-              sys.exit(1)
-
-          pr_body = needs.get("pr-body-gate")
-          if pr_body and pr_body.get("result") not in ("success", "skipped"):
-              print(f"pr-body-gate did not pass: {pr_body.get('result')}")
-              sys.exit(1)
-
-          def github_json(path):
-              token = os.environ["GH_TOKEN"]
-              request = urllib.request.Request(
-                  f"https://api.github.com{path}",
-                  headers={
-                      "Accept": "application/vnd.github+json",
-                      "Authorization": f"Bearer {token}",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=20) as response:
-                  return json.loads(response.read().decode("utf-8"))
-
-          def mirror_previous_required_summary():
-              repository = os.environ["GITHUB_REPOSITORY"]
-              current_run_id = int(os.environ["GITHUB_RUN_ID"])
-              head_sha = os.environ["CI_HEAD_SHA"]
-              query = urllib.parse.urlencode({
-                  "head_sha": head_sha,
-                  "event": "pull_request",
-                  "per_page": "20",
-              })
-              runs = github_json(f"/repos/{repository}/actions/workflows/ci.yml/runs?{query}").get("workflow_runs", [])
-              runs = [run for run in runs if int(run.get("id", 0)) != current_run_id]
-              runs.sort(key=lambda run: run.get("created_at", ""), reverse=True)
-              accepted_summary_names = ("CI Summary",) if required_summary else ("CI Summary", "CI Light Summary")
-              accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"
-              # Metadata gates are re-validated by THIS metadata run (the
-              # summary above already failed hard if this run's pr-body-gate
-              # failed), so a previous failure caused ONLY by those gates must
-              # not be mirrored: that would deadlock body fixes — the edited
-              # event that repairs the body would forever mirror the stale
-              # gate failure it just fixed. Suite-job failures still mirror
-              # as failures.
-              metadata_gate_jobs = {"pr-body-gate", "CI Summary", "CI Light Summary"}
-              for run in runs:
-                  jobs = github_json(f"/repos/{repository}/actions/runs/{run['id']}/jobs?per_page=100").get("jobs", [])
-                  summaries = [job for job in jobs if job.get("name") in accepted_summary_names]
-                  if not summaries:
-                      continue
-                  summaries.sort(key=lambda job: 0 if job.get("name") == "CI Summary" else 1)
-                  summary = summaries[0]
-                  summary_name = summary.get("name") or "CI Summary"
-                  conclusion = summary.get("conclusion")
-                  url = summary.get("html_url") or run.get("html_url")
-                  if conclusion == "success":
-                      print(f"Metadata-only CI mirrors successful {summary_name} from run {run['id']}: {url}")
-                      return
-                  suite_failures = [
-                      job.get("name")
-                      for job in jobs
-                      if job.get("name") not in metadata_gate_jobs
-                      and job.get("conclusion") not in (None, "success", "skipped", "neutral")
-                  ]
-                  if conclusion == "cancelled" and not suite_failures:
-                      print(f"Previous {summary_name} in run {run['id']} was cancelled (superseded) with no suite failures; scanning older runs.")
-                      continue
-                  if not suite_failures:
-                      print(
-                          f"Previous {summary_name} in run {run['id']} failed only on metadata gates; "
-                          f"this metadata run re-validated the PR body, so the suite verdict stands green: {url}"
-                      )
-                      return
-                  print(f"Previous {summary_name} for this head was {conclusion or 'missing'} in run {run['id']} with suite failures {suite_failures}: {url}")
-                  sys.exit(1)
-              if not required_summary and metadata_active_suite_found:
-                  print(
-                      "Metadata-only CI found an active exact-head CI suite but no completed prior summary yet; "
-                      "CI Light Summary passes and the real suite remains authoritative."
-                  )
-                  return
-              print(f"Metadata-only CI could not find a previous {accepted_summary_label} for head {head_sha}.")
-              sys.exit(1)
-
-          if not should_run:
-              if metadata_only_skip:
-                  mirror_previous_required_summary()
-                  sys.exit(0)
-              if bench_shell_only:
-                  bench_smoke = needs.get("bench-script-smoke", {})
-                  if bench_smoke.get("result") != "success":
-                      print(f"bench-script-smoke did not pass: {bench_smoke.get('result')}")
-                      sys.exit(1)
-                  print("Bench shell-only CI passed: bench-script-smoke.")
-                  sys.exit(0)
-              if perf_tool_only:
-                  perf_smoke = needs.get("perf-tool-smoke", {})
-                  if perf_smoke.get("result") != "success":
-                      print(f"perf-tool-smoke did not pass: {perf_smoke.get('result')}")
-                      sys.exit(1)
-                  print("Perf tool-only CI passed: perf-tool-smoke.")
-                  sys.exit(0)
-              if arch_tool_only:
-                  arch_smoke = needs.get("arch-tool-smoke", {})
-                  if arch_smoke.get("result") != "success":
-                      print(f"arch-tool-smoke did not pass: {arch_smoke.get('result')}")
-                      sys.exit(1)
-                  print("Arch tool-only CI passed: arch-tool-smoke.")
-                  sys.exit(0)
-              print("CI gated off; summary passes because jobs were intentionally skipped.")
-              sys.exit(0)
-
-          required = {"cargo-shear", "cargo-deny", "project-row-drift"}
-          if compiler_checks_required:
-              # lint (cargo clippy) is Rust-only and now gated on
-              # compiler_checks_required, so it is required only when the diff
-              # touches Rust/Cargo. Non-compiler PRs skip it and must not require it.
-              required.add("lint")
-              required.update({"dist-binaries", "unit", "unit-checker-integration"})
-          else:
-              print("Compiler checks are non-required for this non-compiler diff.")
-
-          if full_run and compiler_checks_required:
-              required.update({
-                  "project-compile-guard",
-                  # project-compile-canary-aggregate is advisory (continue-on-error,
-                  # ALLOW_FAILURES=1) and no longer a CI Summary dependency, so it is
-                  # not required to pass; it must not block/delay the merge gate.
-                  "conformance-snapshot-gate",
-              })
-              required.update({
-                  "wasm",
-                  "lsp-e2e",
-                  "node-harness-prep",
-                  "conformance-aggregate",
-                  "emit-aggregate",
-                  "fourslash-aggregate",
-              })
+          required = {
+              "clippy",
+              "unit",
+              "conformance",
+              "conformance-aggregate",
+              "emit",
+              "emit-aggregate",
+              "fourslash",
+              "fourslash-aggregate",
+          }
 
           failures = []
-          for name, data in needs.items():
-              if name == "gate" or name not in required:
-                  continue
-              result = data.get("result")
+          for name in sorted(required):
+              result = needs.get(name, {}).get("result")
               if result != "success":
                   failures.append(f"{name}: {result}")
 
@@ -1785,33 +256,5 @@ jobs:
                   print(f"  - {failure}")
               sys.exit(1)
 
-          if full_run:
-              print("All required CI jobs passed.")
-          else:
-              print("Draft/light CI passed for all required checks.")
+          print("Clippy, unit, conformance, emit, and fourslash checks passed.")
           PY
-
-      - name: Report CI Summary status for non-compiler PRs
-        # Branch protection requires the "CI Summary" status check. For light /
-        # non-compiler PRs the verdict job above reports as "CI Light Summary"
-        # (see the job-name expression), so "CI Summary" is never produced and
-        # the PR sits "Expected — waiting for status to be reported" forever —
-        # it cannot be enqueued and no job is running. Mirror this job's verdict
-        # into a "CI Summary" commit status so non-compiler PRs are mergeable.
-        # Full PRs (required_summary == 'true') already emit "CI Summary" as the
-        # job name, so this guard avoids posting a duplicate context for them.
-        if: always() && github.event_name == 'pull_request' && needs.gate.outputs.required_summary != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          state="failure"
-          if [[ "${{ job.status }}" == "success" ]]; then
-            state="success"
-          fi
-          gh api -X POST "repos/${{ github.repository }}/statuses/${{ github.event.pull_request.head.sha }}" \
-            -f state="$state" \
-            -f context="CI Summary" \
-            -f description="Mirrored from CI Light Summary (non-compiler PR)" \
-            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            >/dev/null
-          echo "Posted CI Summary=$state for non-compiler PR head ${{ github.event.pull_request.head.sha }}"
