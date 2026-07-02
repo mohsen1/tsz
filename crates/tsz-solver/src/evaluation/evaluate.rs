@@ -59,6 +59,7 @@ mod application;
 mod closed_eval;
 mod display_alias;
 mod meta_recursion_identity;
+use meta_recursion_identity::MetaRecursionIdentity;
 mod query_budget;
 mod support;
 
@@ -88,6 +89,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
     def_depth: FxHashMap<DefId, u32>,
+    /// Operation-level recursion identities for eager `keyof` / indexed-access
+    /// re-reduction. Unlike `guard`, which keys exact `TypeId` re-entry, this
+    /// mirrors tsc's `getRecursionIdentity`: productive recursion can keep
+    /// allocating fresh `TypeId`s while repeating the same origin.
+    meta_recursion_identity_stack: Vec<MetaRecursionIdentity>,
     /// #14101 SCC-discriminating probe: ordered stack of in-flight `DefId`
     /// application entries (pushed on a successful `increment_def_depth`, popped
     /// in `decrement_def_depth`). Lets the re-entry probe count the distinct
@@ -315,6 +321,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            meta_recursion_identity_stack: Vec::new(),
             def_eval_stack: Vec::new(),
             real_instantiation_depth_count: 0,
             suppress_this_binding: false,
@@ -608,6 +615,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.tainted.clear();
         self.guard.reset();
         self.def_depth.clear();
+        self.meta_recursion_identity_stack.clear();
         self.def_eval_stack.clear();
         self.real_instantiation_depth_count = 0;
         self.silent_depth_bailed = false;
