@@ -1336,6 +1336,94 @@ type Probe = Gen2<ABC.A>;
         );
     }
 
+    /// Resolve `<probe>.<prop>` on the file-local alias `probe` and assert the
+    /// result matches `expect_success`. Shared by the alias-reached
+    /// enum-discriminant `keyof` matrix so each case only supplies source text.
+    fn assert_alias_property(source: &str, probe: &str, prop: &str, expect_success: bool) {
+        let (parser, root, binder, types) = build_checker(source);
+        let mut checker = CheckerState::new(
+            parser.get_arena(),
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        checker.ctx.set_lib_contexts(Vec::new());
+        checker.check_source_file(root);
+
+        let sym = checker
+            .ctx
+            .binder
+            .file_locals
+            .get(probe)
+            .unwrap_or_else(|| panic!("{probe} symbol"));
+        let ty = checker.type_reference_symbol_type(sym);
+        let result = checker.resolve_property_access_with_env(ty, prop);
+        let is_success = matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+        );
+        assert_eq!(
+            is_success,
+            expect_success,
+            "{probe}.{prop}: expected success={expect_success}, got {result:?} for type {}",
+            checker.format_type(ty),
+        );
+    }
+
+    /// Adjacent case: renamed binders + string enum. A concrete discriminant
+    /// reached through the alias body (`Weekday.Tue`, still a `Lazy(DefId)`)
+    /// must still prune the impossible constituent so the mapped-over-`keyof`
+    /// application exposes the member-specific key.
+    #[test]
+    fn mapped_string_enum_discriminant_application_renamed_binders_exposes_member() {
+        let source = r#"
+enum Weekday { Mon = "mon", Tue = "tue" }
+type Slot<D extends Weekday> = { day: D } & (
+  { day: Weekday.Mon, open: string } |
+  { day: Weekday.Tue, close: string }
+);
+type SlotView<D extends Weekday> = { [K in keyof Slot<D>]: string };
+type Probe = SlotView<Weekday.Mon>;
+"#;
+        assert_alias_property(source, "Probe", "open", true);
+    }
+
+    /// Adjacent case: numeric enum with explicit values.
+    #[test]
+    fn mapped_numeric_enum_discriminant_application_exposes_member() {
+        let source = r#"
+enum Level { Low = 1, High = 2 }
+type Cell<L extends Level> = { lvl: L } & (
+  { lvl: Level.Low, floor: string } |
+  { lvl: Level.High, ceil: string }
+);
+type CellView<L extends Level> = { [K in keyof Cell<L>]: string };
+type Probe = CellView<Level.Low>;
+"#;
+        assert_alias_property(source, "Probe", "floor", true);
+    }
+
+    /// Negative control: when both constituents share the *same* discriminant
+    /// member, neither is impossible, so `keyof` keeps only the shared keys and
+    /// a member-specific key must stay unresolved (matching tsc).
+    #[test]
+    fn mapped_enum_same_discriminant_keeps_only_shared_keys() {
+        let source = r#"
+enum ABC { A, B }
+type Gen<T extends ABC> = { v: T } & (
+  { v: ABC.A, a: string } |
+  { v: ABC.A, b: string }
+);
+type Gen2<T extends ABC> = { [K in keyof Gen<T>]: string };
+type Probe = Gen2<ABC.A>;
+"#;
+        // `a` and `b` live on different same-discriminant constituents, so
+        // `keyof (A | B) = keyof A & keyof B` drops both; only `v` survives.
+        assert_alias_property(source, "Probe", "a", false);
+        assert_alias_property(source, "Probe", "v", true);
+    }
+
     /// Rule: when `T extends U ? A : B` is deferred (contains type parameters),
     /// property access uses `A | B` as the apparent type. Properties not on all
     /// branches must produce TS2339; properties on all branches must be accepted.
