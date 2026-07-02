@@ -13,9 +13,9 @@ use super::handlers_code_fixes_utils::{
     relative_module_path_candidates, reorder_import_candidates_for_package_roots,
     resolve_module_path,
 };
-use tsz::lsp::Project;
 use tsz::lsp::code_actions::{CodeActionProvider, CodeFixRegistry, ImportCandidate};
 use tsz::lsp::position::LineMap;
+use tsz::lsp::{NodeModulesExportReachability, Project};
 use tsz::parser::ParserState;
 use tsz_common::file_extensions::strip_known_extension;
 
@@ -1164,6 +1164,7 @@ impl Server {
         }
         if candidates.is_empty() && !fallback_names.is_empty() {
             candidates.extend(Self::fallback_import_candidates_from_export_scan(
+                &project,
                 current_file_path,
                 &files,
                 &fallback_names,
@@ -1178,6 +1179,7 @@ impl Server {
         }
         if candidates.is_empty() && !fallback_names.is_empty() {
             candidates.extend(Self::fallback_import_candidates_from_external_paths(
+                &project,
                 current_file_path,
                 &external_project_paths,
                 &files,
@@ -1273,6 +1275,7 @@ impl Server {
     }
 
     fn fallback_import_candidates_from_export_scan(
+        project: &Project,
         current_file_path: &str,
         files: &rustc_hash::FxHashMap<String, String>,
         missing_names: &rustc_hash::FxHashSet<String>,
@@ -1288,6 +1291,13 @@ impl Server {
             if !path.contains("/node_modules/") {
                 continue;
             }
+            // Honor the target package's `exports` map: a symbol living in a file
+            // the map does not expose must not be offered, and a remapped subpath
+            // must use the `exports`-declared specifier rather than the raw file
+            // path. Reachability depends only on `path`, so resolve it at most
+            // once per file (lazily, so files matching no missing name pay
+            // nothing).
+            let mut resolved_specifier: Option<Option<String>> = None;
             for missing_name in missing_names {
                 let export_patterns = [
                     format!("export declare function {missing_name}"),
@@ -1305,8 +1315,16 @@ impl Server {
                 if !export_patterns.iter().any(|pattern| text.contains(pattern)) {
                     continue;
                 }
-                let Some(module_specifier) =
-                    Self::module_specifier_from_node_modules_path(path, &existing_specifiers)
+                let Some(module_specifier) = resolved_specifier
+                    .get_or_insert_with(|| {
+                        Self::node_modules_fallback_specifier(
+                            project,
+                            current_file_path,
+                            path,
+                            &existing_specifiers,
+                        )
+                    })
+                    .clone()
                 else {
                     continue;
                 };
@@ -1382,6 +1400,7 @@ impl Server {
     }
 
     fn fallback_import_candidates_from_external_paths(
+        project: &Project,
         current_file_path: &str,
         external_project_paths: &rustc_hash::FxHashSet<String>,
         files: &rustc_hash::FxHashMap<String, String>,
@@ -1401,9 +1420,14 @@ impl Server {
             {
                 continue;
             }
-            let Some(specifier) =
-                Self::module_specifier_from_node_modules_path(path, &existing_specifiers)
-            else {
+            // Honor the target package's `exports` map (see the export-scan
+            // fallback): skip files the map hides, prefer its declared specifier.
+            let Some(specifier) = Self::node_modules_fallback_specifier(
+                project,
+                current_file_path,
+                path,
+                &existing_specifiers,
+            ) else {
                 continue;
             };
             for missing_name in missing_names {
@@ -1439,6 +1463,28 @@ impl Server {
             return rest.find('\'').map(|end| rest[..end].to_string());
         }
         None
+    }
+
+    /// Resolve the bare import specifier for a `node_modules` file used by the
+    /// text-scan fallbacks, deferring reachability to the module resolver.
+    ///
+    /// Returns `None` when the target package's `exports` map hides the file
+    /// (so it must not be offered as an auto-import), the `exports`-declared
+    /// specifier when the map exposes it, and the path-derived specifier when
+    /// no `exports` map constrains resolution.
+    fn node_modules_fallback_specifier(
+        project: &Project,
+        current_file_path: &str,
+        path: &str,
+        existing_specifiers: &rustc_hash::FxHashSet<String>,
+    ) -> Option<String> {
+        match project.node_modules_export_reachability(current_file_path, path) {
+            NodeModulesExportReachability::Unreachable => None,
+            NodeModulesExportReachability::Reachable(specifier) => Some(specifier),
+            NodeModulesExportReachability::Unconstrained => {
+                Self::module_specifier_from_node_modules_path(path, existing_specifiers)
+            }
+        }
     }
 
     pub(super) fn module_specifier_from_node_modules_path(

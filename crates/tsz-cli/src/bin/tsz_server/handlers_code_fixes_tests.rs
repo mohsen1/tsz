@@ -777,6 +777,202 @@ fn collect_import_candidates_respects_node_next_package_exports_root_only() {
     );
 }
 
+/// Positive control: a file the `exports` map *does* expose through a subpath
+/// key must still be offered, under its `exports`-declared specifier.
+#[test]
+fn collect_import_candidates_offers_reachable_node_next_subpath_export() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pack/package.json".to_string(),
+        r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        ".": "./main.mjs",
+        "./sub": "./sub.mjs"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/sub.d.mts".to_string(),
+        "export const fromSub = 0;".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.mts".to_string(), "fromSub".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 7),
+        ),
+        message: "Cannot find name 'fromSub'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "fromSub")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+    assert_eq!(module_specifiers, vec!["pack/sub".to_string()]);
+}
+
+/// A wildcard `exports` key exposes only files under its scope; a symbol living
+/// outside that scope must not be offered.
+#[test]
+fn collect_import_candidates_suppresses_unreachable_node_next_wildcard_export() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pack/package.json".to_string(),
+        r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        "./lib/*": "./lib/*.mjs"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/secret.d.mts".to_string(),
+        "export const fromSecret = 0;".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.mts".to_string(), "fromSecret".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 10),
+        ),
+        message: "Cannot find name 'fromSecret'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.is_empty(),
+        "expected no import candidates for a file outside the wildcard exports scope, got {candidates:?}"
+    );
+}
+
+/// Positive control: a file the wildcard `exports` key *does* cover is offered
+/// under the wildcard-derived specifier.
+#[test]
+fn collect_import_candidates_offers_reachable_node_next_wildcard_export() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pack/package.json".to_string(),
+        r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        "./*": "./*.mjs"
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/foo.d.mts".to_string(),
+        "export const fromFoo = 0;".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.mts".to_string(), "fromFoo".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 7),
+        ),
+        message: "Cannot find name 'fromFoo'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
+    let module_specifiers: Vec<String> = candidates
+        .into_iter()
+        .filter(|candidate| candidate.local_name == "fromFoo")
+        .map(|candidate| candidate.module_specifier)
+        .collect();
+    assert_eq!(module_specifiers, vec!["pack/foo".to_string()]);
+}
+
+/// A conditional `exports` map that only exposes the root `.` export (via
+/// `types`/`import` conditions) must still hide sibling files not named by it.
+#[test]
+fn collect_import_candidates_respects_types_condition_only_node_next_exports() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/node_modules/pack/package.json".to_string(),
+        r#"{
+    "name": "pack",
+    "version": "1.0.0",
+    "exports": {
+        ".": {
+            "types": "./main.d.mts",
+            "import": "./main.mjs"
+        }
+    }
+}"#
+        .to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/main.d.mts".to_string(),
+        "export const fromMain = 0;".to_string(),
+    );
+    server.open_files.insert(
+        "/node_modules/pack/hidden.d.mts".to_string(),
+        "export const fromHidden = 0;".to_string(),
+    );
+    server
+        .open_files
+        .insert("/index.mts".to_string(), "fromHidden".to_string());
+
+    let diagnostics = vec![tsz::lsp::diagnostics::LspDiagnostic {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 10),
+        ),
+        message: "Cannot find name 'fromHidden'.".to_string(),
+        code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+        source: Some("tsz".to_string()),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    }];
+
+    let candidates =
+        server.collect_import_candidates("/index.mts", &diagnostics, &[], &[], None, None);
+    assert!(
+        candidates.is_empty(),
+        "expected no import candidates for a sibling file behind a types-condition-only exports map, got {candidates:?}"
+    );
+}
+
 #[test]
 fn collect_import_candidates_prefers_paths_mapping_over_node_modules_package_specifier() {
     let mut server = make_server();

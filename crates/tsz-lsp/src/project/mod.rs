@@ -28,3 +28,4 @@ pub use self::core::{
 };
 pub use self::eviction::{EvictedFile, EvictionResult};
 pub use self::file_context::LspProviderContext;
+pub use self::module_specifiers::NodeModulesExportReachability;

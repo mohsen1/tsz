@@ -37,6 +37,32 @@ enum ExportsResolutionMode {
     Both,
 }
 
+/// Whether a file inside a `node_modules` package can be reached as an
+/// auto-import from a given importer, honoring the target package's
+/// `package.json` `exports` map.
+///
+/// This is the authoritative reachability verdict the module resolver owns.
+/// Ancillary import-candidate collectors (e.g. the CLI code-fix fallbacks)
+/// consult it instead of re-deriving a bare specifier straight from the file
+/// path, which would ignore `exports` gating and offer files the package
+/// deliberately hides.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum NodeModulesExportReachability {
+    /// The importer enforces package `exports` and the target package's map
+    /// does not expose this file. No specifier reaches it, so it must not be
+    /// offered as an auto-import.
+    Unreachable,
+    /// The `exports` map exposes the target file; the wrapped value is the
+    /// specifier a fresh import should use (already `exports`-remapped, so it
+    /// may differ from the on-disk path — e.g. `pack/foo` for a file at
+    /// `pack/dist/foo`).
+    Reachable(String),
+    /// The target package declares no `exports` map, or the importer's module
+    /// resolution predates `exports`. Reachability is unconstrained and the
+    /// caller may derive the specifier by its own rules.
+    Unconstrained,
+}
+
 /// Relative-path-dependent candidate specifiers for one source → target pair.
 struct RelativeCandidates {
     /// Direct relative specifier (e.g. `./utils` or `../shared/helpers`).
@@ -1298,6 +1324,46 @@ impl Project {
             true,
             ExportsResolutionMode::Both,
         )
+    }
+
+    /// Classify whether `target_file` (a file inside a `node_modules` package)
+    /// can be auto-imported from `from_file` under the target package's
+    /// `exports` map.
+    ///
+    /// Returns [`NodeModulesExportReachability::Unreachable`] only when the
+    /// importer's module resolution enforces package `exports` *and* the
+    /// target package declares an `exports` map that does not expose the file.
+    /// Packages without an `exports` map — or importers whose module resolution
+    /// predates `exports` (classic/node10) — are
+    /// [`NodeModulesExportReachability::Unconstrained`], leaving specifier
+    /// choice to the caller. When the map does expose the file, the
+    /// [`NodeModulesExportReachability::Reachable`] specifier already reflects
+    /// any `exports` remapping.
+    pub fn node_modules_export_reachability(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> NodeModulesExportReachability {
+        let normalized = target_file.replace('\\', "/");
+        if !normalized.contains("/node_modules/") {
+            return NodeModulesExportReachability::Unconstrained;
+        }
+        if !self.module_resolution_supports_package_exports(from_file) {
+            return NodeModulesExportReachability::Unconstrained;
+        }
+        // Only an `exports` map constrains reachability; without one, Node
+        // resolves any subpath and the caller keeps its own specifier heuristic.
+        let has_exports_map = self
+            .nearest_package_json(&normalized)
+            .is_some_and(|(_, json)| json.get("exports").is_some());
+        if !has_exports_map {
+            return NodeModulesExportReachability::Unconstrained;
+        }
+        let exports_mode = self.exports_resolution_mode_for_importer(from_file);
+        match self.package_specifier_from_node_modules_with_mode(&normalized, true, exports_mode) {
+            Some(specifier) => NodeModulesExportReachability::Reachable(specifier),
+            None => NodeModulesExportReachability::Unreachable,
+        }
     }
 
     fn package_specifier_from_node_modules_with_mode(
