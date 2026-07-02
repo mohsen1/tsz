@@ -92,7 +92,8 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // Union of all signatures provides contextual typing
-        let union_contextual = tsz_solver::utils::union_or_single(self.ctx.types, signature_types);
+        let union_contextual =
+            tsz_solver::utils::union_or_single(self.ctx.types, signature_types.clone());
 
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
@@ -232,8 +233,19 @@ impl<'a> CheckerState<'a> {
         // like `reduce<U>`). This post-collection snapshot ensures only diagnostics
         // from the current overload attempt are checked.
         let post_union_arg_diag_snap = self.ctx.snapshot_diagnostics();
-        let union_arg_collection_has_callback_body_errors =
-            self.overload_candidate_has_callback_body_errors(args, &overload_snap.diag);
+        // See `union_context_lossy_for_callback_args`: a pass-1 match computed
+        // from a callback the union context could not type is as unreliable as
+        // one with callback body errors — defer it to the signature-specific
+        // pass, which retypes callbacks per candidate exactly like tsc. The
+        // consumer below already requires multiple arity-compatible
+        // signatures, so skip both checks otherwise.
+        let union_arg_collection_unreliable = has_multiple_arity_compatible_signatures
+            && (self.overload_candidate_has_callback_body_errors(args, &overload_snap.diag)
+                || self.union_context_lossy_for_callback_args(
+                    args,
+                    &union_contextual_param_types,
+                    &signature_types,
+                ));
 
         // First pass: try each signature with union-contextual argument types.
         // When an overload succeeds but its return context substitution is empty
@@ -438,7 +450,7 @@ impl<'a> CheckerState<'a> {
                     // Speculatively re-type the callbacks against the selected
                     // signature so those cases are deferred too.
                     if has_multiple_arity_compatible_signatures
-                        && (union_arg_collection_has_callback_body_errors
+                        && (union_arg_collection_unreliable
                             || self.overload_candidate_has_callback_body_errors(
                                 args,
                                 &post_union_arg_diag_snap,
@@ -967,31 +979,15 @@ impl<'a> CheckerState<'a> {
 
         // If the first pass deferred an overload without return context substitution
         // but no later overload succeeded, accept the deferred fallback.
-        if let Some((fallback_arg_types, fallback_return_type, fallback_predicate, fallback_snap)) =
-            no_rcs_fallback
-        {
-            self.ctx.rollback_full(&fallback_snap);
-            self.ctx.node_types.merge(&temp_node_types);
-            return Some(OverloadResolution {
-                arg_types: fallback_arg_types,
-                result: CallResult::Success(fallback_return_type),
-                selected_type_predicate: fallback_predicate,
-            });
+        if let Some(fallback) = no_rcs_fallback {
+            return Some(self.accept_first_pass_success_fallback(fallback, &temp_node_types));
         }
 
         // No candidate passed the subtype pass: accept the first candidate
         // (declaration order) that matched under the assignable relation,
         // mirroring tsc's second `chooseOverload` pass.
-        if let Some((fallback_arg_types, fallback_return_type, fallback_predicate, fallback_snap)) =
-            assignable_pass_fallback
-        {
-            self.ctx.rollback_full(&fallback_snap);
-            self.ctx.node_types.merge(&temp_node_types);
-            return Some(OverloadResolution {
-                arg_types: fallback_arg_types,
-                result: CallResult::Success(fallback_return_type),
-                selected_type_predicate: fallback_predicate,
-            });
+        if let Some(fallback) = assignable_pass_fallback {
+            return Some(self.accept_first_pass_success_fallback(fallback, &temp_node_types));
         }
 
         // No overload accepted the non-tuple spread, so commit the deferred

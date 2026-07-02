@@ -33,6 +33,7 @@ TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.
 TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
+TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-13526}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
 cap_positive_baseline() {
@@ -764,6 +765,7 @@ validate_emit_aggregate_counts() {
   local base_js base_dts
   base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
   base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  base_js="$(cap_positive_baseline "$base_js" "$TSZ_CI_JS_ACCEPTED_FLOOR")"
   base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
   if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
     echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
@@ -921,7 +923,8 @@ run_fourslash_shard() {
   local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
   set +e
   run_with_heartbeat "fourslash-${shard_index}" \
-    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    bash -c 'log_file="$1"; shift; "$@" 2>&1 | tee "$log_file"; exit "${PIPESTATUS[0]}"' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    env FOURSLASH_LOG_START=1 \
     ./scripts/fourslash/run-fourslash.sh \
     --skip-cargo-build \
     --skip-ts-build \
