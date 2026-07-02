@@ -18,7 +18,6 @@ use super::TypeFormatter;
 use super::alias_underlying;
 use crate::types::{TypeData, TypeId};
 use rustc_hash::FxHashSet;
-use tracing::trace;
 
 /// What an `Application` display reduction resolved to.
 ///
@@ -27,7 +26,7 @@ use tracing::trace;
 /// (declaration) order — used for `keyof`-bodied alias applications, whose
 /// resolved key union must follow the operand's property declaration order
 /// (the interned union is canonically sorted and would lose it).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub(super) enum ApplicationDisplayReduction {
     Type(TypeId),
     OrderedUnion(Vec<TypeId>),
@@ -45,10 +44,8 @@ impl<'a> TypeFormatter<'a> {
         }
 
         let def_store = self.def_store?;
-        let def_id = match self.interner.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => def_store.find_def_for_type(base)?,
-        };
+        let def_id =
+            crate::type_queries::application_base_alias_def_id(self.interner, def_store, base)?;
         let def = def_store.get(def_id)?;
         if def.kind != crate::def::DefKind::TypeAlias {
             return None;
@@ -159,8 +156,8 @@ impl<'a> TypeFormatter<'a> {
             // remember the step whose *declared* body is the `keyof` — the
             // ordered-union path below instantiates its operand on demand to
             // recover the property declaration order.
-            if matches!(self.interner.lookup(body), Some(TypeData::KeyOf(_))) {
-                last_keyof_step = Some((def_id, app.args.to_vec()));
+            if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(body) {
+                last_keyof_step = Some((operand, def_id, app.args.to_vec()));
             }
             let instantiated = crate::computation::instantiate_generic(
                 self.interner,
@@ -169,13 +166,6 @@ impl<'a> TypeFormatter<'a> {
                 &app.args,
             );
             let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
-            trace!(
-                current = %current.0,
-                instantiated = %instantiated.0,
-                evaluated = %evaluated.0,
-                evaluated_key = ?self.interner.lookup(evaluated),
-                "reducing_application_display step"
-            );
             if evaluated == current {
                 break;
             }
@@ -206,11 +196,8 @@ impl<'a> TypeFormatter<'a> {
         // on the application surface (tsc applies literal-union display
         // widening there, a separate display concern).
         if body_kind == crate::type_queries::ReducingAliasBodyKind::KeyOf {
-            let (def_id, args) = last_keyof_step?;
+            let (operand, def_id, args) = last_keyof_step?;
             let def = def_store.get(def_id)?;
-            let Some(TypeData::KeyOf(operand)) = self.interner.lookup(def.body?) else {
-                return None;
-            };
             let operand = crate::computation::instantiate_generic(
                 self.interner,
                 operand,
@@ -297,7 +284,7 @@ impl<'a> TypeFormatter<'a> {
         let reduced = self
             .scalar_mapped_alias_application_display(type_id, app.base, &app.args)
             .map(ApplicationDisplayReduction::Type)
-            .or_else(|| self.distributed_conditional_application_display(app.base, &app.args))
+            .or_else(|| self.distributed_conditional_application_display(type_id, &app.args))
             .or_else(|| self.reducing_application_display(type_id))
             .or_else(|| {
                 self.variadic_tuple_alias_application_display(app.base, &app.args)
@@ -311,42 +298,26 @@ impl<'a> TypeFormatter<'a> {
 
     fn distributed_conditional_application_display(
         &self,
-        base: TypeId,
+        type_id: TypeId,
         args: &[TypeId],
     ) -> Option<ApplicationDisplayReduction> {
         let def_store = self.def_store?;
-        let def_id = match self.interner.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => def_store.find_def_for_type(base)?,
-        };
-        let def = def_store.get(def_id)?;
-        if def.kind != crate::def::DefKind::TypeAlias {
-            return None;
-        }
-        let body = def.body?;
-        let TypeData::Conditional(cond_id) = self.interner.lookup(body)? else {
-            return None;
-        };
-        let cond = self.interner.conditional_type(cond_id);
-        if !cond.is_distributive {
-            return None;
-        }
-        let TypeData::TypeParameter(check_tp) = self.interner.lookup(cond.check_type)? else {
-            return None;
-        };
-        let check_index = def
-            .type_params
-            .iter()
-            .position(|param| param.name == check_tp.name)?;
-        let check_arg = self.resolve_distributive_check_arg(*args.get(check_index)?);
+        let check = crate::type_queries::distributive_conditional_alias_check(
+            self.interner,
+            def_store,
+            type_id,
+        )?;
+        let def = def_store.get(check.def_id)?;
+        let base = self.interner.lazy(check.def_id);
 
         // For distributive conditionals, `boolean` distributes as `true | false`.
         // Mirrors the instantiation policy in instantiate.rs that expands
         // `BOOLEAN` to `[BOOLEAN_TRUE, BOOLEAN_FALSE]` before substitution.
-        let mut members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
+        let mut members: Vec<TypeId> = if check.check_arg == TypeId::BOOLEAN {
             vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
-        } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
-            if let Some(origin) = self.interner.get_union_origin(check_arg) {
+        } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check.check_arg)
+        {
+            if let Some(origin) = self.interner.get_union_origin(check.check_arg) {
                 if origin.len() < 2 {
                     return None;
                 }
@@ -362,16 +333,14 @@ impl<'a> TypeFormatter<'a> {
             return None;
         };
 
-        {
-            let positions: Vec<_> = members
-                .iter()
-                .map(|&member| self.get_source_position_for_type(member, def_store))
-                .collect();
-            if positions.iter().all(|&(tier, _, _)| tier < 2) {
-                let mut pairs: Vec<_> = members.iter().copied().zip(positions).collect();
-                pairs.sort_by_key(|&(_, pos)| pos);
-                members = pairs.into_iter().map(|(member, _)| member).collect();
-            }
+        let positions: Vec<_> = members
+            .iter()
+            .map(|&member| self.get_source_position_for_type(member, def_store))
+            .collect();
+        if positions.iter().all(|&(tier, _, _)| tier < 2) {
+            let mut pairs: Vec<_> = members.iter().copied().zip(positions).collect();
+            pairs.sort_by_key(|&(_, pos)| pos);
+            members = pairs.into_iter().map(|(member, _)| member).collect();
         }
 
         // Only evaluate the distributed branches when the *other* type args are
@@ -381,7 +350,7 @@ impl<'a> TypeFormatter<'a> {
         // and tsc preserves the alias-application form
         // (`ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>`).
         let other_args_concrete = args.iter().enumerate().all(|(i, &arg)| {
-            i == check_index
+            i == check.check_index
                 || !crate::visitors::visitor_predicates::contains_type_parameters(
                     self.interner,
                     arg,
@@ -397,23 +366,28 @@ impl<'a> TypeFormatter<'a> {
         let distributed: Vec<TypeId> = members
             .iter()
             .map(|&member| {
-                let mut branch_args = args.to_vec();
-                branch_args[check_index] = member;
                 if other_args_concrete {
                     let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
                     for (i, param) in def.type_params.iter().enumerate() {
-                        let Some(&arg) = branch_args.get(i) else {
-                            return TypeId::ERROR;
+                        let arg = if i == check.check_index {
+                            member
+                        } else {
+                            match args.get(i) {
+                                Some(&arg) => arg,
+                                None => return TypeId::ERROR,
+                            }
                         };
                         subst.insert(param.name, arg);
                     }
                     let substituted = crate::instantiation::instantiate::instantiate_type(
                         self.interner,
-                        body,
+                        check.body,
                         &subst,
                     );
                     crate::evaluation::evaluate::evaluate_type(self.interner, substituted)
                 } else {
+                    let mut branch_args = args.to_vec();
+                    branch_args[check.check_index] = member;
                     self.interner.application(base, branch_args)
                 }
             })
@@ -424,18 +398,6 @@ impl<'a> TypeFormatter<'a> {
         // by earlier evaluation/instantiation of the same canonical union)
         // can differ from this distribution and repaint or reorder it.
         Some(ApplicationDisplayReduction::OrderedUnion(distributed))
-    }
-
-    /// See [`crate::type_queries::resolve_distributive_union_check_arg`].
-    fn resolve_distributive_check_arg(&self, check_arg: TypeId) -> TypeId {
-        let Some(def_store) = self.def_store else {
-            return check_arg;
-        };
-        crate::type_queries::resolve_distributive_union_check_arg(
-            self.interner,
-            def_store,
-            check_arg,
-        )
     }
 
     /// Expand a raw `Application` of a *variadic* (spread) tuple type alias to
@@ -451,10 +413,8 @@ impl<'a> TypeFormatter<'a> {
         args: &[TypeId],
     ) -> Option<TypeId> {
         let def_store = self.def_store?;
-        let def_id = match self.interner.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => def_store.find_def_for_type(base)?,
-        };
+        let def_id =
+            crate::type_queries::application_base_alias_def_id(self.interner, def_store, base)?;
         let def = def_store.get(def_id)?;
         if def.kind != crate::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
             return None;
@@ -516,12 +476,10 @@ impl<'a> TypeFormatter<'a> {
         let Some(def_store) = self.def_store else {
             return false;
         };
-        let def_id = match self.interner.lookup(app.base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => match def_store.find_def_for_type(app.base) {
-                Some(def_id) => def_id,
-                None => return false,
-            },
+        let Some(def_id) =
+            crate::type_queries::application_base_alias_def_id(self.interner, def_store, app.base)
+        else {
+            return false;
         };
         let Some(def) = def_store.get(def_id) else {
             return false;

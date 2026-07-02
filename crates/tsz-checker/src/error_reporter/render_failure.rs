@@ -782,11 +782,6 @@ impl<'a> CheckerState<'a> {
         // (matching tsc — the non-nullish source is elaborated against `T`
         // alone). tsc displays that single non-nullish member, not the union,
         // so rebind the render target to it for these property-miss arms.
-        //
-        // The rebind is skipped when the target carries a type-alias surface
-        // (`UnionAlias<{ u: string }>`, `type NullableObj = T | undefined`):
-        // tsc's `reportErrorResults` restores the original target whenever it
-        // carried an `aliasSymbol`, so the alias-named union renders whole.
         let property_miss_target = if matches!(
             reason,
             SubtypeFailureReason::MissingProperty { .. }

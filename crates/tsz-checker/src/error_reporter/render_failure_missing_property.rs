@@ -44,18 +44,12 @@ impl<'a> CheckerState<'a> {
         let is_source_primitive =
             outer_source_is_primitive || (depth > 0 && inner_source_type_is_primitive);
         if is_source_primitive {
-            let tgt_str = if depth == 0 {
-                self.anonymous_composite_annotation_target_display(idx, target)
-                    .unwrap_or_else(|| {
-                        self.primitive_source_missing_property_target_display(
-                            target,
-                            target_type,
-                            idx,
-                        )
-                    })
-            } else {
-                self.recursive_non_generic_alias_body_name(target_type)
-            };
+            let tgt_str = self.primitive_source_missing_property_target_display(
+                depth,
+                target,
+                target_type,
+                idx,
+            );
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&display_src_str, &tgt_str],
@@ -632,10 +626,19 @@ impl<'a> CheckerState<'a> {
     /// the recorded evaluated type, preserving the established rendering.
     fn primitive_source_missing_property_target_display(
         &mut self,
+        depth: u32,
         target: TypeId,
         target_type: TypeId,
         anchor_idx: NodeIndex,
     ) -> String {
+        if depth != 0 {
+            return self.recursive_non_generic_alias_body_name(target_type);
+        }
+        if let Some(display) =
+            self.anonymous_composite_annotation_target_display(anchor_idx, target)
+        {
+            return display;
+        }
         // `target` here may already be the strip-rebound union member (the
         // annotation verdict governed that rebind), so the annotation only
         // *adds* the bare-alias-reference case (`x: MaybeBox`); a negative
@@ -935,18 +938,12 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_primitive_type(self.ctx.types, source_type)
         {
             let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = if depth == 0 {
-                self.anonymous_composite_annotation_target_display(idx, target)
-                    .unwrap_or_else(|| {
-                        self.primitive_source_missing_property_target_display(
-                            target,
-                            target_type,
-                            idx,
-                        )
-                    })
-            } else {
-                self.recursive_non_generic_alias_body_name(target_type)
-            };
+            let tgt_str = self.primitive_source_missing_property_target_display(
+                depth,
+                target,
+                target_type,
+                idx,
+            );
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&src_str, &tgt_str],

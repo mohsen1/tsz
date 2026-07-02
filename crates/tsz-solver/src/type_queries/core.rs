@@ -220,6 +220,63 @@ pub fn application_base_alias_def_id(
     get_lazy_def_id(db, base).or_else(|| def_store.find_def_for_type(base))
 }
 
+/// Decoded shape of a *distributive* conditional type-alias application: the
+/// alias definition, its declared conditional body, the check parameter's
+/// index among the alias type parameters, and the check argument resolved to
+/// the type it distributes over (a union, `boolean`, or — unresolved — the
+/// original argument).
+pub struct DistributiveConditionalAliasCheck {
+    pub def_id: crate::def::DefId,
+    pub body: TypeId,
+    pub check_index: usize,
+    pub check_arg: TypeId,
+}
+
+/// Decode `type_id` as an application of a distributive conditional type
+/// alias. Returns `None` when the base is not a type alias, the body is not a
+/// distributive conditional, or the conditional's check type is not one of
+/// the alias type parameters. Shared by the display predicate below and the
+/// formatter's distributed-application reduction so the gate and the
+/// expansion cannot disagree about what distributes.
+pub fn distributive_conditional_alias_check(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<DistributiveConditionalAliasCheck> {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = application_base_alias_def_id(db, def_store, app.base)?;
+    let def = def_store.get(def_id)?;
+    if def.kind != crate::def::DefKind::TypeAlias {
+        return None;
+    }
+    let body = def.body?;
+    let TypeData::Conditional(cond_id) = db.lookup(body)? else {
+        return None;
+    };
+    let cond = db.conditional_type(cond_id);
+    if !cond.is_distributive {
+        return None;
+    }
+    let TypeData::TypeParameter(check_tp) = db.lookup(cond.check_type)? else {
+        return None;
+    };
+    let check_index = def
+        .type_params
+        .iter()
+        .position(|param| param.name == check_tp.name)?;
+    let check_arg =
+        resolve_distributive_union_check_arg(db, def_store, *app.args.get(check_index)?);
+    Some(DistributiveConditionalAliasCheck {
+        def_id,
+        body,
+        check_index,
+        check_arg,
+    })
+}
+
 /// Whether `type_id` is an application of a *distributive* conditional type
 /// alias whose check argument is a union (or `boolean`, or a non-generic
 /// union-alias reference) — i.e. the application distributes per member and
@@ -230,49 +287,13 @@ pub fn application_distributes_over_union_check_arg(
     def_store: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+    let Some(check) = distributive_conditional_alias_check(db, def_store, type_id) else {
         return false;
     };
-    let app = db.type_application(app_id);
-    let Some(def_id) =
-        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
-    else {
-        return false;
-    };
-    let Some(def) = def_store.get(def_id) else {
-        return false;
-    };
-    if def.kind != crate::def::DefKind::TypeAlias {
-        return false;
-    }
-    let Some(body) = def.body else {
-        return false;
-    };
-    let Some(TypeData::Conditional(cond_id)) = db.lookup(body) else {
-        return false;
-    };
-    let cond = db.conditional_type(cond_id);
-    if !cond.is_distributive {
-        return false;
-    }
-    let Some(TypeData::TypeParameter(check_tp)) = db.lookup(cond.check_type) else {
-        return false;
-    };
-    let Some(check_index) = def
-        .type_params
-        .iter()
-        .position(|param| param.name == check_tp.name)
-    else {
-        return false;
-    };
-    let Some(&check_arg) = app.args.get(check_index) else {
-        return false;
-    };
-    let check_arg = resolve_distributive_union_check_arg(db, def_store, check_arg);
-    if check_arg == TypeId::BOOLEAN {
+    if check.check_arg == TypeId::BOOLEAN {
         return true;
     }
-    matches!(db.lookup(check_arg), Some(TypeData::Union(list_id)) if db.type_list(list_id).len() >= 2)
+    matches!(db.lookup(check.check_arg), Some(TypeData::Union(list_id)) if db.type_list(list_id).len() >= 2)
 }
 
 /// Resolve a distributive conditional's check argument to the union it
