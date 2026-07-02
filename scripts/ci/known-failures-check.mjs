@@ -1,0 +1,252 @@
+#!/usr/bin/env node
+// Known-failures baseline comparator (#15399).
+//
+// While main carries a known-failing test set and hosted CI is reduced, the
+// local/PR gate needs to distinguish a NEW failure (a regression this change
+// introduced) from the pre-existing known set. `cargo nextest --profile signoff`
+// runs the whole suite with fail-fast disabled and writes junit; this script
+// diffs that junit against the committed baseline in scripts/ci/known-failures.txt:
+//
+//   - any FAILING test not in the baseline  -> exit 1 (a new regression, named)
+//   - any BASELINED test that now PASSES     -> warn + list (shrink ratchet)
+//   - everything else                        -> exit 0
+//
+// `--update` rewrites the baseline to exactly the current failing set. In normal
+// PRs the baseline may only shrink (a CI guard greps the diff for additions); a
+// growth requires an explicit, reviewed baseline change.
+//
+// Bootstrap: the committed baseline ships with the header only and no reconciled
+// marker, so the script runs in advisory mode (reports the current failing set,
+// exits 0) until the first `--update` on a full-suite run stamps the marker and
+// flips it to the strict behavior above. Reconciliation is keyed on the marker,
+// not on the line count, so an empty-but-reconciled baseline (a fully green tree)
+// still blocks any failure.
+//
+// Node-less fallback: on a machine without node, run
+//   cargo nextest run --profile signoff --workspace
+// and compare the reported failures to scripts/ci/known-failures.txt by hand, or
+// pin a nextest `default-filter` that excludes the known set.
+//
+// Usage:
+//   node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]
+//
+// Exit codes:
+//   0 - no new failures (or advisory bootstrap / shrink-only)
+//   1 - one or more failing tests are absent from the baseline (regression)
+//   2 - junit or baseline unreadable/invalid (configuration error, surfaced loudly)
+import fs from "node:fs";
+import path from "node:path";
+
+const DEFAULT_JUNIT = "target/nextest/signoff/junit.xml";
+const DEFAULT_BASELINE = "scripts/ci/known-failures.txt";
+
+// Written by `--update`; its presence (not the line count) marks the baseline as
+// reconciled against a real full run. This keeps "reconciled but green" (empty
+// list + marker -> strict, blocks any failure) distinct from "never reconciled"
+// (no marker -> advisory), so the gate does not silently disable itself on a
+// clean tree.
+const RECONCILED_MARKER = "# baseline-status: reconciled";
+
+const BASELINE_HEADER = [
+  "# Known-failures baseline for scripts/ci/known-failures-check.mjs (#15399).",
+  "# One `binary-id::test-name` per line; blank lines and `#` comments ignored.",
+  "#",
+  "# Regenerate from a full signoff run (fail-fast disabled, junit on):",
+  "#   cargo nextest run --profile signoff --workspace || true",
+  "#   node scripts/ci/known-failures-check.mjs --update",
+  "#",
+  "# Until the first `--update` there is no reconciled marker and the checker",
+  "# runs in advisory mode (never blocks). `--update` stamps the marker and",
+  "# switches the checker to strict: any failing test not listed here is a new",
+  "# regression, even when the list is empty (a fully green tree). In normal PRs",
+  "# this list may only shrink.",
+];
+
+const TESTCASE_RE = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
+const NAME_RE = /\bname="([^"]*)"/;
+const CLASSNAME_RE = /\bclassname="([^"]*)"/;
+const FAILURE_RE = /<(failure|error)\b/;
+
+// Extract a single quoted attribute value from a `<testcase ...>` attribute run.
+function attr(attrs, re) {
+  const m = re.exec(attrs);
+  return m ? m[1] : null;
+}
+
+// Parse a nextest junit document into the set of test ids that ran and the
+// subset that failed. Each `<testcase>` carries `name` (test path within its
+// binary) and `classname` (the binary-id); a failing case has a `<failure>` or
+// `<error>` child. Timeouts surface as `<failure>`, so they count as failures.
+// (A passing case may still carry `<system-out>`/`<system-err>` children, so
+// failure is keyed on the failure/error tag, never on child presence.) The
+// canonical id is `classname::name` (== nextest's `binary-id::test-name`).
+export function parseJunitFailures(xml) {
+  const all = new Set();
+  const failing = new Set();
+  TESTCASE_RE.lastIndex = 0;
+  let m;
+  while ((m = TESTCASE_RE.exec(xml)) !== null) {
+    const attrs = m[1];
+    const inner = m[2]; // undefined when the tag is self-closed
+    const name = attr(attrs, NAME_RE);
+    if (name === null) continue;
+    const classname = attr(attrs, CLASSNAME_RE);
+    const id = classname ? `${classname}::${name}` : name;
+    all.add(id);
+    if (inner !== undefined && FAILURE_RE.test(inner)) failing.add(id);
+  }
+  return { all, failing };
+}
+
+// Parse the baseline text into a set of known-failing ids.
+export function parseBaseline(text) {
+  const set = new Set();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    set.add(line);
+  }
+  return set;
+}
+
+// A baseline is reconciled once `--update` has stamped the marker; only then
+// does the checker enforce strictly. Unreconciled baselines are advisory.
+export function baselineIsReconciled(text) {
+  return text.split(/\r?\n/).some((line) => line.trim() === RECONCILED_MARKER);
+}
+
+// Diff a junit result against the baseline set.
+//   newFailures - failing tests absent from the baseline (regressions -> block)
+//   nowPassing  - baselined tests that ran and did not fail (shrink candidates)
+export function evaluate(baseline, junit) {
+  const newFailures = [...junit.failing].filter((id) => !baseline.has(id)).sort();
+  const nowPassing = [...baseline]
+    .filter((id) => junit.all.has(id) && !junit.failing.has(id))
+    .sort();
+  return { newFailures, nowPassing };
+}
+
+// Render a baseline file body from a set/iterable of failing ids. `--update`
+// produces a reconciled file (marker stamped); the committed bootstrap file is
+// rendered unreconciled.
+export function renderBaseline(ids, { reconciled = true } = {}) {
+  const sorted = [...new Set(ids)].sort();
+  const header = reconciled ? [...BASELINE_HEADER, RECONCILED_MARKER] : BASELINE_HEADER;
+  return [...header, ...sorted].join("\n") + "\n";
+}
+
+function parseArgs(argv) {
+  const out = { junit: DEFAULT_JUNIT, baseline: DEFAULT_BASELINE, update: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--junit") out.junit = argv[++i];
+    else if (a === "--baseline") out.baseline = argv[++i];
+    else if (a === "--update") out.update = true;
+    else if (a === "--help" || a === "-h") out.help = true;
+    else {
+      out.error = `unknown argument '${a}'`;
+      return out;
+    }
+  }
+  return out;
+}
+
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.help) {
+    process.stdout.write(
+      "usage: node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]\n",
+    );
+    process.exit(0);
+  }
+  if (args.error) {
+    process.stderr.write(`known-failures-check: ${args.error}\n`);
+    process.exit(2);
+  }
+
+  let junitXml;
+  try {
+    junitXml = fs.readFileSync(args.junit, "utf8");
+  } catch (err) {
+    process.stderr.write(
+      `known-failures-check: cannot read junit ${args.junit}: ${err.message}\n` +
+        `Run the suite first: cargo nextest run --profile signoff --workspace || true\n`,
+    );
+    process.exit(2);
+  }
+  const junit = parseJunitFailures(junitXml);
+
+  // A junit with zero testcases means the run produced no results (build failed,
+  // or the runner was killed before any test recorded). Treat it as an infra
+  // error rather than "nothing failed" so a truncated run can neither pass the
+  // gate nor be written as an empty baseline. (Partial runs that record most but
+  // not all tests are not caught here; the slice-2 full CI tier owns that.)
+  if (junit.all.size === 0) {
+    process.stderr.write(
+      `known-failures-check: junit ${args.junit} recorded no testcases; ` +
+        `treating as a failed/incomplete run.\n`,
+    );
+    process.exit(2);
+  }
+
+  if (args.update) {
+    fs.mkdirSync(path.dirname(args.baseline), { recursive: true });
+    fs.writeFileSync(args.baseline, renderBaseline(junit.failing));
+    process.stdout.write(
+      `known-failures-check: wrote ${junit.failing.size} known failure(s) to ${args.baseline}.\n`,
+    );
+    process.exit(0);
+  }
+
+  let baselineText;
+  try {
+    baselineText = fs.readFileSync(args.baseline, "utf8");
+  } catch (err) {
+    process.stderr.write(
+      `known-failures-check: cannot read baseline ${args.baseline}: ${err.message}\n`,
+    );
+    process.exit(2);
+  }
+  const baseline = parseBaseline(baselineText);
+
+  // Unreconciled baseline (no `--update` yet): advisory only, never blocks.
+  if (!baselineIsReconciled(baselineText)) {
+    const failing = [...junit.failing].sort();
+    process.stdout.write(
+      `known-failures-check: baseline ${args.baseline} is unreconciled. ` +
+        `Advisory only; ${failing.length} test(s) currently failing.\n`,
+    );
+    for (const id of failing) process.stdout.write(`  would-baseline: ${id}\n`);
+    process.stdout.write(
+      `Populate with a full run once: cargo nextest run --profile signoff --workspace || true; ` +
+        `node scripts/ci/known-failures-check.mjs --update\n`,
+    );
+    process.exit(0);
+  }
+
+  const { newFailures, nowPassing } = evaluate(baseline, junit);
+  process.stdout.write(
+    `known-failures-check: ${junit.all.size} test(s) ran, ${junit.failing.size} failing, ` +
+      `baseline has ${baseline.size} known failure(s).\n`,
+  );
+  for (const id of nowPassing) {
+    process.stdout.write(`  shrink: ${id} is baselined but now passes -> drop it with --update.\n`);
+  }
+  if (newFailures.length > 0) {
+    for (const id of newFailures) process.stderr.write(`  NEW FAILURE: ${id}\n`);
+    process.stderr.write(
+      `::error title=New test failure not in baseline::${newFailures.length} failing test(s) ` +
+        `are absent from ${args.baseline}: ${newFailures.join(", ")}. ` +
+        `Fix the regression, or (if intentional and reviewed) update the baseline with ` +
+        `node scripts/ci/known-failures-check.mjs --update.\n`,
+    );
+    process.exit(1);
+  }
+  process.stdout.write("known-failures-check: no new failures.\n");
+  process.exit(0);
+}
+
+// Only run main when invoked directly, so tests can import the pure functions.
+const invokedDirectly =
+  process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname);
+if (invokedDirectly) main();
