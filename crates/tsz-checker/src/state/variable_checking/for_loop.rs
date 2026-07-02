@@ -356,12 +356,23 @@ impl<'a> CheckerState<'a> {
         expression: NodeIndex,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use crate::query_boundaries::dispatch as query;
 
         // Skip if type is error
         if expr_type == TypeId::ERROR {
             return;
         }
+
+        // tsc validates the *unreduced* for-in operand: `checkForInStatement` never
+        // routes the right-hand side through `getReducedType`, so an object-type
+        // intersection whose members carry a disjoint discriminant (which tsz reduces
+        // to `never` — at intern time for concrete members via
+        // `intersection_has_disjoint_object_literals`, or through property-access
+        // resolution for generic-application members) is still a valid for-in RHS:
+        // it is assignable to `object`. Judge the intersection on its raw, pre-reduction
+        // structure (resolving each member individually so a generic application like
+        // `WithKind<'a'>` exposes its object shape) BEFORE `resolve_type_for_property_access`
+        // below folds the whole operand to `never` and hides the object-like members.
+        let raw_intersection_is_valid = self.for_in_expr_type_is_valid_intersection(expr_type);
 
         // Resolve lazy/application types before checking (e.g. Record<string, any>)
         let expr_type = self.resolve_type_for_property_access(expr_type);
@@ -369,15 +380,12 @@ impl<'a> CheckerState<'a> {
         // Valid types: any, unknown, object (non-primitive), object types, type parameters
         // Invalid types: primitive types (void, null, undefined, number, string, boolean,
         // bigint, symbol) and `never` (tsc reports TS2407 for `never` as well)
-        let is_valid = expr_type == TypeId::ANY
-            || expr_type == TypeId::UNKNOWN
-            || expr_type == TypeId::OBJECT
-            || query::is_type_parameter_like(self.ctx.types, expr_type)
-            || query::is_object_like_type(self.ctx.types, expr_type)
-            || self.is_deferred_object_like_for_in(expr_type)
+        let is_valid = raw_intersection_is_valid
+            || self.for_in_leaf_type_is_valid(expr_type)
             // Also allow union types that contain valid types
             || self.for_in_expr_type_is_valid_union(expr_type)
-            // Intersection types like `object & T`: valid if ANY member is valid
+            // A deferred alias that resolves to an object intersection is valid if ANY
+            // member is object-like (the raw operand above was not itself an intersection).
             || self.for_in_expr_type_is_valid_intersection(expr_type);
 
         if !is_valid {
@@ -388,6 +396,20 @@ impl<'a> CheckerState<'a> {
             );
             self.error_at_node(expression, &message, diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR);
         }
+    }
+
+    /// Leaf (non-union, non-intersection) validity test for a for-in operand:
+    /// `any`, `unknown`, the `object` intrinsic, a type parameter, or any object-like
+    /// type — including deferred index-access / generic-application forms.
+    ///
+    /// `is_deferred_object_like_for_in` already returns `true` for both
+    /// `is_type_parameter_like` and `is_object_like_type`, so this is the single
+    /// predicate shared by the scalar and intersection-member checks.
+    fn for_in_leaf_type_is_valid(&mut self, ty: TypeId) -> bool {
+        ty == TypeId::ANY
+            || ty == TypeId::UNKNOWN
+            || ty == TypeId::OBJECT
+            || self.is_deferred_object_like_for_in(ty)
     }
 
     /// Helper for TS2407: Check if a union type contains at least one valid for-in expression type.
@@ -413,22 +435,32 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Helper for TS2407: Check if an intersection type contains at least one valid for-in member.
-    /// `object & T` is valid because it contains `object`.
+    /// Helper for TS2407: Check if an intersection type is a valid for-in operand.
+    ///
+    /// tsc accepts an intersection RHS when it is assignable to `object` — which
+    /// holds as soon as ANY constituent is object-like / type-parameter-like, since
+    /// `A & B` is a subtype of each member. `object & T` is valid because it contains
+    /// `object`; `WithKind<'a'> & WithKind<'b'>` is valid because each member is an
+    /// object type, even though their disjoint discriminant reduces the intersection
+    /// to `never`. Each member is resolved for property access *individually* so a
+    /// deferred generic application exposes its object shape without collapsing the
+    /// whole intersection to `never`.
     fn for_in_expr_type_is_valid_intersection(&mut self, expr_type: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
 
-        if let Some(members) = query::intersection_members(self.ctx.types, expr_type) {
-            for &member in &members {
-                if member == TypeId::ANY
-                    || member == TypeId::UNKNOWN
-                    || member == TypeId::OBJECT
-                    || query::is_type_parameter_like(self.ctx.types, member)
-                    || query::is_object_like_type(self.ctx.types, member)
-                    || self.is_deferred_object_like_for_in(member)
-                {
-                    return true;
-                }
+        let Some(members) = query::intersection_members(self.ctx.types, expr_type) else {
+            return false;
+        };
+        for &member in &members {
+            if self.for_in_leaf_type_is_valid(member) {
+                return true;
+            }
+            // Resolve deferred members (generic applications, aliases) individually.
+            // Resolving a single member does NOT trigger the whole-intersection
+            // never-collapse, so `WithKind<'a'>` becomes the object type `{ kind: 'a' }`.
+            let resolved_member = self.resolve_type_for_property_access(member);
+            if resolved_member != member && self.for_in_leaf_type_is_valid(resolved_member) {
+                return true;
             }
         }
         false
