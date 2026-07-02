@@ -110,7 +110,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    pub(super) fn declaration_pattern_initializer_request(
+    pub(crate) fn declaration_pattern_initializer_request(
         &mut self,
         pattern_idx: NodeIndex,
         initializer_idx: NodeIndex,

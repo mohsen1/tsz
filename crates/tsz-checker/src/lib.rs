@@ -1381,6 +1381,9 @@ mod overload_param_relation_routing_arch_tests;
 #[path = "tests/overload_two_pass_any_source_tests.rs"]
 mod overload_two_pass_any_source_tests;
 #[cfg(test)]
+#[path = "tests/overload_union_context_callback_tests.rs"]
+mod overload_union_context_callback_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]

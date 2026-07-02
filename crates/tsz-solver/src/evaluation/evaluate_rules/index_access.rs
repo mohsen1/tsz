@@ -1599,7 +1599,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index_type: TypeId,
     ) -> TypeId {
         let index_access = self.interner().index_access(object_type, index_type);
-        self.evaluate(index_access)
+        self.with_meta_rereduce_recursion_identity(index_access, index_access, |evaluator| {
+            evaluator.evaluate(index_access)
+        })
     }
 
     /// Evaluate an index access type: T[K]

@@ -99,7 +99,7 @@ fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
 
 #[test]
 fn relation_cache_config_does_not_expose_raw_flags_constructor() {
-    let source = include_str!("../src/types.rs");
+    let source = include_str!("../src/types/relation_cache.rs");
 
     assert!(
         !source.contains("pub const fn from_flags(flags: RelationFlags) -> Self"),
@@ -109,10 +109,10 @@ fn relation_cache_config_does_not_expose_raw_flags_constructor() {
 
 #[test]
 fn relation_cache_config_does_not_expose_raw_constructor() {
-    let source = include_str!("../src/types.rs");
+    let source = include_str!("../src/types/relation_cache.rs");
     let impl_start = source
         .find("impl RelationCacheConfig")
-        .expect("types.rs must keep RelationCacheConfig impl");
+        .expect("types/relation_cache.rs must keep RelationCacheConfig impl");
     let key_start = source[impl_start..]
         .find("pub struct RelationCacheKey")
         .map(|offset| impl_start + offset)
