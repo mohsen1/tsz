@@ -712,19 +712,11 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_type: TypeId,
     ) -> Option<TypeId> {
+        // `strip_nullish_for_assignability_display` collapses a nullable-union
+        // target only when a single real member survives the strip, so the
+        // result here is always that lone non-union member.
         let stripped = self.strip_nullish_for_assignability_display(param_type, arg_type)?;
-        let stripped_members = query_common::union_members(self.ctx.types, stripped);
-        let has_non_primitive = match stripped_members {
-            Some(members) => members
-                .iter()
-                .any(|&m| !query_common::is_primitive_type(self.ctx.types, m)),
-            None => !query_common::is_primitive_type(self.ctx.types, stripped),
-        };
-        if has_non_primitive {
-            Some(stripped)
-        } else {
-            None
-        }
+        (!query_common::is_primitive_type(self.ctx.types, stripped)).then_some(stripped)
     }
 
     /// When the argument is a non-tuple spread (e.g. `...mixed` where

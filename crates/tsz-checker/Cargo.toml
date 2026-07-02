@@ -2297,6 +2297,10 @@ name = "construct_signature_boundary_matrix_tests"
 path = "tests/construct_signature_boundary_matrix_tests.rs"
 
 [[test]]
+name = "nullable_union_assignability_target_display_tests"
+path = "tests/nullable_union_assignability_target_display_tests.rs"
+
+[[test]]
 name = "nullable_union_missing_property_tests"
 path = "tests/nullable_union_missing_property_tests.rs"
 
