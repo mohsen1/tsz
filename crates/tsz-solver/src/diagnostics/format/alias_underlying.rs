@@ -80,25 +80,22 @@ pub fn type_alias_displayed_as_underlying(
             }
             return Some(body);
         }
+        // Operators that never carry tsc's `aliasSymbol` onto their result.
+        // A conditional or indexed access *resolves away* into its
+        // branch/element, and `keyof`, template-literal, and the
+        // `Uppercase`/`Lowercase`/… string-mapping intrinsics build their
+        // result without ever stamping the enclosing alias onto it. tsc
+        // therefore renders the *evaluated* underlying type for any resolved
+        // shape — scalar, literal, `never`, union, object, tuple, or even
+        // another computed type. The syntactic checks above never see this
+        // because the body is e.g. `true extends true ? { a: 1 } : never` or
+        // `keyof { a: 1 }`. The operator set is shared with the generic-alias
+        // gate via `type_queries::is_name_dropping_reducing_operator`.
+        if crate::type_queries::is_name_dropping_reducing_operator(interner, body) {
+            return alias_resolved_body_underlying(interner, body);
+        }
         match interner.lookup(body) {
             Some(TypeData::Lazy(next_def)) => current_def = next_def,
-            // Operators that never carry tsc's `aliasSymbol` onto their result.
-            // A conditional or indexed access *resolves away* into its
-            // branch/element, and `keyof`, template-literal, and the
-            // `Uppercase`/`Lowercase`/… string-mapping intrinsics build their
-            // result without ever stamping the enclosing alias onto it. tsc
-            // therefore renders the *evaluated* underlying type for any resolved
-            // shape — scalar, literal, `never`, union, object, tuple, or even
-            // another computed type. The syntactic checks above never see this
-            // because the body is e.g. `true extends true ? { a: 1 } : never` or
-            // `keyof { a: 1 }`.
-            Some(
-                TypeData::Conditional(_)
-                | TypeData::IndexAccess(_, _)
-                | TypeData::KeyOf(_)
-                | TypeData::TemplateLiteral(_)
-                | TypeData::StringIntrinsic { .. },
-            ) => return alias_resolved_body_underlying(interner, body),
             // A utility/generic application's display depends on the head alias'
             // declared body. A *conditional*-bodied utility loses tsc's alias
             // symbol once the conditional reduces, so the evaluated result is
