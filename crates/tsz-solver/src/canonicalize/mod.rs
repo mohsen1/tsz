@@ -42,7 +42,8 @@ use crate::types::{
     ConditionalType, IndexSignature, ObjectShapeId, ParamInfo, TemplateSpan, TupleElement,
     TypeData, TypeId, TypePredicate, TypePredicateTarget,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use std::mem::size_of;
 use tsz_common::interner::Atom;
 
@@ -74,6 +75,44 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     cache: FxHashMap<TypeId, TypeId>,
     /// Guard against unbounded canonicalization recursion for expanding aliases.
     guard: RecursionGuard<TypeId>,
+    /// Optional cross-instance memo of *stable* interior results, owned by the
+    /// caller (the query layer's canonical cache). Without it every
+    /// `canonical_id` probe builds a fresh canonicalizer and re-walks the whole
+    /// interior of the type `DAG`, so N probes over roots sharing a large
+    /// subgraph of size S cost O(N·S) instead of O(N + S) — the super-linear
+    /// wall on large evaluated types (#13508). Entries are read and written
+    /// only when both scope stacks are empty and the subtree walk was clean
+    /// (no recursion-guard bail, no unresolved def, no tainted local reuse), so
+    /// a shared entry is exactly the value a fresh empty-stack canonicalizer
+    /// would compute for that `TypeId`.
+    shared_cache: Option<&'a RefCell<FxHashMap<TypeId, TypeId>>>,
+    /// Local-cache entries whose values are recursion-guard-truncated or
+    /// unresolved-def artifacts (the canonicalization analogue of
+    /// `TypeEvaluator::tainted`). Reusing one taints the current subtree so
+    /// its result is never persisted to `shared_cache`.
+    tainted: FxHashSet<TypeId>,
+    /// Whether the subtree currently being canonicalized saw a recursion-guard
+    /// bail, an unresolved `DefId`, or a tainted local-cache reuse. Saved and
+    /// restored around each node so the flag is subtree-scoped.
+    walk_dirty: bool,
+    /// Lowest absolute `param_stack` scope index the current subtree resolved
+    /// a `TypeParameter` through (`usize::MAX` when none). A subtree whose
+    /// floor is at or above its own entry depth only consulted scopes pushed
+    /// *within* itself, so its canonical form is independent of the ambient
+    /// stacks — the closedness test that decides `shared_cache` writes.
+    param_hit_floor: usize,
+    /// Lowest absolute `def_stack` index the current subtree produced a
+    /// `Recursive(n)` back-reference through. Same closedness role as
+    /// [`Self::param_hit_floor`].
+    def_hit_floor: usize,
+    /// Locally-cached entries that resolved through outer scopes when
+    /// computed (`Recursive(n)` / `BoundParameter(n)` relative to a scope
+    /// instance that may since have been popped). A later local-cache hit on
+    /// one dirties the current subtree: scope *indices* cannot identify scope
+    /// *instances*, so such a value can never be proven equal to a fresh
+    /// walk's and must not be laundered into `shared_cache` through a
+    /// "closed" ancestor. Absent = closed.
+    local_open: FxHashSet<TypeId>,
 }
 
 impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
@@ -86,7 +125,24 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             param_stack: Vec::new(),
             cache: FxHashMap::default(),
             guard: RecursionGuard::with_profile(RecursionProfile::SubtypeCheck),
+            shared_cache: None,
+            tainted: FxHashSet::default(),
+            walk_dirty: false,
+            param_hit_floor: usize::MAX,
+            def_hit_floor: usize::MAX,
+            local_open: FxHashSet::default(),
         }
+    }
+
+    /// Share stable interior canonicalization results through a caller-owned
+    /// memo. See [`Self::shared_cache`].
+    #[must_use]
+    pub const fn with_shared_cache(
+        mut self,
+        shared: &'a RefCell<FxHashMap<TypeId, TypeId>>,
+    ) -> Self {
+        self.shared_cache = Some(shared);
+        self
     }
 
     /// Return cache entry and residency accounting for this operation.
@@ -110,6 +166,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             + self.def_stack.capacity() * size_of::<DefId>()
             + param_stack_bytes
             + self.cache.capacity() * size_of::<(TypeId, TypeId)>()
+            + self.tainted.capacity() * size_of::<TypeId>()
+            + self.local_open.capacity() * size_of::<TypeId>()
     }
 
     /// Canonicalize a type to its structural form.
@@ -127,8 +185,29 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             return type_id;
         }
 
-        // 1. Check cache
+        // 1. Check cache. A hit on a guard-truncated or unresolved-def
+        // artifact, or on an *open* entry (one that resolved through outer
+        // scopes when computed), dirties the current subtree so it is never
+        // persisted to the shared memo (the value is still returned, matching
+        // the historical local reuse).
         if let Some(&cached) = self.cache.get(&type_id) {
+            if self.tainted.contains(&type_id) || self.local_open.contains(&type_id) {
+                self.walk_dirty = true;
+            }
+            return cached;
+        }
+
+        // Cross-instance memo: only consulted when no alias expansion or
+        // parameter scope is in flight — under empty stacks a stored stable
+        // result is exactly what a fresh walk would compute, while a walk
+        // with scopes in flight could bind a free parameter or fold an
+        // in-flight alias into `Recursive(n)` (see `shared_cache`).
+        let stacks_empty = self.def_stack.is_empty() && self.param_stack.is_empty();
+        if stacks_empty
+            && let Some(shared) = self.shared_cache
+            && let Some(&cached) = shared.borrow().get(&type_id)
+        {
+            self.cache.insert(type_id, cached);
             return cached;
         }
 
@@ -138,9 +217,24 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             RecursionResult::Cycle
             | RecursionResult::DepthExceeded
             | RecursionResult::IterationExceeded => {
+                // The returned identity form is an ambient-stack artifact, not
+                // a canonical answer; poison the enclosing subtrees' shared
+                // writes.
+                self.walk_dirty = true;
                 return type_id;
             }
         }
+
+        // Subtree-scoped closedness bookkeeping: save the enclosing
+        // accumulation, observe only this node's subtree, then fold back into
+        // the parent below. The entry depths decide whether a scope hit inside
+        // the subtree resolved to a scope pushed *within* it (internal, still
+        // closed) or to an ambient one (open).
+        let entry_param_len = self.param_stack.len();
+        let entry_def_len = self.def_stack.len();
+        let saved_dirty = std::mem::replace(&mut self.walk_dirty, false);
+        let saved_param_floor = std::mem::replace(&mut self.param_hit_floor, usize::MAX);
+        let saved_def_floor = std::mem::replace(&mut self.def_hit_floor, usize::MAX);
 
         // 3. Look up TypeData
         let result = if let Some(key) = self.interner.lookup(type_id) {
@@ -152,10 +246,19 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                             // Structural type: canonicalize recursively
                             self.canonicalize_type_alias(def_id)
                         }
-                        _ => {
+                        Some(_) => {
                             // Nominal type (Interface/Class/Enum): preserve identity
                             // But canonicalize generic arguments if it's an Application
                             // For now, just return the Lazy as-is (nominal types keep their identity)
+                            type_id
+                        }
+                        None => {
+                            // Registration-window artifact: the def's kind is
+                            // not yet known, so this identity result may differ
+                            // once the def registers. Keep the historical
+                            // as-is behavior but never persist it to the
+                            // shared memo.
+                            self.walk_dirty = true;
                             type_id
                         }
                     }
@@ -483,6 +586,23 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
         self.guard.leave(type_id);
         self.cache.insert(type_id, result);
+        let subtree_dirty = self.walk_dirty;
+        let subtree_param_floor = self.param_hit_floor;
+        let subtree_def_floor = self.def_hit_floor;
+        // Closed: the subtree resolved nothing through scopes that existed at
+        // entry, so its canonical form equals a fresh empty-stack walk's.
+        let closed = subtree_param_floor >= entry_param_len && subtree_def_floor >= entry_def_len;
+        if subtree_dirty {
+            self.tainted.insert(type_id);
+        } else if closed && let Some(shared) = self.shared_cache {
+            shared.borrow_mut().insert(type_id, result);
+        }
+        if !closed {
+            self.local_open.insert(type_id);
+        }
+        self.walk_dirty = saved_dirty || subtree_dirty;
+        self.param_hit_floor = saved_param_floor.min(subtree_param_floor);
+        self.def_hit_floor = saved_def_floor.min(subtree_def_floor);
         result
     }
 
@@ -511,12 +631,14 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             false
         };
 
-        // Resolve the alias body and canonicalize recursively
-        let body = self
-            .resolver
-            .resolve_lazy(def_id, self.interner)
-            .unwrap_or(TypeId::ERROR);
-        let canonical_body = self.canonicalize(body);
+        // Resolve the alias body and canonicalize recursively. A body that has
+        // not registered yet is a registration-window artifact: keep the
+        // historical `ERROR` collapse but never persist it to the shared memo.
+        let body = self.resolver.resolve_lazy(def_id, self.interner);
+        if body.is_none() {
+            self.walk_dirty = true;
+        }
+        let canonical_body = self.canonicalize(body.unwrap_or(TypeId::ERROR));
 
         // Pop scope and def_stack
         if pushed_scope {
@@ -548,10 +670,12 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             false
         };
 
-        let body = self
-            .resolver
-            .resolve_lazy(def_id, self.interner)
-            .unwrap_or(TypeId::ERROR);
+        let body = self.resolver.resolve_lazy(def_id, self.interner);
+        if body.is_none() {
+            // Registration-window artifact — see `canonicalize_type_alias`.
+            self.walk_dirty = true;
+        }
+        let body = body.unwrap_or(TypeId::ERROR);
         let instantiated = if let Some(ps) = params {
             let subst = TypeSubstitution::from_args(self.interner, &ps, args);
             instantiate_type(self.interner, body, &subst)
@@ -568,17 +692,19 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         canonical_body
     }
 
-    /// Get the recursion depth for a `DefId` if it's in the `def_stack`.
+    /// Get the recursion depth for a `DefId` if it's in the `def_stack`,
+    /// recording which absolute stack level was hit in
+    /// [`Self::def_hit_floor`] (the closedness signal for `shared_cache`
+    /// writes).
     ///
     /// Returns Some(depth) if the `DefId` is being expanded, where:
     /// - 0 = immediate self-reference (current `DefId`)
     /// - n = n levels up the nesting chain
-    fn get_recursion_depth(&self, def_id: DefId) -> Option<u32> {
-        self.def_stack
-            .iter()
-            .rev()
-            .position(|&d| d == def_id)
-            .map(|pos| pos as u32)
+    fn get_recursion_depth(&mut self, def_id: DefId) -> Option<u32> {
+        let pos = self.def_stack.iter().rev().position(|&d| d == def_id)?;
+        let absolute = self.def_stack.len() - 1 - pos;
+        self.def_hit_floor = self.def_hit_floor.min(absolute);
+        Some(pos as u32)
     }
 
     /// Canonicalize `type_id` with an extra outer scope of type-parameter
@@ -606,21 +732,25 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         result
     }
 
-    /// Find the De Bruijn index for a type parameter by name.
+    /// Find the De Bruijn index for a type parameter by name, recording which
+    /// absolute scope level satisfied the lookup in [`Self::param_hit_floor`]
+    /// (the closedness signal for `shared_cache` writes).
     ///
     /// Searches from the top of the stack (innermost scope) downward.
     /// Returns Some(index) if found, where:
     /// - 0 = innermost parameter
     /// - n = (n+1)th-most-recently-bound parameter
-    fn find_param_index(&self, name: Atom) -> Option<u32> {
+    fn find_param_index(&mut self, name: Atom) -> Option<u32> {
         let mut flattened_index = 0u32;
 
         // Search from top of stack (innermost scope) to bottom
-        for scope in self.param_stack.iter().rev() {
+        for (rev_pos, scope) in self.param_stack.iter().rev().enumerate() {
             for (idx, &param_name) in scope.iter().enumerate() {
                 if param_name == name {
                     // Calculate flattened index from innermost
                     let innermost_offset = scope.len() - idx - 1;
+                    let absolute_scope = self.param_stack.len() - 1 - rev_pos;
+                    self.param_hit_floor = self.param_hit_floor.min(absolute_scope);
                     return Some(flattened_index + innermost_offset as u32);
                 }
             }
@@ -930,6 +1060,10 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 #[cfg(test)]
 #[path = "../../tests/canonicalize_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/canonicalize_shared_cache_tests.rs"]
+mod shared_cache_tests;
 
 #[cfg(test)]
 #[path = "../../tests/canonicalize_origin_axis_tests.rs"]

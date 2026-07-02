@@ -715,6 +715,16 @@ impl TypePredicateCache for QueryCache<'_> {
             .set_contains_free_type_params_cache(type_id, result);
     }
 
+    fn contains_extractable_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner
+            .contains_extractable_type_params_cached(type_id)
+    }
+
+    fn set_contains_extractable_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_extractable_type_params_cache(type_id, result);
+    }
+
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.contains_type_params_cached(type_id)
     }
@@ -1956,8 +1966,18 @@ impl QueryDatabase for QueryCache<'_> {
         // Compute canonical form using a fresh Canonicalizer
         // CRITICAL: Always start with empty stacks for absolute De Bruijn indices
         // This ensures the cached TypeId represents the absolute structural form
+        //
+        // The canonicalizer shares stable interior results through
+        // `canonical_cache` itself: without that, every probe re-walks the
+        // whole interior of the type DAG, so N probes over roots sharing a
+        // subgraph of size S cost O(N·S) instead of O(N + S) — the
+        // super-linear canonicalization wall on large evaluated types
+        // (#13508). Interior writes are gated on clean, empty-stack subtrees
+        // inside the canonicalizer, so every shared entry equals what a fresh
+        // root probe would compute for that `TypeId`.
         use crate::canonicalize::Canonicalizer;
-        let mut canon = Canonicalizer::new(self.as_type_database(), self);
+        let mut canon = Canonicalizer::new(self.as_type_database(), self)
+            .with_shared_cache(&self.canonical_cache);
         let canonical = canon.canonicalize(type_id);
 
         // Cache the result
