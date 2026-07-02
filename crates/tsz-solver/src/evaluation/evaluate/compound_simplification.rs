@@ -189,7 +189,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
                         union_candidate_removable
-                            && checker.is_subtype_of(members[i], members[j])
+                            && self.compound_subtype_cached(&mut checker, members[i], members[j])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             && !Self::has_index_signature_not_in(
                                 self.interner,
@@ -215,7 +215,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // get the Application dropped, even though the Application would
                         // contribute additional union/object members once expanded.
                         !Self::is_opaque_under_bypass_eval(self.interner, members[i])
-                            && checker.is_subtype_of(members[j], members[i])
+                            && self.compound_subtype_cached(&mut checker, members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
                             && !Self::intersection_drop_changes_modifiers(
                                 &prop_mods[i],
@@ -256,6 +256,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         members.truncate(write);
+    }
+
+    /// Return the subtype answer used by compound simplification, reusing
+    /// repeated pair checks during this evaluator request. Limit-derived
+    /// relation answers are deliberately not inserted: a later pass should
+    /// recompute rather than inherit a budget-conditional result.
+    fn compound_subtype_cached(
+        &mut self,
+        checker: &mut crate::relations::subtype::SubtypeChecker<'_, R>,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let key = CompoundSubtypePairKey::from_checker(checker, source, target);
+        if let Some(&cached) = self.compound_subtype_cache.get(&key) {
+            return cached;
+        }
+
+        let lazy_events_at_entry = checker.unresolved_lazy_relation_event_count();
+        let weak_sensitivity_at_entry = crate::limits::weak_type_sensitivity_count();
+        let result = checker.check_subtype(source, target);
+        let related = result.is_true();
+        let definitive = matches!(
+            result,
+            crate::relations::subtype::SubtypeResult::True
+                | crate::relations::subtype::SubtypeResult::False
+        );
+        if definitive
+            && !checker.depth_exceeded()
+            && !checker.iteration_exceeded()
+            && checker.unresolved_lazy_relation_event_count() == lazy_events_at_entry
+            && crate::limits::weak_type_sensitivity_count() == weak_sensitivity_at_entry
+        {
+            self.compound_subtype_cache.insert(key, related);
+        }
+        related
+    }
+
+    /// Test hook: seed the simplification relation memo to prove its read path
+    /// participates in the production reduction decision.
+    #[cfg(test)]
+    pub(crate) fn seed_compound_subtype_cache_for_test(
+        &mut self,
+        checker: &crate::relations::subtype::SubtypeChecker<'_, R>,
+        source: TypeId,
+        target: TypeId,
+        result: bool,
+    ) {
+        let key = CompoundSubtypePairKey::from_checker(checker, source, target);
+        self.compound_subtype_cache.insert(key, result);
     }
 
     /// Check if `candidate` has any property names that `subsuming` doesn't have,
