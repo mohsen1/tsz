@@ -80,6 +80,7 @@ impl<'a> CheckerState<'a> {
             Some(RelationFailure::MissingProperty { .. })
                 | Some(RelationFailure::MissingProperties { .. })
                 | Some(RelationFailure::IncompatiblePropertyValue { .. })
+                | Some(RelationFailure::IndexAccessTypeParameterMismatch { .. })
         )
     }
 
