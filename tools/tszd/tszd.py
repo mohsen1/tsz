@@ -5,13 +5,14 @@ One daemon per worktree. It launches rust-analyzer once, pays the indexing
 cost once, and then answers diagnostic queries in ~1-2s over a Unix socket --
 without ever running `cargo check` (checkOnSave is permanently OFF).
 
-Why this exact design (measured in the rust-lsp-agent-env harness, v0-v9):
-  * Native preflight on tsz: solve-safe, fastest turns, real cargo checks 4->1.
-  * Flycheck-backed preflight (cargo under LSP): 6.4x slower turns. Never.
-  * Hard budgets: lost solves. The gate NEVER refuses a clean check.
+Why this exact design:
+  * Native (cargo-free) diagnostics are the whole point -- they are fast.
+  * checkOnSave/flycheck is deliberately OFF: it would make every query run
+    `cargo check` under the hood, far slower than the loop it replaces.
+  * The gate never rations or refuses a clean check (see cargo_gate.py).
 
-Non-obvious constraints baked in (each one was a real bug found by agent
-trials, not code review -- do not "simplify" them away):
+Non-obvious constraints baked in (each is load-bearing -- do not "simplify"
+them away):
   1. rust-analyzer publishes NATIVE diagnostics only for OPEN documents; the
      daemon opens the dirty-cone crates' sources or errors stay invisible.
   2. didOpen during workspace loading is silently dropped; open AFTER load.
@@ -46,8 +47,8 @@ from collections import deque
 from pathlib import Path
 
 STATE_DIR = ".tsz-ra"
-# Memory reality check (measured): rust-analyzer on tsz with build scripts,
-# proc macros and one crate's sources open is ~10.5 GB RSS. Shut down after a
+# rust-analyzer on a workspace this size is memory-heavy (multiple GB resident
+# with build scripts, proc macros and a crate's sources open). Shut down after a
 # short idle window so an abandoned session never squats on that much RAM.
 IDLE_SHUTDOWN_S = 30 * 60  # no requests for 30min -> exit
 WARM_DIAG_WAIT = 2.0           # quiescence after per-query re-sync
@@ -203,8 +204,8 @@ class LspClient:
                 "window": {"workDoneProgress": True},
             },
             "initializationOptions": {
-                # NATIVE ONLY. checkOnSave would make every query run cargo --
-                # measured at 6.4x slower agent turns on tsz. Never enable it.
+                # NATIVE ONLY. checkOnSave would make every query run cargo,
+                # which defeats the purpose (much slower). Never enable it.
                 "checkOnSave": False,
                 # Isolated target for the daemon's own startup cargo (build
                 # scripts / proc macros): never contend with the agent's .target.
@@ -213,7 +214,7 @@ class LspClient:
                 "procMacro": {"enable": True},
                 # unresolved-method etc. are gated behind "experimental".
                 "diagnostics": {"enable": True, "experimental": {"enable": True}},
-                # Memory: measured ~10.5 GB RSS on tsz with defaults. Skip cache
+                # Memory: rust-analyzer is heavy on this workspace. Skip cache
                 # priming (we analyze on demand) and cap the query LRU.
                 "cachePriming": {"enable": False},
                 "lru": {"capacity": 64},

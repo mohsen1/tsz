@@ -9,13 +9,13 @@ cargo would print, seconds-to-minutes sooner (and it saves the nextest
 compile). In every other situation the call is ALLOWED:
 
   * daemon cold / unreachable / slow (>5s)  -> allow (fail-open)
-  * rust-analyzer reports no errors         -> allow (confirm-check soundness:
-    native detection has a measured ~6% miss rate, so clean must NEVER block)
+  * rust-analyzer reports no errors         -> allow (native diagnostics miss a
+    small fraction of error classes, so a clean state must NEVER block)
   * RA_SKIP=1 anywhere in the command       -> allow (false-positive escape)
   * TSZ_FAST_LOOP=0 in the environment      -> allow (kill switch)
 
-The gate never counts or budgets: hard budgets measurably lost solves.
-Every decision is appended to .tsz-ra/events.jsonl (see `ra stats`).
+The gate never counts or budgets checks. Every decision is appended to
+.tsz-ra/events.jsonl (see `ra stats`).
 """
 
 from __future__ import annotations

@@ -8,8 +8,7 @@ description: Fast compile-feedback loop for editing Rust code in tsz. Use in EVE
 tsz is 2.16M lines of Rust; `cargo check` after a real edit costs seconds to
 minutes and `cargo nextest` compiles huge test binaries. A per-worktree
 rust-analyzer daemon (`tszd`) answers the same compile errors in ~1-2s without
-running cargo at all. Measured on tsz: it cuts real cargo invocations ~4x at
-an equal solve rate.
+running cargo at all, so most of your edit-iterate cycles never wait on cargo.
 
 ## The loop
 
@@ -63,12 +62,14 @@ across crate boundaries before editing the second crate?
   because rust-analyzer on tsz is ~10GB resident: run `ra down` when you
   finish a worktree, and expect the warmup cost again next session.
 
-## Hard rules (each backed by a measured failure mode)
+## Hard rules
 
-- NEVER enable rust-analyzer checkOnSave/flycheck here: cargo-under-LSP made
-  agent turns 6.4x slower on tsz.
-- NEVER ration your own cargo checks to "save time" — budget-starved runs
-  measurably shipped incomplete fixes (fixed error #1, never discovered
-  error #2). Check as often as you need; the gate makes it cheap.
-- A clean `ra diag` is necessary but not sufficient — always finish with the
-  real cargo confirm and the narrow nextest filter per AGENTS.md.
+- NEVER enable rust-analyzer checkOnSave/flycheck here: that makes every
+  diagnostic query run `cargo check` under the hood — far slower than the loop
+  it replaces. The value is native, cargo-free feedback.
+- NEVER ration your own cargo checks to "save time" — on staged errors you
+  need to re-check after each fix or you can miss a second error hidden behind
+  the first. Check as often as you need; the gate makes it cheap.
+- A clean `ra diag` is necessary but not sufficient — it can miss a small
+  fraction of error classes, so always finish with the real cargo confirm and
+  the narrow nextest filter per AGENTS.md.
