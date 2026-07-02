@@ -253,7 +253,24 @@ impl<'a> TypeFormatter<'a> {
                 // is memoized per `Application` `TypeId` to avoid super-linear
                 // re-evaluation on deeply nested generics (#13480).
                 if let Some(reduced) = self.application_display_reduction(type_id, &app) {
-                    return self.format(reduced);
+                    use super::application_reduction::ApplicationDisplayReduction;
+                    match reduced {
+                        ApplicationDisplayReduction::Type(reduced) => {
+                            return self.format(reduced);
+                        }
+                        ApplicationDisplayReduction::OrderedUnion(members) => {
+                            // A caller skipping the display-alias chase did so
+                            // for the *application node* (a stale evaluation
+                            // alias would preempt this reduction); the reduced
+                            // members render with their own alias surfaces
+                            // (`Omit<…, "c">`), so re-enable the chase for them.
+                            let previous_skip_chase = self.skip_application_display_alias_chase;
+                            self.skip_application_display_alias_chase = false;
+                            let rendered = self.format_union_members_in_order(&members);
+                            self.skip_application_display_alias_chase = previous_skip_chase;
+                            return rendered;
+                        }
+                    }
                 }
 
                 // Special handling for Application(Lazy(def_id), args)

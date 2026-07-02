@@ -46,7 +46,9 @@ impl<'a> CheckerState<'a> {
         if is_source_primitive {
             let tgt_str = if depth == 0 {
                 self.anonymous_composite_annotation_target_display(idx, target)
-                    .unwrap_or_else(|| self.recursive_non_generic_alias_body_name(target_type))
+                    .unwrap_or_else(|| {
+                        self.primitive_source_missing_property_target_display(target, target_type)
+                    })
             } else {
                 self.recursive_non_generic_alias_body_name(target_type)
             };
@@ -612,6 +614,36 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Target display for the primitive-source TS2322 downgrade of a
+    /// missing-property failure (`let x: T = 42`).
+    ///
+    /// The solver's `MissingProperty` reason records the *evaluated* member
+    /// type it elaborated against (`target_type`), but tsc's
+    /// `reportRelationError` renders the original relation target: when the
+    /// declared target carries a type-alias surface (a generic alias
+    /// application or a bare alias reference), tsc's `reportErrorResults`
+    /// restores it, and the alias-retention display policy decides whether the
+    /// name survives (`MappedAlias<{ m: string; }>`) or the instantiation
+    /// reduced it away (`IdxAlias<{ x: X }>` → `X`). Anonymous targets keep
+    /// the recorded evaluated type, preserving the established rendering.
+    fn primitive_source_missing_property_target_display(
+        &mut self,
+        target: TypeId,
+        target_type: TypeId,
+    ) -> String {
+        if crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            target,
+        ) {
+            // Not the pair formatter: its top-level nullish strip would undo
+            // the alias restoration (`MaybeBox` must not strip to its
+            // non-nullish member).
+            return self.format_type_for_assignability_message(target);
+        }
+        self.recursive_non_generic_alias_body_name(target_type)
+    }
+
     /// Find the intersection member that requires `property_name`, i.e. declares
     /// it as a non-optional named property. Members are evaluated when a direct
     /// lookup misses so mapped/applied members such as `Map1<{...}>` are
@@ -891,7 +923,9 @@ impl<'a> CheckerState<'a> {
             let src_str = self.format_type_diagnostic(source_type);
             let tgt_str = if depth == 0 {
                 self.anonymous_composite_annotation_target_display(idx, target)
-                    .unwrap_or_else(|| self.recursive_non_generic_alias_body_name(target_type))
+                    .unwrap_or_else(|| {
+                        self.primitive_source_missing_property_target_display(target, target_type)
+                    })
             } else {
                 self.recursive_non_generic_alias_body_name(target_type)
             };

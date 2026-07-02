@@ -147,6 +147,25 @@ pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
     tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
 }
 
+/// See [`tsz_solver::application_reduces_to_displayable_shape`]: the evaluated
+/// shapes a reduced alias application renders structurally (tsc drops the
+/// alias symbol), with the non-converged-recursion carve-out.
+pub(crate) fn application_reduces_to_displayable_shape(
+    db: &dyn TypeDatabase,
+    evaluated: TypeId,
+) -> bool {
+    tsz_solver::application_reduces_to_displayable_shape(db, evaluated)
+}
+
+/// See [`tsz_solver::type_queries::application_distributes_over_union_check_arg`].
+pub(crate) fn application_distributes_over_union_check_arg(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_distributes_over_union_check_arg(db, definitions, type_id)
+}
+
 pub(crate) fn alias_application_body_reduces_through_conditional_or_indexed(
     db: &dyn TypeDatabase,
     definitions: &DefinitionStore,
@@ -179,6 +198,46 @@ pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
                 definitions,
                 source,
             ))
+}
+
+/// Whether `ty` carries a type-alias surface that tsc's error reporting
+/// restores: a generic alias application (`UnionAlias<{ u: string }>`) or a
+/// bare `Lazy` alias reference (`NullableObj`).
+///
+/// Mirrors tsc's `reportErrorResults`, which rebinds the reported pair to the
+/// *original* source/target whenever the original carried an `aliasSymbol` —
+/// so relation-time reductions (e.g. stripping `undefined` from a nullable
+/// union target) never replace an alias-named type in the rendered message.
+/// Anonymous types (no alias surface) keep the reduced form.
+pub(crate) fn type_keeps_alias_symbol_surface(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    ty: TypeId,
+) -> bool {
+    fn alias_def_id_of(
+        db: &dyn TypeDatabase,
+        definitions: &DefinitionStore,
+        ty: TypeId,
+    ) -> Option<tsz_solver::def::DefId> {
+        if let Some(app) = super::common::type_application(db, ty) {
+            super::common::lazy_def_id(db, app.base)
+                .or_else(|| definitions.find_def_for_type(app.base))
+        } else {
+            super::common::lazy_def_id(db, ty).or_else(|| definitions.find_def_for_type(ty))
+        }
+    }
+    // The as-written reference (`ty` itself), the reverse type-to-def
+    // registration (a bare alias annotation resolves eagerly to its body,
+    // losing the `Lazy` surface — the same registration
+    // `lookup_type_alias_name_for_display` consults to render the name), or
+    // the recorded display provenance of an evaluated annotation.
+    alias_def_id_of(db, definitions, ty)
+        .or_else(|| {
+            db.get_display_alias(ty)
+                .and_then(|alias| alias_def_id_of(db, definitions, alias))
+        })
+        .and_then(|def_id| definitions.get(def_id))
+        .is_some_and(|def| def.kind == DefKind::TypeAlias)
 }
 
 pub(crate) fn evaluated_alias_application_has_concrete_display(

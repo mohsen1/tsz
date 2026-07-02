@@ -176,6 +176,148 @@ pub fn application_base_has_conditional_alias_body(
         .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
 }
 
+/// The reducing operator a type alias body bottoms out at, if any.
+///
+/// tsc's `aliasSymbol` policy hinges on whether instantiating an alias
+/// application *resolves the type away*: a conditional takes a branch, an
+/// indexed access resolves to the member type, and `keyof` resolves to the key
+/// union — none of these constructors stamp the enclosing alias onto their
+/// result, so the resolved type is rendered structurally. A mapped, object,
+/// union, or intersection body survives instantiation and keeps the alias.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReducingAliasBodyKind {
+    Conditional,
+    IndexAccess,
+    KeyOf,
+}
+
+/// Classify whether `type_id` is an application of a type alias whose declared
+/// body bottoms out at a reducing operator (conditional / indexed access /
+/// `keyof`), following alias-forwarding chains (`type A<T> = B<T>` where `B`'s
+/// body reduces, or `type A = B` alias references) to a bounded depth.
+///
+/// Returns the terminal operator kind, or `None` when the base is not a type
+/// alias or its body chain ends at a surviving constructor.
+pub fn application_base_reducing_alias_body_kind(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<ReducingAliasBodyKind> {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))?;
+    alias_def_reducing_body_kind(db, def_store, def_id, 0)
+}
+
+/// Whether `type_id` is an application of a *distributive* conditional type
+/// alias whose check argument is a union (or `boolean`, or a non-generic
+/// union-alias reference) — i.e. the application distributes per member and
+/// its diagnostic display renders the distributed branch union rather than
+/// the alias surface or the collapsed evaluated union.
+pub fn application_distributes_over_union_check_arg(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    let Some(def_id) =
+        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
+    else {
+        return false;
+    };
+    let Some(def) = def_store.get(def_id) else {
+        return false;
+    };
+    if def.kind != crate::def::DefKind::TypeAlias {
+        return false;
+    }
+    let Some(body) = def.body else {
+        return false;
+    };
+    let Some(TypeData::Conditional(cond_id)) = db.lookup(body) else {
+        return false;
+    };
+    let cond = db.conditional_type(cond_id);
+    if !cond.is_distributive {
+        return false;
+    }
+    let Some(TypeData::TypeParameter(check_tp)) = db.lookup(cond.check_type) else {
+        return false;
+    };
+    let Some(check_index) = def
+        .type_params
+        .iter()
+        .position(|param| param.name == check_tp.name)
+    else {
+        return false;
+    };
+    let Some(&check_arg) = app.args.get(check_index) else {
+        return false;
+    };
+    let check_arg = resolve_distributive_union_check_arg(db, def_store, check_arg);
+    if check_arg == TypeId::BOOLEAN {
+        return true;
+    }
+    matches!(db.lookup(check_arg), Some(TypeData::Union(list_id)) if db.type_list(list_id).len() >= 2)
+}
+
+/// Resolve a distributive conditional's check argument to the union it
+/// distributes over. A directly-written union (or `boolean`) passes through; a
+/// non-generic union-alias reference (`NoC<U>` where `type U = A | B`) arrives
+/// as `Lazy(def)` and resolves to the alias body, mirroring tsc, which
+/// instantiates the reference before distributing. Every other shape returns
+/// unchanged (and fails the caller's union check).
+pub fn resolve_distributive_union_check_arg(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    check_arg: TypeId,
+) -> TypeId {
+    if check_arg == TypeId::BOOLEAN || matches!(db.lookup(check_arg), Some(TypeData::Union(_))) {
+        return check_arg;
+    }
+    let Some(TypeData::Lazy(def_id)) = db.lookup(check_arg) else {
+        return check_arg;
+    };
+    def_store
+        .get(def_id)
+        .filter(|def| def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty())
+        .and_then(|def| def.body)
+        .filter(|&body| matches!(db.lookup(body), Some(TypeData::Union(_))))
+        .unwrap_or(check_arg)
+}
+
+fn alias_def_reducing_body_kind(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    def_id: crate::def::DefId,
+    depth: usize,
+) -> Option<ReducingAliasBodyKind> {
+    if depth > 8 {
+        return None;
+    }
+    let def = def_store.get(def_id)?;
+    if def.kind != crate::def::DefKind::TypeAlias {
+        return None;
+    }
+    match db.lookup(def.body?)? {
+        TypeData::Conditional(_) => Some(ReducingAliasBodyKind::Conditional),
+        TypeData::IndexAccess(_, _) => Some(ReducingAliasBodyKind::IndexAccess),
+        TypeData::KeyOf(_) => Some(ReducingAliasBodyKind::KeyOf),
+        TypeData::Application(app_id) => {
+            let app = db.type_application(app_id);
+            let next = get_lazy_def_id(db, app.base)?;
+            alias_def_reducing_body_kind(db, def_store, next, depth + 1)
+        }
+        TypeData::Lazy(next) => alias_def_reducing_body_kind(db, def_store, next, depth + 1),
+        _ => None,
+    }
+}
+
 /// When `type_id` is a plain mutable array of a boolean literal element
 /// (`Array<true>` / `Array<false>`), return `Array<boolean>` (which renders as
 /// `boolean[]`); otherwise return `None`.

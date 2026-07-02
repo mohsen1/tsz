@@ -1187,8 +1187,29 @@ impl<'a> CheckerState<'a> {
             // cascade because the printer flattens every nested Application
             // when alias names are skipped. tsc keeps the alias annotation
             // (`T2<U>`) in this case; preserve it here too.
+            //
+            // A recursive alias whose instantiation *converges* is different:
+            // `Flatten<string[][]>` (`Flatten<T> = T extends readonly (infer
+            // U)[] ? Flatten<U> : T`) fully reduces to `string`, and tsc
+            // renders the reduced type — the conditional resolved away and
+            // never stamped the alias onto the result. Only a non-converged
+            // recursion (the evaluation stays deferred or still mentions the
+            // cycle) keeps the annotation surface.
             if self.is_recursive_type_alias_application_for_display(target) {
-                return self.format_annotation_like_type(&display);
+                let evaluated = self.evaluate_type_for_assignability(display_target);
+                let converges = evaluated != display_target
+                    && evaluated != TypeId::ERROR
+                    && !crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        evaluated,
+                    )
+                    && crate::query_boundaries::diagnostics::application_reduces_to_displayable_shape(
+                        self.ctx.types.as_type_database(),
+                        evaluated,
+                    );
+                if !converges {
+                    return self.format_annotation_like_type(&display);
+                }
             }
             let preserve_tuple_alias_display = !display_trimmed.starts_with('{')
                 && !display_trimmed.starts_with('(')

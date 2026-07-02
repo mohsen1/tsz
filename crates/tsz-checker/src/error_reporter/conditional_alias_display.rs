@@ -70,7 +70,28 @@ impl<'a> CheckerState<'a> {
         // alias name for unions and leave them to the separate union-ordering
         // work. Single object/tuple/array/primitive reductions have no such
         // ambiguity and match `tsc` exactly.
+        //
+        // A *distributive* conditional over a concrete union is the exception:
+        // tsc renders the per-member branch union (`Omit<A, 'c'> | Omit<B, 'c'>`)
+        // in source order, and the solver formatter's distributed-application
+        // reduction owns exactly that expansion (member order from source
+        // positions). Formatting the raw evaluated union here would instead
+        // repaint it with the check-arg alias (`U`).
         if crate::query_boundaries::diagnostics::is_union_type(self.ctx.types, evaluated) {
+            if crate::query_boundaries::diagnostics::application_distributes_over_union_check_arg(
+                self.ctx.types.as_type_database(),
+                &self.ctx.definition_store,
+                candidate,
+            ) {
+                // Skip the display-alias chase on the application itself:
+                // eager evaluation can record a (single-branch) alias for the
+                // application node, which would redirect `format` before the
+                // distributed reduction runs. Member rendering re-enables the
+                // chase so each branch keeps its own alias surface.
+                return Some(
+                    self.format_type_for_assignability_message_skip_application_alias(candidate),
+                );
+            }
             return None;
         }
         // When the reduced shape is registered against a *non-generic* type alias
