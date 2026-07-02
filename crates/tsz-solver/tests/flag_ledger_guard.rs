@@ -62,7 +62,10 @@ fn all_env_flags_in_crates() -> BTreeSet<String> {
     let crates_dir = workspace_root().join("crates");
     let mut sources = Vec::new();
     let Ok(entries) = std::fs::read_dir(&crates_dir) else {
-        panic!("workspace crates/ directory not found at {crates_dir:?}");
+        panic!(
+            "workspace crates/ directory not found at {}",
+            crates_dir.display()
+        );
     };
     for entry in entries.flatten() {
         let src = entry.path().join("src");
