@@ -10,7 +10,7 @@ Exit code:
   0 — all counts are at or below the baseline (monotonic improvement or steady)
   1 — at least one lint count rose above its baseline value
 
-Typical usage (called from ``run_lint()`` in ``scripts/ci/gcp-full-ci.sh``):
+Typical usage (called from ``run_lint()`` in ``scripts/ci/full-ci.sh``):
   python3 scripts/arch/check-clippy-warn-ratchet.py [--profile <profile>]
 
 Baseline lifecycle:

@@ -8,13 +8,13 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-GCP_FULL_CI = ROOT / "scripts" / "ci" / "gcp-full-ci.sh"
+FULL_CI = ROOT / "scripts" / "ci" / "full-ci.sh"
 
 
 class EmitMetricPublicationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.script = GCP_FULL_CI.read_text(encoding="utf-8")
+        cls.script = FULL_CI.read_text(encoding="utf-8")
 
     def function_body(self, name, end_marker):
         start = self.script.index(f"{name}() {{")

@@ -5,6 +5,7 @@ _TSZ_CI_GITHUB_SUITES=(
   node-harness-prep
   lint
   unit
+  checker-integration
   lsp-e2e
   wasm-all
   conformance
@@ -15,13 +16,8 @@ _TSZ_CI_GITHUB_SUITES=(
   fourslash-aggregate
 )
 
-_TSZ_CI_DIRECT_SUITES=(
-  checker-integration
-)
-
 _TSZ_CI_FULL_SUITES=(
   "${_TSZ_CI_GITHUB_SUITES[@]}"
-  "${_TSZ_CI_DIRECT_SUITES[@]}"
 )
 
 _TSZ_CI_CACHE_SUITES=(
@@ -31,7 +27,7 @@ _TSZ_CI_CACHE_SUITES=(
 
 ci_suite_names() {
   case "${1:-full}" in
-    full|gcp)
+    full)
       printf '%s\n' "${_TSZ_CI_FULL_SUITES[@]}"
       ;;
     github)
@@ -107,8 +103,7 @@ ci_suite_needs_rust_compile() {
 }
 
 # Per-suite list of "cache feature" tags this suite needs restored.
-# Restoring features the suite does not use is pure runner-minute and GCS
-# bandwidth cost.
+# Restoring features the suite does not use is pure runner-minute cost.
 #
 # Recognized tags:
 #   cargo-home               - Cargo registry/git cache (.ci-cache/cargo-home)
@@ -162,7 +157,7 @@ ci_suite_caches() {
       echo "typescript-source dist-fast-commit"
       ;;
     conformance-aggregate|emit-aggregate|fourslash-aggregate)
-      # Aggregates only download per-shard JSONs from GCS.
+      # Aggregates only read per-shard JSONs from GitHub Actions artifacts.
       echo ""
       ;;
     emit-shard)

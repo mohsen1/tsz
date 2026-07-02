@@ -8,7 +8,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-CLOUDBUILD_CHECKER = ROOT / "scripts" / "cloudbuild" / "cloudbuild-checker-integration.yaml"
 
 
 def suite_names(scope: str) -> list[str]:
@@ -33,12 +32,8 @@ class SuiteMetadataTests(unittest.TestCase):
 
         self.assertEqual(set(suite_names("github")), invoked)
 
-    def test_full_suites_add_only_direct_cloudbuild_suite(self):
-        cloudbuild = CLOUDBUILD_CHECKER.read_text(encoding="utf-8")
-        direct = set(re.findall(r"scripts/ci/gcp-full-ci\.sh\s+([A-Za-z0-9_-]+)", cloudbuild))
-
-        self.assertEqual(set(suite_names("full")), set(suite_names("github")) | direct)
-        self.assertEqual(direct, {"checker-integration"})
+    def test_full_suites_are_github_entry_points(self):
+        self.assertEqual(set(suite_names("full")), set(suite_names("github")))
 
     def test_removed_local_fanout_suites_are_not_entry_points(self):
         removed = {
@@ -50,7 +45,6 @@ class SuiteMetadataTests(unittest.TestCase):
             "wasm",
             "wasm-web",
             "emit",
-            "emit-aggregate",
             "fourslash",
         }
 

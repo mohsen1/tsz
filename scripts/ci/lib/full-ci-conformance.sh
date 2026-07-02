@@ -184,39 +184,8 @@ run_conformance() {
   fi
 
   if [[ "$shard_count" -gt 1 ]]; then
-    # Upload shard result to GCS so the conformance-aggregate job can check the global total.
-    # Per-shard count assertions removed: baseline.txt counts go stale and cause off-by-one flakes.
-    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-    if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
-      ensure_gcs_auth
-      local up_attempt up_rc=1
-      for up_attempt in 1 2 3; do
-        if gsutil -q cp "$METRICS_DIR/conformance.json" \
-            "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null; then
-          up_rc=0
-          echo "Uploaded shard result: shard-${shard_index}.json (attempt ${up_attempt})"
-          break
-        fi
-        echo "warning: upload attempt ${up_attempt}/3 failed for shard-${shard_index}.json" >&2
-        [[ "$up_attempt" -lt 3 ]] && sleep "$((up_attempt * 5))"
-      done
-      [[ "$up_rc" -ne 0 ]] && echo "warning: failed to upload shard result after 3 attempts (non-fatal)" >&2
-
-      if [[ -f "$timings_file" ]]; then
-        gsutil -q cp "$timings_file" \
-          "${bucket%/}/conformance-runs/${run_key}/timings-shard-${shard_index}.json" 2>/dev/null \
-          && echo "Uploaded shard timings: timings-shard-${shard_index}.json" \
-          || echo "warning: failed to upload shard timings (non-fatal)" >&2
-      fi
-
-      # Upload per-shard FAIL list so aggregate can show which tests regressed.
-      if [[ -s "$failures_file" ]]; then
-        gsutil -q cp "$failures_file" \
-          "${bucket%/}/conformance-runs/${run_key}/failures-shard-${shard_index}.txt" 2>/dev/null \
-          || echo "warning: failed to upload failure list (non-fatal)" >&2
-      fi
-    fi
+    # The workflow uploads conformance.json, timings, and failure lists as a
+    # GitHub Actions artifact for the aggregate job.
     return 0
   fi
 
@@ -241,15 +210,8 @@ run_conformance_aggregate() {
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  local prefix=""
-  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
-    prefix="${bucket%/}/conformance-runs/${run_key}"
-  fi
 
-  # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
-  # over GCS, which requires SA key permissions that may not be available.
+  # GitHub Actions artifacts are the only shard handoff.
   local artifacts_dir=".conformance-shards"
   local using_artifacts=0
   if [[ -d "$artifacts_dir" ]]; then
@@ -271,37 +233,25 @@ run_conformance_aggregate() {
       if [[ -f "$artifact_failure_list" ]]; then
         cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"
       fi
+      local artifact_timings
+      artifact_timings="$(find "$shard_dir" -maxdepth 4 -name "conformance-timings-${shard_name#conformance-shard-}.json" 2>/dev/null | head -1)"
+      if [[ -f "$artifact_timings" ]]; then
+        cp "$artifact_timings" "$tmp_dir/timings-shard-${shard_name#conformance-shard-}.json"
+      fi
       found=$(( found + 1 ))
     done
     if [[ "$found" -gt 0 ]]; then
       echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
       using_artifacts=1
     else
-      echo "warning: ${artifacts_dir}/ exists but no conformance.json files found; falling back to GCS" >&2
+      echo "warning: ${artifacts_dir}/ exists but no conformance.json files found" >&2
       ls -la "$artifacts_dir"/ 2>/dev/null || true
     fi
   fi
 
   if [[ "$using_artifacts" -eq 0 ]]; then
-    if [[ -z "$prefix" ]]; then
-      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
-      return 1
-    fi
-    ensure_gcs_auth
-    echo "Downloading shard results from ${prefix}/shard-*.json ..."
-    local dl_attempt dl_rc=1
-    for dl_attempt in 1 2 3; do
-      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-        dl_rc=0
-        break
-      fi
-      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
-      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
-    done
-    if [[ "$dl_rc" -ne 0 ]]; then
-      echo "error: failed to download shard results from GCS after 3 attempts" >&2
-      return 1
-    fi
+    echo "error: cannot aggregate conformance results — GitHub artifact shard data is missing" >&2
+    return 1
   fi
 
   local total_passed=0 total_tests=0 shard_count=0
@@ -349,7 +299,7 @@ run_conformance_aggregate() {
   if [[ "$total_expected_passed" -gt 0 ]]; then
     local expected_deficit=$(( total_expected_passed - total_passed ))
     if [[ "$expected_deficit" -gt 0 ]]; then
-      if ! _check_conformance_regression_allowlist "$tmp_dir" "$prefix" "$expected_deficit"; then
+      if ! _check_conformance_regression_allowlist "$tmp_dir" "" "$expected_deficit"; then
         return 1
       fi
     fi
@@ -362,7 +312,7 @@ run_conformance_aggregate() {
         echo "warning: conformance aggregate below baseline within tolerance: ${total_passed} < ${pass_baseline} (tolerance ${pass_tolerance})" >&2
       else
         echo "error: conformance regression: ${total_passed} < ${pass_baseline}" >&2
-        _show_conformance_regressions "$tmp_dir" "$prefix" "$pass_baseline"
+        _show_conformance_regressions "$tmp_dir" "" "$pass_baseline"
         return 1
       fi
     fi
@@ -379,7 +329,7 @@ run_conformance_aggregate() {
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
 
-  if [[ -n "$prefix" ]] && gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+  if compgen -G "$tmp_dir/timings-shard-*.json" >/dev/null; then
     jq -s '
       {
         summary: {
@@ -409,7 +359,7 @@ _check_conformance_regression_allowlist() {
 
   if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
     :
-  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  else
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -477,11 +427,10 @@ _show_conformance_regressions() {
   local tmp_dir="$1" prefix="$2" baseline_passed="$3"
   local snapshot="scripts/conformance/conformance-detail.json"
 
-  # Download all per-shard failure lists (best-effort; non-fatal if missing).
   if compgen -G "$tmp_dir/failures-shard-*.txt" >/dev/null; then
     :
-  elif [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
-    echo "(no per-shard failure lists available — upload may have been skipped)" >&2
+  else
+    echo "(no per-shard failure lists available — artifact may be missing)" >&2
     return
   fi
 

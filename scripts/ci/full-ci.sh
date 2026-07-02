@@ -9,10 +9,8 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
 export CARGO_HOME="${TSZ_CI_CARGO_HOME:-$ROOT_DIR/.ci-cache/cargo-home}"
 SCCACHE_VERSION="${SCCACHE_VERSION:-0.9.1}"
-# Pinned fallback versions for environments that are not running the baked
-# cloud-run-gh-runner image. Keep these in sync with SCCACHE_VER / NEXTEST_VER /
-# WASM_PACK_VER in scripts/infra/cloud-run-gh-runner/Dockerfile. The baked image
-# is the source of truth; these only fire behind the `command -v` guards below.
+# Pinned fallback versions for GitHub-hosted runners. These only fire behind
+# the `command -v` guards below.
 NEXTEST_VERSION="${NEXTEST_VERSION:-0.9.137}"
 WASM_PACK_VERSION="${WASM_PACK_VERSION:-0.15.0}"
 export CARGO_PROFILE_DIST_FAST_LTO="${CARGO_PROFILE_DIST_FAST_LTO:-false}"
@@ -53,12 +51,8 @@ HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 
 # shellcheck source=scripts/ci/ci-resources.sh
 source "$(dirname "${BASH_SOURCE[0]}")/ci-resources.sh"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
-# Cap nextest test-thread parallelism for the memory-heavy unit lib-tests on the
-# 32 GiB Cloud Run runners. The build side is already pinned to CARGO_BUILD_JOBS=1
-# for unit (rustc RSS >16 GiB), but the *test* phase ran 4-wide (profile.ci
-# test-threads=4); several heavy lib-test processes (tsz-checker/solver/emitter)
-# peaking together exceeded 32 GiB and SIGKILLed the runner ("lost communication"),
-# cancelling main CI. Default to 2; override with TSZ_CI_UNIT_TEST_THREADS.
+# Cap nextest test-thread parallelism for memory-heavy unit lib-tests on
+# GitHub-hosted runners. Default to 2; override with TSZ_CI_UNIT_TEST_THREADS.
 export UNIT_NEXTEST_TEST_THREADS="${TSZ_CI_UNIT_TEST_THREADS:-2}"
 echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
 
@@ -115,15 +109,10 @@ num_or_zero() {
 publish_latest_metric() {
   local suite="$1"
   local file="$2"
-  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  if [[ -z "$bucket" || ! -f "$file" ]]; then
+  if [[ ! -f "$file" ]]; then
     return 0
   fi
-  if command -v gsutil >/dev/null 2>&1; then
-    gsutil -q cp "$file" "${bucket%/}/metrics/latest/${suite}.json" \
-      && echo "Published latest ${suite} metrics" \
-      || echo "warning: failed to publish latest ${suite} metrics (non-fatal)" >&2
-  fi
+  echo "Recorded ${suite} metrics at ${file}"
 }
 
 write_emit_metric() {
@@ -214,40 +203,6 @@ ensure_host_tools() {
   nproc
 }
 
-ensure_gcs_auth() {
-  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-    if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
-      local key_file="/tmp/sccache-gcs-key.json"
-      printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
-      chmod 600 "$key_file"
-      export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
-      echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
-    fi
-
-    # gsutil from the Cloud SDK does not reliably consume ADC-only JSON key
-    # files. Activate the same key in gcloud, then let gsutil reuse that
-    # account instead of falling through to anonymous GCS requests.
-    if command -v gcloud >/dev/null 2>&1; then
-      if ! gcloud auth activate-service-account \
-        --key-file="$GOOGLE_APPLICATION_CREDENTIALS" >/dev/null 2>&1; then
-        echo "error: failed to activate SCCACHE_GCS_KEY_JSON for GCS access" >&2
-        return 1
-      fi
-      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
-      echo "gcs-auth: activated service account credentials for gsutil"
-    fi
-  fi
-
-  # Cloud Run runners can arrive with `gcloud auth` already configured. Make
-  # the bundled gsutil use that account instead of falling back to anonymous
-  # requests during shard artifact transfer.
-  if [[ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]] && command -v gcloud >/dev/null 2>&1; then
-    if gcloud auth print-access-token >/dev/null 2>&1; then
-      gcloud config set pass_credentials_to_gsutil true >/dev/null 2>&1 || true
-    fi
-  fi
-}
-
 setup_sccache() {
   if command -v sccache >/dev/null 2>&1; then
     echo "sccache $(sccache --version 2>&1 | head -1) already available"
@@ -297,37 +252,12 @@ configure_sccache() {
     return 0
   fi
 
-  local bucket_uri="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  if [[ -z "$bucket_uri" ]]; then
-    echo "sccache: no GCS bucket configured, skipping"
-    return 0
-  fi
-
-  # Parse gs://bucket-name/key/prefix → bucket + prefix
-  local no_scheme="${bucket_uri#gs://}"
-  local gcs_bucket="${no_scheme%%/*}"
-  local gcs_prefix="${no_scheme#*/}/sccache"
-
-  export SCCACHE_GCS_BUCKET="$gcs_bucket"
-  export SCCACHE_GCS_KEY_PREFIX="$gcs_prefix"
-  export SCCACHE_GCS_RW_MODE="${SCCACHE_GCS_RW_MODE:-READ_WRITE}"
+  export SCCACHE_DIR="${SCCACHE_DIR:-$ROOT_DIR/.ci-cache/sccache}"
   export RUSTC_WRAPPER="sccache"
   export CARGO_INCREMENTAL="0"  # incompatible with sccache
   export SCCACHE_LOG="${SCCACHE_LOG:-warn}"
-
-  # Write SA key to disk if injected via secret; otherwise fall back to ADC metadata URL
-  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
-    local key_file="/tmp/sccache-gcs-key.json"
-    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
-    chmod 600 "$key_file"
-    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
-    echo "sccache: using service account key from SCCACHE_GCS_KEY_JSON"
-  else
-    export SCCACHE_GCS_CREDENTIALS_URL="${SCCACHE_GCS_CREDENTIALS_URL:-http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token}"
-    echo "sccache: using metadata server credentials"
-  fi
-
-  echo "sccache: GCS bucket=${gcs_bucket} prefix=${gcs_prefix} mode=${SCCACHE_GCS_RW_MODE}"
+  mkdir -p "$SCCACHE_DIR"
+  echo "sccache: local cache dir=${SCCACHE_DIR}"
   sccache --stop-server 2>/dev/null || true
   if sccache --start-server; then
     echo "sccache server started"
@@ -370,11 +300,11 @@ ensure_source_git_context() {
 
   SYNTHETIC_GIT_CHECKOUT=1
   git init
-  git config user.email "cloud-build@thirdface-ai-oauth.iam.gserviceaccount.com"
-  git config user.name "Cloud Build"
+  git config user.email "ci@tsz.local"
+  git config user.name "TSZ CI"
   git remote add origin "${TSZ_CI_REPO_URL:-https://github.com/tsz-org/tsz.git}"
   git add -A
-  git commit -q -m "cloud build source snapshot"
+  git commit -q -m "ci source snapshot"
 }
 
 init_typescript_submodule() {
@@ -443,8 +373,8 @@ run_lint() {
   node scripts/bench/test-ci-health-benchmark-readiness.mjs || return $?
   node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
   node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
-  node scripts/bench/test-bench-workflow-cloudbuild-prep.mjs || return $?
-  node scripts/bench/test-bench-workflow-cloudbuild-shards.mjs || return $?
+  node scripts/bench/test-bench-workflow-github-prep.mjs || return $?
+  node scripts/bench/test-bench-workflow-github-run.mjs || return $?
   node scripts/bench/test-bench-workflow-micro-coverage.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
@@ -459,9 +389,6 @@ run_lint() {
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-check-ci-job-timing.mjs || return $?
   node scripts/ci/test-check-main-red.mjs || return $?
-  node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
-  node scripts/ci/test-gcp-cache-auth.mjs || return $?
-  node scripts/ci/test-gcp-cache-staleness.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
@@ -470,8 +397,8 @@ run_lint() {
     python3 "$test_file" || return $?
   done
   python3 scripts/ci/test_ci_resources.py || return $?
-  python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
-  python3 scripts/ci/test_gcp_full_ci_emit_metrics.py || return $?
+  python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
@@ -526,8 +453,8 @@ _UNIT_TEST_PACKAGES=(
   tsz-core
 )
 
-# The `tsz-checker` lib-test target currently exceeds the self-hosted runner
-# memory limit even with one Cargo job and serialized codegen. Keep checker
+# The `tsz-checker` lib-test target can exceed hosted runner memory even with
+# one Cargo job and serialized codegen. Keep checker
 # integration tests in the unit job by enumerating declared `[[test]]` targets
 # and avoiding the monolithic `rustc --test crates/tsz-checker/src/lib.rs`
 # artifact.
@@ -616,7 +543,7 @@ run_unit_tests() {
 
   if (( checker_selected )); then
     if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
-      echo "info: skipping checker integration tests in Cloud Run unit job"
+      echo "info: skipping checker integration tests in unit job"
       return 0
     fi
     run_checker_integration_tests
@@ -668,87 +595,13 @@ run_checker_integration_tests() {
 
 build_unit_test_archive() {
   ci_section "Build unit test archive"
-  local bucket run_key archive_uri tmp_archive
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-
-  if [[ -z "$bucket" ]]; then
-    echo "No GCS bucket configured, skipping unit test archive"
-    return 0
-  fi
-
-  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
-
-  if gsutil -q stat "$archive_uri" 2>/dev/null; then
-    echo "Unit test archive already exists for ${run_key}: ${archive_uri}"
-    return 0
-  fi
-
-  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
-  echo "Building unit test archive → ${tmp_archive}"
-  local archive_rc=0
-  local archive_pkg_args
-  mapfile -t archive_pkg_args < <(unit_archive_package_args)
-  cargo nextest archive \
-    --cargo-profile ci-unit \
-    --build-jobs "$CARGO_BUILD_JOBS" \
-    --archive-file "$tmp_archive" \
-    "${archive_pkg_args[@]}" || archive_rc=$?
-  if [[ "$archive_rc" -ne 0 ]]; then
-    echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
-    rm -f "$tmp_archive"
-    return "$archive_rc"
-  fi
-  if [[ ! -f "$tmp_archive" ]]; then
-    echo "error: archive file not created at ${tmp_archive}; sharding unavailable" >&2
-    return 1
-  fi
-
-  echo "Uploading unit test archive → ${archive_uri}"
-  local upload_rc=0
-  gsutil -q cp "$tmp_archive" "$archive_uri" || upload_rc=$?
-  rm -f "$tmp_archive"
-  if [[ "$upload_rc" -ne 0 ]]; then
-    echo "error: gsutil upload failed (rc=${upload_rc}); sharding unavailable" >&2
-    return "$upload_rc"
-  fi
-  echo "Unit test archive uploaded: ${archive_uri}"
+  echo "Unit archive fanout is disabled; GitHub Actions jobs run unit suites directly."
 }
 
 run_unit_shard() {
   ci_section "Unit shard"
-  local bucket run_key shard_index shard_count archive_uri tmp_archive
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  shard_index="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_INDEX:-0}")"
-  shard_count="$(num_or_zero "${_TSZ_CI_UNIT_SHARD_COUNT:-8}")"
-
-  echo "Unit shard $((shard_index + 1))/${shard_count}"
-
-  if [[ -z "$bucket" ]]; then
-    echo "No GCS bucket — running all unit tests without sharding"
-    run_unit_tests
-    return
-  fi
-
-  archive_uri="${bucket}/unit-archive/${run_key}.tar.zst"
-  tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
-
-  echo "Downloading unit test archive: ${archive_uri}"
-  if ! gsutil -q cp "$archive_uri" "$tmp_archive"; then
-    echo "error: unit test archive not found for ${run_key} — build job must have failed to upload it" >&2
-    echo "error: refusing to fall back to full unsharded run (would defeat sharding and inflate CI cost)" >&2
-    return 1
-  fi
-
-  # Use hash partitioning instead of count partitioning so slow tests are spread
-  # by stable test identity rather than clustered by nextest's listing order.
-  cargo nextest run \
-    --archive-file "$tmp_archive" \
-    --profile ci \
-    --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
-    --partition "hash:$((shard_index + 1))/${shard_count}"
-  rm -f "$tmp_archive"
+  echo "Unit shard fanout is disabled; running the local unit suite."
+  run_unit_tests
 }
 
 build_test_binaries() {
@@ -888,8 +741,8 @@ maybe_prep_node_artifacts() {
   prep_node_artifacts
 }
 
-# shellcheck source=scripts/ci/lib/gcp-full-ci-conformance.sh
-source scripts/ci/lib/gcp-full-ci-conformance.sh
+# shellcheck source=scripts/ci/lib/full-ci-conformance.sh
+source scripts/ci/lib/full-ci-conformance.sh
 
 
 validate_emit_aggregate_counts() {
@@ -925,9 +778,7 @@ validate_emit_aggregate_counts() {
 
 run_emit_shard() {
   ci_section "Emit shard"
-  local bucket run_key shard_index shard_count
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local shard_index shard_count
   shard_index="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_INDEX:-0}")"
   shard_count="$(num_or_zero "${_TSZ_CI_EMIT_SHARD_COUNT:-1}")"
   local chunk="${EMIT_CHUNK:-2000}"
@@ -977,13 +828,6 @@ run_emit_shard() {
   echo "$result_json" > "$shard_json"
   echo "EMIT_SHARD shard=${shard_index} rc=${rc} js=${js_p}/${js_t} skip=${js_s} timeout=${js_to} dts=${dts_p}/${dts_t}"
 
-  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
-    local prefix="${bucket%/}/emit-runs/${run_key}"
-    gsutil cp "$shard_json" "${prefix}/shard-${shard_index}.json" \
-      && echo "Uploaded emit shard result: shard-${shard_index}.json" \
-      || echo "warning: failed to upload emit shard result (non-fatal)" >&2
-  fi
-
   if [[ "$shard_count" -eq 1 ]]; then
     ci_section "Emit aggregate"
     validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1
@@ -995,8 +839,7 @@ run_emit_shard() {
   return 0
 }
 
-# Recombine the per-shard emit results (uploaded by run_emit_shard as both a
-# GitHub Actions artifact and a GCS object) and re-run the full-corpus floor
+# Recombine the per-shard emit results from GitHub Actions artifacts and re-run the full-corpus floor
 # over the summed counts. This is the required emit leaf for multi-shard runs;
 # single-shard runs validate inline in run_emit_shard above.
 run_emit_aggregate() {
@@ -1006,17 +849,9 @@ run_emit_aggregate() {
   [[ "$expected_shards" -lt 1 ]] && expected_shards=1
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-  local prefix=""
-  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
-    prefix="${bucket%/}/emit-runs/${run_key}"
-  fi
 
-  # Prefer GitHub Actions artifacts (downloaded by the workflow's
-  # download-artifact step) over GCS, which requires SA key permissions that may
-  # not be available. upload-artifact@v4 preserves the workspace-relative path,
-  # so the file lands at emit-shard-N/ci-metrics/emit-shard-N.json.
+  # upload-artifact preserves the workspace-relative path, so the file lands at
+  # emit-shard-N/ci-metrics/emit-shard-N.json.
   local artifacts_dir=".emit-shards"
   local using_artifacts=0
   if [[ -d "$artifacts_dir" ]]; then
@@ -1035,30 +870,14 @@ run_emit_aggregate() {
       echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
       using_artifacts=1
     else
-      echo "warning: ${artifacts_dir}/ exists but no emit-shard-*.json files found; falling back to GCS" >&2
+      echo "warning: ${artifacts_dir}/ exists but no emit-shard-*.json files found" >&2
       ls -la "$artifacts_dir"/ 2>/dev/null || true
     fi
   fi
 
   if [[ "$using_artifacts" -eq 0 ]]; then
-    if [[ -z "$prefix" ]]; then
-      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
-      return 1
-    fi
-    echo "Downloading emit shard results from ${prefix}/shard-*.json ..."
-    local dl_attempt dl_rc=1
-    for dl_attempt in 1 2 3; do
-      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-        dl_rc=0
-        break
-      fi
-      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
-      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
-    done
-    if [[ "$dl_rc" -ne 0 ]]; then
-      echo "error: failed to download emit shard results from GCS after 3 attempts" >&2
-      return 1
-    fi
+    echo "error: cannot aggregate emit results — GitHub artifact shard data is missing" >&2
+    return 1
   fi
 
   local js_p=0 js_t=0 js_s=0 js_to=0 dts_p=0 dts_t=0 dts_s=0
@@ -1091,9 +910,7 @@ run_emit_aggregate() {
 
 run_fourslash_shard() {
   ci_section "Fourslash shard"
-  local bucket run_key shard_index shard_count
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local shard_index shard_count
   shard_index="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_INDEX:-0}")"
   shard_count="$(num_or_zero "${_TSZ_CI_FOURSLASH_SHARD_COUNT:-8}")"
 
@@ -1158,36 +975,34 @@ run_fourslash_shard() {
     show_log_tail "$LOG_DIR/fourslash/shard-${shard_index}.log"
   fi
 
-  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
-    local prefix="${bucket%/}/fourslash-runs/${run_key}"
-    gsutil cp "$detail_json" "${prefix}/shard-${shard_index}.json" \
-      && echo "Uploaded fourslash shard result: shard-${shard_index}.json" \
-      || echo "warning: failed to upload fourslash shard result (non-fatal)" >&2
-  fi
   return 0
 }
 
 run_fourslash_aggregate() {
-  ci_section "Fourslash aggregate (GCS)"
-  local bucket run_key
-  bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  ci_section "Fourslash aggregate"
   local expected_shards="${_TSZ_CI_FOURSLASH_SHARD_COUNT:-${TSZ_CI_FOURSLASH_SHARDS:-8}}"
-
-  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
-    echo "error: cannot aggregate — no bucket or run key available" >&2
-    return 1
-  fi
-
-  local prefix="${bucket%/}/fourslash-runs/${run_key}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
-  echo "Downloading fourslash shard results from ${prefix}/shard-*.json ..."
-  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-    echo "error: failed to download fourslash shard results from GCS" >&2
+  local artifacts_dir=".fourslash-shards"
+  local found=0
+  if [[ -d "$artifacts_dir" ]]; then
+    for shard_dir in "$artifacts_dir"/fourslash-shard-*/; do
+      [[ -d "$shard_dir" ]] || continue
+      local json
+      json="$(find "$shard_dir" -name "fourslash-shard-*.json" -maxdepth 4 2>/dev/null | head -1)"
+      [[ -f "$json" ]] || continue
+      local shard_name
+      shard_name="$(basename "$shard_dir")"
+      cp "$json" "$tmp_dir/shard-${shard_name#fourslash-shard-}.json"
+      found=$(( found + 1 ))
+    done
+  fi
+  if [[ "$found" -eq 0 ]]; then
+    echo "error: cannot aggregate fourslash results — GitHub artifact shard data is missing" >&2
     return 1
   fi
+  echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
 
   local total_passed=0 total_tests=0 shard_count=0 failed_shards=0 timed_out=0
   for f in "$tmp_dir"/shard-*.json; do
@@ -1258,10 +1073,10 @@ show_sccache_stats() {
 # Advisory sccache hit-rate floor. Reads the JSON stats sccache accumulated for
 # this suite's compiles, records the cache-hit ratio as a published metric, and
 # emits a ::warning:: when the ratio falls below SCCACHE_HIT_RATE_FLOOR. This
-# makes a silent cold-cache regression (key-namespace bump, GCS download failure)
-# visible fleet-wide instead of only surfacing as wall-clock drift (#13605 items
-# 3-4). Guarded on RUSTC_WRAPPER: dist-binaries disables sccache by design, so it
-# has no stats and is skipped. Never fails the suite.
+# makes a silent cold-cache regression visible instead of only surfacing as
+# wall-clock drift (#13605 items 3-4). Guarded on RUSTC_WRAPPER:
+# dist-binaries disables sccache by design, so it has no stats and is skipped.
+# Never fails the suite.
 record_sccache_metric() {
   local suite="${1:-unit}"
   # No sccache, or sccache not actually wired as the rustc wrapper: nothing to do.
@@ -1314,7 +1129,7 @@ record_sccache_metric() {
     local below
     below="$(awk -v r="$hit_rate" -v f="$floor" 'BEGIN { print (r + 0 < f + 0) ? 1 : 0 }')"
     if [[ "$below" == "1" ]]; then
-      echo "::warning::sccache ${suite} hit-rate ${hit_rate}% is below the ${floor}% floor (hits=${hits} misses=${misses}); cache may be cold (key-namespace bump or GCS download failure)"
+      echo "::warning::sccache ${suite} hit-rate ${hit_rate}% is below the ${floor}% floor (hits=${hits} misses=${misses}); cache may be cold"
     fi
   fi
 }
@@ -1350,9 +1165,6 @@ run_common_setup() {
     # avoids the gitlink-vs-ref-file staleness check that's only relevant
     # when the tree is actually used.
     echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
-  fi
-  if [[ -n "${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}" ]] && command -v gsutil >/dev/null 2>&1; then
-    ensure_gcs_auth
   fi
   if suite_needs_group "$suite" rust_compile; then
     if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then

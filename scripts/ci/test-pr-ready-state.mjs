@@ -174,7 +174,7 @@ assert.match(
 assert.match(
   ciWorkflow,
   /TSZ_CI_EMERGENCY_SCALE_DOWN: "1"[\s\S]+?GitHub Actions-only cost-control mode is active[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false/,
-  "CI should force GitHub Actions-only cost-control mode and skip Cloud Run / Cloud Build fanout",
+  "CI should force GitHub Actions-only cost-control mode and skip heavy CI fanout",
 );
 assert.doesNotMatch(
   ciWorkflow,
@@ -189,7 +189,7 @@ assert.match(
 
 assert.match(
   gateClassifier,
-  /ci-resources\|gcp-full-ci\|github-suite\|gcp-cache\|suite-metadata\|build-dist\|dist\|wasm/,
+  /ci-resources\|full-ci\|github-suite\|suite-metadata\|build-dist\|dist\|wasm/,
   "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
 );
 
@@ -227,17 +227,17 @@ for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
   assert.match(
     ciWorkflow,
     new RegExp(`\\n\\s{2}${job}:\\n[\\s\\S]+?runs-on: ubuntu-latest`),
-    `${job} should run on hosted Ubuntu so cheap gates are not blocked by the self-hosted pool`,
+    `${job} should run on hosted Ubuntu so cheap gates do not wait on external runners`,
   );
 }
 
-const gcpFullCi = fs.readFileSync(
-  path.join(ROOT, "scripts", "ci", "gcp-full-ci.sh"),
+const fullCi = fs.readFileSync(
+  path.join(ROOT, "scripts", "ci", "full-ci.sh"),
   "utf8",
 );
 
 assert.match(
-  gcpFullCi,
+  fullCi,
   /CARGO_INCREMENTAL=0 "\$ROOT_DIR\/scripts\/safe-run\.sh"[\s\S]+cargo build --profile dist-fast/,
   "build_test_binaries should force non-incremental dist-fast builds regardless of inherited CI environment",
 );
