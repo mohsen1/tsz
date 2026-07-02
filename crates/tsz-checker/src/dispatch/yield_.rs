@@ -367,9 +367,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 } else {
                     let is_iterable = self.checker.is_iterable_type(expression_type);
                     if !is_iterable {
+                        // A fresh literal `yield* 42` shows `Type '42'`, not the
+                        // widened `Type 'number'` (see #15366).
+                        let display = self
+                            .checker
+                            .literal_type_from_initializer(yield_expr.expression)
+                            .unwrap_or(expression_type);
                         let type_str = self
                             .checker
-                            .format_type_diagnostic_without_function_type_params(expression_type);
+                            .format_type_diagnostic_without_function_type_params(display);
                         let message = format_message(
                             diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                             &[&type_str],

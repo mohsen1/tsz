@@ -36,6 +36,9 @@ stacker = "0.1.23"
 name = "base_class_construct_signature_arity_filter_tests"
 path = "tests/base_class_construct_signature_arity_filter_tests.rs"
 [[test]]
+name = "iterability_error_literal_display_tests"
+path = "tests/iterability_error_literal_display_tests.rs"
+[[test]]
 name = "class_interface_merge_member_type_tests"
 path = "tests/class_interface_merge_member_type_tests.rs"
 [[test]]

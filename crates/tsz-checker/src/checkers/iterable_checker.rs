@@ -1015,9 +1015,13 @@ impl<'a> CheckerState<'a> {
                 self.emit_es5_not_iterable_error(expr_type, expr_type, expr_idx, allows_strings);
                 return false;
             }
-            // Not async iterable - emit TS2504
+            // Not async iterable - emit TS2504. Keep a fresh literal operand's
+            // own type (`Type '42'`) rather than the widened base (see #15366).
             if let Some((start, end)) = self.get_node_span(expr_idx) {
-                let type_str = self.format_type(expr_type);
+                let display = self
+                    .literal_type_from_initializer(expr_idx)
+                    .unwrap_or(expr_type);
+                let type_str = self.format_type(display);
                 let message = format_message(
                     diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                     &[&type_str],
@@ -1073,8 +1077,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(expr_type, expr_idx, false, None);
+        // Not iterable - emit TS2488. Recover the operand's literal type from the
+        // AST node so a fresh literal shows as `Type '42'`, not the widened
+        // `Type 'number'` (mirrors the spread path below). See #15366.
+        let literal_display_type = self.literal_type_from_initializer(expr_idx);
+        self.emit_ts2488_not_iterable(expr_type, expr_idx, false, literal_display_type);
         false
     }
 
@@ -1734,7 +1741,13 @@ impl<'a> CheckerState<'a> {
         allows_strings: bool,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
-            let type_str = self.format_type(display_type);
+            // A fresh literal operand (`for (… of 42)`, `[...99]`) shows its own
+            // literal type; only the element binding widens. Non-literal operands
+            // (and destructuring patterns) recover nothing and keep display_type. See #15366.
+            let display = self
+                .literal_type_from_initializer(error_node)
+                .unwrap_or(display_type);
+            let type_str = self.format_type(display);
             if self.is_iterable_type(resolved_type) {
                 let message = format_message(
                     diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
