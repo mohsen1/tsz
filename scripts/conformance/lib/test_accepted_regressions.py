@@ -41,7 +41,7 @@ class NormalizeTests(unittest.TestCase):
 
     def test_mirrors_aggregate_matcher_contract(self):
         # This pins the exact behavior duplicated inline in
-        # scripts/ci/lib/gcp-full-ci-conformance.sh. If that copy changes, this
+        # scripts/ci/lib/full-ci-conformance.sh. If that copy changes, this
         # assertion must change with it (and vice versa).
         def aggregate_normalize(path):
             parts = path.replace("\\", "/").split("/")

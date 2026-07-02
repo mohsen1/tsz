@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write a sanitized markdown summary for one GCP CI suite."""
+"""Write a sanitized markdown summary for one TSZ CI suite."""
 
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ def append_env(lines: list[str], suite: str, exit_code: int) -> None:
     if pr_number:
         lines.append(f"| PR | {code('#' + md_escape(pr_number))} |")
     if build_id:
-        lines.append(f"| Cloud Build | {code(build_id)} |")
+        lines.append(f"| Build | {code(build_id)} |")
     lines.append("")
 
 

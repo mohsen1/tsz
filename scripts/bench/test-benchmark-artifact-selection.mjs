@@ -61,17 +61,17 @@ function applicationTimedRows() {
 try {
   const snapshot = writeArtifact("bench-snapshot.json", "2026-05-17T01:23:02.991Z");
   const github = writeArtifact("bench-vs-tsgo-github-latest.json", "2026-05-28T02:14:24.444Z");
-  const gcs = writeArtifact("bench-vs-tsgo-gcs-latest.json", "2026-05-29T02:14:24.444Z");
+  const local = writeArtifact("bench-vs-tsgo-local-latest.json", "2026-05-29T02:14:24.444Z");
   const empty = writeArtifact("empty.json", "2026-06-01T00:00:00.000Z", []);
 
   assert.equal(
-    selectLatestBenchmarkArtifact([snapshot, github, gcs])?.file,
-    gcs,
-    "newer GCS benchmark truth should beat older GitHub and snapshot files",
+    selectLatestBenchmarkArtifact([snapshot, github, local])?.file,
+    local,
+    "newer benchmark artifact should beat older GitHub and snapshot files",
   );
   assert.equal(
-    selectLatestBenchmarkArtifact([gcs, github, snapshot])?.file,
-    gcs,
+    selectLatestBenchmarkArtifact([local, github, snapshot])?.file,
+    local,
     "candidate order should not override generated_at freshness",
   );
   assert.equal(

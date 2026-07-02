@@ -13,7 +13,7 @@ normalized, and validated. It is shared by:
   * `check-accepted-regression-growth.py` - the CI growth/integrity gate.
   * `query-conformance.py` - the `--dashboard` accepted-regression counter.
 
-The CI aggregate matcher in `scripts/ci/lib/gcp-full-ci-conformance.sh` (the
+The CI aggregate matcher in `scripts/ci/lib/full-ci-conformance.sh` (the
 `_check_conformance_regression_allowlist` heredoc) applies the same `normalize`
 rule when it compares per-shard failure lists against this ledger.
 `test_accepted_regressions.py` pins that contract so the inline copy in the
@@ -43,7 +43,7 @@ def normalize(path: str) -> str:
     """Return the ledger-canonical form of a test path.
 
     Mirrors the aggregate-matcher ``normalize`` helper in
-    ``scripts/ci/lib/gcp-full-ci-conformance.sh``: backslashes become forward
+    ``scripts/ci/lib/full-ci-conformance.sh``: backslashes become forward
     slashes and the path is sliced from its first ``TypeScript`` segment so that
     absolute shard paths and repo-relative ledger entries compare equal.
 

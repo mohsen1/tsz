@@ -2,7 +2,7 @@
 # Resource budget helpers for CI suites.
 #
 # HOST_CPUS and SHARD_COUNT default to sensible values if not already set;
-# callers may override them before sourcing.  gcp-full-ci.sh sets HOST_CPUS
+# callers may override them before sourcing.  full-ci.sh sets HOST_CPUS
 # before sourcing this file, so the :=... assignment below is a no-op in
 # that path.
 
@@ -55,7 +55,7 @@ default_cargo_build_jobs() {
       # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
       # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
       # the LLVM codegen phase. With any -j > 1, peaks coincide and SIGKILL
-      # fires on the 8 vCPU × 32 GiB Cloud Run runner.
+      # fires on the 8 vCPU × 32 GiB hosted runner.
       #
       # History of this knob, in order:
       #   * commit 111d24ba98 — TSZ_CI_CARGO_MB_PER_JOB=7168 globally (4 jobs)
@@ -67,9 +67,8 @@ default_cargo_build_jobs() {
       #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
       #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
       #
-      # Keep unit on Cloud Run by default. Heavy dist-style builds can use
-      # larger infra when needed, but unit needs to stay within the standard
-      # 32 GiB runner budget.
+      # Keep unit within the standard 32 GiB hosted runner budget. Heavy
+      # dist-style builds use their own profile-specific memory knob.
       mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     dist-binaries)
@@ -206,7 +205,7 @@ ci_available_memory_mb() {
 # Preflight memory gate for the best-effort CI cache save.
 #
 # The cache-save path tars a multi-GB target dir at post-build memory peak
-# (gcp-cache.sh save). On a memory-starved runner the kernel OOM-killer can
+# (cache.sh save). On a memory-starved runner the kernel OOM-killer can
 # SIGKILL the build container mid-tar, failing an otherwise-green job and
 # wedging the merge queue (#13733). No after-the-fact `|| echo warning` can
 # catch a SIGKILL, so the only real lever is to refuse the tar before it runs.

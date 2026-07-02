@@ -10,7 +10,7 @@ usage: scripts/ci/signoff.sh [--no-post]
 
 Runs the local PR signoff suite from a clean checkout and posts a GitHub commit
 status named "signoff" for HEAD. Branch protection can require the PR Signoff
-job, which checks this status instead of spending GCP runner minutes.
+job, which checks this status instead of spending hosted runner minutes.
 
 Environment:
   SIGNOFF_COMMANDS_FILE  newline-delimited commands to run instead of defaults

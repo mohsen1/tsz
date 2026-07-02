@@ -125,7 +125,7 @@ echo "Wrote combined canary summary to $COMBINED_SUMMARY"
 # Record shard-set completeness into the regenerated summary JSON so downstream
 # consumers can detect a silently-incomplete canary run. Unlike conformance /
 # fourslash / emit (which fail-closed), the canary is intentionally advisory and
-# continue-on-error: a hard `exit 1` here would let one dead self-hosted runner
+# continue-on-error: a hard `exit 1` here would let one dead or missing shard
 # wedge the required CI Summary on pure infra flakiness. So we record the gap and
 # emit a DISTINCT, greppable signal instead of failing.
 SHARDS_COMPLETE=1
@@ -158,12 +158,12 @@ if [[ "$SHARDS_COMPLETE" -ne 1 ]]; then
   # silently-incomplete project set (a dead/missing shard) rather than a
   # genuinely green full set.
   echo "CANARY_SHARDS_INCOMPLETE shards_seen=${SHARDS_SEEN} shards_expected=${SHARDS_EXPECTED}"
-  echo "::warning title=Canary shard set incomplete::CANARY_SHARDS_INCOMPLETE: only ${SHARDS_SEEN}/${SHARDS_EXPECTED} canary shards aggregated; the required canary check covers a partial project set (likely a dead/missing self-hosted shard)."
+  echo "::warning title=Canary shard set incomplete::CANARY_SHARDS_INCOMPLETE: only ${SHARDS_SEEN}/${SHARDS_EXPECTED} canary shards aggregated; the required canary check covers a partial project set (likely a dead/missing shard)."
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     {
       echo "> [!WARNING]"
       echo "> **CANARY_SHARDS_INCOMPLETE** — aggregated ${SHARDS_SEEN}/${SHARDS_EXPECTED} canary shards."
-      echo "> The required canary check passed over a partial project set (likely a dead/missing self-hosted shard)."
+      echo "> The required canary check passed over a partial project set (likely a dead/missing shard)."
     } >> "$GITHUB_STEP_SUMMARY"
   fi
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

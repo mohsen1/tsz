@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "bench", "reduction-backlog.mjs");
-const CI_SCRIPT = path.join(ROOT, "scripts", "ci", "gcp-full-ci.sh");
+const CI_SCRIPT = path.join(ROOT, "scripts", "ci", "full-ci.sh");
 const BENCHMARK_DATA = path.join(ROOT, "crates", "tsz-website", "src", "_data", "benchmark_data.js");
 const SUBSYSTEM_MODULE = path.join(ROOT, "scripts", "ci", "diagnostic-subsystems.mjs");
 
@@ -654,14 +654,14 @@ withTempDir((dir) => {
   assert.ok(result.stderr.includes("usage:"), "should print usage on missing input");
 }
 
-// --- gcp-full-ci.sh wires up the test ---
+// --- full-ci.sh wires up the test ---
 
 {
   const ciScript = fs.readFileSync(CI_SCRIPT, "utf8");
   assert.match(
     ciScript,
     /node scripts\/bench\/test-reduction-backlog\.mjs/,
-    "gcp-full-ci.sh must run test-reduction-backlog.mjs in run_lint",
+    "full-ci.sh must run test-reduction-backlog.mjs in run_lint",
   );
 }
 

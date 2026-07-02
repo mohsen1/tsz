@@ -82,7 +82,7 @@ assert.equal(classify(["scripts/arch/guard.py", "docs/arch.md"]).archToolOnly, t
 }
 
 {
-  const result = classify(["scripts/ci/gcp-full-ci.sh"]);
+  const result = classify(["scripts/ci/full-ci.sh"]);
   assert.equal(result.draftUnitNarrow.canNarrow, false);
   assert.match(result.draftUnitNarrow.reason, /blast-radius paths touched/);
 }
