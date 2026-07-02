@@ -1422,12 +1422,22 @@ WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS = [
     ),
 ]
 
+# Architecture health metric 5 (workstream 4): non-test checker files that call a
+# low-level speculation-rollback API directly instead of through a capability-
+# scoped holder (`FullSpeculationSnapshot` / `DiagnosticSpeculationSnapshot`). The
+# cap ratchets down toward 0 as call sites migrate; the scanner names the
+# offending files when it fires. Lowered 4 -> 3 (live count 5 -> 3) after
+# `elaboration.rs` and `overload_resolution/helpers.rs` moved their full-snapshot
+# rollbacks onto `FullSpeculationSnapshot`. The remaining callers additionally use
+# diag-merge APIs (`rollback_and_replace_diagnostics` / `restore_ts2454_state`)
+# the holder surface does not yet expose, so unlisting them needs a richer holder
+# rather than a mechanical swap.
 SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
     (
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        4,
+        3,
     ),
 ]
 

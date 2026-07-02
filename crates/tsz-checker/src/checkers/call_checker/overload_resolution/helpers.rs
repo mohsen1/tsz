@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
         temp_node_types: &crate::context::NodeTypeCache,
     ) -> OverloadResolution {
         let (arg_types, return_type, selected_type_predicate, snap) = fallback;
-        self.ctx.rollback_full(&snap);
+        snap.rollback(&mut self.ctx.speculation_state());
         self.ctx.node_types.merge(temp_node_types);
         OverloadResolution {
             arg_types,
