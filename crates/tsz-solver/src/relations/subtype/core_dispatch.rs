@@ -1281,8 +1281,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             let mut evaluated_target = self.evaluate_type(target);
             if evaluated_target == target {
-                let raw_evaluated =
-                    crate::evaluation::evaluate::evaluate_type(self.interner, target);
+                let raw_evaluated = self.raw_fallback_evaluate(target);
                 if raw_evaluated != target {
                     evaluated_target = raw_evaluated;
                 }
@@ -1312,8 +1311,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             let mut evaluated_source = self.evaluate_type(source);
             if evaluated_source == source {
-                let raw_evaluated =
-                    crate::evaluation::evaluate::evaluate_type(self.interner, source);
+                let raw_evaluated = self.raw_fallback_evaluate(source);
                 if raw_evaluated != source {
                     evaluated_source = raw_evaluated;
                 }

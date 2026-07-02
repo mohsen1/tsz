@@ -1709,13 +1709,25 @@ mod tests {
         assert_eq!(different_symbol, SymbolDefCycleState::NoCycle);
     }
 
-    #[test]
-    fn relation_cache_write_ignores_sibling_checker_lazy_event() {
+    /// Drive one `record_definitive_verdict` taint-gate scenario: build a
+    /// checker (with shared cache) plus a second independent checker, snapshot
+    /// the taint counters, fire `note` (which may touch either checker), record
+    /// a definitive `False` for `string <: number`, and assert the shared-cache
+    /// observation. `expected = None` means the write was suppressed;
+    /// `Some(false)` means the unrelated event did not poison the frame.
+    fn assert_definitive_write_gate(
+        note: impl Fn(
+            &SubtypeChecker<'_, crate::def::resolver::NoopResolver>,
+            &SubtypeChecker<'_, crate::def::resolver::NoopResolver>,
+        ),
+        expected: Option<bool>,
+        message: &str,
+    ) {
         crate::limits::reset_subtype_thread_local_state();
         let interner = TypeInterner::new();
         let db = QueryCache::new(&interner);
         let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-        let sibling = SubtypeChecker::new(&interner);
+        let other = SubtypeChecker::new(&interner);
 
         let source = TypeId::STRING;
         let target = TypeId::NUMBER;
@@ -1723,39 +1735,73 @@ mod tests {
         let taint_entry =
             checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
 
-        sibling.note_unresolved_lazy_relation_event();
+        note(&checker, &other);
         checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
 
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            Some(false),
-            "sibling checker lazy misses must not poison this relation frame"
-        );
+        assert_eq!(db.lookup_subtype_cache(key), expected, "{message}");
         crate::limits::reset_subtype_thread_local_state();
     }
 
     #[test]
-    fn relation_cache_write_skips_same_checker_lazy_event() {
-        crate::limits::reset_subtype_thread_local_state();
-        let interner = TypeInterner::new();
-        let db = QueryCache::new(&interner);
-        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-
-        let source = TypeId::STRING;
-        let target = TypeId::NUMBER;
-        let key = checker.make_cache_key(source, target);
-        let taint_entry =
-            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
-
-        checker.note_unresolved_lazy_relation_event();
-        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
-
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            None,
-            "this checker's unresolved Lazy event must keep the frame non-cacheable"
+    fn relation_cache_write_ignores_sibling_checker_lazy_event() {
+        assert_definitive_write_gate(
+            |_, sibling| sibling.note_unresolved_lazy_relation_event(),
+            Some(false),
+            "sibling checker lazy misses must not poison this relation frame",
         );
-        crate::limits::reset_subtype_thread_local_state();
+    }
+
+    #[test]
+    fn relation_cache_write_skips_same_checker_lazy_event() {
+        assert_definitive_write_gate(
+            |checker, _| checker.note_unresolved_lazy_relation_event(),
+            None,
+            "this checker's unresolved Lazy event must keep the frame non-cacheable",
+        );
+    }
+
+    #[test]
+    fn relation_cache_write_skips_contributing_subchecker_lazy_event() {
+        assert_definitive_write_gate(
+            |checker, subchecker| {
+                let entry = subchecker.unresolved_lazy_relation_event_count();
+                subchecker.note_unresolved_lazy_relation_event();
+                checker.absorb_unresolved_lazy_relation_events_from(subchecker, entry);
+            },
+            None,
+            "a contributing subchecker Lazy miss must keep the outer frame non-cacheable",
+        );
+    }
+
+    #[test]
+    fn relation_cache_write_skips_same_checker_incomplete_evaluation_event() {
+        assert_definitive_write_gate(
+            |checker, _| checker.note_incomplete_evaluation_relation_event(),
+            None,
+            "a guard-truncated evaluation must keep the frame's verdict non-cacheable",
+        );
+    }
+
+    #[test]
+    fn relation_cache_write_ignores_sibling_checker_incomplete_evaluation_event() {
+        assert_definitive_write_gate(
+            |_, sibling| sibling.note_incomplete_evaluation_relation_event(),
+            Some(false),
+            "sibling checker truncation events must not poison this relation frame",
+        );
+    }
+
+    #[test]
+    fn relation_cache_write_skips_contributing_subchecker_incomplete_evaluation_event() {
+        assert_definitive_write_gate(
+            |checker, subchecker| {
+                let entry = subchecker.incomplete_evaluation_relation_event_count();
+                subchecker.note_incomplete_evaluation_relation_event();
+                checker.absorb_incomplete_evaluation_relation_events_from(subchecker, entry);
+            },
+            None,
+            "a contributing subchecker truncation must keep the outer frame non-cacheable",
+        );
     }
 
     #[test]
@@ -1804,109 +1850,6 @@ mod tests {
             db.lookup_subtype_cache(cache_key),
             Some(false),
             "alpha-scoped verdicts must not overwrite the ordinary relation cache slot"
-        );
-        crate::limits::reset_subtype_thread_local_state();
-    }
-
-    #[test]
-    fn relation_cache_write_skips_contributing_subchecker_lazy_event() {
-        crate::limits::reset_subtype_thread_local_state();
-        let interner = TypeInterner::new();
-        let db = QueryCache::new(&interner);
-        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-        let subchecker = SubtypeChecker::new(&interner);
-
-        let source = TypeId::STRING;
-        let target = TypeId::NUMBER;
-        let key = checker.make_cache_key(source, target);
-        let taint_entry =
-            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
-        let subchecker_entry = subchecker.unresolved_lazy_relation_event_count();
-
-        subchecker.note_unresolved_lazy_relation_event();
-        checker.absorb_unresolved_lazy_relation_events_from(&subchecker, subchecker_entry);
-        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
-
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            None,
-            "a contributing subchecker Lazy miss must keep the outer frame non-cacheable"
-        );
-        crate::limits::reset_subtype_thread_local_state();
-    }
-
-    #[test]
-    fn relation_cache_write_skips_same_checker_incomplete_evaluation_event() {
-        crate::limits::reset_subtype_thread_local_state();
-        let interner = TypeInterner::new();
-        let db = QueryCache::new(&interner);
-        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-
-        let source = TypeId::STRING;
-        let target = TypeId::NUMBER;
-        let key = checker.make_cache_key(source, target);
-        let taint_entry =
-            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
-
-        checker.note_incomplete_evaluation_relation_event();
-        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
-
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            None,
-            "a guard-truncated evaluation must keep the frame's verdict non-cacheable"
-        );
-        crate::limits::reset_subtype_thread_local_state();
-    }
-
-    #[test]
-    fn relation_cache_write_ignores_sibling_checker_incomplete_evaluation_event() {
-        crate::limits::reset_subtype_thread_local_state();
-        let interner = TypeInterner::new();
-        let db = QueryCache::new(&interner);
-        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-        let sibling = SubtypeChecker::new(&interner);
-
-        let source = TypeId::STRING;
-        let target = TypeId::NUMBER;
-        let key = checker.make_cache_key(source, target);
-        let taint_entry =
-            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
-
-        sibling.note_incomplete_evaluation_relation_event();
-        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
-
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            Some(false),
-            "sibling checker truncation events must not poison this relation frame"
-        );
-        crate::limits::reset_subtype_thread_local_state();
-    }
-
-    #[test]
-    fn relation_cache_write_skips_contributing_subchecker_incomplete_evaluation_event() {
-        crate::limits::reset_subtype_thread_local_state();
-        let interner = TypeInterner::new();
-        let db = QueryCache::new(&interner);
-        let mut checker = SubtypeChecker::new(&interner).with_query_db(&db);
-        let subchecker = SubtypeChecker::new(&interner);
-
-        let source = TypeId::STRING;
-        let target = TypeId::NUMBER;
-        let key = checker.make_cache_key(source, target);
-        let taint_entry =
-            checker.relation_taint_snapshot(crate::limits::weak_type_sensitivity_count());
-        let subchecker_entry = subchecker.incomplete_evaluation_relation_event_count();
-
-        subchecker.note_incomplete_evaluation_relation_event();
-        checker.absorb_incomplete_evaluation_relation_events_from(&subchecker, subchecker_entry);
-        checker.record_definitive_verdict(source, target, SubtypeResult::False, true, taint_entry);
-
-        assert_eq!(
-            db.lookup_subtype_cache(key),
-            None,
-            "a contributing subchecker truncation must keep the outer frame non-cacheable"
         );
         crate::limits::reset_subtype_thread_local_state();
     }

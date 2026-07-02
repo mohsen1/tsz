@@ -68,6 +68,23 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         entry
     }
 
+    /// Resolver-less raw evaluation fallback, used by function-shape recovery
+    /// when the resolver-backed [`Self::evaluate_type`] left the type
+    /// unchanged. Applies the same #14346 taint discipline as the primary
+    /// seat: a guard-truncated walk notes the checker-local event before
+    /// collapsing to a `TypeId`.
+    pub(crate) fn raw_fallback_evaluate(&self, type_id: TypeId) -> TypeId {
+        let result = crate::evaluation::evaluate::evaluate_type_result_with_request(
+            self.interner,
+            EvaluationRequest::new(type_id)
+                .with_exact_optional_property_types(self.interner.exact_optional_property_types()),
+        );
+        if result.is_incomplete() {
+            self.note_incomplete_evaluation_relation_event();
+        }
+        result.into_type_id()
+    }
+
     fn evaluate_type_with_session(
         &self,
         request: EvaluationRequest,
