@@ -5,8 +5,8 @@ name: Campaign Flag Lane
 # behavior that nothing exercised; this lane runs the committed gauge so flag-ON
 # parity and run-to-run determinism are re-proven as solver/checker main moves.
 #
-# Inert on normal PRs: it runs on a nightly schedule, on manual dispatch, and on
-# PRs only when labeled `campaign-flag-lane`, so it never burdens default PR CI.
+# Runs on a nightly schedule or manual dispatch. PR CI stays limited to the
+# core compiler checks in `ci.yml`.
 
 on:
   schedule:
@@ -23,9 +23,6 @@ on:
           - flag-tests
           - determinism
           - census
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
-
 permissions:
   contents: read
 
@@ -39,10 +36,6 @@ env:
 jobs:
   gauge:
     name: campaign gauge
-    # Schedule / manual dispatch always; PRs only when opted in via label.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'campaign-flag-lane')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
