@@ -353,7 +353,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     let is_iterable = self.checker.is_async_iterable_type(expression_type)
                         || self.checker.is_iterable_type(expression_type);
                     if !is_iterable {
-                        let type_str = self.checker.format_type(expression_type);
+                        // Preserve a literal operand unwidened (see `iterand_display_type`).
+                        let display_id = self
+                            .checker
+                            .iterand_display_type(yield_expr.expression, expression_type);
+                        let type_str = self.checker.format_type(display_id);
                         let message = format_message(
                             diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                             &[&type_str],
@@ -367,9 +371,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 } else {
                     let is_iterable = self.checker.is_iterable_type(expression_type);
                     if !is_iterable {
+                        // Preserve a literal operand unwidened (see `iterand_display_type`).
+                        let display_id = self
+                            .checker
+                            .iterand_display_type(yield_expr.expression, expression_type);
                         let type_str = self
                             .checker
-                            .format_type_diagnostic_without_function_type_params(expression_type);
+                            .format_type_diagnostic_without_function_type_params(display_id);
                         let message = format_message(
                             diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                             &[&type_str],
