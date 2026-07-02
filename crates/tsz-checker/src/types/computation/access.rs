@@ -1854,6 +1854,48 @@ impl<'a> CheckerState<'a> {
             report_no_index = true;
         }
 
+        // TS2538: an ESSymbolLike key that only resolves through a `string` index
+        // signature (no `symbol` index, no matching symbol-keyed property). tsc
+        // reports "Type 'X' cannot be used as an index type" here — distinct from
+        // the implicit-any TS7053 — because the access still yields the string
+        // signature's value type rather than `any`, so this supersedes any
+        // `report_no_index` (TS7053) verdict and keeps the resolved value type
+        // (no spurious cascade). tsc's `checkIndexedAccessIndexType` runs
+        // independently of whether a value type resolved, so this is
+        // intentionally NOT gated on `use_index_signature_check` — the precise
+        // predicate below is the gate. Scoped to concrete (non-union /
+        // non-intersection) receivers; composite receivers keep the existing
+        // per-member diagnostic paths. The predicate is the cheap discriminator
+        // (it bails in O(1) for non-symbol keys), so it leads the guard chain.
+        if self.symbol_key_resolves_via_string_index_only(
+            object_type_for_access,
+            index_type,
+            index_type_for_access,
+        ) && crate::query_boundaries::common::intersection_members(
+            self.ctx.types,
+            pre_resolution_object_type,
+        )
+        .is_none()
+            && crate::query_boundaries::common::union_members(
+                self.ctx.types,
+                object_type_for_access,
+            )
+            .is_none()
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                access.name_or_argument,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            report_no_index = false;
+        }
+
         if report_no_index {
             let is_write_target_or_base = self.property_access_is_write_target_or_base(idx);
             // Suppress TS7053 for expando bracket assignments on function types.
