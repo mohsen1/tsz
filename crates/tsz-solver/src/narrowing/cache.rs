@@ -68,6 +68,7 @@ pub struct NarrowingCacheStatistics {
     pub contextual_resolve_cache_entries: usize,
     pub discriminant_index_entries: usize,
     pub narrow_type_cache_entries: usize,
+    pub narrow_positive_subset_cache_entries: usize,
     pub narrow_excluding_cache_entries: usize,
     pub narrow_assignable_cache_entries: usize,
     pub narrow_subtype_cache_entries: usize,
@@ -89,6 +90,7 @@ impl NarrowingCacheStatistics {
             + self.contextual_resolve_cache_entries
             + self.discriminant_index_entries
             + self.narrow_type_cache_entries
+            + self.narrow_positive_subset_cache_entries
             + self.narrow_excluding_cache_entries
             + self.narrow_assignable_cache_entries
             + self.narrow_subtype_cache_entries
@@ -142,14 +144,22 @@ pub struct NarrowingCache {
     /// Built once per (union, property) pair, then O(1) lookup per case clause.
     /// Without this, each case clause iterates ALL union members (O(N) per case = O(N^2) total).
     pub discriminant_index: RefCell<DiscriminantIndex>,
-    /// Cache for applying a semantic predicate guard to an input type.
+    /// Cache for applying a semantic guard to an input type.
     ///
-    /// Keyed by input `TypeId`, predicate payload, branch sense, compiler
-    /// option bits, and resolver generation so lazy alias changes cannot reuse
-    /// stale predicate results. Other guard kinds keep their existing dynamic
-    /// paths because their results depend on structural lookups that are already
-    /// cached at narrower query boundaries.
+    /// Keyed by input `TypeId`, guard payload, branch sense, compiler option
+    /// bits, and resolver generation so lazy alias changes cannot reuse stale
+    /// narrowing results. Publication is policy-gated by guard shape, cache
+    /// residency, and exclusion-fuel truncation.
     pub(crate) narrow_type_cache: RefCell<GenerationMemo<NarrowTypeStableCacheKey, TypeId>>,
+    /// Memo for the shallow false-branch predicate exclusion:
+    /// `(source, positive-branch type, resolver generation) -> source without
+    /// the positive subset`, or `None` when the shallow pass cannot reduce.
+    pub(crate) narrow_positive_subset_cache:
+        RefCell<GenerationMemo<NarrowExcludingStableKey, Option<TypeId>>>,
+    /// Request-local taint for a top-level guard narrow whose nested exclusion
+    /// walk spent or exceeded its work budget. Such results are conservative
+    /// and must not be published into `narrow_type_cache`.
+    pub(crate) narrow_type_request_truncated: Cell<bool>,
     /// Memo for `NarrowingContext::narrow_excluding_type` keyed by
     /// `(source, excluded, resolver_generation)`.
     ///
@@ -272,6 +282,8 @@ impl NarrowingCache {
             )),
             discriminant_index: RefCell::new(FxHashMap::default()),
             narrow_type_cache: RefCell::new(GenerationMemo::default()),
+            narrow_positive_subset_cache: RefCell::new(GenerationMemo::default()),
+            narrow_type_request_truncated: Cell::new(false),
             narrow_excluding_cache: RefCell::new(GenerationMemo::default()),
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
             narrow_assignable_cache: RefCell::new(GenerationMemo::default()),
@@ -287,6 +299,7 @@ impl NarrowingCache {
         let property_cache = self.property_cache.borrow();
         let required_property_cache = self.required_property_cache.borrow();
         let narrow_type_cache = self.narrow_type_cache.borrow();
+        let narrow_positive_subset_cache = self.narrow_positive_subset_cache.borrow();
         let narrow_excluding_cache = self.narrow_excluding_cache.borrow();
         let narrow_assignable_cache = self.narrow_assignable_cache.borrow();
         let narrow_subtype_cache = self.narrow_subtype_cache.borrow();
@@ -295,6 +308,7 @@ impl NarrowingCache {
             + self.optional_chain_cache.borrow().key_count()
             + self.optional_property_chain_cache.borrow().key_count()
             + narrow_type_cache.key_count()
+            + narrow_positive_subset_cache.key_count()
             + narrow_excluding_cache.key_count()
             + narrow_assignable_cache.key_count()
             + narrow_subtype_cache.key_count();
@@ -306,6 +320,7 @@ impl NarrowingCache {
                 .borrow()
                 .max_slots_per_key(),
             narrow_type_cache.max_slots_per_key(),
+            narrow_positive_subset_cache.max_slots_per_key(),
             narrow_excluding_cache.max_slots_per_key(),
             narrow_assignable_cache.max_slots_per_key(),
             narrow_subtype_cache.max_slots_per_key(),
@@ -331,6 +346,7 @@ impl NarrowingCache {
             contextual_resolve_cache_entries: self.contextual_resolve_cache.borrow().len(),
             discriminant_index_entries: self.discriminant_index.borrow().len(),
             narrow_type_cache_entries: narrow_type_cache.len(),
+            narrow_positive_subset_cache_entries: narrow_positive_subset_cache.len(),
             narrow_excluding_cache_entries: narrow_excluding_cache.len(),
             narrow_assignable_cache_entries: narrow_assignable_cache.len(),
             narrow_subtype_cache_entries: narrow_subtype_cache.len(),
@@ -410,6 +426,10 @@ impl NarrowingCache {
             size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
         {
+            let map = self.narrow_positive_subset_cache.borrow();
+            size += map.estimated_size_bytes(BUCKET_OVERHEAD);
+        }
+        {
             let map = self.narrow_excluding_cache.borrow();
             size += map.estimated_size_bytes(BUCKET_OVERHEAD);
         }
@@ -451,14 +471,27 @@ impl NarrowingCache {
     pub(in crate::narrowing) fn charge_exclusion_work(&self) -> bool {
         let fuel = self.narrow_excluding_fuel.get();
         if fuel == 0 {
+            self.narrow_type_request_truncated.set(true);
             return false;
         }
-        self.narrow_excluding_fuel.set(fuel - 1);
+        let remaining = fuel - 1;
+        self.narrow_excluding_fuel.set(remaining);
+        if remaining == 0 {
+            self.narrow_type_request_truncated.set(true);
+        }
         true
     }
 
     pub(in crate::narrowing) const fn exclusion_within_budget(&self) -> bool {
         self.narrow_excluding_fuel.get() > 0
+    }
+
+    pub(in crate::narrowing) fn begin_narrow_type_request(&self) {
+        self.narrow_type_request_truncated.set(false);
+    }
+
+    pub(in crate::narrowing) const fn narrow_type_request_truncated(&self) -> bool {
+        self.narrow_type_request_truncated.get()
     }
 
     #[cfg(test)]

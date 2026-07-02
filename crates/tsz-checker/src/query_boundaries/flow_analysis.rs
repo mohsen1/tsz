@@ -346,12 +346,11 @@ pub(crate) fn narrow_call_predicate_guard(
             // recursive-schema unions (typebox / ts-morph `value is T`, where
             // each nested schema is a distinct `TypeId` so the
             // `(source, excluded)` memo never hits). Take tsc's cheap shallow
-            // path; when it cannot reduce the source, fall through to the
-            // structural top-level-member pass below (tsc's
-            // `directlyRelated`/intersection step) rather than the deep recursion.
-            if let Some(excluded) = narrowing.narrow_excluding_positive_subset(type_id, positive)
-                && excluded != type_id
-            {
+            // path. `Some(type_id)` is a terminal tsc-shaped unchanged result:
+            // it means the solver deliberately deferred recursive/evaluator-
+            // sensitive structural repair instead of sending the false branch
+            // through the relation fallback below.
+            if let Some(excluded) = narrowing.narrow_excluding_positive_subset(type_id, positive) {
                 return excluded;
             }
         }

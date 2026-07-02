@@ -69,6 +69,14 @@ fn narrowing_cache_statistics_report_entries_and_size() {
         0,
         TypeId::STRING,
     );
+    let relation_key = NarrowExcludingStableKey {
+        source: TypeId::STRING,
+        excluded: TypeId::NUMBER,
+    };
+    cache
+        .narrow_positive_subset_cache
+        .borrow_mut()
+        .insert(relation_key, 0, Some(TypeId::STRING));
 
     let stats = cache.cache_statistics();
     assert_eq!(stats.resolve_cache_entries, 1);
@@ -81,7 +89,8 @@ fn narrowing_cache_statistics_report_entries_and_size() {
     assert_eq!(stats.contextual_resolve_cache_entries, 1);
     assert_eq!(stats.discriminant_index_entries, 1);
     assert_eq!(stats.narrow_type_cache_entries, 1);
-    assert_eq!(stats.total_entries(), 10);
+    assert_eq!(stats.narrow_positive_subset_cache_entries, 1);
+    assert_eq!(stats.total_entries(), 11);
     assert!(stats.estimated_size_bytes > empty.estimated_size_bytes);
     assert!(cache.estimated_size_bytes() >= stats.estimated_size_bytes);
 }
@@ -130,6 +139,11 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
             generation,
             TypeId::STRING,
         );
+        cache.narrow_positive_subset_cache.borrow_mut().insert(
+            relation_key,
+            generation,
+            Some(TypeId::STRING),
+        );
         cache
             .narrow_excluding_cache
             .borrow_mut()
@@ -145,7 +159,7 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     }
 
     let stats = cache.cache_statistics();
-    assert_eq!(stats.generation_stamped_cache_keys, 8);
+    assert_eq!(stats.generation_stamped_cache_keys, 9);
     assert_eq!(
         stats.max_generation_slots_per_cache_key,
         MAX_GENERATIONS_PER_NARROWING_KEY
@@ -168,6 +182,10 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     );
     assert_eq!(
         stats.narrow_type_cache_entries,
+        MAX_GENERATIONS_PER_NARROWING_KEY
+    );
+    assert_eq!(
+        stats.narrow_positive_subset_cache_entries,
         MAX_GENERATIONS_PER_NARROWING_KEY
     );
     assert_eq!(
@@ -214,6 +232,20 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     assert_eq!(
         cache.narrow_type_cache.borrow().get(&request_key, 7),
         Some(TypeId::STRING)
+    );
+    assert_eq!(
+        cache
+            .narrow_positive_subset_cache
+            .borrow()
+            .get(&relation_key, 1),
+        None
+    );
+    assert_eq!(
+        cache
+            .narrow_positive_subset_cache
+            .borrow()
+            .get(&relation_key, 7),
+        Some(Some(TypeId::STRING))
     );
 }
 
@@ -278,6 +310,24 @@ fn exclusion_frame_clears_request_fuel_on_outer_drop() {
 
     assert_eq!(cache.narrow_excluding_depth.get(), 0);
     assert_eq!(cache.narrow_excluding_fuel.get(), 0);
+}
+
+#[test]
+fn exclusion_budget_spent_taints_narrow_type_request() {
+    let cache = NarrowingCache::new();
+    cache.set_narrow_excluding_budget(1);
+    cache.begin_narrow_type_request();
+
+    {
+        let _frame = cache.enter_exclusion_frame();
+        assert!(!cache.narrow_type_request_truncated());
+        assert!(cache.charge_exclusion_work());
+        assert!(cache.narrow_type_request_truncated());
+        assert!(!cache.charge_exclusion_work());
+    }
+
+    cache.begin_narrow_type_request();
+    assert!(!cache.narrow_type_request_truncated());
 }
 
 #[test]

@@ -189,8 +189,8 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
     );
     assert_eq!(
         cache.narrow_type_cache.borrow().len(),
-        1,
-        "non-predicate guards keep their existing dynamic narrowing path"
+        2,
+        "typeof guards now share the top-level semantic narrowing cache"
     );
 
     let number_predicate = TypeGuard::Predicate {
@@ -201,7 +201,7 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
         ctx.narrow_type(TypeId::UNKNOWN, &number_predicate, GuardSense::Positive),
         TypeId::NUMBER
     );
-    assert_eq!(cache.narrow_type_cache.borrow().len(), 2);
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 3);
 
     interner.set_no_unchecked_indexed_access(true);
     let flags_ctx = NarrowingContext::with_cache(&interner, &cache);
@@ -209,7 +209,7 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
         flags_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
         TypeId::STRING
     );
-    assert_eq!(cache.narrow_type_cache.borrow().len(), 3);
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 4);
 
     let resolver_one = GenerationResolver(1);
     let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_one);
@@ -217,7 +217,7 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
         resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
         TypeId::STRING
     );
-    assert_eq!(cache.narrow_type_cache.borrow().len(), 4);
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
 
     let resolver_two = GenerationResolver(2);
     let resolver_ctx = NarrowingContext::with_cache(&interner, &cache).with_resolver(&resolver_two);
@@ -225,7 +225,7 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
         resolver_ctx.narrow_type(TypeId::UNKNOWN, &string_predicate, GuardSense::Positive),
         TypeId::STRING
     );
-    assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 6);
 }
 
 #[test]

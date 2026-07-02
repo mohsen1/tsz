@@ -64,6 +64,10 @@ where
         self.entries.len()
     }
 
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.entries.contains_key(key)
+    }
+
     pub fn max_slots_per_key(&self) -> usize {
         self.entries.values().map(SmallVec::len).max().unwrap_or(0)
     }

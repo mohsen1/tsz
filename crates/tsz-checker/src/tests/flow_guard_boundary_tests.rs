@@ -49,6 +49,27 @@ function use(value: string | number) {
 }
 
 #[test]
+fn predicate_false_branch_accepts_terminal_positive_subset_result() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read flow analysis boundary source");
+    let compact_boundary: String = boundary_source
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+
+    assert!(
+        compact_boundary
+            .contains("ifletSome(excluded)=narrowing.narrow_excluding_positive_subset(type_id,positive){returnexcluded;}"),
+        "predicate false-branch boundary should return the solver's positive-subset result directly"
+    );
+    assert!(
+        !compact_boundary
+            .contains("narrow_excluding_positive_subset(type_id,positive)&&excluded!=type_id"),
+        "predicate false-branch boundary must not fall through after terminal unchanged results"
+    );
+}
+
+#[test]
 fn type_predicate_true_branch_removes_null_before_property_access() {
     let codes = check_strict(
         r#"

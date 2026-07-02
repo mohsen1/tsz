@@ -580,6 +580,48 @@ fn test_in_then_typeof_object_independent_of_property_name() {
     }
 }
 
+#[test]
+fn test_narrow_type_with_request_reuses_general_guard_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let source = interner.union(vec![TypeId::STRING, TypeId::NULL]);
+    let request = NarrowingRequest::new(source, TypeGuard::Truthy, GuardSense::Positive);
+
+    assert_eq!(ctx.narrow_type_with_request(&request), TypeId::STRING);
+    assert_eq!(cache.narrow_type_cache.borrow().len(), 1);
+    assert_eq!(ctx.narrow_type_with_request(&request), TypeId::STRING);
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        1,
+        "repeated request-object guards should hit without growing the cache"
+    );
+}
+
+#[test]
+fn test_narrow_type_cache_bypasses_long_discriminant_paths() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let property_path = (0..=super::cache_policy::MAX_CACHED_DISCRIMINANT_PATH_LEN)
+        .map(|index| interner.intern_string(&format!("p{index}")))
+        .collect();
+    let guard = TypeGuard::Discriminant {
+        property_path,
+        value_type: TypeId::STRING,
+    };
+
+    assert_eq!(
+        ctx.narrow_type(TypeId::UNKNOWN, &guard, GuardSense::Positive),
+        TypeId::UNKNOWN
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        0,
+        "long discriminant payloads bypass instead of truncating cache keys"
+    );
+}
+
 // =============================================================================
 // narrow_excluding_type per-request cumulative work budget (issue #13806, theme C)
 // =============================================================================
@@ -625,6 +667,50 @@ fn test_narrow_excluding_budget_bounds_constraint_refinement() {
     assert_eq!(
         bounded_ctx.narrow_excluding_type(union, TypeId::STRING),
         union,
+    );
+}
+
+#[test]
+fn test_narrow_type_cache_skips_budget_truncated_predicate_exclusion() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let constraint = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    }));
+    let union = interner.union(vec![param, TypeId::BOOLEAN]);
+    let guard = TypeGuard::Predicate {
+        type_id: Some(TypeId::STRING),
+        asserts: false,
+    };
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    ctx.set_narrow_excluding_budget(1);
+    assert_eq!(
+        ctx.narrow_type(union, &guard, GuardSense::Negative),
+        union
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        0,
+        "budget-truncated guard results must remain request-local"
+    );
+
+    ctx.set_narrow_excluding_budget(0);
+    let expected_param = interner.intersection(vec![param, TypeId::NUMBER]);
+    let expected_full = interner.union(vec![expected_param, TypeId::BOOLEAN]);
+    assert_eq!(
+        ctx.narrow_type(union, &guard, GuardSense::Negative),
+        expected_full
+    );
+    assert_eq!(
+        cache.narrow_type_cache.borrow().len(),
+        1,
+        "the fully budgeted rerun may publish the guard result"
     );
 }
 

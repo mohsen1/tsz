@@ -28,6 +28,7 @@
 //! - **Solver**: Applies `TypeGuard` to types (WHAT)
 
 mod cache;
+mod cache_policy;
 mod compound;
 mod core;
 mod discriminants;

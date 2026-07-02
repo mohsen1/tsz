@@ -2,17 +2,20 @@ use crate::caches::db::TypeCompilerOptions;
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
 use crate::narrowing::cache::{NarrowExcludingKey, NarrowExcludingStableKey, NarrowingCache};
+use crate::narrowing::cache_policy::{MAX_NARROW_TYPE_CACHE_KEYS, guard_can_use_narrow_type_cache};
 use crate::narrowing::guard::{GuardSense, TypeGuard};
 use crate::narrowing::request::{NarrowingOptions, NarrowingRequest};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
-use crate::type_queries::{UnionMembersKind, classify_for_union_members};
+use crate::type_queries::{
+    UnionMembersKind, classify_for_union_members, is_structurally_eval_inert,
+};
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
 use crate::utils::{TypeIdExt, union_or_single};
 use crate::visitor::{
     application_id, index_access_parts, intersection_list_id,
-    is_function_type_through_type_constraints, is_object_like_type_through_type_constraints,
-    lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
-    type_param_info, union_list_id,
+    is_function_type_through_type_constraints, is_object_like_type,
+    is_object_like_type_through_type_constraints, lazy_def_id, literal_value, object_shape_id,
+    object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
@@ -898,10 +901,13 @@ impl<'a> NarrowingContext<'a> {
     /// recursion is exponential and was the dominant non-termination frame.
     ///
     /// This boundary keeps the false-branch predicate exclusion on tsc's cheap
-    /// O(N) shallow path. It returns `None` when the shallow filter cannot
-    /// reduce the source (every member survives `isTypeSubsetOf`), so the caller
-    /// can fall back to its structural-assignability member pass for the cases
-    /// tsc covers through `directlyRelated`/intersection construction.
+    /// O(N) shallow path. It returns `Some(source_type)` as a terminal unchanged
+    /// answer when a potential structural repair would require evaluating a
+    /// recursive/deferred member; callers must not then fall through to the deep
+    /// relation fallback. It returns `None` only when no shallow reduction and no
+    /// deferred structural repair candidate exists, so the caller can use its
+    /// structural-assignability member pass for cases tsc covers through
+    /// `directlyRelated`/intersection construction.
     pub fn narrow_excluding_positive_subset(
         &self,
         source_type: TypeId,
@@ -913,6 +919,34 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
+        let resolver_generation = self.resolver_generation();
+        let stable_key = NarrowExcludingStableKey {
+            source: source_type,
+            excluded: positive_type,
+        };
+        if let Some(cached) = self
+            .cache
+            .narrow_positive_subset_cache
+            .borrow()
+            .get(&stable_key, resolver_generation)
+        {
+            return cached;
+        }
+
+        let result = self.narrow_excluding_positive_subset_uncached(source_type, positive_type);
+        self.cache.narrow_positive_subset_cache.borrow_mut().insert(
+            stable_key,
+            resolver_generation,
+            result,
+        );
+        result
+    }
+
+    fn narrow_excluding_positive_subset_uncached(
+        &self,
+        source_type: TypeId,
+        positive_type: TypeId,
+    ) -> Option<TypeId> {
         let resolved_source = self.resolve_type(source_type);
         let Some(members) = union_list_id(self.db, resolved_source) else {
             // A non-union source is dropped to `never` iff it is a subset of the
@@ -924,42 +958,86 @@ impl<'a> NarrowingContext<'a> {
         };
 
         let members = self.db.type_list(members);
-        let remaining: Vec<TypeId> = members
-            .iter()
-            .copied()
-            .filter(|&member| !self.is_type_subset_of(member, positive_type))
-            .collect();
+        let positive_members: Vec<TypeId> = union_list_id(self.db, positive_type)
+            .map(|positive_members| self.db.type_list(positive_members).to_vec())
+            .unwrap_or_else(|| vec![positive_type]);
 
-        if remaining.len() == members.len()
-            || remaining
-                .iter()
-                .any(|&member| self.is_assignable_to(member, positive_type))
-        {
-            // Identity/containment did not catch every positive-branch member.
-            // Keep the pass top-level-only, but allow structural equivalence
-            // against the already-computed positive type. This covers freshly
-            // materialized true-branch shapes such as #52984 deep-path
-            // predicates without returning to recursive intersection descent.
-            let structurally_remaining: Vec<TypeId> = members
-                .iter()
-                .copied()
-                .filter(|&member| !self.is_assignable_to(member, positive_type))
-                .collect();
-            if structurally_remaining.len() == members.len() {
-                return None;
+        let mut remaining = Vec::with_capacity(members.len());
+        let mut dropped_member = false;
+        let mut deferred_structural_probe = false;
+
+        for &member in members.iter() {
+            if self.is_type_subset_of(member, positive_type) {
+                dropped_member = true;
+                continue;
             }
-            return Some(match structurally_remaining.as_slice() {
+
+            let mut structurally_dropped = false;
+            for &positive_member in &positive_members {
+                if self.can_probe_positive_subset_structurally(member, positive_member) {
+                    if self.is_assignable_to(member, positive_member) {
+                        structurally_dropped = true;
+                        break;
+                    }
+                } else if self
+                    .should_defer_positive_subset_structural_probe(member, positive_member)
+                {
+                    deferred_structural_probe = true;
+                }
+            }
+
+            if structurally_dropped {
+                dropped_member = true;
+            } else {
+                remaining.push(member);
+            }
+        }
+
+        if dropped_member {
+            return Some(match remaining.as_slice() {
                 [] => TypeId::NEVER,
                 [single] => *single,
-                _ => self.db.union(structurally_remaining),
+                _ => self.db.union(remaining),
             });
         }
-        // The pure identity/containment filter handled the positive members.
-        Some(match remaining.as_slice() {
-            [] => TypeId::NEVER,
-            [single] => *single,
-            _ => self.db.union(remaining),
-        })
+        if deferred_structural_probe {
+            return Some(source_type);
+        }
+        None
+    }
+
+    fn can_probe_positive_subset_structurally(
+        &self,
+        source_member: TypeId,
+        positive_member: TypeId,
+    ) -> bool {
+        // Structural repair is only for already materialized object-like pairs.
+        // Deferred/evaluator-sensitive pairs stay on the tsc false-branch
+        // subset path so recursive schema unions do not re-enter relation/eval.
+        self.positive_subset_structural_candidate(source_member, positive_member)
+            && is_structurally_eval_inert(self.db, source_member)
+            && is_structurally_eval_inert(self.db, positive_member)
+    }
+
+    fn should_defer_positive_subset_structural_probe(
+        &self,
+        source_member: TypeId,
+        positive_member: TypeId,
+    ) -> bool {
+        self.positive_subset_structural_candidate(source_member, positive_member)
+            && (!is_structurally_eval_inert(self.db, source_member)
+                || !is_structurally_eval_inert(self.db, positive_member))
+    }
+
+    fn positive_subset_structural_candidate(
+        &self,
+        source_member: TypeId,
+        positive_member: TypeId,
+    ) -> bool {
+        !source_member.is_intrinsic()
+            && !positive_member.is_intrinsic()
+            && is_object_like_type(self.db, source_member)
+            && is_object_like_type(self.db, positive_member)
     }
 
     /// tsc's `isTypeSubsetOf`: a pure identity/containment relation used by
@@ -1373,37 +1451,39 @@ impl<'a> NarrowingContext<'a> {
     }
 
     pub fn narrow_type(&self, source_type: TypeId, guard: &TypeGuard, sense: GuardSense) -> TypeId {
-        if !matches!(guard, TypeGuard::Predicate { .. }) {
-            return self.narrow_type_uncached(source_type, guard, sense);
-        }
         let request = NarrowingRequest::new(source_type, guard.clone(), sense);
-        self.narrow_predicate_cached(&request)
+        self.narrow_type_with_request(&request)
     }
 
     /// Avoids re-cloning the guard when the caller already holds a `NarrowingRequest`.
     pub fn narrow_type_with_request(&self, request: &NarrowingRequest) -> TypeId {
-        if !matches!(request.guard(), TypeGuard::Predicate { .. }) {
+        if !guard_can_use_narrow_type_cache(request.guard()) {
             return self.narrow_type_uncached(
                 request.source_type(),
                 request.guard(),
                 request.sense(),
             );
         }
-        self.narrow_predicate_cached(request)
+        self.narrow_type_cached(request)
     }
 
-    fn narrow_predicate_cached(&self, request: &NarrowingRequest) -> TypeId {
+    fn narrow_type_cached(&self, request: &NarrowingRequest) -> TypeId {
         let generation = self.resolver_generation();
         let key = request.stable_cache_key(self.narrowing_options());
         if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key, generation) {
             return cached;
         }
+        self.cache.begin_narrow_type_request();
         let narrowed =
             self.narrow_type_uncached(request.source_type(), request.guard(), request.sense());
-        self.cache
-            .narrow_type_cache
-            .borrow_mut()
-            .insert(key, generation, narrowed);
+        if self.cache.narrow_type_request_truncated() {
+            return narrowed;
+        }
+        let mut cache = self.cache.narrow_type_cache.borrow_mut();
+        if cache.key_count() >= MAX_NARROW_TYPE_CACHE_KEYS && !cache.contains_key(&key) {
+            return narrowed;
+        }
+        cache.insert(key, generation, narrowed);
         narrowed
     }
 
