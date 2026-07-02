@@ -1,2 +1,3 @@
 codeFixClassImplementInterfaceNoTruncation
 codeFixClassImplementInterfaceNoTruncationProperties
+completionListAtIdentifierDefinitionLocations_Generics

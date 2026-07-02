@@ -690,6 +690,10 @@ async function runParallel(opts, testsToRun) {
                 workerLastActivity.set(i, Date.now());
                 if (msg.type === "ready") {
                     // Worker initialized
+                } else if (msg.type === "start") {
+                    if (opts.verbose || process.env.FOURSLASH_LOG_START === "1") {
+                        console.log(`  [W${msg.workerId}] START ${msg.testName} (${msg.testFile})`);
+                    }
                 } else if (msg.type === "result") {
                     if (msg.passed) {
                         passed++;
