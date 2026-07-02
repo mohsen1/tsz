@@ -40,6 +40,128 @@ fn ts2322(diags: &[Diagnostic]) -> &Diagnostic {
     matches[0]
 }
 
+/// Return the message of the first related-information line carrying `code`,
+/// or panic with the observed related lines for a legible failure.
+fn related_msg(diag: &Diagnostic, code: u32) -> &str {
+    diag.related_information
+        .iter()
+        .find(|r| r.code == code)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a related TS{code} line; related: {:?}",
+                diag.related_information
+                    .iter()
+                    .map(|r| (r.code, &r.message_text))
+                    .collect::<Vec<_>>()
+            )
+        })
+        .message_text
+        .as_str()
+}
+
+/// A closed target with a *trailing optional* element reports its **minimum**
+/// required length, not its raw slot count. `[alpha: number, beta?: string]`
+/// requires 1, so an empty source is `Source has 0 element(s) but target
+/// requires 1.` (previously mis-reported "requires 2", counting the optional
+/// slot). Regression for the closed-tuple arity gate (`TS2618`).
+#[test]
+fn closed_target_trailing_optional_reports_min_length() {
+    let source = r#"
+type Empty = [];
+const pair: [alpha: number, beta?: string] = (null as unknown as Empty);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2618),
+        "Source has 0 element(s) but target requires 1."
+    );
+}
+
+/// A closed target with several trailing optionals still reports the minimum
+/// (`[first, second, third?, fourth?]` requires 2). A one-element source is
+/// `Source has 1 element(s) but target requires 2.` (previously "requires 4").
+#[test]
+fn closed_target_multiple_trailing_optionals_reports_min_length() {
+    let source = r#"
+type Solo = [number];
+const quad: [first: number, second: number, third?: number, fourth?: number] =
+    (null as unknown as Solo);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2618),
+        "Source has 1 element(s) but target requires 2."
+    );
+}
+
+/// An all-optional source that is longer than a closed target reports the
+/// target's minimum with the "source may have fewer" wording (`TS2620`),
+/// because the source is not guaranteed to supply the required elements.
+#[test]
+fn all_optional_longer_source_reports_target_requires_may_have_fewer() {
+    let source = r#"
+type Loose = [first?: number, second?: number, third?: number];
+const strict: [x: number, y: number] = (null as unknown as Loose);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2620),
+        "Target requires 2 element(s) but source may have fewer."
+    );
+}
+
+/// A source that satisfies the target's minimum but is longer, and whose extra
+/// element is optional, reports the "source may have more" wording (`TS2621`).
+#[test]
+fn longer_source_with_trailing_optional_reports_target_allows_only_may_have_more() {
+    let source = r#"
+type Extra = [one: number, two: number, three?: number];
+const shorter: [x: number, y: number] = (null as unknown as Extra);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2621),
+        "Target allows only 2 element(s) but source may have more."
+    );
+}
+
+/// When arities are compatible but a source element is optional at a position
+/// the target requires, tsc reports the element-flag mismatch (`TS2623`)
+/// *ahead of* any element-type comparison — the source may not provide a value
+/// at that position at all.
+#[test]
+fn optional_source_element_at_required_target_position_reports_no_match() {
+    let source = r#"
+type Half = [head: number, tail?: number];
+const full: [x: number, y: number] = (null as unknown as Half);
+"#;
+    let diags = check_strict(source);
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2623),
+        "Source provides no match for required element at position 1 in target."
+    );
+}
+
+/// Anti-regression: a physically-present array-*literal* element is Required,
+/// so an over-long literal against a closed target with an optional slot still
+/// reports `TS2619` ("Source has N …but target allows only M"), not the
+/// variadic-flavored `TS2621`. The literal `[1, "x", true]` has minimum length
+/// 3 regardless of the target's optional second slot.
+#[test]
+fn overlong_array_literal_against_optional_target_reports_allows_only() {
+    let diags = check_strict("const t: [number, string?] = [1, \"x\", true];\n");
+    let diag = ts2322(&diags);
+    assert_eq!(
+        related_msg(diag, 2619),
+        "Source has 3 element(s) but target allows only 2."
+    );
+}
+
 /// Source longer than a closed target -> `target allows only M` (`TS2619`).
 #[test]
 fn too_many_elements_attaches_allows_only_reason() {

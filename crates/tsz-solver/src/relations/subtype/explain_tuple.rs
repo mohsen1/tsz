@@ -44,38 +44,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<SubtypeFailureReason> {
         // tsc gates a tuple-to-tuple relation on an arity check *before* it
         // compares individual elements (`tupleTypesRelated` in `checker.ts`).
+        // `classify_tuple_arity` mirrors that gate exactly, selecting the
+        // correct `TS2618`–`TS2621` family from each side's *arity* (slot count)
+        // and *minimum length* (required-element count).
         //
-        // The historical bug (#10874) is confined to *variadic* tuples: when a
-        // side carries a rest element, the old length comparison counted that
-        // rest slot as a fixed element, over-reporting the source length and
-        // emitting only two of tsc's four arity messages. So the tsc-faithful
-        // classifier runs **only when a rest element is present**; purely closed
-        // tuples keep their established reason and rendering exactly (closed
-        // tuples have `arity == len`, so they were never affected by the bug,
-        // and tsc resolves their optional-element mismatches per-element, not
-        // through this length gate).
-        let source_has_rest = source.iter().any(|e| e.rest);
-        let target_has_rest = target.iter().any(|e| e.rest);
-
-        if source_has_rest || target_has_rest {
-            if let Some(arity) = crate::utils::classify_tuple_arity(source, target) {
-                return Some(SubtypeFailureReason::TupleArityMismatch(arity));
-            }
-        } else {
-            // Closed-tuple length mismatch: preserve the prior structured
-            // `TupleElementMismatch` reason (and its alias-preserving render
-            // path). A source that cannot supply the target's required elements,
-            // or a source longer than a closed target, is reported here rather
-            // than drilled into element-by-element, matching the established
-            // baseline.
-            let source_required = crate::utils::required_element_count(source);
-            let target_required = crate::utils::required_element_count(target);
-            if source_required < target_required || source.len() > target.len() {
-                return Some(SubtypeFailureReason::TupleElementMismatch {
-                    source_count: source.len(),
-                    target_count: target.len(),
-                });
-            }
+        // This classifier runs for *every* tuple pair, closed or variadic. A
+        // closed target that carries optional elements still has
+        // `minLength < arity`, so the "requires"/"allows only" counts tsc
+        // reports are the minimum length, not the raw slot count. The earlier
+        // implementation gated the classifier behind "a rest element is
+        // present" and fell back to a coarse `TupleElementMismatch` that used
+        // `target.len()` for the required count — over-reporting whenever a
+        // closed target held optional (or nested) elements (e.g.
+        // `[number, string?]` reported "requires 2" instead of tsc's
+        // "requires 1"). Routing closed tuples through the same gate restores
+        // parity across the whole `TS2618`–`TS2621` family.
+        if let Some(arity) = crate::utils::classify_tuple_arity(source, target) {
+            return Some(SubtypeFailureReason::TupleArityMismatch(arity));
         }
 
         for (i, t_elem) in target.iter().enumerate() {
@@ -243,6 +228,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return Some(SubtypeFailureReason::TupleElementMismatch {
                         source_count: source.len(), // Approximate "infinity"
                         target_count: target.len(),
+                    });
+                }
+
+                // Element-flag mismatch: the target requires a value at this
+                // position but the source element is optional, so the source
+                // may not provide one. tsc reports this (`TS2623`,
+                // `Source_provides_no_match_for_required_element_at_position…`)
+                // ahead of any element-*type* comparison, so a closed source
+                // whose optional slot also has an incompatible type still
+                // surfaces the flag mismatch first (matching `tupleTypesRelated`
+                // in `checker.ts`, which relates element flags before types).
+                if t_elem.is_required() && s_elem.optional {
+                    return Some(SubtypeFailureReason::SourceProvidesNoMatch {
+                        position: i,
+                        variadic: false,
                     });
                 }
 
