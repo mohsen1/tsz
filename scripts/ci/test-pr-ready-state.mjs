@@ -11,7 +11,7 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "ci", "check-pr-ready-state.mjs");
 const CI_WORKFLOW = path.join(ROOT, ".github", "workflows", "ci.yml");
-const GATE_CLASSIFIER = path.join(ROOT, "scripts", "ci", "gate-path-classifier.mjs");
+const WORKFLOW_DIR = path.join(ROOT, ".github", "workflows");
 
 function readyPr(overrides = {}) {
   return {
@@ -133,103 +133,54 @@ assert.equal(passingDraft.status, 0, passingDraft.stderr);
 assert.match(passingDraft.stdout, /Ready-state WIP check passed/);
 
 const ciWorkflow = fs.readFileSync(CI_WORKFLOW, "utf8");
-const gateClassifier = fs.readFileSync(GATE_CLASSIFIER, "utf8");
-assert.match(
-  ciWorkflow,
-  /pull_request:\s*\n\s*types:\s*\[[^\]]*\bedited\b[^\]]*\]/,
-  "CI should rerun PR metadata gates after body/title edits",
-);
-assert.match(
-  ciWorkflow,
-  /if \[\[ "\$\{\{ github\.event\.action \}\}" == "edited" \]\]; then[\s\S]+?PR metadata edited[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?metadata_only_skip=true[\s\S]+?compiler_checks_required=false[\s\S]+?fi/,
-  "edited PR events should refresh body/ready-state gates without heavy CI",
-);
-assert.match(
-  ciWorkflow,
-  /accepted_summary_names = \("CI Summary",\) if required_summary else \("CI Summary", "CI Light Summary"\)[\s\S]+?job\.get\("name"\) in accepted_summary_names[\s\S]+?Metadata-only CI mirrors successful \{summary_name\}/,
-  "metadata-only edited runs should require prior full summaries when publishing protected CI Summary",
-);
-assert.match(
-  ciWorkflow,
-  /id: metadata-active-suite[\s\S]+?if: github\.event_name == 'pull_request' && github\.event\.action == 'edited'[\s\S]+?actions\/workflows\/ci\.yml\/runs\?head_sha=\$\{PR_HEAD_SHA\}&event=pull_request[\s\S]+?\.status == "queued"[\s\S]+?\.status == "in_progress"[\s\S]+?\.id != \$current_run_id[\s\S]+?active_suite_found=true[\s\S]+?metadata CI will publish CI Light Summary[\s\S]+?METADATA_ACTIVE_SUITE_FOUND: \$\{\{ steps\.metadata-active-suite\.outputs\.active_suite_found \}\}[\s\S]+?PR metadata edited[\s\S]+?required_summary=false/,
-  "metadata-only edited runs should publish CI Light Summary while the exact-head real suite is active",
-);
-assert.match(
-  ciWorkflow,
-  /metadata_active_suite_found: \$\{\{ steps\.gate\.outputs\.metadata_active_suite_found \}\}[\s\S]+?echo "metadata_active_suite_found=\$\{METADATA_ACTIVE_SUITE_FOUND:-false\}" >> "\$GITHUB_OUTPUT"[\s\S]+?CI_METADATA_ACTIVE_SUITE_FOUND: \$\{\{ needs\.gate\.outputs\.metadata_active_suite_found \}\}[\s\S]+?metadata_active_suite_found = os\.environ\.get\("CI_METADATA_ACTIVE_SUITE_FOUND"\) == "true"[\s\S]+?if not required_summary and metadata_active_suite_found:[\s\S]+?active exact-head CI suite[\s\S]+?return/,
-  "metadata-only edited runs should pass CI Light Summary when an active exact-head suite has not published its summary yet",
-);
-assert.match(
-  ciWorkflow,
-  /accepted_summary_label = "CI Summary" if required_summary else "CI Summary or CI Light Summary"[\s\S]+?previous \{accepted_summary_label\}/,
-  "metadata-only edited runs should report the accepted prior summary class when no mirror exists",
-);
 
-assert.match(
-  ciWorkflow,
-  /node scripts\/ci\/gate-path-classifier\.mjs/,
-  "CI gate should use the shared path classifier instead of inline path regex copies",
-);
-
-assert.match(
-  ciWorkflow,
-  /TSZ_CI_EMERGENCY_SCALE_DOWN: "1"[\s\S]+?GitHub Actions-only cost-control mode is active[\s\S]+?should_run=false[\s\S]+?full_run=false[\s\S]+?compiler_checks_required=false/,
-  "CI should force GitHub Actions-only cost-control mode and skip heavy CI fanout",
-);
 assert.doesNotMatch(
   ciWorkflow,
-  /full_ci|TSZ_CI_MANUAL_FULL_CI|inputs\.full_ci/,
-  "CI should not expose a manual full-CI escape hatch while GCP spend is shut down",
-);
-assert.match(
-  ciWorkflow,
-  /signoff-gate:[\s\S]+name: PR Signoff[\s\S]+context == "signoff"[\s\S]+Run scripts\/ci\/signoff\.sh locally/,
-  "PR CI should require the local signoff commit status instead of starting heavy GCP-backed jobs",
-);
-
-assert.match(
-  gateClassifier,
-  /ci-resources\|full-ci\|github-suite\|suite-metadata\|build-dist\|dist\|wasm/,
-  "ci-resources.sh changes must require compiler CI because they size dist/unit/wasm jobs",
-);
-
-assert.match(
-  gateClassifier,
-  /\.github\\\/workflows\\\/\(ci\|bench\)\\\.yml/,
-  "CI workflow changes should continue to be classified as compiler-sensitive paths",
+  /signoff-gate|PR Signoff|context == "signoff"|scripts\/ci\/signoff\.sh/,
+  "PR CI should not require the local signoff status",
 );
 
 assert.doesNotMatch(
   ciWorkflow,
-  /CI run superseded[\s\S]+?sys\.exit\(0\)/,
-  "CI Summary must not pass when required heavy jobs were cancelled",
+  /TSZ_CI_EMERGENCY_SCALE_DOWN|CI Light Summary|gate-path-classifier|metadata-only|metadata_only/,
+  "PR CI should not keep the old emergency metadata/light-summary mode",
 );
 
 assert.doesNotMatch(
   ciWorkflow,
-  /Treating as neutral/,
-  "CI Summary must not treat cancelled required jobs as a neutral protected check",
+  /cargo-shear|cargo-deny|dist-binaries|node-harness-prep|lsp-e2e|project-compile|wasm|bench-script-smoke|perf-tool-smoke|arch-tool-smoke|conformance-snapshot-gate|unit-checker-integration/,
+  "PR CI should expose only the requested core checks",
 );
 
-// The project-compile-canary suite is advisory (continue-on-error + ALLOW_FAILURES)
-// and now installs dependencies for ~20 real applications, so it runs for tens of
-// minutes and queues on a busy pool. It must NOT be a dependency of, or required by,
-// the CI Summary gate — otherwise the required CI Summary stalls "expected — waiting
-// for status to be reported" on a suite that never gates correctness. It still runs
-// and records its compatibility results out of band.
-assert.doesNotMatch(
-  ciWorkflow,
-  /^\s+- project-compile-canary-aggregate\s*$/m,
-  "CI Summary must NOT list project-compile-canary-aggregate in needs: the advisory canary must not block/delay the required gate",
-);
-
-for (const job of ["lint", "cargo-shear", "cargo-deny"]) {
+for (const job of [
+  "clippy",
+  "unit",
+  "conformance",
+  "conformance-aggregate",
+  "emit",
+  "emit-aggregate",
+  "fourslash",
+  "fourslash-aggregate",
+  "ci-summary",
+]) {
   assert.match(
     ciWorkflow,
     new RegExp(`\\n\\s{2}${job}:\\n[\\s\\S]+?runs-on: ubuntu-latest`),
-    `${job} should run on hosted Ubuntu so cheap gates do not wait on external runners`,
+    `${job} should run on hosted Ubuntu`,
   );
 }
+
+assert.match(
+  ciWorkflow,
+  /name: clippy[\s\S]+?scripts\/safe-run\.sh --limit 88% --[\s\S]+?cargo clippy --profile ci-lint --workspace --exclude tsz-conformance[\s\S]+?--all-targets -- -D warnings/,
+  "The clippy job should run only cargo clippy through safe-run",
+);
+
+assert.match(
+  ciWorkflow,
+  /TSZ_CI_FOURSLASH_WORKERS:\s*1/,
+  "Fourslash PR shards should use one worker on hosted runners to avoid shard shutdowns before artifact upload",
+);
 
 const fullCi = fs.readFileSync(
   path.join(ROOT, "scripts", "ci", "full-ci.sh"),
@@ -244,24 +195,33 @@ assert.match(
 
 assert.doesNotMatch(
   ciWorkflow,
-  /TSZ_CI_EMERGENCY_SCALE_DOWN: "0"|manual full CI|manual_full_ci/,
-  "CI should not contain a documented switch that re-enables GCP-backed heavy jobs",
+  /scripts\/ci\/github-suite\.sh\s+(lint|checker-integration|dist-binaries|node-harness-prep|lsp-e2e|wasm-all)/,
+  "PR CI should not invoke removed helper suites",
+);
+
+for (const workflow of ["campaign-flag-lane.yml", "install-test.yml"]) {
+  const content = fs.readFileSync(path.join(WORKFLOW_DIR, workflow), "utf8");
+  assert.doesNotMatch(
+    content,
+    /^\s{2}pull_request:/m,
+    `${workflow} must not add a pull_request check to the default PR surface`,
+  );
+}
+
+assert.match(
+  ciWorkflow,
+  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- clippy[\s\S]+?- unit[\s\S]+?- conformance[\s\S]+?- conformance-aggregate[\s\S]+?- emit[\s\S]+?- emit-aggregate[\s\S]+?- fourslash[\s\S]+?- fourslash-aggregate/,
+  "CI Summary should wait only on clippy, unit, conformance, emit, and fourslash leaves",
 );
 
 assert.match(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- signoff-gate[\s\S]+?PR Signoff did not pass/,
-  "CI Summary should include PR Signoff so missing local testing fails the required summary",
-);
-
-assert.match(
-  ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?needs:[\s\S]+?- emit-aggregate\s*\n\s+- fourslash-aggregate[\s\S]+?"emit-aggregate",\s*\n\s+"fourslash-aggregate",/,
-  "CI Summary must require the emit-aggregate recombiner (not a raw emit shard) as the required emit leaf before reporting required full-run success",
+  /required = \{[\s\S]+?"clippy"[\s\S]+?"unit"[\s\S]+?"conformance"[\s\S]+?"conformance-aggregate"[\s\S]+?"emit"[\s\S]+?"emit-aggregate"[\s\S]+?"fourslash"[\s\S]+?"fourslash-aggregate"/,
+  "CI Summary should require the same core check set at runtime",
 );
 
 assert.doesNotMatch(
   ciWorkflow,
-  /\n\s{2}ci-summary:\n[\s\S]+?required\.update\(\{[\s\S]*?"emit",/,
+  /\n\s{2}ci-summary:\n[\s\S]+?required\.update\(/,
   "CI Summary must not require a raw emit shard leaf; the sharded emit suite is gated through emit-aggregate",
 );

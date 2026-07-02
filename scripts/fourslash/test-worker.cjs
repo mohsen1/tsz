@@ -305,6 +305,7 @@ async function main() {
     let testsRun = 0;
     for (const testFile of testFiles) {
         const testName = path.basename(testFile, ".ts");
+        process.send({ type: "start", workerId, testFile, testName });
         const startTime = Date.now();
         let shouldRestartBridge = RESTART_BRIDGE_EVERY_TEST;
         let restartReason = RESTART_BRIDGE_EVERY_TEST
