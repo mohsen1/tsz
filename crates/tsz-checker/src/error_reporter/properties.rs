@@ -513,6 +513,14 @@ impl<'a> CheckerState<'a> {
         let decl_idx = symbol.value_declaration;
         let decl_node = self.ctx.arena.get(decl_idx)?;
         let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        // Only surface the initializer's anonymous object-literal shape when the
+        // declaration has no explicit type annotation. With an annotation the
+        // declared type *is* the annotation (not the widened initializer), and
+        // tsc renders that annotated/apparent type in the index diagnostic —
+        // e.g. `t` in `const t: T = { ... }` displays as `T`, not `{ ... }`.
+        if decl.type_annotation.is_some() {
+            return None;
+        }
         let init = self
             .ctx
             .arena
