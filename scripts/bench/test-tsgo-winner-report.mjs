@@ -1198,50 +1198,31 @@ assert.match(
   /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-missing-attribution\.md"/,
   "bench workflow should generate the green tsgo winner report from merged results",
 );
+// The GCP scale-down in #15343 (`ci: stop GCP-backed tsz automation`)
+// deliberately reduced this workflow to a single manual `workflow_dispatch`
+// job with `contents: read`/`issues: read` permissions. The heavy post-report
+// pipeline it used to guard — the standalone `run-attribution-plan.mjs`
+// sidecar collection, the timestamped/`latest` `bench-runs/*` publish steps
+// (which needed `contents: write`), and the severe-alert issue filing (which
+// needed `issues: write`) — was removed with it. The winner report itself is
+// still generated inline (attribution attempts run inside
+// `tsgo-winner-report.mjs`), so this test now guards the slimmed contract:
+// generate the report, evaluate readiness, upload the merged artifact, and
+// dispatch the site redeploy.
 assert.match(
   benchWorkflow,
-  /node scripts\/bench\/run-attribution-plan\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-attribution-manifest\.json"/,
-  "bench workflow should collect attribution artifacts from the generated missing-attribution plan",
+  /node scripts\/bench\/check-artifact-readiness\.mjs[\s\S]+?"\$GITHUB_WORKSPACE\/bench-results\.json"[\s\S]+?> "\$GITHUB_WORKSPACE\/bench-results-readiness\.json"/,
+  "bench workflow should evaluate public benchmark readiness from the merged results",
 );
 assert.match(
   benchWorkflow,
-  /run-attribution-plan\.mjs[\s\S]+node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-missing-attribution\.md"/,
-  "bench workflow should refresh the winner report after attribution sidecars are collected",
+  /name: bench-results-merged\s*\n\s+path: \|\s*\n\s+bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json\s*\n\s+bench-results-missing-attribution\.md\s*\n\s+bench-results-readiness\.json/,
+  "merged benchmark artifact should upload the results, green tsgo winner report, missing-attribution plan, and readiness verdict",
 );
 assert.match(
   benchWorkflow,
-  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json\s*\n\s+bench-results-missing-attribution\.md\s*\n\s+bench-results-attribution-manifest\.json\s*\n\s+bench-results\*\.perf\.json/,
-  "merged benchmark artifact should upload the green tsgo winner report, attribution plan, manifest, and perf sidecars",
-);
-assert.match(
-  benchWorkflow,
-  /bench-runs\/\$\{TIMESTAMP\}\.tsgo-winners\.json/,
-  "benchmark publish step should write timestamped green tsgo winner reports",
-);
-assert.match(
-  benchWorkflow,
-  /bench-runs\/\$\{TIMESTAMP\}\.missing-attribution\.md/,
-  "benchmark publish step should write timestamped missing-attribution plans",
-);
-assert.match(
-  benchWorkflow,
-  /bench-runs\/latest\.tsgo-winners\.json/,
-  "benchmark publish step should write latest green tsgo winner reports",
-);
-assert.match(
-  benchWorkflow,
-  /bench-runs\/latest\.missing-attribution\.md/,
-  "benchmark publish step should write latest missing-attribution plans",
-);
-assert.match(
-  benchWorkflow,
-  /JSON\.parse\(fs\.readFileSync\("bench-results-tsgo-winners\.json", "utf8"\)\)/,
-  "severe benchmark alert should read the generated green tsgo winner report",
-);
-assert.match(
-  benchWorkflow,
-  /row\.semantic_owner_family \|\| "n\/a"/,
-  "severe benchmark alert should include semantic owner family from the winner report",
+  /actions\/workflows\/gh-pages\.yml\/dispatches/,
+  "bench workflow should dispatch the GitHub Pages site redeploy after uploading results",
 );
 
 const ghPagesWorkflow = fs.readFileSync(GH_PAGES_WORKFLOW, "utf8");
