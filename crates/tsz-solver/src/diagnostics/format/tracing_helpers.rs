@@ -61,6 +61,10 @@ impl fmt::Display for TypeDisplay<'_> {
             TypeId::SYMBOL => Some("symbol"),
             TypeId::OBJECT => Some("object"),
             TypeId::FUNCTION => Some("Function"),
+            // Tracing output keeps the internal `error` spelling on purpose:
+            // in a trace a compiler dev wants the error sentinel visually
+            // distinguished from a real `any`. User-facing diagnostics
+            // deliberately diverge and render it `any` (see `TypeFormatter`).
             TypeId::ERROR => Some("error"),
             TypeId::BOOLEAN_TRUE => Some("true"),
             TypeId::BOOLEAN_FALSE => Some("false"),
