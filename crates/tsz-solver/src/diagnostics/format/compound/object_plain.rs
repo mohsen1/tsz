@@ -245,8 +245,15 @@ impl<'a> TypeFormatter<'a> {
             }
         };
 
-        // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`
-        if prop.is_method {
+        // Method shorthand: `name(params): return_type` instead of `name: (params) => return_type`.
+        //
+        // tsc's node builder (`addPropertyToElementList`) only emits a method signature
+        // for a method-flagged symbol when it is NOT readonly; a readonly method (e.g. a
+        // method captured by `as const`, which freezes every member) falls to the
+        // property-signature branch and renders as `readonly name: (params) => return_type`.
+        // Mirror that here so diagnostic display matches tsc — and matches tsz's own
+        // declaration emitter, which already prints the property form for readonly methods.
+        if prop.is_method && !prop.readonly {
             match self.interner.lookup(prop.type_id) {
                 Some(TypeData::Function(f_id)) => {
                     let shape = self.interner.function_shape(f_id);

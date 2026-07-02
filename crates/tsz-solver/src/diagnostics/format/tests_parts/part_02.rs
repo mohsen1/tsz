@@ -260,6 +260,46 @@ fn format_object_method_shorthand() {
     );
 }
 
+#[test]
+fn format_object_readonly_method_uses_property_form() {
+    // A readonly method member (e.g. captured by `as const`) must render as a
+    // readonly property holding a function type — `readonly greet: (x: number) => string`
+    // — never as a method signature. This mirrors tsc's node builder, which only emits a
+    // method signature for a non-readonly method symbol.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+
+    let method_type = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: TypeId::NUMBER,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::STRING,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut method_prop = PropertyInfo::new(db.intern_string("greet"), method_type);
+    method_prop.is_method = true;
+    method_prop.readonly = true;
+
+    let obj = db.object(vec![method_prop]);
+    let result = fmt.format(obj);
+    // Property form with an arrow function type, not method shorthand.
+    assert!(
+        result.contains("readonly greet: (x: number) => string"),
+        "Expected readonly property form, got: {result}"
+    );
+    assert!(
+        !result.contains("greet("),
+        "Readonly method must not use method shorthand, got: {result}"
+    );
+}
+
 // =================================================================
 // Const type parameter
 // =================================================================
