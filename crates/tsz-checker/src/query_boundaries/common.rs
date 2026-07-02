@@ -1442,23 +1442,41 @@ pub(crate) fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::get_fixed_tuple_length(db, type_id)
 }
 
-/// Returns the number of leading fixed (non-rest) elements before the first rest element,
-/// when the tuple has trailing fixed elements after the rest. Returns `None` if the tuple
-/// has no rest element or no trailing fixed elements after the rest.
+/// Upper bound (exclusive) on the source element indices that array-literal /
+/// argument elaboration may report per-element against a tuple *target* that
+/// contains a rest element.
 ///
-/// For `[number, ...string[], number]`: returns `Some(1)` (1 leading fixed before rest).
-/// For `[...string[], number]`: returns `Some(0)` (0 leading fixed before rest).
-/// For `[number, ...string[]]`: returns `None` (no trailing fixed after rest).
+/// tsc's `generateLimitedTupleElements` skips any source element whose index has
+/// no *fixed* slot in the tuple-like target (`isTupleLikeType(target) &&
+/// !getPropertyOfType(target, `${i}`)`), so only the leading fixed prefix before
+/// the first rest element is ever drilled into at the element level. Positions
+/// covered by the rest element — and any trailing fixed elements, whose position
+/// depends on the source length — fall back to the whole-type tuple relation,
+/// which renders the `Type at position(s) i[ through j] in source …` chain.
+///
+/// Returns `Some(leading_fixed_count)` when the target tuple pairs a rest element
+/// with at least one other element, capping element drill-in to that prefix.
+/// Returns `None` when there is no rest element (a closed tuple — every position
+/// is a fixed slot and drills in) or when the tuple is a lone rest element
+/// (`[...T[]]`, which is array-like — tsc drills into each element).
+///
+/// For `[number, ...string[]]`: returns `Some(1)`.
+/// For `[number, ...string[], number]`: returns `Some(1)`.
+/// For `[...string[], number]`: returns `Some(0)`.
+/// For `[...string[]]`: returns `None` (array-like — drill every element).
 /// For `[number, string]`: returns `None` (no rest element).
-pub(crate) fn tuple_leading_fixed_count_before_trailing(
+pub(crate) fn tuple_leading_fixed_drill_cap(
     elements: &[tsz_solver::TupleElement],
 ) -> Option<usize> {
+    // Fixed-length tuple spreads (`[a, ...[b, c]]`) are flattened into fixed
+    // elements before interning, so a `rest` marker denotes only a genuine
+    // variable-length rest. `first_rest_pos` is therefore the flattened count of
+    // leading fixed slots, with no nested-tuple flattening left to do.
     let first_rest_pos = elements.iter().position(|e| e.rest)?;
-    let n_trailing = elements[first_rest_pos..]
-        .iter()
-        .filter(|e| !e.rest)
-        .count();
-    if n_trailing == 0 {
+    // A lone rest element `[...T[]]` is array-like: tsc reports each element
+    // individually rather than deferring to the whole-tuple relation, so it is
+    // never capped.
+    if elements.len() == 1 {
         return None;
     }
     Some(first_rest_pos)

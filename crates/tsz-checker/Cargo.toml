@@ -243,6 +243,9 @@ path = "tests/tuple_call_argument_elaboration_tests.rs"
 name = "array_source_tuple_target_elaboration_tests"
 path = "tests/array_source_tuple_target_elaboration_tests.rs"
 [[test]]
+name = "array_literal_rest_tuple_drill_cap_tests"
+path = "tests/array_literal_rest_tuple_drill_cap_tests.rs"
+[[test]]
 name = "arrow_conditional_body_return_elaboration_tests"
 path = "tests/arrow_conditional_body_return_elaboration_tests.rs"
 [[test]]
