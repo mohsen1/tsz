@@ -42,7 +42,7 @@ override so the lane is belt-and-suspenders deterministic.
 ## CI
 
 `.github/workflows/campaign-flag-lane.yml` runs this nightly and on
-`workflow_dispatch`, and on PRs labeled `campaign-flag-lane`.
+`workflow_dispatch`.
 
 ## Local run
 
