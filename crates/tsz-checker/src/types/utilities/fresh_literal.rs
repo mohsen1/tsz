@@ -75,6 +75,10 @@ impl<'a> CheckerState<'a> {
                 init_type,
             );
         }
+        // The def-id-only gate (matching `is_widening_literal_source`)
+        // intentionally excludes `widen_enum_member_type`'s legacy
+        // symbol-flags fallback, preserving the pre-boundary per-site
+        // behavior.
         if self.is_enum_member_type_for_widening(init_type) {
             return self.widen_enum_member_type(init_type);
         }
