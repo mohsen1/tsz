@@ -57,6 +57,7 @@ use tsz_common::interner::Atom;
 
 mod application;
 mod closed_eval;
+mod compound_simplification;
 mod display_alias;
 mod meta_recursion_identity;
 use meta_recursion_identity::MetaRecursionIdentity;
