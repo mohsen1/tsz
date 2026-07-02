@@ -172,8 +172,9 @@ ci_suite_caches() {
       echo "typescript-source"
       ;;
     fourslash-shard)
-      # The node-harness artifact carries built/local and fourslash cases.
-      echo ""
+      # The runner initializes the TypeScript checkout to read lib and
+      # tests/cases inputs before executing the shard.
+      echo "typescript-source"
       ;;
     node-harness-prep)
       # Builds TypeScript/built/local and scripts/emit/dist for shards.
