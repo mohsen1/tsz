@@ -211,16 +211,16 @@ if ! [[ "$PROBE_TIMEOUT_SECS" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 INTERVAL_WHOLE_SECS=${INTERVAL%%.*}
-if [[ "${INTERVAL_WHOLE_SECS:-0}" -gt "$PROBE_TIMEOUT_SECS" ]]; then
+if [[ "$INTERVAL_WHOLE_SECS" -gt "$PROBE_TIMEOUT_SECS" ]]; then
     PROBE_TIMEOUT_SECS=$INTERVAL_WHOLE_SECS
 fi
 
 sample_tree_memory_kb() {
     local root_pid=$1
-    local out="$SAFE_RUN_TMP/probe-kb"
+    local mode=${2:-$MEMORY_MODE}
     local probe_pid ticks kb
 
-    get_tree_memory_kb "$root_pid" >"$out" 2>/dev/null &
+    MEMORY_MODE="$mode" get_tree_memory_kb "$root_pid" >"$PROBE_OUT" 2>/dev/null &
     probe_pid=$!
 
     ticks=$((PROBE_TIMEOUT_SECS * 5))
@@ -235,7 +235,7 @@ sample_tree_memory_kb() {
     done
     wait "$probe_pid" 2>/dev/null || return 1
 
-    kb=$(cat "$out" 2>/dev/null)
+    kb=$(<"$PROBE_OUT")
     [[ "$kb" =~ ^[0-9]+$ ]] || return 1
     printf '%s\n' "$kb"
 }
@@ -263,7 +263,7 @@ kill_tree() {
 
 MONITOR_PID=""
 CMD_PID=""
-SAFE_RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/safe-run.XXXXXX") || exit 1
+PROBE_OUT=$(mktemp "${TMPDIR:-/tmp}/safe-run.XXXXXX") || exit 1
 
 # Tear down the monitor and every probe/sleep child it may have in
 # flight. SIGKILL, not SIGTERM: bash defers terminating signals while
@@ -288,7 +288,7 @@ cleanup() {
         kill_tree "$CMD_PID" KILL
         CMD_PID=""
     fi
-    rm -rf "$SAFE_RUN_TMP"
+    rm -f "$PROBE_OUT"
 }
 trap cleanup EXIT
 
@@ -321,17 +321,19 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mo
         if MEMORY_KB=$(sample_tree_memory_kb "$CMD_PID"); then
             probe_failures=0
         else
-            # The probe timed out or produced garbage. Fall back to a
-            # plain RSS sample for this tick so memory enforcement
-            # never silently stops, and after three consecutive
-            # failures stop paying the footprint timeout every tick.
+            # The probe timed out or produced garbage. Retry as a
+            # bounded RSS sample on the same tick so memory
+            # enforcement never silently stops, and after three
+            # consecutive failures stop paying the footprint timeout
+            # every tick. When the failed sample already was RSS,
+            # skip the tick instead of probing twice.
             probe_failures=$((probe_failures + 1))
-            if [[ "$MEMORY_MODE" != "RSS" && "$probe_failures" -ge 3 ]]; then
+            [[ "$MEMORY_MODE" != "RSS" ]] || continue
+            if [[ "$probe_failures" -ge 3 ]]; then
                 echo "[safe-run] ${MEMORY_MODE} probe failed ${probe_failures}x; switching to RSS" >&2
                 MEMORY_MODE="RSS"
             fi
-            MEMORY_KB=$(get_tree_rss_kb "$CMD_PID")
-            [[ "$MEMORY_KB" =~ ^[0-9]+$ ]] || continue
+            MEMORY_KB=$(sample_tree_memory_kb "$CMD_PID" RSS) || continue
         fi
         MEMORY_MB=$((MEMORY_KB / 1024))
 
