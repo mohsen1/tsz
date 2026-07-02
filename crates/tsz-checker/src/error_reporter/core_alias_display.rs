@@ -126,13 +126,23 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
+        self.recursive_non_generic_alias_body_display_name(ty)
+            .unwrap_or_else(|| self.format_type_diagnostic(ty))
+    }
+
+    /// The alias *name* when `ty` is the registered body of a recursive
+    /// non-generic type alias (`type Box2 = Box<Box2 | number>` → `Box2`);
+    /// `None` for every other shape so the caller picks its own fallback.
+    pub(crate) fn recursive_non_generic_alias_body_display_name(
+        &self,
+        ty: TypeId,
+    ) -> Option<String> {
         crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
             self.ctx.types.as_type_database(),
             &self.ctx.definition_store,
             ty,
         )
         .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
-        .unwrap_or_else(|| self.format_type_diagnostic(ty))
     }
 
     pub(in crate::error_reporter) fn compute_ambiguous_conditional_display(

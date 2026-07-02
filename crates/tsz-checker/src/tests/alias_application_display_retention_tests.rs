@@ -241,3 +241,39 @@ const wrong: KeysOf<{ 1: true; 0: false }> = 'nope';
         ts2322[0].message_text
     );
 }
+
+#[test]
+fn recursive_non_generic_alias_over_interface_application_keeps_alias_name() {
+    // Conformance witness `recursiveTypeReferences1.ts` (`type Box2 =
+    // Box<Box2 | number>`): the annotation restores its alias surface, and a
+    // recursive non-generic alias renders its *name* — the general formatter
+    // would unroll the cycle one evaluation step per render
+    // (`Wrap<number | Wrap<number | Cyc>>`), where tsc keeps `Cyc`.
+    let message = ts2322_message(
+        r#"
+interface Wrap_Qx<T> { value: T }
+type Cyc_Qx = Wrap_Qx<Cyc_Qx | number>;
+const sink_qx: Cyc_Qx = 42;
+"#,
+    );
+    assert_eq!(message, "Type 'number' is not assignable to type 'Cyc_Qx'.");
+}
+
+#[test]
+fn non_converging_recursive_generic_alias_unroll_keeps_annotation_surface() {
+    // The converges gate requires the recursion to have *resolved away*: an
+    // evaluation that still mentions the alias cycle (here the object unroll
+    // `{ v: RObj_Qx<number> }`) keeps the annotation spelling even though the
+    // unrolled shape is concrete and displayable.
+    let message = ts2322_message(
+        r#"
+type RObj_Qx<T> = { v: RObj_Qx<T> } | T;
+declare const probe_qx: RObj_Qx<string>;
+const sink_qx: 0 = probe_qx;
+"#,
+    );
+    assert!(
+        message.contains("RObj_Qx<string>"),
+        "self-referential unroll must keep the annotation surface, got: {message}"
+    );
+}

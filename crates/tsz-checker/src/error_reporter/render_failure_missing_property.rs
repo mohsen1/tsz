@@ -653,6 +653,13 @@ impl<'a> CheckerState<'a> {
             .assignment_target_annotation_alias_reference_verdict(anchor_idx)
             == Some(true);
         if restores_alias {
+            // A recursive non-generic alias surface restores as its *name*:
+            // the general formatter unrolls the cycle one evaluation step per
+            // render (`Box2` → `Box<number | Box<number | Box2>>` for
+            // `type Box2 = Box<Box2 | number>`), where tsc keeps `Box2`.
+            if let Some(name) = self.recursive_non_generic_alias_body_display_name(target) {
+                return name;
+            }
             // Not the pair formatter: its top-level nullish strip would undo
             // the alias restoration (`MaybeBox` must not strip to its
             // non-nullish member).

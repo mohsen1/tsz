@@ -1205,6 +1205,11 @@ impl<'a> CheckerState<'a> {
                     ) && crate::query_boundaries::diagnostics::application_reduces_to_displayable_shape(
                         self.ctx.types.as_type_database(),
                         evaluated,
+                    ) && !crate::query_boundaries::recursive_alias::evaluated_recursion_still_reaches_alias(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        target,
+                        evaluated,
                     );
                 if !converges {
                     return self.format_annotation_like_type(&display);
