@@ -406,19 +406,32 @@ impl CheckerState<'_> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
-                return TypeId::ERROR;
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME
+            || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let (left_idx, right_idx) = if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                    return TypeId::ERROR;
+                };
+                (qn.left, qn.right)
+            } else {
+                let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                    return TypeId::ERROR;
+                };
+                if access.question_dot_token {
+                    return TypeId::ERROR;
+                }
+                (access.expression, access.name_or_argument)
             };
             let left_type =
-                self.resolve_typeof_qualified_value_chain_with_request(qn.left, request, use_flow);
-            if let Some(rn) = self.ctx.arena.get(qn.right)
+                self.resolve_typeof_qualified_value_chain_with_request(left_idx, request, use_flow);
+            if let Some(rn) = self.ctx.arena.get(right_idx)
                 && let Some(ident) = self.ctx.arena.get_identifier(rn)
             {
                 if let Some(global_like_type) = self.resolve_global_like_typeof_member_access(
-                    qn.left,
+                    left_idx,
                     &ident.escaped_text,
-                    qn.right,
+                    right_idx,
                 ) {
                     return if use_flow {
                         self.apply_flow_narrowing(idx, global_like_type)
@@ -436,12 +449,12 @@ impl CheckerState<'_> {
                 let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
                 let Some(object_type_for_access) = object_type_for_access else {
                     if let Some(cause) = nullish_cause {
-                        self.report_nullish_object(qn.left, cause, true);
+                        self.report_nullish_object(left_idx, cause, true);
                     }
                     return TypeId::ERROR;
                 };
                 if let Some(cause) = nullish_cause {
-                    self.report_nullish_object(qn.left, cause, false);
+                    self.report_nullish_object(left_idx, cause, false);
                 }
                 use crate::query_boundaries::common::PropertyAccessResult;
                 match self

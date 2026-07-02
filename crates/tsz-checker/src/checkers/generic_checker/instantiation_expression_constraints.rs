@@ -150,14 +150,15 @@ impl<'a> CheckerState<'a> {
             let Some(args) = type_query.type_arguments.as_ref() else {
                 return false;
             };
-            let expr_type = if self
+            let is_member_query = self
                 .ctx
                 .arena
                 .get(type_query.expr_name)
                 .is_some_and(|expr| {
                     expr.kind == syntax_kind_ext::QUALIFIED_NAME
                         || expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                }) {
+                });
+            let expr_type = if is_member_query {
                 self.resolve_typeof_qualified_value_chain(type_query.expr_name, true)
             } else {
                 self.get_type_of_node(type_query.expr_name)
@@ -165,6 +166,36 @@ impl<'a> CheckerState<'a> {
             return self
                 .instantiation_expression_applicability_error_type(expr_type, args.nodes.len())
                 .is_some();
+        }
+
+        false
+    }
+
+    pub(crate) fn is_typeof_instantiation_node(
+        &self,
+        mut arg_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for _ in 0..10 {
+            let Some(node) = self.ctx.arena.get(arg_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+                && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+            {
+                arg_idx = wrapped.type_node;
+                continue;
+            }
+            if node.kind != syntax_kind_ext::TYPE_QUERY {
+                return false;
+            }
+            return self
+                .ctx
+                .arena
+                .get_type_query(node)
+                .and_then(|type_query| type_query.type_arguments.as_ref())
+                .is_some_and(|args| !args.nodes.is_empty());
         }
 
         false

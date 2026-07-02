@@ -307,8 +307,14 @@ impl CheckerState<'_> {
                     .nodes
                     .get(i)
                     .is_some_and(|&arg_idx| self.is_failed_typeof_instantiation_node(arg_idx));
+                let has_typeof_instantiation_node = type_args_list
+                    .nodes
+                    .get(i)
+                    .is_some_and(|&arg_idx| self.is_typeof_instantiation_node(arg_idx));
+                let failed_typeof_instantiation_arg =
+                    self.is_failed_typeof_instantiation_arg(type_arg);
                 if failed_typeof_instantiation_node
-                    || self.is_failed_typeof_instantiation_arg(type_arg)
+                    || (!has_typeof_instantiation_node && failed_typeof_instantiation_arg)
                 {
                     let constraint_resolved = self.resolve_lazy_type(constraint);
                     if let Some(&arg_idx) = type_args_list.nodes.get(i) {
