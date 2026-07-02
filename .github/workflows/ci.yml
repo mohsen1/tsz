@@ -165,7 +165,10 @@ jobs:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
       TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
-      TSZ_CI_FOURSLASH_WORKERS: 4
+      # Shard 4 repeatedly terminates hosted runners before artifact upload with
+      # higher worker counts. Keep the PR gate reliable; weighted sharding still
+      # leaves single-worker shards inside the job timeout.
+      TSZ_CI_FOURSLASH_WORKERS: 1
       TSZ_CI_FOURSLASH_TIMEOUT_MS: 60000
       TSZ_CI_CACHE_SAVE: "0"
       TSZ_CI_CACHE_RESTORE: "0"

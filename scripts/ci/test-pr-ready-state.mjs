@@ -176,6 +176,12 @@ assert.match(
   "The clippy job should run only cargo clippy through safe-run",
 );
 
+assert.match(
+  ciWorkflow,
+  /TSZ_CI_FOURSLASH_WORKERS:\s*1/,
+  "Fourslash PR shards should use one worker on hosted runners to avoid shard shutdowns before artifact upload",
+);
+
 const fullCi = fs.readFileSync(
   path.join(ROOT, "scripts", "ci", "full-ci.sh"),
   "utf8",
