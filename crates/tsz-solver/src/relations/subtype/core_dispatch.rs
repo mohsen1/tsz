@@ -1279,13 +1279,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 Some(TypeData::Application(_) | TypeData::Lazy(_))
             )
         {
-            let mut evaluated_target = self.evaluate_type(target);
-            if evaluated_target == target {
-                let raw_evaluated = self.raw_fallback_evaluate(target);
-                if raw_evaluated != target {
-                    evaluated_target = raw_evaluated;
-                }
-            }
+            let evaluated_target = self.evaluate_type_or_raw_fallback(target);
             if evaluated_target != target {
                 if let (Some(s_fn_id), Some(t_fn_id)) = (
                     function_shape_id(self.interner, source),
@@ -1309,13 +1303,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(TypeData::Application(_) | TypeData::Lazy(_))
         ) && function_shape_id(self.interner, target).is_some()
         {
-            let mut evaluated_source = self.evaluate_type(source);
-            if evaluated_source == source {
-                let raw_evaluated = self.raw_fallback_evaluate(source);
-                if raw_evaluated != source {
-                    evaluated_source = raw_evaluated;
-                }
-            }
+            let evaluated_source = self.evaluate_type_or_raw_fallback(source);
             if evaluated_source != source {
                 if let (Some(s_fn_id), Some(t_fn_id)) = (
                     function_shape_id(self.interner, evaluated_source),

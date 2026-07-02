@@ -134,9 +134,9 @@ impl EvaluationResult {
     }
 
     /// Collapse the result to a single `TypeId`, ignoring the termination
-    /// verdict. The verdict-aware path is reserved for a future stage; today
-    /// every consumer collapses here, so the emitted type and diagnostics are
-    /// byte-identical to the pre-channel evaluator.
+    /// verdict. The collapse is byte-identical to the pre-channel evaluator;
+    /// verdict-aware consumers (the relation layer's cache-taint gate, #14346)
+    /// read [`Self::is_incomplete`] before collapsing here.
     pub const fn into_type_id(self) -> TypeId {
         self.type_id
     }
