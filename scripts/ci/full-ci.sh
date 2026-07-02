@@ -354,6 +354,7 @@ run_lint() {
   cargo fmt --all --check || return $?
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
+  scripts/ci/check-bash32-compat.sh || return $?
   node scripts/bench/test-project-rows.mjs || return $?
   node scripts/bench/test-project-fixture-deprecations.mjs || return $?
   node scripts/bench/project-row-summary.mjs || return $?
@@ -519,8 +520,14 @@ checker_integration_test_names() {
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args
-  mapfile -t package_names < <(unit_test_packages)
+  local package checker_selected general_pkg_args
+  # Read one package name per line into an array. `mapfile`/`readarray` is
+  # Bash 4+, which macOS system `/bin/bash` (3.2) lacks, so use the same
+  # process-substitution read loop as `checker_integration_test_args` above.
+  local package_names=()
+  while IFS= read -r package; do
+    package_names+=("$package")
+  done < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
