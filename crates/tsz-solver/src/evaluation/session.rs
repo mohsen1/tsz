@@ -10,6 +10,7 @@
 //! delegation without implicit global state.
 
 use crate::evaluation::request::EvaluationCacheKey;
+use crate::evaluation::result::EvaluationResult;
 use crate::types::TypeId;
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
@@ -213,7 +214,13 @@ pub struct EvaluationSession {
     /// `TypeId`s currently expanded by fresh evaluators in this session.
     cross_eval_active: InFlightTypeCounter,
     /// Per-top-level-query memo for stable fresh-evaluator results.
-    query_memo: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    ///
+    /// Stores the full [`EvaluationResult`] — not just the `TypeId` — so a
+    /// retained boundary-intrinsic partial (see
+    /// [`EvaluationMemoResult::is_stable_for_per_query_memo`](crate::evaluation::result::EvaluationMemoResult::is_stable_for_per_query_memo))
+    /// carries its termination verdict back out on a hit and never leaks into a
+    /// durable cache as if it were converged.
+    query_memo: RefCell<FxHashMap<EvaluationCacheKey, EvaluationResult>>,
     /// In-flight expansion count per `Application` node across every
     /// evaluator instance in this session. A fresh evaluator re-entering a
     /// node that [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`] instances are
@@ -644,13 +651,13 @@ impl EvaluationSession {
 
     /// Look up a stable fresh-evaluator result for the current top-level query.
     #[inline]
-    pub(crate) fn query_memo_get(&self, key: EvaluationCacheKey) -> Option<TypeId> {
+    pub(crate) fn query_memo_get(&self, key: EvaluationCacheKey) -> Option<EvaluationResult> {
         self.query_memo.borrow().get(&key).copied()
     }
 
     /// Record a stable fresh-evaluator result for the current top-level query.
     #[inline]
-    pub(crate) fn query_memo_put(&self, key: EvaluationCacheKey, result: TypeId) {
+    pub(crate) fn query_memo_put(&self, key: EvaluationCacheKey, result: EvaluationResult) {
         self.query_memo.borrow_mut().insert(key, result);
     }
 
@@ -886,15 +893,21 @@ mod tests {
         let exact_optional_key = EvaluationCacheKey::new(type_id, false, true);
         let both_key = EvaluationCacheKey::new(type_id, true, true);
 
-        session.query_memo_put(default_key, TypeId(210));
-        session.query_memo_put(no_unchecked_key, TypeId(211));
-        session.query_memo_put(exact_optional_key, TypeId(212));
+        session.query_memo_put(default_key, EvaluationResult::complete(TypeId(210)));
+        session.query_memo_put(no_unchecked_key, EvaluationResult::complete(TypeId(211)));
+        session.query_memo_put(exact_optional_key, EvaluationResult::complete(TypeId(212)));
 
-        assert_eq!(session.query_memo_get(default_key), Some(TypeId(210)));
-        assert_eq!(session.query_memo_get(no_unchecked_key), Some(TypeId(211)));
+        assert_eq!(
+            session.query_memo_get(default_key),
+            Some(EvaluationResult::complete(TypeId(210)))
+        );
+        assert_eq!(
+            session.query_memo_get(no_unchecked_key),
+            Some(EvaluationResult::complete(TypeId(211)))
+        );
         assert_eq!(
             session.query_memo_get(exact_optional_key),
-            Some(TypeId(212))
+            Some(EvaluationResult::complete(TypeId(212)))
         );
         assert_eq!(session.query_memo_get(both_key), None);
 
