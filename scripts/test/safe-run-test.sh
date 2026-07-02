@@ -192,6 +192,10 @@ fi
 "$SAFE_RUN" --limit bogus -- true 2>/dev/null
 [[ $? -ne 0 ]] && ok "rejects non-numeric --limit" \
     || bad "accepted non-numeric --limit"
+# A typo'd percentage must not slip through as a 0MB limit.
+"$SAFE_RUN" --limit bogus% -- true 2>/dev/null
+[[ $? -ne 0 ]] && ok "rejects non-numeric percentage --limit" \
+    || bad "accepted non-numeric percentage --limit"
 
 echo
 echo "passed: $PASS, failed: $FAIL"

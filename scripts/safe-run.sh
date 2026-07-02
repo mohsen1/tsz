@@ -47,6 +47,10 @@ VERBOSE=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --limit)
+            if ! [[ "${2:-}" =~ ^[0-9]+%?$ ]]; then
+                echo "safe-run: --limit must be a number of MB or a percentage (got '${2:-}')" >&2
+                exit 1
+            fi
             if [[ "$2" == *% ]]; then
                 PCT=${2%\%}
                 LIMIT_MB=$((TOTAL_RAM_MB * PCT / 100))
@@ -56,6 +60,10 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --interval)
+            if ! [[ "${2:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+                echo "safe-run: --interval must be a number of seconds (got '${2:-}')" >&2
+                exit 1
+            fi
             INTERVAL="$2"
             shift 2
             ;;
@@ -75,15 +83,6 @@ done
 
 if [[ $# -eq 0 ]]; then
     echo "Usage: safe-run.sh [--limit MB|%] [--interval S] [--verbose] [--] COMMAND [ARGS...]" >&2
-    exit 1
-fi
-
-if ! [[ "$LIMIT_MB" =~ ^[0-9]+$ ]]; then
-    echo "safe-run: --limit must be a number of MB or a percentage (got '$LIMIT_MB')" >&2
-    exit 1
-fi
-if ! [[ "$INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    echo "safe-run: --interval must be a number of seconds (got '$INTERVAL')" >&2
     exit 1
 fi
 
@@ -235,9 +234,10 @@ sample_tree_memory_kb() {
     done
     wait "$probe_pid" 2>/dev/null || return 1
 
+    # The result stays in $PROBE_OUT; callers read it with the
+    # fork-free $(<...) instead of capturing this function's stdout.
     kb=$(<"$PROBE_OUT")
-    [[ "$kb" =~ ^[0-9]+$ ]] || return 1
-    printf '%s\n' "$kb"
+    [[ "$kb" =~ ^[0-9]+$ ]]
 }
 
 # ─── Kill process tree (freeze, then bottom-up) ─────────────────────
@@ -318,7 +318,7 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mo
         # Guard: process may have exited during sleep
         kill -0 "$CMD_PID" 2>/dev/null || break
 
-        if MEMORY_KB=$(sample_tree_memory_kb "$CMD_PID"); then
+        if sample_tree_memory_kb "$CMD_PID"; then
             probe_failures=0
         else
             # The probe timed out or produced garbage. Retry as a
@@ -333,8 +333,9 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mo
                 echo "[safe-run] ${MEMORY_MODE} probe failed ${probe_failures}x; switching to RSS" >&2
                 MEMORY_MODE="RSS"
             fi
-            MEMORY_KB=$(sample_tree_memory_kb "$CMD_PID" RSS) || continue
+            sample_tree_memory_kb "$CMD_PID" RSS || continue
         fi
+        MEMORY_KB=$(<"$PROBE_OUT")
         MEMORY_MB=$((MEMORY_KB / 1024))
 
         if [[ "$VERBOSE" -eq 1 ]]; then
@@ -373,6 +374,5 @@ while :; do
 done
 CMD_PID=""
 
-stop_monitor
-
+# The EXIT trap (cleanup -> stop_monitor) tears down the monitor tree.
 exit "$EXIT_CODE"
