@@ -860,9 +860,11 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        // Only widen when the initializer is a "fresh" literal expression
-                        let is_enum_member = self.is_enum_member_type_for_widening(init_type);
-                        if is_enum_member || self.is_fresh_literal_expression(param.initializer) {
+                        // Only widen when the initializer is a "fresh" literal
+                        // expression. A direct enum-member access (`p = E.A`) is
+                        // fresh and widens to `E`; a non-fresh enum reference keeps
+                        // the member type.
+                        if self.is_fresh_literal_expression(param.initializer) {
                             self.widen_initializer_type_for_mutable_binding(init_type)
                         } else {
                             init_type

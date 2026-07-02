@@ -572,12 +572,15 @@ impl<'a> CheckerState<'a> {
         // An enum-member access (`return E.A`) is a fresh enum literal in tsc:
         // `getReturnTypeFromBody` widens it to the parent enum (`E`), exactly as
         // a fresh primitive literal widens to its base (`return "x"` → `string`).
-        // The carve-outs above (a pinning contextual return, `preserve_literal_types`,
-        // an `as const` assertion, a conditional deferred to union collapse) already
+        // Freshness alone gates this: `is_fresh_literal_expression` now recognizes
+        // a direct enum-member access as fresh, so a non-fresh enum reference
+        // (`const c: E.A = E.A; return c`) correctly keeps `E.A`. The carve-outs
+        // above (a pinning contextual return, `preserve_literal_types`, an
+        // `as const` assertion, a conditional deferred to union collapse) already
         // returned, so enum members observe the same preservation rules. The widen
         // itself runs through `widen_enum_member_type` at each widenable site,
         // since the primitive literal widener leaves `TypeData::Enum` untouched.
-        self.is_fresh_literal_expression(expr_idx) || self.is_enum_member_type_for_widening(type_id)
+        self.is_fresh_literal_expression(expr_idx)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal

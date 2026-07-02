@@ -940,9 +940,10 @@ impl<'a> CheckerState<'a> {
             // Only widen when the initializer is a "fresh" literal expression
             // (direct literal in source code). Types from variable references,
             // narrowing, or computed expressions are "non-fresh" and NOT widened.
-            // EXCEPTION: Enum member types are always widened for mutable bindings.
-            let is_enum_member = self.is_enum_member_type_for_widening(init_type);
-            let widened = if is_enum_member || self.is_fresh_literal_expression(facts.initializer) {
+            // Enum members follow the same freshness rule: a direct member access
+            // (`E.A`) is fresh and widens to `E`, while a non-fresh reference
+            // (an annotated const, a property read) keeps the member type.
+            let widened = if self.is_fresh_literal_expression(facts.initializer) {
                 self.widen_initializer_type_for_mutable_binding(init_type)
             } else {
                 init_type
