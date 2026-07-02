@@ -6,6 +6,7 @@ mod infer_guard_state;
 pub(crate) mod infer_matching;
 mod infer_matching_guard_state;
 mod infer_matching_helpers;
+mod infer_matching_structure;
 pub(crate) mod infer_matching_tuples;
 pub(crate) mod infer_resolve;
 pub(crate) mod infer_variance;

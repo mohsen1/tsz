@@ -1020,6 +1020,71 @@ fn test_match_index_access() {
     assert_eq!(ctx.resolve_with_constraints(var_u).unwrap(), TypeId::NUMBER);
 }
 
+#[test]
+fn test_union_target_prefers_deferred_index_access_arm() {
+    // Match `IndexAccess(A, B)` against `IndexAccess(T, U) | F`.
+    // The deferred indexed-access arm is the structured arm: it must receive
+    // pairwise inference before the naked fallback can capture the whole source.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let (t_name, t_type) = make_type_param(&interner, "T");
+    let (u_name, u_type) = make_type_param(&interner, "U");
+    let (fallback_name, fallback_type) = make_type_param(&interner, "Fallback");
+    let _var_t = ctx.fresh_type_param(t_name, false);
+    let _var_u = ctx.fresh_type_param(u_name, false);
+    let _var_fallback = ctx.fresh_type_param(fallback_name, false);
+
+    let source = interner.intern(TypeData::IndexAccess(TypeId::STRING, TypeId::NUMBER));
+    let structured_target = interner.intern(TypeData::IndexAccess(t_type, u_type));
+    let target = interner.union(vec![structured_target, fallback_type]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let var_t = ctx.find_type_param(t_name).unwrap();
+    let var_u = ctx.find_type_param(u_name).unwrap();
+    let var_fallback = ctx.find_type_param(fallback_name).unwrap();
+
+    assert_eq!(ctx.resolve_with_constraints(var_t).unwrap(), TypeId::STRING);
+    assert_eq!(ctx.resolve_with_constraints(var_u).unwrap(), TypeId::NUMBER);
+    assert_eq!(
+        ctx.resolve_with_constraints(var_fallback).unwrap(),
+        TypeId::UNKNOWN,
+        "naked fallback must not swallow the deferred indexed-access source"
+    );
+}
+
+#[test]
+fn test_union_target_prefers_keyof_arm() {
+    // Match `keyof A` against `keyof T | F`. The structural `keyof` arm must
+    // receive inference before the naked fallback can capture the source.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let (t_name, t_type) = make_type_param(&interner, "T");
+    let (fallback_name, fallback_type) = make_type_param(&interner, "Fallback");
+    let _var_t = ctx.fresh_type_param(t_name, false);
+    let _var_fallback = ctx.fresh_type_param(fallback_name, false);
+
+    let source = interner.intern(TypeData::KeyOf(TypeId::STRING));
+    let structured_target = interner.intern(TypeData::KeyOf(t_type));
+    let target = interner.union(vec![structured_target, fallback_type]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let var_t = ctx.find_type_param(t_name).unwrap();
+    let var_fallback = ctx.find_type_param(fallback_name).unwrap();
+
+    assert_eq!(ctx.resolve_with_constraints(var_t).unwrap(), TypeId::STRING);
+    assert_eq!(
+        ctx.resolve_with_constraints(var_fallback).unwrap(),
+        TypeId::UNKNOWN,
+        "naked fallback must not swallow the `keyof` source"
+    );
+}
+
 // =============================================================================
 // Upper Bound (Source Position) Matching
 // =============================================================================
