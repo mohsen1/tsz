@@ -435,6 +435,21 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.factory().union(slices)
             };
         }
+        // Members that are all array-like distribute numeric indexed access;
+        // a non-array-like member (string, `Iterable<T>`, `Set`, ...) switches
+        // the whole union to its iterated element type, mirroring tsc's
+        // `checkIteratedTypeOrElementType`.
+        let every_member_array_like = members.iter().all(|&member| {
+            let member = query::unwrap_readonly_deep(self.ctx.types, member);
+            query::array_element_type(self.ctx.types, member).is_some()
+                || query::tuple_elements(self.ctx.types, member).is_some()
+        });
+        if !every_member_array_like {
+            let iterated = self.for_of_element_type(parent_type, false);
+            if iterated != TypeId::ANY && iterated != TypeId::ERROR {
+                return self.ctx.types.factory().array(iterated);
+            }
+        }
         let element_type = self.get_element_access_type(parent_type, TypeId::NUMBER, None);
         self.ctx.types.factory().array(element_type)
     }

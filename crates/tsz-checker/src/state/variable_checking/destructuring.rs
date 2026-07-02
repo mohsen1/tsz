@@ -347,19 +347,19 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` when an array binding pattern's destructuring source is a
     /// fresh array-literal initializer (`var [a, ...rest] = [1, 2, 3]`).
     ///
-    /// tsc widens a fresh array literal to `ElementType[]` via
-    /// `getWidenedTypeForVariableLikeDeclaration`, so a `...rest` element binds
-    /// `createArrayType(elementType)` — *not* the residual tuple slice. tsz
-    /// keeps the un-widened literal tuple as the destructuring source (for
-    /// positional `const` literal-default precision, e.g. `const [first = 0] =
-    /// [10, 20]`), so the rest path detects the fresh-literal origin and widens,
-    /// while declared and `as const` tuple sources keep slicing
-    /// (`sliceTupleType`).
+    /// tsc slices every tuple source for a `...rest` element
+    /// (`sliceTupleType`), but it slices the *widened* literal tuple, so the
+    /// slice of `[1, 'x', true]` is `[string, boolean]`. tsz keeps the
+    /// un-widened literal tuple as the destructuring source (for positional
+    /// `const` literal-default precision, e.g. `const [first = 0] = [10, 20]`
+    /// → `0 | 10`), so the rest path detects the fresh-literal origin and
+    /// widens the slice, while declared and `as const` tuple sources slice
+    /// as-is.
     ///
     /// Walks up through nested binding patterns/elements to the enclosing
     /// `VARIABLE_DECLARATION`. A `[...] as const` initializer is an
-    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it keeps slicing;
-    /// parameter sources (annotated tuple types) are never fresh.
+    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it slices
+    /// as-is; parameter sources (annotated tuple types) are never fresh.
     pub(crate) fn array_binding_source_is_fresh_array_literal(
         &self,
         pattern_idx: NodeIndex,
@@ -697,6 +697,21 @@ impl<'a> CheckerState<'a> {
                 if element_data.dot_dot_dot_token {
                     return self.union_rest_binding_type(&members, parent_type, element_index);
                 }
+                // When some member is not array-like (string, `Iterable<T>`,
+                // `Set`, ...), tsc types every position from the iterated
+                // element type of the whole union rather than distributing
+                // indexed access over the members.
+                let every_member_array_like = members.iter().all(|&member| {
+                    let member = query::unwrap_readonly_deep(self.ctx.types, member);
+                    query::array_element_type(self.ctx.types, member).is_some()
+                        || query::tuple_elements(self.ctx.types, member).is_some()
+                });
+                if !every_member_array_like {
+                    let iterated = self.for_of_element_type(parent_type, false);
+                    if iterated != TypeId::ANY && iterated != TypeId::ERROR {
+                        return iterated;
+                    }
+                }
                 let mut elem_types = Vec::new();
                 let factory = self.ctx.types.factory();
                 for &member in &members {
@@ -769,18 +784,33 @@ impl<'a> CheckerState<'a> {
                     // Array source `E[]` → `E[]`.
                     return self.rest_binding_array_type(elem);
                 } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                    // A fresh array-literal source is widened by tsc to
-                    // `createArrayType(elementType)` (it is `E[]`, not a tuple,
-                    // at the destructuring site), so the rest binds the element
-                    // array. Declared / `as const` tuple sources slice the
-                    // residual, matching tsc's `sliceTupleType`.
-                    if self.array_binding_source_is_fresh_array_literal(pattern_idx) {
+                    // Tuple sources slice the residual, matching tsc's
+                    // `sliceTupleType`. Two fresh array-literal adjustments:
+                    // a leading rest (`[...r] = [0, 1]`) never puts the
+                    // literal in tuple context, so it binds the widened
+                    // element array; and a trailing rest slices the
+                    // *widened* literal tuple (tsz keeps unwidened literal
+                    // elements for positional `const` literal-default
+                    // precision, e.g. `const [first = 0] = [10, 20]` → `0 | 10`).
+                    let is_fresh = self.array_binding_source_is_fresh_array_literal(pattern_idx);
+                    if is_fresh && element_index == 0 {
                         let elem = self.get_element_access_type(array_like, TypeId::NUMBER, None);
                         return self.rest_binding_array_type(elem);
                     }
-                    return self.tuple_rest_binding_type(&elems, element_index);
+                    let sliced = self.tuple_rest_binding_type(&elems, element_index);
+                    if is_fresh {
+                        return self.widen_initializer_type_for_mutable_binding(sliced);
+                    }
+                    return sliced;
                 }
-                return self.rest_binding_array_type(TypeId::ANY);
+                // Non-array-like iterable sources (string, `Iterable<T>`,
+                // `Map`, generators) bind an array of the iterated element
+                // type, mirroring tsc's `checkIteratedTypeOrElementType`.
+                let iterated = self.for_of_element_type(array_like, false);
+                if iterated == TypeId::ERROR {
+                    return self.rest_binding_array_type(TypeId::ANY);
+                }
+                return self.rest_binding_array_type(iterated);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
@@ -897,7 +927,15 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 }
             } else {
-                TypeId::ANY
+                // Non-array-like iterable sources (string, `Iterable<T>`,
+                // `Map`, generators) bind the iterated element type at every
+                // position, mirroring tsc's `checkIteratedTypeOrElementType`.
+                let iterated = self.for_of_element_type(array_like, false);
+                if iterated == TypeId::ERROR {
+                    TypeId::ANY
+                } else {
+                    iterated
+                }
             };
         }
 
