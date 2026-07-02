@@ -2,10 +2,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
-import {
-  PERF_TIMED_APPLICATION_PROJECT_ROWS,
-  PERF_TIMED_CANARY_PROJECT_ROWS,
-} from "./project-rows.mjs";
+import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
 const runner = fs.readFileSync("scripts/bench/bench-vs-tsgo.sh", "utf8");
@@ -14,14 +11,20 @@ const websiteData = fs.readFileSync(
   "utf8",
 );
 
-function workflowShardFilters() {
-  return [...workflow.matchAll(/^\s+- label: ([^\n]+)\n\s+timeout: \d+\n\s+filter: '([^']+)'/gm)]
-    .map((match) => ({
-      label: match[1].trim(),
-      pattern: match[2],
-      regex: new RegExp(match[2]),
-    }));
-}
+// Project-derived hotspot micro families. The runner emits several N-scaled
+// rows per family; the website classifies each family under a dedicated
+// "Project Hotspot Microbenchmarks" category. This list is the single shared
+// contract: the runner rows (via the golden list below) and the website
+// classifier (via exact set equality below) are both pinned to it, so a family
+// cannot be added to or removed from one side without the others following.
+const PROJECT_HOTSPOT_FAMILIES = [
+  "Recursive utility aliases",
+  "Indexed access hotspot",
+  "Remapped accessor hotspot",
+  "Conditional infer hotspot",
+  "Object spread hotspot",
+  "Contextual callback hotspot",
+];
 
 function expandNameTemplate(template, frames) {
   if (template.includes("$(") || template.includes("${rel") || template.includes("$label")) {
@@ -72,41 +75,51 @@ function parseBenchmarkNames() {
   return [...names].sort();
 }
 
-const shardFilters = workflowShardFilters();
+// Parse the alternation rows out of the workflow's single manual `filter`
+// input default, e.g. ^(Row A|Row B|project-c)$ -> ["Row A", "Row B", "project-c"].
+function workflowDefaultFilterRows() {
+  const match = workflow.match(/^\s+filter:\s*\n(?:\s+.*\n)*?\s+default:\s*"([^"]*)"/m);
+  assert.ok(
+    match,
+    "bench workflow should expose a single manual `filter` input with a default row set",
+  );
+  const shape = match[1].match(/^\^\((.+)\)\$$/);
+  assert.ok(
+    shape,
+    "bench workflow `filter` default must be an anchored ^(...)$ alternation so every named row is validated",
+  );
+  return shape[1].split("|").map((row) => row.trim()).filter(Boolean);
+}
 
-assert.deepEqual(
-  shardFilters.map((filter) => filter.label),
-  [
-    "compiler-files",
-    "synthetic",
-    "project-hotspots",
-    "solver-stress",
-    "algorithmic-bct",
-    "algorithmic-constraint",
-    "algorithmic-mapped",
-    "projects",
-    "bench-canaries",
-    "bench-applications",
-    "large-ts-repo",
-  ],
-  "bench workflow shard labels should stay explicit when adding timed benchmark families",
-);
+// The website `categoryFor` classifier is the source of truth for which
+// benchmark families are "Project Hotspot Microbenchmarks". Parse its regex
+// alternation so the test compares the shared contract against the real
+// classifier instead of a hand-copied duplicate of it.
+function websiteHotspotFamilies() {
+  const match = websiteData.match(
+    /\/([^/\n]+)\/i\.test\(name\)\)\s*\{\s*\n\s*return "Project Hotspot Microbenchmarks";/,
+  );
+  assert.ok(
+    match,
+    "website categoryFor should classify project hotspot micro rows via a family regex",
+  );
+  return match[1].split("|").map((family) => family.trim());
+}
 
 const benchmarkNames = parseBenchmarkNames();
-const missing = benchmarkNames.filter((name) => (
-  !shardFilters.some((filter) => filter.regex.test(name))
+
+// The bench workflow was intentionally collapsed to a single GCP-free manual
+// run (see #15343), so there is no longer a per-family shard matrix to audit.
+// The coverage that still matters is that the runner, the website category
+// logic, and the workflow's single selection knob stay in sync with the real
+// benchmark and project rows.
+
+// 1. The runner's project-derived hotspot micro rows, computed from the family
+//    predicate over the single source of truth (bench-vs-tsgo.sh) instead of a
+//    now-removed workflow shard filter.
+const projectHotspotRows = benchmarkNames.filter((name) => (
+  PROJECT_HOTSPOT_FAMILIES.some((family) => name.includes(family))
 ));
-
-assert.deepEqual(
-  missing,
-  [],
-  "bench workflow shard filters should cover every statically named bench-vs-tsgo benchmark",
-);
-
-const projectHotspotFilter = shardFilters.find((filter) => filter.label === "project-hotspots");
-assert.ok(projectHotspotFilter, "bench workflow should have a dedicated project-hotspots shard");
-
-const projectHotspotRows = benchmarkNames.filter((name) => projectHotspotFilter.regex.test(name));
 assert.deepEqual(
   projectHotspotRows,
   [
@@ -134,37 +147,32 @@ assert.deepEqual(
     "Remapped accessor hotspot N=25",
     "Remapped accessor hotspot N=50",
   ],
-  "project-hotspots shard should publish all current project-derived micro rows",
+  "bench runner should publish all current project-derived hotspot micro rows",
 );
 
-assert.match(
-  websiteData,
-  /Project Hotspot Microbenchmarks/,
-  "website benchmark data should classify project-derived micro rows separately",
-);
-assert.match(
-  websiteData,
-  /Recursive utility aliases\|Indexed access hotspot\|Remapped accessor hotspot\|Conditional infer hotspot\|Object spread hotspot\|Contextual callback hotspot/,
-  "website benchmark category logic should recognize every project-hotspots shard row family",
-);
-
-// The dedicated passing-canary perf shard must time exactly the rows opted in
-// via PERF_TIMED_CANARY_PROJECT_ROWS, so the single source of truth in
-// project-rows.mjs cannot drift away from the bench workflow filter.
-const benchCanariesFilter = shardFilters.find((filter) => filter.label === "bench-canaries");
-assert.ok(benchCanariesFilter, "bench workflow should have a dedicated bench-canaries shard");
+// 2. The website benchmark classifier must recognize exactly the shared
+//    hotspot family contract. Exact set equality (rather than a per-family
+//    substring check) means the website and the contract cannot silently
+//    diverge: adding or removing a family on either side fails this test.
 assert.deepEqual(
-  [...benchCanariesFilter.pattern.split("|")].sort(),
-  [...PERF_TIMED_CANARY_PROJECT_ROWS].sort(),
-  "bench-canaries shard filter must match PERF_TIMED_CANARY_PROJECT_ROWS exactly",
+  [...websiteHotspotFamilies()].sort(),
+  [...PROJECT_HOTSPOT_FAMILIES].sort(),
+  "website hotspot classifier families must match the shared PROJECT_HOTSPOT_FAMILIES contract exactly",
 );
 
-const benchApplicationsFilter = shardFilters.find((filter) => filter.label === "bench-applications");
-assert.ok(benchApplicationsFilter, "bench workflow should have a dedicated bench-applications shard");
+// 3. The collapsed workflow's single manual `filter` default replaces the old
+//    per-family shard matrix as the one knob that selects which rows run. It
+//    must reference only real benchmark or project rows so the default can
+//    never silently name a row that no longer exists.
+const knownRows = new Set([
+  ...benchmarkNames,
+  ...Object.keys(PROJECT_ROWS_BY_NAME),
+]);
+const unknownDefaultRows = workflowDefaultFilterRows().filter((row) => !knownRows.has(row));
 assert.deepEqual(
-  [...benchApplicationsFilter.pattern.split("|")].sort(),
-  [...PERF_TIMED_APPLICATION_PROJECT_ROWS].sort(),
-  "bench-applications shard filter must match PERF_TIMED_APPLICATION_PROJECT_ROWS exactly",
+  unknownDefaultRows,
+  [],
+  "bench workflow default filter must reference only real benchmark or project rows",
 );
 
 console.log("bench workflow micro coverage tests passed");
