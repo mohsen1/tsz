@@ -25,7 +25,7 @@
 //! holding the real work — converge and breaks the churn.
 
 use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
-use crate::evaluation::result::EvaluationMemoResult;
+use crate::evaluation::result::{EvaluationMemoResult, EvaluationResult};
 use crate::evaluation::session::EvaluationSession;
 use crate::types::TypeId;
 
@@ -37,16 +37,24 @@ use crate::types::TypeId;
 pub(crate) fn query_memo_get(
     session: &EvaluationSession,
     key: EvaluationCacheKey,
-) -> Option<TypeId> {
+) -> Option<EvaluationResult> {
     session.query_memo_get(key)
 }
 
-/// Record a stable fresh-evaluator result for the current top-level query.
+/// Record a window-scoped fresh-evaluator result for the current top-level
+/// query.
 ///
-/// Callers must only store results that did not hit a recursion/budget limit
-/// (`TypeEvaluator::recursion_limit_hit`), so an opaque cycle/budget bail is
-/// never cached and reused as if it were the converged answer.
-pub(crate) fn query_memo_put(session: &EvaluationSession, key: EvaluationCacheKey, result: TypeId) {
+/// Callers store either a converged result or a *boundary-intrinsic* bail — a
+/// partial reproducible from the key alone (see
+/// [`EvaluationMemoResult::is_stable_for_per_query_memo`]). Ambient/global-budget
+/// bails are never stored, and a stored partial keeps its incomplete verdict
+/// (via [`EvaluationResult`]) so a hit is never promoted into a durable cache as
+/// if it were the converged answer.
+pub(crate) fn query_memo_put(
+    session: &EvaluationSession,
+    key: EvaluationCacheKey,
+    result: EvaluationResult,
+) {
     session.query_memo_put(key, result);
 }
 
@@ -91,7 +99,10 @@ pub(crate) fn memoized_eval_with_stability(
 ) -> Option<EvaluationMemoResult> {
     let key = request.cache_key();
     if let Some(cached) = query_memo_get(session, key) {
-        return Some(EvaluationMemoResult::cached(cached));
+        // Reconstruct from the stored result so a retained boundary-intrinsic
+        // partial keeps its incomplete verdict on the way out (and thus stays
+        // out of durable caches), while a converged result round-trips stable.
+        return Some(EvaluationMemoResult::from_memoized_result(cached));
     }
     let _cross = match CrossEvalExpansionGuard::enter(session, request.type_id()) {
         CrossEvalExpansionState::Entered(guard) => guard,
@@ -99,7 +110,7 @@ pub(crate) fn memoized_eval_with_stability(
     };
     let memo_result = compute();
     if memo_result.is_stable_for_per_query_memo() {
-        query_memo_put(session, key, memo_result.type_id());
+        query_memo_put(session, key, memo_result.result());
     }
     Some(memo_result)
 }
@@ -161,14 +172,32 @@ mod tests {
         let no_unchecked_key = EvaluationCacheKey::new(t, true, false);
         let exact_optional_key = EvaluationCacheKey::new(t, false, true);
         let both_key = EvaluationCacheKey::new(t, true, true);
-        query_memo_put(&session, default_key, TypeId(70));
-        query_memo_put(&session, no_unchecked_key, TypeId(71));
-        query_memo_put(&session, exact_optional_key, TypeId(72));
-        assert_eq!(query_memo_get(&session, default_key), Some(TypeId(70)));
-        assert_eq!(query_memo_get(&session, no_unchecked_key), Some(TypeId(71)));
+        query_memo_put(
+            &session,
+            default_key,
+            EvaluationResult::complete(TypeId(70)),
+        );
+        query_memo_put(
+            &session,
+            no_unchecked_key,
+            EvaluationResult::complete(TypeId(71)),
+        );
+        query_memo_put(
+            &session,
+            exact_optional_key,
+            EvaluationResult::complete(TypeId(72)),
+        );
+        assert_eq!(
+            query_memo_get(&session, default_key),
+            Some(EvaluationResult::complete(TypeId(70)))
+        );
+        assert_eq!(
+            query_memo_get(&session, no_unchecked_key),
+            Some(EvaluationResult::complete(TypeId(71)))
+        );
         assert_eq!(
             query_memo_get(&session, exact_optional_key),
-            Some(TypeId(72))
+            Some(EvaluationResult::complete(TypeId(72)))
         );
         assert_eq!(query_memo_get(&session, both_key), None);
         reset_query_memo(&session);
@@ -197,7 +226,7 @@ mod tests {
         assert_eq!(second, Some(TypeId(81)));
         assert_eq!(
             query_memo_get(&session, request.cache_key()),
-            Some(TypeId(81))
+            Some(EvaluationResult::complete(TypeId(81)))
         );
         reset_query_memo(&session);
     }
@@ -221,7 +250,7 @@ mod tests {
         assert_eq!(first, Some(TypeId(90)));
         assert_eq!(
             query_memo_get(&session, request.cache_key()),
-            Some(TypeId(90))
+            Some(EvaluationResult::complete(TypeId(90)))
         );
 
         let second = memoized_eval(&session, request, || {
@@ -233,7 +262,7 @@ mod tests {
         assert_eq!(calls, 1);
         assert_eq!(
             query_memo_get(&session, request.cache_key()),
-            Some(TypeId(90))
+            Some(EvaluationResult::complete(TypeId(90)))
         );
         reset_query_memo(&session);
     }

@@ -66,6 +66,42 @@ pub enum TerminationKind {
     IterationExceeded,
 }
 
+impl TerminationKind {
+    /// Whether this bail class is a function of the evaluated *key alone*.
+    ///
+    /// A fresh evaluator (spun up at every cross-evaluator boundary —
+    /// `SubtypeChecker::evaluate_type`, infer-pattern matching,
+    /// `relations::judge`) starts its per-instance recursion guard with the
+    /// iteration counter at zero. [`IterationExceeded`](Self::IterationExceeded)
+    /// counts that evaluator's *total* enter attempts, so for a given boundary
+    /// key it trips at the same point no matter which evaluator walks it: the
+    /// opaque partial it surfaces is *reproducible from the key*, and retaining
+    /// it in the window-scoped per-query memo cannot change the emitted type —
+    /// it only removes the redundant cross-evaluator re-walk.
+    ///
+    /// The other kinds are excluded:
+    /// - [`DepthExceeded`](Self::DepthExceeded) is per-evaluator too, but its
+    ///   bail point is the *current stack nesting*, which depends on how the
+    ///   node was reached rather than on the node alone, so a fresh boundary
+    ///   walk of the same key can converge where an inline one bailed. It stays
+    ///   excluded until that reproducibility is established.
+    /// - [`FuelExhausted`](Self::FuelExhausted),
+    ///   [`SolverStackFrames`](Self::SolverStackFrames),
+    ///   [`CrossEvalCycle`](Self::CrossEvalCycle), and
+    ///   [`QueryOpBudget`](Self::QueryOpBudget) are driven by process- or
+    ///   run-global budgets a fresh evaluator does **not** reset; their bail
+    ///   point moves with ambient state, so their partial is not reproducible
+    ///   from the key and must never be reused as if it were.
+    ///
+    /// Used to decide whether a guard-truncated partial may be retained in the
+    /// window-scoped per-query memo (see
+    /// [`EvaluationMemoResult::is_stable_for_per_query_memo`]). Durable,
+    /// depth-agnostic caches refuse every incomplete result regardless.
+    pub(crate) const fn is_boundary_intrinsic(self) -> bool {
+        matches!(self, Self::IterationExceeded)
+    }
+}
+
 /// Whether an evaluation walk ran to completion or was bounded short.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Termination {
@@ -248,6 +284,11 @@ impl EvaluationMemoResult {
 
     /// Construct a completed memo result read from a cache that stores only
     /// stable entries.
+    ///
+    /// Superseded in the per-query memo read path by [`Self::from_memoized_result`],
+    /// which preserves the stored termination verdict; retained for tests that
+    /// pin the stable-complete shape directly.
+    #[cfg(test)]
     pub(crate) const fn cached(type_id: TypeId) -> Self {
         Self {
             result: EvaluationResult::complete(type_id),
@@ -290,11 +331,54 @@ impl EvaluationMemoResult {
 
     /// Whether this result can be stored in the thread-local per-query memo.
     ///
-    /// `UnresolvedDef` remains visible to run-state gates such as closed-eval
-    /// publication, but a complete memo result is reusable within the same
-    /// coherent analysis window.
+    /// The per-query memo is window-scoped (cleared when a fresh top-level query
+    /// begins) and read only at cross-evaluator boundaries, where every walk
+    /// starts from a fresh per-instance guard. Two families qualify:
+    ///
+    /// * a converged result whose request state is window-safe (`Stable` /
+    ///   `UnresolvedDef`) — `UnresolvedDef` remains visible to run-state gates
+    ///   such as closed-eval publication, but a complete memo result is reusable
+    ///   within the same coherent analysis window; and
+    /// * a guard-truncated result whose bail is *boundary-intrinsic*
+    ///   ([`TerminationKind::is_boundary_intrinsic`]) — a fresh evaluator
+    ///   re-walking the same boundary key reproduces the identical opaque
+    ///   partial, so serving it from the window memo removes the cross-evaluator
+    ///   re-walk storm on deep recursive template-literal / conditional aliases
+    ///   without changing the emitted type. A hit reconstructs the incomplete
+    ///   verdict (see [`Self::from_memoized_result`]), so the partial stays out
+    ///   of durable, depth-agnostic caches exactly as an in-line bail would.
     pub(crate) const fn is_stable_for_per_query_memo(self) -> bool {
-        self.result.is_complete() && self.request_stability.is_stable_for_per_query_memo()
+        match self.result.termination() {
+            Termination::Complete => self.request_stability.is_stable_for_per_query_memo(),
+            Termination::Incomplete { kind, .. } => kind.is_boundary_intrinsic(),
+        }
+    }
+
+    /// The typed evaluation result this memo wraps.
+    pub(crate) const fn result(self) -> EvaluationResult {
+        self.result
+    }
+
+    /// Reconstruct a memo result from an [`EvaluationResult`] previously stored
+    /// in the window-scoped per-query memo.
+    ///
+    /// The stored result's termination verdict is preserved, so an opaque
+    /// boundary-intrinsic partial keeps its incomplete verdict on the way out:
+    /// [`Self::is_stable_for_depth_agnostic_cache`] stays `false` and downstream
+    /// consumers (the subtype checker's `eval_cache`, closed-eval publication)
+    /// refuse to promote it into a durable cache — identical to how they treat a
+    /// freshly-computed bail. A converged result round-trips as `Stable`.
+    pub(crate) const fn from_memoized_result(result: EvaluationResult) -> Self {
+        // A converged hit round-trips `Stable` (matching the pre-existing
+        // `cached()` read path); a stored boundary-intrinsic partial round-trips
+        // `IncompleteVerdict` so it keeps its taint and stays out of durable
+        // caches. `for_depth_agnostic_memo` owns the cache-stability derivation.
+        let request_stability = if result.is_complete() {
+            EvaluationRequestStability::Stable
+        } else {
+            EvaluationRequestStability::IncompleteVerdict
+        };
+        Self::for_depth_agnostic_memo(result, request_stability)
     }
 
     /// Collapse to the request's `TypeId` while preserving today's behavior for
@@ -354,7 +438,7 @@ mod tests {
             EvaluationRequestStability::Stable,
         );
 
-        assert_eq!(stable.evaluation_result(), complete);
+        assert_eq!(stable.result(), complete);
         assert_eq!(stable.type_id(), TypeId::STRING);
         assert_eq!(stable.into_type_id(), TypeId::STRING);
         assert_eq!(stable.cache_stability, EvaluationMemoStability::Stable);
@@ -438,10 +522,7 @@ mod tests {
 
         assert_eq!(cached.type_id(), TypeId::BOOLEAN);
         assert!(cached.is_stable_for_depth_agnostic_cache());
-        assert_eq!(
-            cached.evaluation_result().termination(),
-            Termination::Complete
-        );
+        assert_eq!(cached.result().termination(), Termination::Complete);
     }
 
     #[test]
@@ -452,5 +533,96 @@ mod tests {
         assert_eq!(result.into_type_id(), TypeId::STRING);
         assert!(!result.is_stable_for_depth_agnostic_cache());
         assert!(!result.is_stable_for_per_query_memo());
+    }
+
+    #[test]
+    fn boundary_intrinsic_names_the_iteration_bail_only() {
+        // The per-evaluator total-work counter resets at every fresh-evaluator
+        // boundary, so an iteration bail reproduces from the key alone.
+        assert!(TerminationKind::IterationExceeded.is_boundary_intrinsic());
+        // Depth is per-evaluator but reach-dependent; ambient/global budgets do
+        // not reset per evaluator — all stay excluded.
+        assert!(!TerminationKind::DepthExceeded.is_boundary_intrinsic());
+        assert!(!TerminationKind::FuelExhausted.is_boundary_intrinsic());
+        assert!(!TerminationKind::SolverStackFrames.is_boundary_intrinsic());
+        assert!(!TerminationKind::CrossEvalCycle.is_boundary_intrinsic());
+        assert!(!TerminationKind::QueryOpBudget.is_boundary_intrinsic());
+    }
+
+    #[test]
+    fn per_query_memo_retains_boundary_intrinsic_partials_but_never_durably() {
+        // A converged result keeps the pre-existing behavior: window- and
+        // depth-agnostic-cacheable.
+        let complete = EvaluationMemoResult::for_depth_agnostic_memo(
+            EvaluationResult::complete(TypeId::STRING),
+            EvaluationRequestStability::Stable,
+        );
+        assert!(complete.is_stable_for_per_query_memo());
+        assert!(complete.is_stable_for_depth_agnostic_cache());
+
+        // A boundary-intrinsic bail is retained in the window memo (kills the
+        // re-walk storm) but stays out of every durable cache.
+        let partial = EvaluationMemoResult::for_depth_agnostic_memo(
+            EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::IterationExceeded),
+            EvaluationRequestStability::IncompleteVerdict,
+        );
+        assert!(
+            partial.is_stable_for_per_query_memo(),
+            "iteration-exceeded partial should be window-retainable"
+        );
+        assert!(
+            !partial.is_stable_for_depth_agnostic_cache(),
+            "iteration-exceeded partial must never reach a durable cache"
+        );
+        assert_eq!(partial.into_type_id(), TypeId::NUMBER);
+
+        // Reach-dependent and ambient/global-budget bails stay excluded from the
+        // window memo too, so a budget-dependent partial is never reused as a
+        // converged answer.
+        for kind in [
+            TerminationKind::DepthExceeded,
+            TerminationKind::FuelExhausted,
+            TerminationKind::SolverStackFrames,
+            TerminationKind::CrossEvalCycle,
+            TerminationKind::QueryOpBudget,
+        ] {
+            let partial = EvaluationMemoResult::for_depth_agnostic_memo(
+                EvaluationResult::incomplete(TypeId::NUMBER, kind),
+                EvaluationRequestStability::IncompleteVerdict,
+            );
+            assert!(
+                !partial.is_stable_for_per_query_memo(),
+                "{kind:?} partial must not be window-retained"
+            );
+            assert!(!partial.is_stable_for_depth_agnostic_cache());
+        }
+    }
+
+    #[test]
+    fn from_memoized_result_preserves_the_stored_verdict() {
+        // A converged stored result round-trips as fully stable.
+        let complete =
+            EvaluationMemoResult::from_memoized_result(EvaluationResult::complete(TypeId::BOOLEAN));
+        assert_eq!(complete.type_id(), TypeId::BOOLEAN);
+        assert!(complete.is_stable_for_depth_agnostic_cache());
+        assert!(complete.is_stable_for_per_query_memo());
+
+        // A stored boundary-intrinsic partial comes back out still incomplete:
+        // window-retainable but refused by durable caches, so a hit is never
+        // promoted into a depth-agnostic cache as if it were converged.
+        let partial = EvaluationMemoResult::from_memoized_result(EvaluationResult::incomplete(
+            TypeId::NUMBER,
+            TerminationKind::IterationExceeded,
+        ));
+        assert_eq!(partial.into_type_id(), TypeId::NUMBER);
+        assert!(!partial.is_stable_for_depth_agnostic_cache());
+        assert!(partial.is_stable_for_per_query_memo());
+        assert_eq!(
+            partial.result().termination(),
+            Termination::Incomplete {
+                kind: TerminationKind::IterationExceeded,
+                partial: TypeId::NUMBER,
+            }
+        );
     }
 }
