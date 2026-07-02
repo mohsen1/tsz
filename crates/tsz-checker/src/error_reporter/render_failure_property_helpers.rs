@@ -117,9 +117,54 @@ impl<'a> CheckerState<'a> {
         }
 
         // `Record<E, V>`-style applications carry the enum as a type argument.
-        let (_, args) = diagnostic_query::application_info(self.ctx.types, target)?;
-        args.into_iter()
-            .find_map(|arg| self.enum_key_property_name_for_display(&property_key, arg))
+        if let Some((_, args)) = diagnostic_query::application_info(self.ctx.types, target)
+            && let Some(display) = args
+                .into_iter()
+                .find_map(|arg| self.enum_key_property_name_for_display(&property_key, arg))
+        {
+            return Some(display);
+        }
+
+        // A mapped type over a *concrete* key constraint (`{ [K in E]: V }` where
+        // `E` is a fully-known enum, not a type parameter) is instantiated to a
+        // plain object during lowering, so neither the `Mapped` node nor the enum
+        // origin survives on the resulting type. The iteration constraint is then
+        // recoverable only from the alias declaration's AST, where the mapped
+        // syntax (and its `in E` clause) is still intact.
+        let constraint = self.alias_declaration_mapped_key_constraint(target)?;
+        self.enum_key_property_name_for_display(&property_key, constraint)
+    }
+
+    /// Recover the key constraint of a mapped type whose alias body was
+    /// eagerly instantiated to a plain object (`type M = { [K in E]: V }`).
+    ///
+    /// The concrete-key mapped type is materialized during lowering, so the
+    /// `Mapped` node is gone from the resolved type. The declaration AST still
+    /// carries the `{ [K in E]: V }` syntax, so resolve the alias `target`
+    /// refers to and read the `in <constraint>` clause off its mapped-type node.
+    /// Restricted to plain key-domain mapped types (no `as` name-type remap),
+    /// where every generated key is exactly an iteration-constraint member.
+    fn alias_declaration_mapped_key_constraint(&mut self, target: TypeId) -> Option<TypeId> {
+        use tsz_parser::parser::NodeIndex;
+        let def_id = diagnostic_query::lazy_def_id(self.ctx.types, target)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(target))?;
+        let symbol_id = tsz_binder::SymbolId(self.ctx.definition_store.get(def_id)?.symbol_id?);
+        let body_node = self.type_alias_type_node(symbol_id)?;
+        let mapped_node = self.ctx.arena.get(body_node)?;
+        // `get_mapped_type` is kind-gated (returns `None` unless the node is a
+        // `MAPPED_TYPE`), so a plain `type M = Foo` alias falls through here.
+        let mapped = self.ctx.arena.get_mapped_type(mapped_node)?;
+        // A `[K in E as R]` name-type remap breaks the 1:1 key↔member
+        // correspondence, so this recovery applies only to the plain form.
+        if mapped.name_type != NodeIndex::NONE {
+            return None;
+        }
+        let type_param_node = self.ctx.arena.get(mapped.type_parameter)?;
+        let type_param = self.ctx.arena.get_type_parameter(type_param_node)?;
+        if type_param.constraint == NodeIndex::NONE {
+            return None;
+        }
+        Some(self.get_type_from_type_node(type_param.constraint))
     }
 
     /// Recover the key constraint (e.g. the enum `E` in `{ [K in E]: V }`) of a
