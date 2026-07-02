@@ -203,17 +203,31 @@ kill_tree() {
     kill -"$sig" "$pid" 2>/dev/null || true
 }
 
+# ─── Stop the monitor and its whole subtree ─────────────────────────
+# A bare `kill "$MONITOR_PID"` is not enough: the monitor shell is
+# usually blocked in a foreground child (sleep/ps/footprint). On macOS a
+# slow or wedged `footprint` invocation defers a plain TERM to the
+# monitor shell indefinitely, leaving the wrapper hung after the wrapped
+# command has already exited (issue #15439). Tearing down the monitor's
+# entire subtree — children first so the in-flight child dies and the
+# shell unblocks, then escalating to KILL which cannot be deferred —
+# makes teardown bounded regardless of what the monitor is blocked on.
+
+stop_monitor() {
+    [[ -n "$MONITOR_PID" ]] || return 0
+    kill_tree "$MONITOR_PID" TERM
+    kill_tree "$MONITOR_PID" KILL
+    wait "$MONITOR_PID" 2>/dev/null || true
+    MONITOR_PID=""
+}
+
 # ─── Cleanup on exit ────────────────────────────────────────────────
 
 MONITOR_PID=""
 CMD_PID=""
 
 cleanup() {
-    if [[ -n "$MONITOR_PID" ]]; then
-        kill "$MONITOR_PID" 2>/dev/null || true
-        wait "$MONITOR_PID" 2>/dev/null || true
-        MONITOR_PID=""
-    fi
+    stop_monitor
     if [[ -n "$CMD_PID" ]] && kill -0 "$CMD_PID" 2>/dev/null; then
         kill_tree "$CMD_PID" TERM
         sleep 1
@@ -280,8 +294,6 @@ CMD_PID=""
 
 # ─── Stop monitor ───────────────────────────────────────────────────
 
-kill "$MONITOR_PID" 2>/dev/null || true
-wait "$MONITOR_PID" 2>/dev/null || true
-MONITOR_PID=""
+stop_monitor
 
 exit "$EXIT_CODE"
