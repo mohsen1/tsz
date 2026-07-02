@@ -37,9 +37,12 @@ toggle = "off";
 "#,
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322),
-        "expected TS2322 — `toggle` keeps non-fresh type '\"on\"'. Got: {diags:?}"
+        diags
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("\"on\"")),
+        "expected TS2322 against '\"on\"' — `toggle` keeps the non-fresh literal. Got: {diags:?}"
     );
+    assert_eq!(diags.len(), 1, "no other diagnostics expected: {diags:?}");
 }
 
 /// An unannotated const literal is a widening literal type: copying it into a
@@ -85,8 +88,31 @@ let other: typeof pinned = Signal.Stop;
 "#,
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322),
-        "expected TS2322 — `typeof pinned` is `Signal.Go`. Got: {diags:?}"
+        diags
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("Signal.Go")),
+        "expected TS2322 against `Signal.Go` — `typeof pinned` keeps the member type. Got: {diags:?}"
+    );
+    assert_eq!(diags.len(), 1, "no other diagnostics expected: {diags:?}");
+}
+
+/// Known drift from tsc, pinned (#15445): tsc gates the enum arm on
+/// freshness, so an *annotated* enum-member const reference keeps `E.A` and
+/// the re-assignment errors; tsz's type-based gate widens it to `E` and
+/// accepts the write. Flip this expectation when fixing #15445.
+#[test]
+fn annotated_enum_const_reference_currently_still_widens() {
+    let diags = check_strict(
+        r#"
+enum Level { Low, High }
+const pinnedLevel: Level.Low = Level.Low;
+let cursor = pinnedLevel;
+cursor = Level.High;
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "pinned current behavior — `cursor` widens to `Level` (tsc keeps `Level.Low`; #15445): {diags:?}"
     );
 }
 
@@ -119,8 +145,10 @@ step();
 "#,
     );
     assert!(
-        diags.iter().any(|(code, _)| *code == 2322),
-        "expected exactly the string-to-number TS2322. Got: {diags:?}"
+        diags
+            .iter()
+            .any(|(code, msg)| *code == 2322 && msg.contains("'number'")),
+        "expected the string-to-number TS2322 on the '\"two\"' write. Got: {diags:?}"
     );
     assert_eq!(
         diags.len(),

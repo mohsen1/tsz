@@ -45,27 +45,40 @@ impl<'a> CheckerState<'a> {
     /// member value (`E.A` widens to `E` even though it is not an AST
     /// literal); false for non-fresh sources — variable references, narrowed
     /// values, computed expressions — which keep their type.
+    /// [`Self::widen_mutable_binding_initializer_type`] applies the same rule
+    /// in widening form.
     pub(crate) fn is_widening_literal_source(&self, expr: NodeIndex, type_id: TypeId) -> bool {
         self.is_fresh_literal_expression(expr) || self.is_enum_member_type_for_widening(type_id)
     }
 
-    /// Widen a mutable binding's initializer type exactly when `tsc` would:
-    /// the initializer is a fresh literal expression, or the type is an enum
-    /// member literal. Non-fresh, non-enum sources keep their type.
+    /// Widen a mutable binding's initializer type when the initializer is a
+    /// fresh literal expression or the type is an enum member literal;
+    /// non-fresh, non-enum sources keep their type. This is the widening
+    /// form of [`Self::is_widening_literal_source`].
+    ///
+    /// Known drift from `tsc`: `tsc` also gates the enum arm on freshness
+    /// (an *annotated* enum-member const reference does not widen), while
+    /// tsz widens any enum-member-typed initializer. Pinned in
+    /// `fresh_literal_boundary_tests` and tracked as a parity bug (#15445).
     pub(crate) fn widen_mutable_binding_initializer_type(
         &mut self,
         initializer: NodeIndex,
         init_type: TypeId,
     ) -> TypeId {
-        // Freshness first: a direct literal token answers on a cheap AST kind
-        // check, and `widen_initializer_type_for_mutable_binding` owns the
-        // enum-member arm internally, so the enum resolution runs at most
-        // once on either path.
+        // Freshness first: a direct literal token answers on a cheap AST
+        // kind check, and a fresh literal expression never produces a bare
+        // enum-member type (enum members arrive through property accesses,
+        // which are non-fresh), so the fresh arm skips the enum probe.
         if self.is_fresh_literal_expression(initializer) {
-            return self.widen_initializer_type_for_mutable_binding(init_type);
+            return crate::query_boundaries::widening::widen_type_for_mutable_binding(
+                self.ctx.types,
+                init_type,
+            );
         }
-        self.enum_member_widened_parent_type(init_type)
-            .unwrap_or(init_type)
+        if self.is_enum_member_type_for_widening(init_type) {
+            return self.widen_enum_member_type(init_type);
+        }
+        init_type
     }
 
     /// Widen `ty` to its base only when `expr` is a fresh literal
