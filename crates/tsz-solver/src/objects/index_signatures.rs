@@ -141,6 +141,104 @@ impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
     }
 }
 
+/// Visitor for resolving symbol index signatures.
+///
+/// A `symbol` index signature (`{ [k: symbol]: V }`) — including the symbol
+/// component of a `PropertyKey` / `string | number | symbol` index (e.g.
+/// `Record<PropertyKey, V>`) — lives in its own [`ObjectShape::symbol_index`]
+/// slot, distinct from the `string` index. Only such a signature accepts a
+/// `symbol` key; a bare `string` index does not. This resolver reports the
+/// value type of that genuine symbol-accepting signature so callers can tell a
+/// real symbol index apart from a `string`-index fallthrough.
+struct SymbolIndexResolver<'a, R: TypeResolver> {
+    db: &'a dyn TypeDatabase,
+    resolver: &'a R,
+}
+
+impl<R: TypeResolver> TypeVisitor for SymbolIndexResolver<'_, R> {
+    type Output = Option<TypeId>;
+
+    fn visit_intrinsic(&mut self, _kind: crate::types::IntrinsicKind) -> Self::Output {
+        None
+    }
+
+    fn visit_literal(&mut self, _value: &crate::LiteralValue) -> Self::Output {
+        None
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        shape.symbol_index_signature().map(|idx| idx.value_type)
+    }
+
+    fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
+        // `CallableShape` carries no dedicated `symbol_index` slot; a symbol
+        // index (rare on a callable) is merged into `string_index` with
+        // `key_type == SYMBOL`.
+        let shape = self.db.callable_shape(CallableShapeId(shape_id));
+        shape
+            .string_index
+            .as_ref()
+            .filter(|idx| idx.key_type == TypeId::SYMBOL)
+            .map(|idx| idx.value_type)
+    }
+
+    // `visit_array` / `visit_tuple` intentionally use the trait default
+    // (`None`): arrays and tuples never carry a `symbol` index signature.
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::types::TypeListId(list_id));
+        types.iter().find_map(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(crate::types::TypeListId(list_id));
+        types.first().and_then(|&t| self.visit_type(self.db, t))
+    }
+
+    fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
+        self.visit_type(self.db, inner_type)
+    }
+
+    fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
+        let resolved = crate::evaluation::evaluate::evaluate_type(self.db, TypeId(def_id));
+        (resolved != TypeId(def_id))
+            .then(|| self.visit_type(self.db, resolved))
+            .flatten()
+    }
+
+    fn visit_application_type(&mut self, type_id: TypeId, _app_id: u32) -> Self::Output {
+        let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
+            self.db,
+            self.resolver,
+            type_id,
+        );
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn visit_type(&mut self, types: &dyn TypeDatabase, type_id: TypeId) -> Self::Output {
+        match types.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => self.visit_application_type(type_id, app_id.0),
+            Some(ref type_key) => self.visit_type_key(types, type_key),
+            None => Self::default_output(),
+        }
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn default_output() -> Self::Output {
+        None
+    }
+}
+
 /// Visitor for resolving number index signatures.
 struct NumberIndexResolver<'a, R: TypeResolver> {
     db: &'a dyn TypeDatabase,
@@ -471,6 +569,32 @@ impl<'a, R: TypeResolver> IndexSignatureResolver<'a, R> {
     /// - `{ a: number }` → `None`
     pub fn resolve_string_index(&self, obj: TypeId) -> Option<TypeId> {
         let mut visitor = StringIndexResolver {
+            db: self.db,
+            resolver: self.resolver,
+        };
+        visitor.visit_type(self.db, obj)
+    }
+
+    /// Resolve the symbol index signature type from an object type.
+    ///
+    /// Returns `Some(value_type)` when the object has a genuine `symbol`-keyed
+    /// index signature that accepts a `symbol` key — a dedicated
+    /// `{ [k: symbol]: V }` signature or the `symbol` component of a
+    /// `PropertyKey` / `Record<PropertyKey, V>` index. Returns `None` for a
+    /// bare `string` index, which does not accept symbol keys.
+    ///
+    /// Callers use this to distinguish a real symbol index from a `string`-index
+    /// fallthrough: `tsc` reports TS2538 when a symbol key indexes a receiver
+    /// whose only applicable signature is `string`.
+    ///
+    /// ## Examples
+    ///
+    /// - `{ [key: symbol]: number }` → `Some(TypeId::NUMBER)`
+    /// - `{ [key: PropertyKey]: string }` → `Some(TypeId::STRING)`
+    /// - `{ [key: string]: number }` → `None`
+    /// - `{ a: number }` → `None`
+    pub fn resolve_symbol_index(&self, obj: TypeId) -> Option<TypeId> {
+        let mut visitor = SymbolIndexResolver {
             db: self.db,
             resolver: self.resolver,
         };

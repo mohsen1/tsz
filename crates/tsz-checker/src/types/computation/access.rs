@@ -1302,6 +1302,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS2538 recovery value for a `symbol`-like key that only reaches this
+        // receiver's plain `string` index (see `symbol_key_string_index_fallthrough`).
+        // `Some(value)` marks the plain-`string`-fallthrough case shared by the
+        // three symbol arms below; `object_type_for_access` / `index_type` are
+        // fixed from here on, so it is computed once.
+        let symbol_string_index_fallthrough =
+            self.symbol_key_string_index_fallthrough(object_type_for_access, index_type);
+
         // Handle unique symbol index access on concrete (non-type-parameter) objects.
         // Unique symbols resolve to internal property names like "__unique_N" and need
         // write_type propagation for getter/setter divergence (e.g., `foo[k] = value`
@@ -1391,11 +1399,19 @@ impl<'a> CheckerState<'a> {
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,
-                ..
+                from_index_signature,
             } = result
             {
-                use_index_signature_check = false;
-                result_type = Some(effective_write_result(type_id, write_type));
+                // A real symbol-keyed member (`from_index_signature == false`)
+                // resolves the access. A resolution that only reached a `string`
+                // index signature must NOT swallow the key: if that string index
+                // rejects symbol keys, the fallthrough gate below reports TS2538
+                // (a `PropertyKey` / symbol-accepting index leaves the gate at
+                // `None`, so the fallthrough value is kept here).
+                if !from_index_signature || symbol_string_index_fallthrough.is_none() {
+                    use_index_signature_check = false;
+                    result_type = Some(effective_write_result(type_id, write_type));
+                }
             }
         }
 
@@ -1403,9 +1419,17 @@ impl<'a> CheckerState<'a> {
         // a binding-identity key for exact computed-member lookup. Once that
         // exact lookup misses, a receiver with a broad symbol index signature
         // should resolve through `receiver[symbol]`, not through the binding key.
+        //
+        // This applies only when the receiver genuinely accepts a `symbol` key
+        // (a `{ [k: symbol]: V }` / `Record<PropertyKey, V>` signature). A bare
+        // `string` index does NOT accept symbol keys — resolving through it here
+        // would silently swallow the TS2538 that the fallthrough gate below
+        // emits. `symbol_key_string_index_fallthrough` returns `Some` in exactly
+        // that plain-`string`-index case, so gate on its absence.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && index_type_for_access != index_type
+            && symbol_string_index_fallthrough.is_none()
         {
             let symbol_index_result =
                 self.get_element_access_type(object_type_for_access, TypeId::SYMBOL, None);
@@ -1425,6 +1449,35 @@ impl<'a> CheckerState<'a> {
         {
             result_type = Some(TypeId::ANY);
             use_index_signature_check = false;
+        }
+
+        // TS2538: a `symbol` / unique-symbol key indexing a concrete receiver
+        // whose only applicable index signature is `string`. A `string` index
+        // does not accept symbol keys, so tsc reports TS2538 while still
+        // resolving the access to that signature's value type (no cascade).
+        // Mirrors `getPropertyTypeForIndexType`'s `indexInfo.keyType ===
+        // stringType && !isTypeAssignableToKind(indexType, String | Number)`
+        // branch. Runs only after the concrete-member / symbol-index / late-bound
+        // resolutions above have missed (`result_type` is still `None`), so a
+        // real `[sym]: T` member or a genuine `symbol` / `PropertyKey` index is
+        // never overridden.
+        if result_type.is_none()
+            && use_index_signature_check
+            && let Some(string_index_value) = symbol_string_index_fallthrough
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let index_type_str = self.format_type(index_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                &[&index_type_str],
+            );
+            self.error_at_node(
+                access.name_or_argument,
+                &message,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+            );
+            use_index_signature_check = false;
+            result_type = Some(string_index_value);
         }
 
         // Under NUIA, value-level `any` indexes use the receiver index signature.

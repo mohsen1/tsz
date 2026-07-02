@@ -1271,4 +1271,65 @@ impl<'a> CheckerState<'a> {
                 .resolve_element_access_type(object_type, index_type_for_access, None);
         member == TypeId::UNDEFINED || member == TypeId::ERROR
     }
+
+    /// TS2538 for a symbol-like key indexing a receiver whose only applicable
+    /// index signature is `string`.
+    ///
+    /// A `string` index signature does not accept `symbol` keys, so `tsc`'s
+    /// `getPropertyTypeForIndexType` (`indexInfo.keyType === stringType &&
+    /// !isTypeAssignableToKind(indexType, String | Number)`) reports **TS2538**
+    /// while still resolving the access to that string signature's value type —
+    /// no cascade. This mirrors that branch: it returns `Some(value_type)` when
+    /// the receiver has a `string` index but no `symbol`-accepting index and no
+    /// matching symbol-keyed member, so the caller can emit TS2538 and recover
+    /// the value type; otherwise `None` (a genuine `symbol` / `PropertyKey`
+    /// index, a real member, an array/number-only receiver, or no string index
+    /// — each handled by its own diagnostic path).
+    ///
+    /// Scoped to concrete receivers; union / intersection / type-parameter
+    /// receivers keep their existing per-member paths.
+    pub(crate) fn symbol_key_string_index_fallthrough(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        // The key must be `symbol` or a unique symbol.
+        let is_symbol_like = index_type == TypeId::SYMBOL
+            || crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some();
+        if !is_symbol_like {
+            return None;
+        }
+
+        // Composite receivers combine per-member signatures; keep them on their
+        // existing paths (documented follow-up).
+        if crate::query_boundaries::common::union_members(self.ctx.types, object_type).is_some()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+                .is_some()
+            || crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type)
+        {
+            return None;
+        }
+
+        let resolver = crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types);
+        // A genuine `symbol`-accepting index (a dedicated `{ [k: symbol]: V }`
+        // slot, or the `symbol` component of `Record<PropertyKey, V>`) accepts
+        // the key: `tsc`'s `getApplicableIndexInfo` returns it (`keyType` is
+        // `symbol`, not `string`) so no TS2538.
+        if resolver.resolve_symbol_index(object_type).is_some() {
+            return None;
+        }
+        // The fallback signature must be a *plain* `string` index (`indexInfo
+        // .keyType === stringType`). A `PropertyKey` / `string | symbol` union
+        // key (`key_type != string`) accepts the symbol key and resolves
+        // cleanly; a template/pattern key or a `number`-only receiver (TS7015)
+        // / an array (TS7015) / a receiver with no string index (TS7053) are
+        // each handled by their own paths — none of which reach here because
+        // their `string_index` is absent or non-`string`-keyed.
+        let string_sig = resolver.get_index_info(object_type).string_index?;
+        if string_sig.key_type != TypeId::STRING {
+            return None;
+        }
+        Some(string_sig.value_type)
+    }
 }

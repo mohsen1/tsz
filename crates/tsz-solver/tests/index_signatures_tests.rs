@@ -32,6 +32,112 @@ fn test_resolve_string_index() {
 }
 
 #[test]
+fn test_resolve_symbol_index_dedicated_slot() {
+    let db = TypeInterner::new();
+
+    // `{ [k: symbol]: number }` — a dedicated symbol index slot.
+    let obj = db.object_with_index(ObjectShape {
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_symbol_index(obj), Some(TypeId::NUMBER));
+    // A dedicated symbol index is NOT reported as a string index.
+    assert_eq!(resolver.resolve_string_index(obj), None);
+}
+
+#[test]
+fn test_resolve_symbol_index_alongside_string() {
+    let db = TypeInterner::new();
+
+    // `{ [k: string]: number; [k: symbol]: boolean }` — symbol index coexists
+    // with a string index; each resolves to its own value type.
+    let obj = db.object_with_index(ObjectShape {
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_symbol_index(obj), Some(TypeId::BOOLEAN));
+    assert_eq!(resolver.resolve_string_index(obj), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn test_resolve_symbol_index_legacy_string_slot_encoding() {
+    let db = TypeInterner::new();
+
+    // Legacy encoding: a symbol index stored in the `string_index` slot with
+    // `key_type == SYMBOL`. `symbol_index_signature()` recovers it, and it must
+    // not be mistaken for a `string` index.
+    let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_symbol_index(obj), Some(TypeId::STRING));
+    assert_eq!(resolver.resolve_string_index(obj), None);
+}
+
+#[test]
+fn test_resolve_symbol_index_none_for_plain_string() {
+    let db = TypeInterner::new();
+
+    // `{ [k: string]: number }` — a plain string index does NOT accept symbol
+    // keys, so there is no symbol index.
+    let obj = db.object_with_index(ObjectShape {
+        symbol_index: None,
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_symbol_index(obj), None);
+    assert_eq!(resolver.resolve_string_index(obj), Some(TypeId::NUMBER));
+}
+
+#[test]
 fn test_resolve_number_index() {
     let db = TypeInterner::new();
 
