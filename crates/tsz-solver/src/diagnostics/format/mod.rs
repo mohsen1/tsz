@@ -194,29 +194,10 @@ pub struct TypeFormatter<'a> {
     /// source/display origin was recorded. This is used by narrow diagnostic
     /// surfaces where tsc does not preserve source-written union order.
     ignore_union_origins: bool,
-    /// Per-formatter memo for the Application display-reduction decision.
-    ///
-    /// Formatting a generic `Application` attempts up to four alias-reduction
-    /// strategies (`scalar_mapped_alias_application_display`,
-    /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`,
-    /// `variadic_tuple_alias_application_display`). Each strategy runs a fresh
-    /// `instantiate_generic` + `evaluate_type` over the alias body. Deeply
-    /// nested generic receiver types (e.g. drizzle's relational builders) form
-    /// a *DAG* of shared `Application` nodes, so the formatter — which walks
-    /// the type as a tree — re-reaches the same `Application` `TypeId` through
-    /// many parents and re-runs the whole cascade each time, turning display
-    /// formatting into super-linear re-evaluation (#13480).
-    ///
-    /// The reduction is a pure function of the input `TypeId` for a fixed
-    /// formatter configuration (the interner is immutable for the formatter's
-    /// lifetime and every reduction input derives from the `Application`'s base
-    /// and args). Memoizing it keyed on the `Application` `TypeId` collapses the
-    /// repeated cascade to one evaluation per distinct node. The cached value is
-    /// the reduced `TypeId` to format in place, or `None` to fall through to the
-    /// structural `Name<Args>` rendering. `RefCell` keeps the `&self` reduction
-    /// helpers untouched. Invalidation: none — the cache lives for the single
-    /// diagnostic the formatter instance serves.
+    /// Per-formatter memo for the `Application` display-reduction verdict,
+    /// keyed on the `Application` `TypeId`. See
+    /// [`Self::application_display_reduction`] for the strategy cascade and
+    /// the DAG-walk rationale (#13480).
     application_reduction_cache: std::cell::RefCell<
         FxHashMap<TypeId, Option<application_reduction::ApplicationDisplayReduction>>,
     >,

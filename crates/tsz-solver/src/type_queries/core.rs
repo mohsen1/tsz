@@ -222,22 +222,25 @@ pub fn application_base_alias_def_id(
 
 /// Decoded shape of a *distributive* conditional type-alias application: the
 /// alias definition, its declared conditional body, the check parameter's
-/// index among the alias type parameters, and the check argument resolved to
-/// the type it distributes over (a union, `boolean`, or — unresolved — the
-/// original argument).
+/// index among the alias type parameters, and the members the application
+/// distributes over (`boolean` expanded to `false | true`; a union read
+/// through its recorded display origin when one exists, so member order
+/// follows the source).
 pub struct DistributiveConditionalAliasCheck {
     pub def_id: crate::def::DefId,
     pub body: TypeId,
     pub check_index: usize,
-    pub check_arg: TypeId,
+    pub members: Vec<TypeId>,
 }
 
 /// Decode `type_id` as an application of a distributive conditional type
-/// alias. Returns `None` when the base is not a type alias, the body is not a
-/// distributive conditional, or the conditional's check type is not one of
-/// the alias type parameters. Shared by the display predicate below and the
+/// alias whose check argument distributes over two or more members. Returns
+/// `None` when the base is not a type alias, the body is not a distributive
+/// conditional, the conditional's check type is not one of the alias type
+/// parameters, or the check argument does not resolve to `boolean` / a
+/// multi-member union. Shared by the display predicate below and the
 /// formatter's distributed-application reduction so the gate and the
-/// expansion cannot disagree about what distributes.
+/// expansion decide membership identically.
 pub fn distributive_conditional_alias_check(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
@@ -269,11 +272,26 @@ pub fn distributive_conditional_alias_check(
         .position(|param| param.name == check_tp.name)?;
     let check_arg =
         resolve_distributive_union_check_arg(db, def_store, *app.args.get(check_index)?);
+    // `boolean` distributes as `true | false`, mirroring the instantiation
+    // policy that expands `BOOLEAN` before substitution.
+    let members: Vec<TypeId> = if check_arg == TypeId::BOOLEAN {
+        vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
+    } else if let Some(TypeData::Union(member_list_id)) = db.lookup(check_arg) {
+        match db.get_union_origin(check_arg) {
+            Some(origin) => origin.to_vec(),
+            None => db.type_list(member_list_id).to_vec(),
+        }
+    } else {
+        return None;
+    };
+    if members.len() < 2 {
+        return None;
+    }
     Some(DistributiveConditionalAliasCheck {
         def_id,
         body,
         check_index,
-        check_arg,
+        members,
     })
 }
 
@@ -287,38 +305,43 @@ pub fn application_distributes_over_union_check_arg(
     def_store: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(check) = distributive_conditional_alias_check(db, def_store, type_id) else {
-        return false;
-    };
-    if check.check_arg == TypeId::BOOLEAN {
-        return true;
-    }
-    matches!(db.lookup(check.check_arg), Some(TypeData::Union(list_id)) if db.type_list(list_id).len() >= 2)
+    distributive_conditional_alias_check(db, def_store, type_id).is_some()
 }
 
 /// Resolve a distributive conditional's check argument to the union it
-/// distributes over. A directly-written union (or `boolean`) passes through; a
-/// non-generic union-alias reference (`NoC<U>` where `type U = A | B`) arrives
-/// as `Lazy(def)` and resolves to the alias body, mirroring tsc, which
+/// distributes over. A directly-written union (or `boolean`) passes through;
+/// a non-generic union-alias reference (`NoC<U>` where `type U = A | B`,
+/// including alias-of-alias chains) arrives as `Lazy(def)` and resolves
+/// through the bounded chain to the alias body, mirroring tsc, which
 /// instantiates the reference before distributing. Every other shape returns
 /// unchanged (and fails the caller's union check).
-pub fn resolve_distributive_union_check_arg(
+fn resolve_distributive_union_check_arg(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
     check_arg: TypeId,
 ) -> TypeId {
-    if check_arg == TypeId::BOOLEAN || matches!(db.lookup(check_arg), Some(TypeData::Union(_))) {
-        return check_arg;
+    let mut current = check_arg;
+    for _ in 0..8 {
+        if current == TypeId::BOOLEAN || matches!(db.lookup(current), Some(TypeData::Union(_))) {
+            return current;
+        }
+        let Some(TypeData::Lazy(def_id)) = db.lookup(current) else {
+            break;
+        };
+        let Some(body) = def_store
+            .get(def_id)
+            .filter(|def| def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty())
+            .and_then(|def| def.body)
+        else {
+            break;
+        };
+        current = body;
     }
-    let Some(TypeData::Lazy(def_id)) = db.lookup(check_arg) else {
-        return check_arg;
-    };
-    def_store
-        .get(def_id)
-        .filter(|def| def.kind == crate::def::DefKind::TypeAlias && def.type_params.is_empty())
-        .and_then(|def| def.body)
-        .filter(|&body| matches!(db.lookup(body), Some(TypeData::Union(_))))
-        .unwrap_or(check_arg)
+    if matches!(db.lookup(current), Some(TypeData::Union(_))) {
+        current
+    } else {
+        check_arg
+    }
 }
 
 /// Whether `ty` carries a type-alias surface that tsc's error reporting

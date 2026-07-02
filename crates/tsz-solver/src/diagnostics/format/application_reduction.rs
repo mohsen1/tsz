@@ -33,7 +33,7 @@ pub(super) enum ApplicationDisplayReduction {
 }
 
 impl<'a> TypeFormatter<'a> {
-    pub(super) fn scalar_mapped_alias_application_display(
+    fn scalar_mapped_alias_application_display(
         &self,
         type_id: TypeId,
         base: TypeId,
@@ -155,8 +155,11 @@ impl<'a> TypeFormatter<'a> {
             // substituted body arrives as the key union, not `KeyOf(obj)`), so
             // remember the step whose *declared* body is the `keyof` — the
             // ordered-union path below instantiates its operand on demand to
-            // recover the property declaration order.
-            if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(body) {
+            // recover the property declaration order. Only a `KeyOf`-terminal
+            // chain consumes it.
+            if body_kind == crate::type_queries::ReducingAliasBodyKind::KeyOf
+                && let Some(TypeData::KeyOf(operand)) = self.interner.lookup(body)
+            {
                 last_keyof_step = Some((operand, def_id, app.args.to_vec()));
             }
             let instantiated = crate::computation::instantiate_generic(
@@ -307,31 +310,7 @@ impl<'a> TypeFormatter<'a> {
             def_store,
             type_id,
         )?;
-        let def = def_store.get(check.def_id)?;
-        let base = self.interner.lazy(check.def_id);
-
-        // For distributive conditionals, `boolean` distributes as `true | false`.
-        // Mirrors the instantiation policy in instantiate.rs that expands
-        // `BOOLEAN` to `[BOOLEAN_TRUE, BOOLEAN_FALSE]` before substitution.
-        let mut members: Vec<TypeId> = if check.check_arg == TypeId::BOOLEAN {
-            vec![TypeId::BOOLEAN_FALSE, TypeId::BOOLEAN_TRUE]
-        } else if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check.check_arg)
-        {
-            if let Some(origin) = self.interner.get_union_origin(check.check_arg) {
-                if origin.len() < 2 {
-                    return None;
-                }
-                origin.to_vec()
-            } else {
-                let list = self.interner.type_list(member_list_id);
-                if list.len() < 2 {
-                    return None;
-                }
-                list.to_vec()
-            }
-        } else {
-            return None;
-        };
+        let mut members = check.members;
 
         let positions: Vec<_> = members
             .iter()
@@ -363,10 +342,11 @@ impl<'a> TypeFormatter<'a> {
         // Application so the formatter renders `Foo<member>` rather than a
         // misleading evaluation (which can collapse to `never` when relations
         // involve free type parameters).
-        let distributed: Vec<TypeId> = members
-            .iter()
-            .map(|&member| {
-                if other_args_concrete {
+        let distributed: Vec<TypeId> = if other_args_concrete {
+            let def = def_store.get(check.def_id)?;
+            members
+                .iter()
+                .map(|&member| {
                     let mut subst = crate::instantiation::instantiate::TypeSubstitution::new();
                     for (i, param) in def.type_params.iter().enumerate() {
                         let arg = if i == check.check_index {
@@ -385,13 +365,19 @@ impl<'a> TypeFormatter<'a> {
                         &subst,
                     );
                     crate::evaluation::evaluate::evaluate_type(self.interner, substituted)
-                } else {
+                })
+                .collect()
+        } else {
+            let base = self.interner.lazy(check.def_id);
+            members
+                .iter()
+                .map(|&member| {
                     let mut branch_args = args.to_vec();
                     branch_args[check.check_index] = member;
                     self.interner.application(base, branch_args)
-                }
-            })
-            .collect();
+                })
+                .collect()
+        };
         // Render the distributed branches directly, in the order computed
         // above. Returning the interned union `TypeId` instead would route
         // through the `Union` display arm, whose side-table origin (recorded
