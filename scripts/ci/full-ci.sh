@@ -923,7 +923,8 @@ run_fourslash_shard() {
   local detail_json="$METRICS_DIR/fourslash-shard-${shard_index}.json"
   set +e
   run_with_heartbeat "fourslash-${shard_index}" \
-    bash -c 'log_file="$1"; shift; "$@" >"$log_file" 2>&1' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    bash -c 'log_file="$1"; shift; "$@" 2>&1 | tee "$log_file"; exit "${PIPESTATUS[0]}"' bash "$LOG_DIR/fourslash/shard-${shard_index}.log" \
+    env FOURSLASH_LOG_START=1 \
     ./scripts/fourslash/run-fourslash.sh \
     --skip-cargo-build \
     --skip-ts-build \
