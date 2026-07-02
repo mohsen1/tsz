@@ -910,6 +910,25 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
+        // `getReducedApparentType`: an object intersection with a disjoint
+        // discriminant property (e.g. `{ kind: "a" } & { kind: "b" }`) reduces
+        // to `never`. The interner applies this reduction only while every
+        // member is already concrete; a member reached through a generic
+        // application (`WithKind<"a"> & WithKind<"b">`) or an alias stays
+        // deferred at intern time, so the conflict is invisible until the
+        // members are evaluated. The lighter `evaluate_application_type`
+        // receiver path never re-materializes those members, so detect the
+        // reduction here by resolving the receiver for property access (which
+        // evaluates each member and re-interns, collapsing to `never` on a
+        // disjoint discriminant) and fold the receiver to `never` so the
+        // shared never-access machinery below reports TS2339 — matching tsc.
+        if crate::query_boundaries::common::is_intersection_type(self.ctx.types, object_type)
+            && !access_query::contains_never_type(self.ctx.types, object_type)
+            && self.resolve_type_for_property_access(object_type) == TypeId::NEVER
+        {
+            object_type = TypeId::NEVER;
+        }
+
         // Property access on `never` emits TS2339 and returns an any-like
         // fallback. This preserves tsc's follow-on TS2322 when the failed
         // access is assigned to `never`.

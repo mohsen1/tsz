@@ -1577,6 +1577,9 @@ path = "tests/ts2527_unique_symbol_via_reexport_tests.rs"
 name = "intersection_primitive_member_assignability_tests"
 path = "tests/intersection_primitive_member_assignability_tests.rs"
 [[test]]
+name = "intersection_reduced_never_property_access_tests"
+path = "tests/intersection_reduced_never_property_access_tests.rs"
+[[test]]
 name = "union_origin_display_tests"
 path = "tests/union_origin_display_tests.rs"
 [[test]]
