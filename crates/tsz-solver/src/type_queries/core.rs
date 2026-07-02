@@ -4,7 +4,7 @@
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::def::DefinitionStore;
+use crate::def::{DefId, DefinitionStore};
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{TypeData, TypeId, TypeParamInfo};
@@ -165,15 +165,122 @@ pub fn application_base_has_conditional_alias_body(
         return false;
     };
     let app = db.type_application(app_id);
-    let Some(def_id) =
-        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
-    else {
+    let Some(def_id) = application_base_def_via_store(db, def_store, app.base) else {
         return false;
     };
     def_store
         .get(def_id)
         .and_then(|def| def.body)
         .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
+}
+
+/// Resolve an `Application` base to its backing `DefId`, honoring both the
+/// direct `Lazy(DefId)` form and the reverse `find_def_for_type` lookup used for
+/// bases that intern to a shape rather than a lazy reference. The
+/// `DefinitionStore`-fallback variant used by the display queries in this
+/// module (distinct from the resolver-based `application_base_def_id`, which
+/// resolves `TypeQuery`/`UnresolvedTypeName` bases instead).
+fn application_base_def_via_store(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    base: TypeId,
+) -> Option<DefId> {
+    get_lazy_def_id(db, base).or_else(|| def_store.find_def_for_type(base))
+}
+
+/// The reducing-operator families a type-alias body can bottom out at. tsc never
+/// stamps its `aliasSymbol` onto the result of any of these, so a fully
+/// instantiated generic application whose declared body is one of them drops the
+/// alias name and renders the evaluated type structurally (issue #15368).
+///
+/// `Conditional` is tracked distinctly from the rest because tsc applies
+/// literal-union display *widening* to a conditional's reduced union result
+/// (`Extract<"a" | "b" | 1, string>` shows `string`), whereas a `keyof` /
+/// indexed-access / template-literal / string-mapping result renders its
+/// evaluated union or literal verbatim (`keyof { p: 1; q: 2 }` shows
+/// `"p" | "q"`). Callers keep the union/literal carve-out only for the
+/// conditional variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReducingAliasBody {
+    /// `T extends U ? X : Y` — subject to literal-union display widening.
+    Conditional,
+    /// `keyof`, indexed access, template literal, or a string-mapping intrinsic.
+    /// The evaluated result (including unions/literals) renders verbatim.
+    OtherOperator,
+}
+
+/// Single source of truth for "operators tsc never stamps its `aliasSymbol`
+/// onto": classify a type-alias *body* `TypeData` into its reducing-operator
+/// family, or `None` for a *surviving constructor* (mapped / union /
+/// intersection / object) or any non-operator shape. Shared by the
+/// generic-application display gate ([`application_base_reducing_alias_body`])
+/// and the non-generic policy in
+/// [`crate::diagnostics::format::alias_underlying::type_alias_displayed_as_underlying`]
+/// so the operator set cannot drift between the two display paths.
+pub const fn classify_reducing_operator(key: &TypeData) -> Option<ReducingAliasBody> {
+    match key {
+        TypeData::Conditional(_) => Some(ReducingAliasBody::Conditional),
+        TypeData::IndexAccess(_, _)
+        | TypeData::KeyOf(_)
+        | TypeData::TemplateLiteral(_)
+        | TypeData::StringIntrinsic { .. } => Some(ReducingAliasBody::OtherOperator),
+        _ => None,
+    }
+}
+
+/// Classify the *declared body* of the alias an `Application` `type_id` heads,
+/// following `Lazy` alias-chain forwarding, and report the head `DefId` (the def
+/// directly under the application, ready to instantiate with the application's
+/// args) together with which reducing-operator family the body bottoms out at.
+/// Returns `None` when the body is a *surviving constructor* (mapped, union,
+/// intersection, object) that keeps tsc's `aliasSymbol`, or is not an alias
+/// application at all.
+pub fn application_base_reducing_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<(DefId, ReducingAliasBody)> {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let head_def_id = application_base_def_via_store(db, def_store, app.base)?;
+    let kind = reducing_alias_body_kind(db, def_store, head_def_id, 0)?;
+    Some((head_def_id, kind))
+}
+
+/// Classify `def_id`'s declared body into its [`ReducingAliasBody`] family,
+/// following `Lazy` alias chains up to a bounded depth (guards against cyclic
+/// alias definitions); `None` for a surviving-constructor / non-operator body.
+fn reducing_alias_body_kind(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    def_id: DefId,
+    depth: usize,
+) -> Option<ReducingAliasBody> {
+    if depth > 16 {
+        return None;
+    }
+    let def = def_store.get(def_id)?;
+    if def.kind != crate::def::DefKind::TypeAlias {
+        return None;
+    }
+    let body_key = db.lookup(def.body?)?;
+    if let Some(kind) = classify_reducing_operator(&body_key) {
+        return Some(kind);
+    }
+    match body_key {
+        // An alias forwarding to another alias (`type A = B`) inherits B's
+        // reducing classification; an application-bodied alias
+        // (`type A = Reverse<T>`) inherits the head alias' body.
+        TypeData::Lazy(next_def) => reducing_alias_body_kind(db, def_store, next_def, depth + 1),
+        TypeData::Application(app_id) => {
+            let app = db.type_application(app_id);
+            let next = application_base_def_via_store(db, def_store, app.base)?;
+            reducing_alias_body_kind(db, def_store, next, depth + 1)
+        }
+        _ => None,
+    }
 }
 
 /// When `type_id` is a plain mutable array of a boolean literal element

@@ -253,7 +253,23 @@ impl<'a> TypeFormatter<'a> {
                 // is memoized per `Application` `TypeId` to avoid super-linear
                 // re-evaluation on deeply nested generics (#13480).
                 if let Some(reduced) = self.application_display_reduction(type_id, &app) {
-                    return self.format(reduced);
+                    // The reduced structural result can carry a `display_alias`
+                    // pointing back at *this* application (a `keyof`/indexed-access
+                    // reduction returns a subterm of the argument that the
+                    // evaluator stamped with the application's provenance). Since we
+                    // have deliberately decided to drop the alias and render the
+                    // reduced shape, mark this application as already-visiting on the
+                    // display-alias chase so the reduced result renders structurally
+                    // instead of chasing back into the still-`format_visiting`
+                    // application and eliding to `...` (issue #15368). A freshly
+                    // constructed conditional-branch object carries no such back-ref
+                    // and is unaffected.
+                    let inserted_alias_guard = self.display_alias_visiting.insert(type_id);
+                    let out = self.format(reduced);
+                    if inserted_alias_guard {
+                        self.display_alias_visiting.remove(&type_id);
+                    }
+                    return out;
                 }
 
                 // Special handling for Application(Lazy(def_id), args)

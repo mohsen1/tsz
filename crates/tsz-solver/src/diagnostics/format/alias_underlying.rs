@@ -80,25 +80,27 @@ pub fn type_alias_displayed_as_underlying(
             }
             return Some(body);
         }
-        match interner.lookup(body) {
+        let body_key = interner.lookup(body);
+        // Operators that never carry tsc's `aliasSymbol` onto their result.
+        // A conditional or indexed access *resolves away* into its
+        // branch/element, and `keyof`, template-literal, and the
+        // `Uppercase`/`Lowercase`/… string-mapping intrinsics build their
+        // result without ever stamping the enclosing alias onto it. tsc
+        // therefore renders the *evaluated* underlying type for any resolved
+        // shape — scalar, literal, `never`, union, object, tuple, or even
+        // another computed type. The syntactic checks above never see this
+        // because the body is e.g. `true extends true ? { a: 1 } : never` or
+        // `keyof { a: 1 }`. The operator set is the shared
+        // `classify_reducing_operator` so it cannot drift from the
+        // generic-application display gate.
+        if body_key
+            .as_ref()
+            .is_some_and(|key| crate::type_queries::classify_reducing_operator(key).is_some())
+        {
+            return alias_resolved_body_underlying(interner, body);
+        }
+        match body_key {
             Some(TypeData::Lazy(next_def)) => current_def = next_def,
-            // Operators that never carry tsc's `aliasSymbol` onto their result.
-            // A conditional or indexed access *resolves away* into its
-            // branch/element, and `keyof`, template-literal, and the
-            // `Uppercase`/`Lowercase`/… string-mapping intrinsics build their
-            // result without ever stamping the enclosing alias onto it. tsc
-            // therefore renders the *evaluated* underlying type for any resolved
-            // shape — scalar, literal, `never`, union, object, tuple, or even
-            // another computed type. The syntactic checks above never see this
-            // because the body is e.g. `true extends true ? { a: 1 } : never` or
-            // `keyof { a: 1 }`.
-            Some(
-                TypeData::Conditional(_)
-                | TypeData::IndexAccess(_, _)
-                | TypeData::KeyOf(_)
-                | TypeData::TemplateLiteral(_)
-                | TypeData::StringIntrinsic { .. },
-            ) => return alias_resolved_body_underlying(interner, body),
             // A utility/generic application's display depends on the head alias'
             // declared body. A *conditional*-bodied utility loses tsc's alias
             // symbol once the conditional reduces, so the evaluated result is
@@ -213,9 +215,7 @@ pub(crate) fn application_reduces_to_displayable_shape(
 ) -> bool {
     // A non-converged recursive reduction leaves a nested `Recursive` cycle
     // marker that renders as a truncated cycle; keep the alias name instead.
-    if crate::visitor::contains_type_matching(interner, evaluated, |key| {
-        matches!(key, TypeData::Recursive(_))
-    }) {
+    if contains_unconverged_recursive(interner, evaluated) {
         return false;
     }
     if evaluated == TypeId::NEVER
@@ -228,4 +228,18 @@ pub(crate) fn application_reduces_to_displayable_shape(
     // literal, which the comment above keeps out of scope.
     crate::visitor::is_primitive_type(interner, evaluated)
         && !matches!(interner.lookup(evaluated), Some(TypeData::Literal(_)))
+}
+
+/// A reduced type still contains a nested `Recursive` cycle marker — the
+/// recursion did not converge, so expanding it would render a truncated cycle
+/// (`Reverse<[1, 2, 3]>` → `[...[...[......, 3], 2], 1]`) and the alias name is
+/// strictly clearer. Shared by both reduction kinds so the "recursion didn't
+/// converge" invariant has a single definition.
+pub(crate) fn contains_unconverged_recursive(
+    interner: &dyn TypeDatabase,
+    evaluated: TypeId,
+) -> bool {
+    crate::visitor::contains_type_matching(interner, evaluated, |key| {
+        matches!(key, TypeData::Recursive(_))
+    })
 }

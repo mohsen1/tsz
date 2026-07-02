@@ -196,7 +196,7 @@ pub struct TypeFormatter<'a> {
     /// Formatting a generic `Application` attempts up to four alias-reduction
     /// strategies (`scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`,
+    /// `reducing_operator_application_display`,
     /// `variadic_tuple_alias_application_display`). Each strategy runs a fresh
     /// `instantiate_generic` + `evaluate_type` over the alias body. Deeply
     /// nested generic receiver types (e.g. drizzle's relational builders) form
@@ -390,35 +390,40 @@ impl<'a> TypeFormatter<'a> {
     }
 
     /// A non-distributive application of a generic alias whose *declared body is
-    /// a conditional type* loses its alias symbol when the conditional resolves:
-    /// the operator resolves into its branch and never stamps the enclosing
-    /// alias onto the result, so tsc renders the resolved type structurally for
-    /// any shape — scalar (`DeepReadonly<number>` → `number`), tuple
-    /// (`Parameters<F>` → `[a: number]`), union (`A | B`), and object
-    /// (`DeepReadonly<{ b: number }>` → `{ readonly b: number; }`, issue
-    /// #10914) alike — not as `Name<Args>`.
+    /// a reducing operator* — a conditional, an indexed access, a `keyof`, a
+    /// template literal, or a string-mapping intrinsic — loses its alias symbol
+    /// when the operator resolves: the operator resolves into its
+    /// branch/element/key set and never stamps the enclosing alias onto the
+    /// result, so tsc renders the resolved type structurally for any shape —
+    /// scalar (`DeepReadonly<number>` → `number`), tuple (`Parameters<F>` →
+    /// `[a: number]`), union (`A | B`), object (`DeepReadonly<{ b: number }>` →
+    /// `{ readonly b: number; }`, issue #10914), indexed access
+    /// (`Idx<{ x: { deep: boolean } }>` → `{ deep: boolean; }`), and `keyof`
+    /// (`Keys<{ p: 1; q: 2 }>` → `"p" | "q"`, issue #15368) alike — not as
+    /// `Name<Args>`. Mapped/object/union/intersection-bodied applications
+    /// (`Partial<T>`, `Pick<…>`) are *surviving constructors* that keep the
+    /// alias symbol and are rejected by the gate.
     ///
-    /// Returns the evaluated type to format in place of the application form.
-    /// Returns `None` only when the conditional cannot drop its name: a
-    /// mapped/object-bodied application (`Partial<T>` keeps its alias symbol)
-    /// fails the structural gate, a result that stays generic is rejected
-    /// above, and a result that fails to reduce (a still-deferred conditional,
-    /// or one whose evaluation made no progress) keeps the application form.
-    /// The distributive form is handled earlier by
+    /// Returns the evaluated type to format in place of the application form, or
+    /// `None` when the operator cannot drop its name: a surviving-constructor
+    /// body fails the gate, a result that stays generic is rejected, and a
+    /// result that fails to reduce (a still-deferred operator node, or one whose
+    /// evaluation made no progress) keeps the application form. The distributive
+    /// conditional form is handled earlier by
     /// [`Self::distributed_conditional_application_display`].
-    fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
+    fn reducing_operator_application_display(&self, type_id: TypeId) -> Option<TypeId> {
         let def_store = self.def_store?;
         // Cheap structural gate (shared with the checker boundary): the base
-        // must resolve to a generic alias whose declared body is a conditional.
-        // Mapped/object-bodied applications (`Partial<T>`) fail this and keep
-        // their alias symbol.
-        if !crate::type_queries::application_base_has_conditional_alias_body(
+        // must resolve to a generic alias whose declared body bottoms out at a
+        // reducing operator. Mapped/object/union-bodied applications
+        // (`Partial<T>`) fail this and keep their alias symbol. The classifier
+        // also hands back the head `def_id` (ready to instantiate), and the kind
+        // decides the union/literal carve-out below.
+        let (def_id, reducing_kind) = crate::type_queries::application_base_reducing_alias_body(
             self.interner,
             def_store,
             type_id,
-        ) {
-            return None;
-        }
+        )?;
         // tsc only drops the alias symbol once the application is fully
         // instantiated. A still-generic application (`Extract<Extract<T, Foo>,
         // Bar>` with free `T`) stays deferred and is displayed as `Name<Args>`,
@@ -428,16 +433,14 @@ impl<'a> TypeFormatter<'a> {
         if crate::type_queries::contains_type_parameters_db(self.interner, type_id) {
             return None;
         }
-        // Instantiate the conditional body with the concrete arguments and
+        // Instantiate the operator body with the concrete arguments and
         // evaluate. `instantiate_generic` substitutes the def body directly,
         // which reduces a nested helper application (`DeepReadonly<{ b }>`)
         // that a bare `evaluate_type` of the wrapper would leave deferred.
-        let TypeData::Application(app_id) = self.interner.lookup(type_id)? else {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
             return None;
         };
         let app = self.interner.type_application(app_id);
-        let def_id = crate::type_queries::get_lazy_def_id(self.interner, app.base)
-            .or_else(|| def_store.find_def_for_type(app.base))?;
         let def = def_store.get(def_id)?;
         let instantiated = crate::computation::instantiate_generic(
             self.interner,
@@ -451,33 +454,47 @@ impl<'a> TypeFormatter<'a> {
         {
             return None;
         }
-        // A conditional/indexed access still deferred after evaluation never
-        // reduced (an unresolved operand); the raw node is no more informative
-        // than the application form, so keep the application form. Otherwise tsc
-        // drops the alias symbol and renders the reduced result structurally for
-        // any concrete shape — `Reverse<[1, 2, 3]>` → `[3, 2, 1]`,
-        // `Unbox<Promise<Promise<number>>>` → `number`, `DeepReadonly<{ b }>` →
-        // `{ readonly b: number; }`. Bare literal / union results are excluded
-        // (`application_reduces_to_displayable_shape`): tsc applies literal-union
-        // display widening to those, a separate display concern, so they keep
-        // the application surface.
+        // An operator node still deferred after evaluation never reduced (an
+        // unresolved operand); the raw node is no more informative than the
+        // application form, so keep the application form.
         if matches!(
             self.interner.lookup(evaluated),
-            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
-        ) || !alias_underlying::application_reduces_to_displayable_shape(
-            self.interner,
-            evaluated,
+            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _) | TypeData::KeyOf(_))
         ) {
             return None;
         }
-        Some(evaluated)
+        match reducing_kind {
+            // A conditional drops the alias symbol and renders structurally for
+            // any concrete shape — `Reverse<[1, 2, 3]>` → `[3, 2, 1]`,
+            // `Unbox<Promise<Promise<number>>>` → `number`, `DeepReadonly<{ b }>`
+            // → `{ readonly b: number; }`. Bare literal / union results are
+            // excluded (`application_reduces_to_displayable_shape`): tsc applies
+            // literal-union display *widening* to a conditional's union result
+            // (`Extract<"a" | "b" | 1, string>` → `string`), a separate display
+            // concern, so those keep the application surface.
+            crate::type_queries::ReducingAliasBody::Conditional => {
+                alias_underlying::application_reduces_to_displayable_shape(self.interner, evaluated)
+                    .then_some(evaluated)
+            }
+            // `keyof` / indexed-access / template-literal / string-mapping
+            // intrinsics render their evaluated result verbatim — including
+            // unions and literals, which tsc shows as written
+            // (`keyof { p: 1; q: 2 }` → `"p" | "q"`, `Idx<{ x: T }>` → `T`). A
+            // non-converged recursive reduction is still rejected: expanding a
+            // nested `Recursive` cycle renders a truncated garbage form, and the
+            // alias name is strictly clearer.
+            crate::type_queries::ReducingAliasBody::OtherOperator => {
+                (!alias_underlying::contains_unconverged_recursive(self.interner, evaluated))
+                    .then_some(evaluated)
+            }
+        }
     }
 
     /// Memoized dispatch for the four `Application` display-reduction strategies.
     ///
     /// Tries, in order, `scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`, and
+    /// `reducing_operator_application_display`, and
     /// `variadic_tuple_alias_application_display`; the first that fires wins and
     /// its reduced `TypeId` is returned for the caller to format in place of the
     /// `Name<Args>` application surface. Each strategy runs an
@@ -500,7 +517,7 @@ impl<'a> TypeFormatter<'a> {
         let reduced = self
             .scalar_mapped_alias_application_display(type_id, app.base, &app.args)
             .or_else(|| self.distributed_conditional_application_display(app.base, &app.args))
-            .or_else(|| self.reducing_conditional_application_display(type_id))
+            .or_else(|| self.reducing_operator_application_display(type_id))
             .or_else(|| self.variadic_tuple_alias_application_display(app.base, &app.args));
         self.application_reduction_cache
             .borrow_mut()

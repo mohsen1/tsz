@@ -728,6 +728,9 @@ path = "tests/conditional_alias_source_display_tests.rs"
 name = "conditional_application_display_tests"
 path = "tests/conditional_application_display_tests.rs"
 [[test]]
+name = "reducing_operator_application_display_tests"
+path = "tests/reducing_operator_application_display_tests.rs"
+[[test]]
 name = "type_parameter_source_constraint_chain_tests"
 path = "tests/type_parameter_source_constraint_chain_tests.rs"
 [[test]]
