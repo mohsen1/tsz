@@ -697,22 +697,8 @@ impl<'a> CheckerState<'a> {
                 if element_data.dot_dot_dot_token {
                     return self.union_rest_binding_type(&members, parent_type, element_index);
                 }
-                // When some member is not array-like (string, `Iterable<T>`,
-                // `Set`, ...), tsc types every position from the iterated
-                // element type of the whole union rather than distributing
-                // indexed access over the members.
-                let every_member_array_like = members.iter().all(|&member| {
-                    let member = query::unwrap_readonly_deep(self.ctx.types, member);
-                    query::array_element_type(self.ctx.types, member).is_some()
-                        || query::tuple_elements(self.ctx.types, member).is_some()
-                });
-                if !every_member_array_like {
-                    let iterated = self.for_of_element_type(parent_type, false);
-                    if iterated != TypeId::ANY && iterated != TypeId::ERROR {
-                        return iterated;
-                    }
-                }
                 let mut elem_types = Vec::new();
+                let mut saw_non_array_like = false;
                 let factory = self.ctx.types.factory();
                 for &member in &members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
@@ -743,6 +729,19 @@ impl<'a> CheckerState<'a> {
                                 elem_types.push(elem);
                             }
                         }
+                    } else {
+                        saw_non_array_like = true;
+                    }
+                }
+                // When some member is not array-like (string, `Iterable<T>`,
+                // `Set`, ...), tsc types every position from the iterated
+                // element type of the whole union rather than distributing
+                // indexed access over the members. ANY/ERROR mean the union
+                // could not be iterated, so keep the distributed result.
+                if saw_non_array_like {
+                    let iterated = self.for_of_element_type(parent_type, false);
+                    if iterated != TypeId::ANY && iterated != TypeId::ERROR {
+                        return iterated;
                     }
                 }
                 if elem_types.is_empty() {
@@ -806,6 +805,8 @@ impl<'a> CheckerState<'a> {
                 // Non-array-like iterable sources (string, `Iterable<T>`,
                 // `Map`, generators) bind an array of the iterated element
                 // type, mirroring tsc's `checkIteratedTypeOrElementType`.
+                // Unlike the union paths there is no better fallback here, so
+                // an ANY result flows through as `any[]`.
                 let iterated = self.for_of_element_type(array_like, false);
                 if iterated == TypeId::ERROR {
                     return self.rest_binding_array_type(TypeId::ANY);
@@ -930,6 +931,8 @@ impl<'a> CheckerState<'a> {
                 // Non-array-like iterable sources (string, `Iterable<T>`,
                 // `Map`, generators) bind the iterated element type at every
                 // position, mirroring tsc's `checkIteratedTypeOrElementType`.
+                // Unlike the union paths there is no better fallback here, so
+                // an ANY result flows through unchanged.
                 let iterated = self.for_of_element_type(array_like, false);
                 if iterated == TypeId::ERROR {
                     TypeId::ANY

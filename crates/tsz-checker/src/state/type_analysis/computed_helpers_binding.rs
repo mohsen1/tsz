@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
         be_idx: NodeIndex,
         depth: usize,
     ) -> Option<TypeId> {
-        if depth > 24 {
+        if depth > 10 {
             return None;
         }
         let ext = self.ctx.arena.get_extended(be_idx)?;

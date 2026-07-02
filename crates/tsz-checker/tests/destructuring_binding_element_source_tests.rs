@@ -12,6 +12,8 @@
 //! All expectations are pinned against `tsc` 6.0.2. Binder names vary across
 //! cases so the behaviour is structural, not name-driven.
 
+use std::sync::{Arc, OnceLock};
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{
     check_source_diagnostics, check_source_with_libs_code_messages, load_default_lib_files,
@@ -35,8 +37,9 @@ fn messages_2322(source: &str) -> Vec<String> {
 /// TS2322 messages with the default lib loaded, for sources that need
 /// `Iterable` / `Set` / `Map` / generator types to resolve.
 fn lib_messages_2322(source: &str) -> Vec<String> {
-    let lib_files = load_default_lib_files();
-    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
+    static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    let lib_files = LIBS.get_or_init(load_default_lib_files);
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), lib_files)
         .into_iter()
         .filter(|(code, _)| *code == 2322)
         .map(|(_, message)| message)
@@ -114,10 +117,10 @@ const fn = ([alpha, ...omega]: [number, string]) => {
   const wrong: boolean = omega[0];
 };
 "#;
+    let arrow_codes = codes(arrow);
     assert!(
-        codes(arrow).contains(&2322),
-        "arrow param rest element is string; got {:?}",
-        codes(arrow)
+        arrow_codes.contains(&2322),
+        "arrow param rest element is string; got {arrow_codes:?}"
     );
 
     let method = r#"
@@ -127,10 +130,10 @@ class Holder {
   }
 }
 "#;
+    let method_codes = codes(method);
     assert!(
-        codes(method).contains(&2322),
-        "method param rest element is string; got {:?}",
-        codes(method)
+        method_codes.contains(&2322),
+        "method param rest element is string; got {method_codes:?}"
     );
 
     let object_literal_method = r#"
@@ -140,10 +143,10 @@ const bag = {
   },
 };
 "#;
+    let method_prop_codes = codes(object_literal_method);
     assert!(
-        codes(object_literal_method).contains(&2322),
-        "object-literal method param rest element is string; got {:?}",
-        codes(object_literal_method)
+        method_prop_codes.contains(&2322),
+        "object-literal method param rest element is string; got {method_prop_codes:?}"
     );
 }
 
@@ -214,10 +217,10 @@ function withLiteral([lo, ...hi] = [1, "x"]) {
   const wrong: boolean = lo;
 }
 "#;
+    let literal_codes = codes(literal_form);
     assert!(
-        codes(literal_form).contains(&2322),
-        "fresh-literal default binds lo: number; got {:?}",
-        codes(literal_form)
+        literal_codes.contains(&2322),
+        "fresh-literal default binds lo: number; got {literal_codes:?}"
     );
 }
 
@@ -231,10 +234,10 @@ fn string_source_binds_string_elements() {
 const [ch] = "hi";
 const wrong: boolean = ch;
 "#;
+    let positional_codes = codes(positional);
     assert!(
-        codes(positional).contains(&2322),
-        "string positional element is string; got {:?}",
-        codes(positional)
+        positional_codes.contains(&2322),
+        "string positional element is string; got {positional_codes:?}"
     );
 
     let rest = r#"
@@ -255,24 +258,20 @@ declare const nums: Iterable<number>;
 const [...gathered] = nums;
 const show: "X" = gathered;
 "#;
+    let iterable_msgs = lib_messages_2322(iterable);
     assert!(
-        lib_messages_2322(iterable)
-            .iter()
-            .any(|m| m.contains("number[]")),
-        "Iterable<number> rest binds number[]; got {:?}",
-        lib_messages_2322(iterable)
+        iterable_msgs.iter().any(|m| m.contains("number[]")),
+        "Iterable<number> rest binds number[]; got {iterable_msgs:?}"
     );
 
     let set = r#"
 const [...uniques] = new Set([1, 2]);
 const show: "X" = uniques;
 "#;
+    let set_msgs = lib_messages_2322(set);
     assert!(
-        lib_messages_2322(set)
-            .iter()
-            .any(|m| m.contains("number[]")),
-        "Set<number> rest binds number[]; got {:?}",
-        lib_messages_2322(set)
+        set_msgs.iter().any(|m| m.contains("number[]")),
+        "Set<number> rest binds number[]; got {set_msgs:?}"
     );
 
     let map = r#"
@@ -280,12 +279,10 @@ declare const table: Map<string, number>;
 const [...entries] = table;
 const show: "X" = entries;
 "#;
+    let map_msgs = lib_messages_2322(map);
     assert!(
-        lib_messages_2322(map)
-            .iter()
-            .any(|m| m.contains("[string, number][]")),
-        "Map rest binds [string, number][]; got {:?}",
-        lib_messages_2322(map)
+        map_msgs.iter().any(|m| m.contains("[string, number][]")),
+        "Map rest binds [string, number][]; got {map_msgs:?}"
     );
 
     let generator = r#"
@@ -293,12 +290,10 @@ function* words() { yield "a"; }
 const [...taken] = words();
 const show: "X" = taken;
 "#;
+    let generator_msgs = lib_messages_2322(generator);
     assert!(
-        lib_messages_2322(generator)
-            .iter()
-            .any(|m| m.contains("string[]")),
-        "generator rest binds string[]; got {:?}",
-        lib_messages_2322(generator)
+        generator_msgs.iter().any(|m| m.contains("string[]")),
+        "generator rest binds string[]; got {generator_msgs:?}"
     );
 }
 
@@ -369,21 +364,21 @@ declare const trio: [number, string, boolean];
 const [x, ...xs] = trio;
 const show: "X" = xs;
 "#;
+    let declared_msgs = messages_2322(declared);
     assert!(
-        messages_2322(declared)
+        declared_msgs
             .iter()
             .any(|m| m.contains("[string, boolean]")),
-        "declared tuple rest still slices; got {:?}",
-        messages_2322(declared)
+        "declared tuple rest still slices; got {declared_msgs:?}"
     );
 
     let as_const = r#"
 const [y, ...ys] = [1, "x"] as const;
 const show: "X" = ys;
 "#;
+    let as_const_msgs = messages_2322(as_const);
     assert!(
-        messages_2322(as_const).iter().any(|m| m.contains("\"x\"")),
-        "as-const rest keeps literal slice elements; got {:?}",
-        messages_2322(as_const)
+        as_const_msgs.iter().any(|m| m.contains("\"x\"")),
+        "as-const rest keeps literal slice elements; got {as_const_msgs:?}"
     );
 }
