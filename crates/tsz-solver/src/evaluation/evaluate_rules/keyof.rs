@@ -403,12 +403,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Helper to recursively evaluate keyof while respecting depth limits.
-    /// Creates a `KeyOf` type and evaluates it through the main `evaluate()` method.
+    /// Creates a `KeyOf` type and evaluates it under the shared meta-recursion
+    /// identity guard.
     pub(crate) fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
         let keyof = self.interner().keyof(operand);
-        self.with_meta_rereduce_recursion_identity(operand, keyof, |evaluator| {
-            evaluator.evaluate(keyof)
-        })
+        self.evaluate(keyof)
     }
 
     /// Whether a per-member `keyof` result is the *universal* key space and so is
@@ -490,6 +489,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Evaluate keyof T - extract the keys of an object type
     pub fn evaluate_keyof(&mut self, operand: TypeId) -> TypeId {
+        let keyof = self.interner().keyof(operand);
+        self.with_meta_rereduce_recursion_identity(operand, keyof, |evaluator| {
+            evaluator.evaluate_keyof_inner(operand)
+        })
+    }
+
+    fn evaluate_keyof_inner(&mut self, operand: TypeId) -> TypeId {
         // PERF: Single lookup for both TemplateLiteral and Union checks.
         // CRITICAL ordering: TemplateLiteral BEFORE Union to avoid incorrect intersection,
         // and Union BEFORE general evaluation to avoid union simplification.

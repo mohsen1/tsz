@@ -110,6 +110,119 @@ fn conditional_recurse_helper_allows_seeded_fourth_root_and_pops() {
 }
 
 #[test]
+fn direct_keyof_defers_seeded_fifth_identity() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let expected = interner.keyof(object);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 4);
+    let result = evaluator.evaluate_keyof(object);
+
+    assert_eq!(result, expected);
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::KeyOf(inner)) if inner == object),
+        "seeded fifth direct keyof should preserve the deferred root"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "seeded direct keyof bailout must mark the request partial"
+    );
+}
+
+#[test]
+fn direct_keyof_allows_seeded_fourth_identity() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let deferred = interner.keyof(object);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 3);
+    let result = evaluator.evaluate_keyof(object);
+
+    assert_ne!(result, deferred);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff direct keyof must reduce and pop its stack entry"
+    );
+}
+
+#[test]
+fn recurse_keyof_allows_seeded_fourth_without_double_counting() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let deferred = interner.keyof(object);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 3);
+    let result = evaluator.recurse_keyof(object);
+
+    assert_ne!(result, deferred);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "helper-origin keyof evaluation must enter exactly one identity frame"
+    );
+}
+
+#[test]
+fn direct_index_access_defers_seeded_fifth_identity() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let key = interner.literal_string("value");
+    let expected = interner.index_access(object, key);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(expected, 4);
+    let result = evaluator.evaluate_index_access(object, key);
+
+    assert_eq!(result, expected);
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::IndexAccess(obj, idx)) if obj == object && idx == key),
+        "seeded fifth direct indexed access should preserve the deferred root"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "seeded direct indexed-access bailout must mark the request partial"
+    );
+}
+
+#[test]
+fn direct_index_access_allows_seeded_fourth_identity() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let key = interner.literal_string("value");
+    let deferred = interner.index_access(object, key);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(deferred, 3);
+    let result = evaluator.evaluate_index_access(object, key);
+
+    assert_eq!(result, TypeId::STRING);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff direct indexed access must reduce and pop its stack entry"
+    );
+}
+
+#[test]
+fn recurse_index_access_allows_seeded_fourth_without_double_counting() {
+    let interner = TypeInterner::new();
+    let object = object_prop(&interner, "value", TypeId::STRING);
+    let key = interner.literal_string("value");
+    let deferred = interner.index_access(object, key);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(deferred, 3);
+    let result = evaluator.recurse_index_access(object, key);
+
+    assert_eq!(result, TypeId::STRING);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "helper-origin indexed access must enter exactly one identity frame"
+    );
+}
+
+#[test]
 fn conditional_recurse_helper_reset_clears_seeded_bailout_state() {
     let interner = TypeInterner::new();
     let object = object_prop(&interner, "value", TypeId::STRING);
