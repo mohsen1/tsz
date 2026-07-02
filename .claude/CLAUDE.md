@@ -65,6 +65,9 @@ Hard rules:
 - For tracing, use `TSZ_LOG`/`TSZ_LOG_FORMAT`; do not add print debugging.
 - No temporary `dbg!`; no compiler instrumentation via `println!`, `print!`,
   or `eprintln!`. Use `tracing`.
+- To read runtime state (a `TypeId`, a diagnostic's operand, a decision-site
+  flag) prefer the `rust-debugger` skill (`rdbg`): break on a repro and inspect
+  values in place, instead of instrumenting and rebuilding.
 - In Rust doc comments, backtick CamelCase identifiers, file names, and dotted
   paths to satisfy `clippy::doc_markdown`.
 
@@ -127,6 +130,8 @@ Use repo-local skills under `.agents/skills/` when the task matches:
 - `tsz-performance-engineering`: perf/cache/residency.
 - `tsz-project-bench`: project corpus and benchmark rows.
 - `tsz-iteration-audit`: workflow, guardrail, context debt.
+- `rust-debugger`: break on a repro and read runtime state (types, diagnostics,
+  checker/solver flow) with `rdbg` instead of instrument-and-rebuild loops.
 
 Runtime/global skills may exist outside this checkout; do not document them as
 TSZ repo skills.
