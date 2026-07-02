@@ -429,6 +429,17 @@ Use for long-running or memory-intensive commands such as a full
 not override the CI-only rule for full conformance, emit, or fourslash suites:
 keep those full suites out of normal local development and let CI run them.
 
+On macOS the guard samples physical footprint via `footprint` when available,
+falling back to RSS elsewhere. Each memory probe runs under a deadline
+(`SAFE_RUN_PROBE_TIMEOUT_SECS`, default 10s); a timed-out probe falls back to
+an RSS sample on the same tick, and after three consecutive probe failures the
+run downgrades to RSS mode permanently, so a slow or wedged `footprint` never
+disables memory enforcement or hangs the wrapper after the child exits
+(issue #15439). Teardown kills the entire monitor process tree so pipelines
+reading safe-run's output (`... | tee log`) get EOF as soon as the wrapped
+command finishes. The behavior is covered by `scripts/test/safe-run-test.sh`,
+which runs in the CI lint gate.
+
 ### `scripts/test/nextest-guard.sh`
 
 Serializes local `cargo nextest` runs and self-heals a wedged orchestrator.
