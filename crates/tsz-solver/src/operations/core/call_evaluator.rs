@@ -137,6 +137,62 @@ pub trait AssignabilityChecker {
 // Function Call Resolution
 // =============================================================================
 
+/// Per-candidate elaboration for a `NoOverloadMatch` (`TS2769`) failure.
+///
+/// `tsc` groups an overload failure *per candidate*: under the top-level
+/// `No overload matches this call.` it emits, for each candidate that reached
+/// argument checking, a `TS2772` chain node
+/// `Overload {ordinal} of {total}, '{signature}', gave the following error.`
+/// with that candidate's applicability error nested one level deeper, in
+/// declaration order. This carries the data the checker's error reporter needs
+/// to build that node: the candidate's 1-based position among the failing
+/// candidates (`ordinal`), the total number of overload signatures (`total`),
+/// and the declared candidate signature to render (`signature`,
+/// `signatureToString`-style colon form). Entries are aligned 1:1 with the
+/// `failures` vector; an empty vector means the reporter keeps its flat
+/// fallback (used for the `>3`-candidate `TS2770` shape, which is out of scope
+/// for the per-overload branch).
+#[derive(Clone, Debug)]
+pub struct OverloadElaboration {
+    /// 1-based position of this candidate among the failing candidates.
+    pub ordinal: usize,
+    /// Total number of overload signatures considered (`tsc`'s `candidates.length`).
+    pub total: usize,
+    /// The declared candidate signature to render in the `TS2772` header.
+    pub signature: CallSignature,
+}
+
+/// Build the per-candidate `TS2772` elaborations for a `NoOverloadMatch`.
+///
+/// `failing_signatures` are the declared candidate signatures whose applicability
+/// errors were collected, in declaration order and aligned 1:1 with the
+/// `failures` vector. `total` is the number of overload signatures considered
+/// (`tsc`'s `candidates.length`, the `of M` count).
+///
+/// Mirrors `tsc`'s `resolveCall` branch selection: the per-overload elaboration
+/// is produced only when 2 or 3 candidates reached argument checking. A single
+/// failing candidate collapses to a plain `TS2345` (handled upstream, before a
+/// `NoOverloadMatch` is even built) and more than 3 candidates use the `TS2770`
+/// last-overload shape, for which this returns an empty vector so the reporter
+/// keeps its flat rendering.
+pub fn build_overload_elaborations(
+    failing_signatures: &[CallSignature],
+    total: usize,
+) -> Vec<OverloadElaboration> {
+    if !(2..=3).contains(&failing_signatures.len()) {
+        return Vec::new();
+    }
+    failing_signatures
+        .iter()
+        .enumerate()
+        .map(|(index, signature)| OverloadElaboration {
+            ordinal: index + 1,
+            total,
+            signature: signature.clone(),
+        })
+        .collect()
+}
+
 /// Result of attempting to call a function type.
 #[derive(Clone, Debug)]
 pub enum CallResult {
@@ -193,6 +249,11 @@ pub enum CallResult {
         func_type: TypeId,
         arg_types: Vec<TypeId>,
         failures: Vec<PendingDiagnostic>,
+        /// Per-candidate `TS2772` elaboration data, aligned 1:1 with `failures`.
+        /// Empty when the overload set falls outside `tsc`'s per-overload branch
+        /// (the `>3`-candidate `TS2770` shape), in which case the reporter keeps
+        /// its flat rendering.
+        overload_elaborations: Vec<OverloadElaboration>,
         fallback_return: TypeId,
     },
 }

@@ -5,7 +5,7 @@
 //! but with construct-specific semantics (e.g., union strictness, mixin pattern).
 
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{CallableShape, FunctionShape, TypeData, TypeId, TypeListId};
+use crate::types::{CallSignature, CallableShape, FunctionShape, TypeData, TypeId, TypeListId};
 use rustc_hash::FxHashSet;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -139,6 +139,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Handle overloads (similar to resolve_callable_call)
         let mut failures = Vec::new();
+        // Declared construct signatures aligned 1:1 with `failures`, for the
+        // per-overload TS2772 elaboration.
+        let mut failing_signatures: Vec<CallSignature> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut min_expected = usize::MAX;
         let mut max_expected = 0;
@@ -200,6 +203,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual, expected,
                         ),
                     );
+                    failing_signatures.push(sig.clone());
                 }
                 CallResult::ArgumentCountMismatch {
                     expected_min,
@@ -221,6 +225,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual,
                         ),
                     );
+                    failing_signatures.push(sig.clone());
                 }
                 // Track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
                 // when all count-compatible overloads fail with the same this-type mismatch)
@@ -242,6 +247,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             actual_this,
                         ),
                     );
+                    failing_signatures.push(sig.clone());
                 }
                 _ => {
                     all_arg_count_mismatches = false;
@@ -319,10 +325,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
+        let overload_elaborations = crate::operations::build_overload_elaborations(
+            &failing_signatures,
+            shape.construct_signatures.len(),
+        );
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(shape.clone()),
             arg_types: arg_types.to_vec(),
             failures,
+            overload_elaborations,
             fallback_return: shape
                 .construct_signatures
                 .first()

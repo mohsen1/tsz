@@ -143,6 +143,29 @@ impl<'a> TypeFormatter<'a> {
         rendered
     }
 
+    /// Render a single call/construct signature the way `tsc`'s
+    /// `signatureToString` does when it appears inside a diagnostic message
+    /// chain (e.g. the TS2772 `Overload N of M, '<sig>', gave the following
+    /// error.` header). The separator is a colon, so the result is
+    /// `<T>(x: T): T` — the call-signature spelling, never the `=>` function-type
+    /// form and (matching `resolveCall`'s `signatureToString(candidate)` call,
+    /// which passes no `SignatureKind`) without a leading `new ` for construct
+    /// signatures. Type predicates are preserved in the return position.
+    pub fn format_call_signature_display(&mut self, signature: &CallSignature) -> String {
+        self.format_signature_with_predicate(
+            &signature.type_params,
+            &signature.params,
+            signature.return_type,
+            &SignatureFormatOpts {
+                this_type: signature.this_type,
+                type_predicate: signature.type_predicate.as_ref(),
+                is_construct: false,
+                is_abstract: false,
+                separator: ":",
+            },
+        )
+    }
+
     /// Format a signature with the given separator between params and return type.
     pub(super) fn format_signature(
         &mut self,

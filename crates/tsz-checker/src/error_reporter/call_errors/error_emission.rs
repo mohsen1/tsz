@@ -757,10 +757,19 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report "No overload matches this call" with related overload failures.
+    ///
+    /// When `elaborations` is non-empty (the 2–3 candidate case), each failure is
+    /// grouped under a `TS2772`
+    /// `Overload {n} of {m}, '{signature}', gave the following error.` header
+    /// (depth 0) with the candidate's applicability error nested one level
+    /// deeper (depth 1), in declaration order — matching `tsc`'s per-overload
+    /// elaboration. An empty `elaborations` keeps the flat rendering (the
+    /// `>3`-candidate `TS2770` shape).
     pub fn error_no_overload_matches_at(
         &mut self,
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
+        elaborations: &[tsz_solver::operations::OverloadElaboration],
     ) {
         tracing::debug!(
             "error_no_overload_matches_at: File name: {}",
@@ -1067,7 +1076,16 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        for failure in failures {
+        // tsc groups a no-overload failure per candidate when 2 or 3 candidates
+        // reached argument checking: a TS2772 header per candidate with its
+        // applicability error nested one level deeper, in declaration order. The
+        // elaboration vector is aligned 1:1 with `failures`; only wrap when it
+        // is present and aligned, otherwise keep the flat rendering (the
+        // >3-candidate TS2770 shape).
+        let use_per_overload_elaboration =
+            !elaborations.is_empty() && elaborations.len() == failures.len();
+
+        for (failure_idx, failure) in failures.iter().enumerate() {
             let mut pending: PendingDiagnostic = PendingDiagnostic {
                 span: Some(span.clone()),
                 ..failure.clone()
@@ -1099,14 +1117,45 @@ impl<'a> CheckerState<'a> {
             }
             let diag = formatter.render(&pending);
             if let Some(diag_span) = diag.span.as_ref() {
+                let (file, start, length) = (
+                    diag_span.file.to_string(),
+                    diag_span.start,
+                    diag_span.length,
+                );
+                // In the per-overload case, emit the TS2772 header first (depth 0)
+                // and nest the candidate's applicability error one level deeper
+                // (depth 1); otherwise the applicability error stays flat (depth 0).
+                let child_depth = if use_per_overload_elaboration {
+                    let elab = &elaborations[failure_idx];
+                    let signature = formatter.format_call_signature_display(&elab.signature);
+                    related.push(DiagnosticRelatedInformation {
+                        file: file.clone(),
+                        start,
+                        length,
+                        message_text: format_message(
+                            diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                            &[
+                                &elab.ordinal.to_string(),
+                                &elab.total.to_string(),
+                                &signature,
+                            ],
+                        ),
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                        depth: 0,
+                    });
+                    1
+                } else {
+                    0
+                };
                 related.push(DiagnosticRelatedInformation {
-                    file: diag_span.file.to_string(),
-                    start: diag_span.start,
-                    length: diag_span.length,
+                    file,
+                    start,
+                    length,
                     message_text: diag.message.clone(),
                     category: DiagnosticCategory::Message,
                     code: diag.code,
-                    depth: 0,
+                    depth: child_depth,
                 });
             }
         }

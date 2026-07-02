@@ -1924,11 +1924,12 @@ impl<'a> CheckerState<'a> {
             }
             CallResult::NoOverloadMatch {
                 failures,
+                overload_elaborations,
                 fallback_return,
                 ..
             } => {
                 if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
-                    self.error_no_overload_matches_at(idx, &failures);
+                    self.error_no_overload_matches_at(idx, &failures, &overload_elaborations);
                 }
                 if fallback_return != TypeId::ERROR {
                     query::instantiate_type_params_to_constraints(self.ctx.types, fallback_return)

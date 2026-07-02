@@ -1007,6 +1007,10 @@ impl<'a> CheckerState<'a> {
         // type callback/object-literal arguments correctly. The union pass above can
         // miss those, producing false negatives and downstream false TS2345/TS2322.
         let mut failures = Vec::new();
+        // Declared candidate signatures aligned 1:1 with `failures`, so the
+        // reporter can build the per-overload TS2772 elaboration in declaration
+        // order.
+        let mut failing_signatures: Vec<tsz_solver::CallSignature> = Vec::new();
         let mut all_arg_count_mismatches = true;
         let mut any_has_rest = false;
         let mut exact_expected_counts = std::collections::BTreeSet::new();
@@ -1667,6 +1671,7 @@ impl<'a> CheckerState<'a> {
                                 };
                             callback_body_failure_return.get_or_insert(recovery_return);
                             failures.clear();
+                            failing_signatures.clear();
                             failures.push(
                                 PendingDiagnosticBuilder::argument_not_assignable(
                                     return_type,
@@ -1674,6 +1679,7 @@ impl<'a> CheckerState<'a> {
                                 )
                                 .with_span(span),
                             );
+                            failing_signatures.push(original_sig.clone());
                             type_mismatch_count = type_mismatch_count.max(1);
                             best_type_mismatch = Some((
                                 OverloadResolution {
@@ -1834,6 +1840,7 @@ impl<'a> CheckerState<'a> {
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index)),
                         );
+                        failing_signatures.push(original_sig.clone());
                     }
                 }
                 CallResult::ArgumentCountMismatch {
@@ -1854,6 +1861,7 @@ impl<'a> CheckerState<'a> {
                         max,
                         actual,
                     ));
+                    failing_signatures.push(original_sig.clone());
                 }
                 _ => {
                     all_arg_count_mismatches = false;
@@ -1976,12 +1984,17 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::operations::overload_failure_return_type(self.ctx.types, signatures)
             })
         });
+        let overload_elaborations = tsz_solver::operations::build_overload_elaborations(
+            &failing_signatures,
+            signatures.len(),
+        );
         Some(OverloadResolution {
             arg_types: arg_types.clone(),
             result: CallResult::NoOverloadMatch {
                 func_type: TypeId::ANY,
                 arg_types,
                 failures,
+                overload_elaborations,
                 fallback_return,
             },
             selected_type_predicate: None,
