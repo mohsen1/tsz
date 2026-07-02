@@ -454,8 +454,8 @@ install_application_deps() {
 }
 
 # Provision the package managers the application fixtures need, once per job. The
-# self-hosted Cloud Run runner ships only npm — yarn (7 rows), pnpm (10), and bun
-# (1) are not on PATH, and npm's DEFAULT global prefix is neither writable nor on
+# hosted runner image ships only npm — yarn (7 rows), pnpm (10), and bun (1) are
+# not on PATH, and npm's DEFAULT global prefix is neither writable nor on
 # PATH, so a bare `npm i -g corepack` neither installs nor becomes invocable.
 # That left the whole application set "<pm>: command not found" -> fixture-invalid
 # (gray), which is what emptied the compatibility dashboard. Provision into a

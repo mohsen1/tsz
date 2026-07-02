@@ -10,8 +10,7 @@ set -euo pipefail
 #
 # Benchmark data priority (first match wins):
 #   1. Latest GitHub Pages benchmark snapshot    — refreshed with plain curl
-#   2. Latest public GCS benchmark data          — fallback for older deployments
-#   3. Existing CI artifact                      — reused when refresh is unavailable
+#   2. Existing CI artifact                      — reused when refresh is unavailable
 #
 # Other env vars:
 #   TSZ_WEBSITE_BUILD_WASM=1  — build WASM package for playground if missing
@@ -22,7 +21,6 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WEBSITE_DIR="$ROOT/crates/tsz-website"
 GITHUB_PAGES_BENCH_URL="https://tsz.dev/benchmark-data/latest.json"
 GITHUB_PAGES_FALLBACK_BENCH_URL="https://tsz-org.github.io/tsz/benchmark-data/latest.json"
-GCS_BENCH_URL="https://storage.googleapis.com/storage/v1/b/thirdface-ai-oauth_cloudbuild/o/tsz-ci-cache%2Fbench-runs%2Flatest.json?alt=media"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "error: npm is required but not found in PATH" >&2
@@ -61,11 +59,9 @@ try_download_latest_benchmarks() {
   echo "Benchmarks: refreshing latest CI benchmark data..."
 
   local github_dest="$ROOT/artifacts/bench-vs-tsgo-github-latest.json"
-  local gcs_dest="$ROOT/artifacts/bench-vs-tsgo-gcs-latest.json"
 
   try_download_benchmark_url "GitHub Pages" "${TSZ_WEBSITE_BENCH_URL:-$GITHUB_PAGES_BENCH_URL}" "$github_dest" && return 0
   try_download_benchmark_url "GitHub Pages fallback" "$GITHUB_PAGES_FALLBACK_BENCH_URL" "$github_dest" && return 0
-  try_download_benchmark_url "public GCS" "$GCS_BENCH_URL" "$gcs_dest" && return 0
 
   return 1
 }
@@ -99,7 +95,6 @@ prepare_benchmarks() {
   # 2. Reuse only CI-backed artifacts already on disk.
   for ci_latest in \
     "$ROOT/artifacts/bench-vs-tsgo-github-latest.json" \
-    "$ROOT/artifacts/bench-vs-tsgo-gcs-latest.json" \
     "$ROOT/artifacts/bench-vs-tsgo-latest.json"; do
     if [ -f "$ci_latest" ] && validate_benchmark_json "$ci_latest"; then
       echo "Benchmarks: using existing CI artifact $(basename "$ci_latest")"

@@ -67,7 +67,7 @@ function isNonEmptyStringArray(value) {
 
 // A benchmark shard that exits non-zero writes an explicit error stub
 // ({"schema_version":1,"results":[],"error":"..."}) instead of timing data
-// (scripts/cloudbuild/cloudbuild-bench-shard.yaml). A payload with no result
+// for a failed shard. A payload with no result
 // rows contributes nothing to the published artifact, so it carries no timing
 // data to publish — and nothing to forge — and must be excluded from the merge
 // rather than fail the runner-signature gate.

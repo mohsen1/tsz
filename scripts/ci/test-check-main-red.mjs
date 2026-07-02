@@ -91,8 +91,8 @@ test("timed_out and startup_failure count as red", () => {
 // --- infra-interruption classification (issue #14688) ---
 
 // The witnessed false-red signature: the `unit` job concluded `failure` but its
-// "Submit ... to Cloud Build pool" work step ended with `conclusion: null`
-// (submission interrupted) while every other step succeeded.
+// work step ended with `conclusion: null` (runner interruption) while every
+// other step succeeded.
 const INTERRUPTED_UNIT_JOBS = {
   jobs: [
     {
@@ -101,7 +101,7 @@ const INTERRUPTED_UNIT_JOBS = {
       steps: [
         { name: "Set up job", conclusion: "success" },
         { name: "Checkout", conclusion: "success" },
-        { name: "Submit unit suite to Cloud Build pool", conclusion: null },
+        { name: "Run unit suite", conclusion: null },
         { name: "Complete job", conclusion: null },
       ],
     },
@@ -142,7 +142,7 @@ test("classifyJobsFailure: cancelled work step counts as interrupted => infra", 
       conclusion: "failure",
       steps: [
         { name: "Checkout", conclusion: "success" },
-        { name: "Submit checker integration suite to Cloud Build pool", conclusion: "cancelled" },
+        { name: "Run checker integration suite", conclusion: "cancelled" },
       ],
     }],
   };

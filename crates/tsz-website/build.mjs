@@ -193,7 +193,7 @@ function loadBenchmarks() {
   })();
 
   // Fall back to the committed snapshot so the site always shows real data
-  // even when the CI GCS download hasn't run yet.
+  // even when no GitHub Actions benchmark artifact has been downloaded.
   const snapshot = path.join(WEBSITE, "bench-snapshot.json");
   const searchPaths = [...locations, snapshot];
 

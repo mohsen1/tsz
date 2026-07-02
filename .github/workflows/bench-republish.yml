@@ -1,18 +1,13 @@
 name: Bench Republish
 
 # Quick, matrix-free republish of an ALREADY-COMPLETED bench run's data to the
-# public benchmark site. The perf matrix takes ~2.5h and queues for hours on the
-# contended self-hosted pool; when latest.json freezes (a failed publish gate,
-# runner starvation, or a gate-policy fix that only applies to newer commits),
-# this lever re-publishes the newest complete run WITHOUT re-running the matrix.
+# public benchmark site. The perf matrix is now GitHub Actions-only; when the
+# site needs a rebake after a gate-policy fix, this lever re-publishes the
+# newest complete run WITHOUT re-running the matrix.
 #
-# It is deliberately the lowest-risk shape: a single self-hosted job that reuses
-# the bench-publish auth (ambient GCS creds on tsz-cloud-run), the SAME readiness
-# gate, and the SAME monotonic generated_at guard — it never publishes
-# gate-failing or older data. Unlike re-running an old Bench run's bench-publish
-# (which checks out that run's pinned, possibly pre-fix commit and re-runs its
-# OLD gate code), this workflow checks out CURRENT main, so the gate that runs is
-# always the current-main policy.
+# It is deliberately the lowest-risk shape: a single GitHub-hosted job that
+# downloads an existing bench-results-merged artifact, re-runs the current-main
+# readiness gate, and uploads a fresh GitHub artifact for the Pages build.
 #
 # Why a separate workflow rather than a job inside bench.yml: adding a republish
 # job to bench.yml would require gating ~8 existing jobs (and the publish job's
@@ -43,13 +38,10 @@ permissions:
   actions: write
   issues: read
 
-env:
-  _TSZ_CI_CACHE_BUCKET: gs://thirdface-ai-oauth_cloudbuild/tsz-ci-cache
-
 jobs:
   republish:
     name: bench-republish
-    runs-on: [self-hosted, tsz-cloud-run]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       # Plain checkout: for workflow_dispatch this is the selected ref (main by
@@ -72,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           # The bench-results-merged artifact already contains the merged
-          # bench-results.json and every sibling the publish step copies to GCS
+          # bench-results.json and every sibling the site consumes
           # (winners + missing-attribution), so there is nothing to re-merge.
           for required in \
             bench-results.json \
@@ -106,63 +98,26 @@ jobs:
           fi
           echo "Readiness gate passed for run ${{ inputs.run_id }}."
 
-      - name: Publish to GCS latest.json (monotonic guard preserved)
-        id: publish
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-
-          # Always keep a timestamped history copy regardless of the guard below.
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
-          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
-            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.missing-attribution.md"
-
-          # Monotonic latest.json guard — identical policy to bench.yml: refuse to
-          # overwrite latest.* when the already-published latest.json carries a
-          # newer-or-equal generated_at than the run being republished. Only
-          # refuses when BOTH timestamps parse and this run is not strictly newer,
-          # so it never reduces publishing on first publish or unparseable data.
-          existing_latest="$GITHUB_WORKSPACE/bench-results-existing-latest.json"
-          if ! gsutil -q cp "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json" "$existing_latest" 2>/dev/null; then
-            rm -f "$existing_latest"
-          fi
-          latest_decision="$(node -e '
-            const fs = require("node:fs");
-            const gen = (p) => { try { return Date.parse(JSON.parse(fs.readFileSync(p, "utf8")).generated_at) || 0; } catch { return 0; } };
-            const incoming = gen(process.argv[1]);
-            const existing = gen(process.argv[2]);
-            process.stdout.write(incoming > 0 && existing > 0 && incoming <= existing ? "skip" : "publish");
-          ' "$GITHUB_WORKSPACE/bench-results.json" "$existing_latest")"
-          rm -f "$existing_latest"
-
-          if [[ "$latest_decision" == "skip" ]]; then
-            echo "latest.json guard: existing latest.json is newer-or-equal than run ${{ inputs.run_id }}; keeping it and skipping the latest.* overwrite (timestamped ${TIMESTAMP}.json was still published)."
-            echo "should_redeploy=false" >> "$GITHUB_OUTPUT"
-          else
-            gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
-              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-            echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
-            gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
-              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
-            gsutil -q cp "$GITHUB_WORKSPACE/bench-results-missing-attribution.md" \
-              "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.missing-attribution.md"
-            echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Upload republished benchmark artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-results-merged
+          path: |
+            bench-results.json
+            bench-results-tsgo-winners.json
+            bench-results-missing-attribution.md
+            bench-results-readiness.json
+          retention-days: 30
+          if-no-files-found: error
+          compression-level: 1
 
       - name: Trigger website redeploy
-        if: steps.publish.outputs.should_redeploy == 'true' && inputs.redeploy_site
+        if: inputs.redeploy_site
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # GCS latest.json alone does NOT update tsz.dev — the public file is a
-          # static asset baked by the gh-pages "Deploy Website" build. Dispatch it
-          # (idempotent, retried) so the site rebakes the freshly published data.
+          # Dispatch gh-pages so the site rebakes from the uploaded GitHub
+          # Actions benchmark artifact.
           if ! curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 15 \
             -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -170,5 +125,5 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/gh-pages.yml/dispatches" \
             -d '{"ref":"main"}'; then
-            echo "::warning::Website redeploy dispatch failed after retries; benchmark data is published to GCS. Re-run gh-pages.yml manually to rebake the site."
+            echo "::warning::Website redeploy dispatch failed after retries; benchmark data is uploaded as a GitHub artifact. Re-run gh-pages.yml manually to rebake the site."
           fi

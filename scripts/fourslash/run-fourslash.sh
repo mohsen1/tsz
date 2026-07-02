@@ -246,7 +246,7 @@ build_typescript_harness() {
 
 ensure_typescript_harness_deps() {
     # The built harness requires runtime packages from TypeScript/node_modules.
-    # Cloud Build may restore built/local without node_modules, so validate both.
+    # CI may restore built/local without node_modules, so validate both.
     if [[ ! -f "node_modules/typescript/lib/tsc.js" ]] \
         || [[ ! -d "node_modules/chai" ]] \
         || [[ ! -d "node_modules/@types/mocha" ]]; then

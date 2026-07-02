@@ -12,6 +12,7 @@ use crate::intern::TypeInterner;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{
     ConditionalType, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo,
+    TypeParamOrigin,
 };
 
 // =============================================================================
@@ -811,6 +812,516 @@ fn same_identity_containment_keeps_finite_lazy_resolution() {
         ),
         "ordinary Lazy(D) -> object resolution must still reduce keyof, got {:?}",
         interner.lookup(keyof_result)
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_defers_fifth_keyof_object_identity() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 4);
+    let result = evaluator.recurse_keyof(object);
+
+    assert_eq!(result, interner.keyof(object));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::KeyOf(inner)) if inner == object),
+        "fifth same-identity keyof re-reduce should preserve the deferred operand, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "identity-count bailout must mark the request partial for cache gates"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_allows_fourth_keyof_object_identity() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("renamed"),
+        TypeId::STRING,
+    )]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 3);
+    let result = evaluator.recurse_keyof(object);
+
+    assert_eq!(result, interner.literal_string("renamed"));
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "fourth same-identity keyof re-reduce is below the tsc-style cutoff"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_truncates_after_reducing_call() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("stable"),
+        TypeId::STRING,
+    )]);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 3);
+    assert_eq!(
+        evaluator.recurse_keyof(object),
+        interner.literal_string("stable")
+    );
+    assert_eq!(
+        evaluator.recurse_keyof(object),
+        interner.literal_string("stable")
+    );
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff reductions must pop their temporary stack entry"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_keeps_finite_readonly_keyof_reduction() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let readonly = interner.intern(TypeData::ReadonlyType(object));
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    let result = evaluator.recurse_keyof(readonly);
+
+    assert_eq!(result, interner.literal_string("a"));
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "finite transparent wrappers must still reduce below the identity cutoff"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_keeps_readonly_seed_distinct_from_object() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let readonly = interner.intern(TypeData::ReadonlyType(object));
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(readonly, 4);
+    assert_eq!(
+        evaluator.recurse_keyof(object),
+        interner.literal_string("a")
+    );
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "readonly recursion entries must not make the bare object bail"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_uses_leftmost_index_access_object() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let key = interner.literal_string("a");
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let first_access = interner.index_access(object, key);
+    let second_access = interner.index_access(first_access, key);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(second_access, 4);
+    let result = evaluator.recurse_index_access(first_access, key);
+
+    assert_eq!(result, interner.index_access(first_access, key));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::IndexAccess(obj, idx)) if obj == first_access && idx == key),
+        "fifth same-leftmost-object indexed-access re-reduce should preserve the deferred chain, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "identity-count bailout must mark indexed-access requests partial"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_object_and_indexed_leftmost_together() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let key = interner.literal_string("a");
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let first_access = interner.index_access(object, key);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first_access, 4);
+    let result = evaluator.recurse_keyof(object);
+
+    assert_eq!(result, interner.keyof(object));
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "A and A[P] intentionally share the leftmost object recursion identity"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_conditional_roots() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: object,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(conditional, 4);
+    let result = evaluator.recurse_keyof(conditional);
+
+    assert_eq!(result, interner.keyof(conditional));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::KeyOf(inner)) if inner == conditional),
+        "conditional recursion identity should defer before eager branch evaluation, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "conditional identity-count bailout must mark the request partial"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_distinct_conditional_root_still_reduces() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: object,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let distinct_conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::NUMBER,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NEVER,
+        false_type: object,
+        is_distributive: false,
+    });
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(distinct_conditional, 4);
+    let result = evaluator.recurse_keyof(conditional);
+
+    assert_eq!(result, interner.literal_string("a"));
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "a different conditional root must not trip the identity-count bailout"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_canonical_def_ids() {
+    use crate::construction::TypeDatabase;
+    use crate::def::DefId;
+    use crate::evaluation::evaluate::TypeEvaluator;
+    use crate::relations::subtype::TypeResolver;
+    use crate::types::SymbolRef;
+
+    struct CanonicalDefResolver {
+        body: TypeId,
+        primary: DefId,
+        alias: DefId,
+    }
+
+    impl TypeResolver for CanonicalDefResolver {
+        fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+            (def_id == self.primary || def_id == self.alias).then_some(self.body)
+        }
+
+        fn canonical_def_id(&self, def_id: DefId) -> DefId {
+            if def_id == self.alias {
+                self.primary
+            } else {
+                def_id
+            }
+        }
+
+        fn defs_are_equivalent(&self, left: DefId, right: DefId) -> bool {
+            self.canonical_def_id(left) == self.canonical_def_id(right)
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let primary = crate::def::DefId(14361);
+    let alias = crate::def::DefId(14362);
+    let body = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    let resolver = CanonicalDefResolver {
+        body,
+        primary,
+        alias,
+    };
+    let primary_lazy = interner.lazy(primary);
+    let alias_lazy = interner.lazy(alias);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &resolver);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(alias_lazy, 4);
+    let result = evaluator.recurse_keyof(primary_lazy);
+
+    assert_eq!(result, interner.keyof(primary_lazy));
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "canonical/equivalent DefIds must count as the same recursion identity"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_keeps_distinct_def_ids_separate() {
+    use crate::def::DefId;
+    use crate::def::resolver::TypeEnvironment;
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let primary = DefId(14363);
+    let other = DefId(14364);
+    let primary_lazy = interner.lazy(primary);
+    let other_lazy = interner.lazy(other);
+    let object = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+
+    let mut env = TypeEnvironment::new();
+    env.insert_def(primary, object);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(other_lazy, 4);
+    let result = evaluator.recurse_keyof(primary_lazy);
+
+    assert_eq!(result, interner.literal_string("a"));
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "distinct DefIds without canonical/equivalent identity must not collide"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_decl_scoped_type_params_without_names() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("types.ts");
+    let first = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 42 },
+    }));
+    let renamed = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("Renamed"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 42 },
+    }));
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let result = evaluator.recurse_keyof(renamed);
+
+    assert_eq!(result, interner.keyof(renamed));
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "declaration-scoped type parameters should count by declaration site, not display name"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_keeps_distinct_decl_scoped_type_params_separate() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("types.ts");
+    let first = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 42 },
+    }));
+    let same_name_distinct_decl = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 43 },
+    }));
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let _ = evaluator.recurse_keyof(same_name_distinct_decl);
+
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "distinct declaration-scoped type parameters must not collide solely because names match"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_keeps_user_type_param_names_distinct() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("T");
+    let first = interner.fresh_type_param(TypeParamInfo {
+        name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let second = interner.fresh_type_param(TypeParamInfo {
+        name,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let _ = evaluator.recurse_keyof(second);
+
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "ordinary user type parameters must not collide solely because their names match"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_infer_placeholders_by_id() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let first = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::InferPlaceholder { id: 7 },
+    }));
+    let renamed = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("Renamed"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::InferPlaceholder { id: 7 },
+    }));
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let result = evaluator.recurse_keyof(renamed);
+
+    assert_eq!(result, interner.keyof(renamed));
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "infer placeholders should count by structured placeholder id, not display name"
+    );
+}
+
+#[test]
+fn meta_rereduce_identity_stack_counts_infer_sources_by_id() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let origin_name = interner.intern_string("Source");
+    let first = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::InferSource {
+            id: 9,
+            origin_name: Some(origin_name),
+        },
+    }));
+    let renamed = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("Renamed"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::InferSource {
+            id: 9,
+            origin_name: None,
+        },
+    }));
+    let distinct = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::InferSource {
+            id: 10,
+            origin_name: Some(origin_name),
+        },
+    }));
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let _ = evaluator.recurse_keyof(distinct);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "different infer-source ids must remain distinct even with the same source name"
+    );
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let result = evaluator.recurse_keyof(renamed);
+
+    assert_eq!(result, interner.keyof(renamed));
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "infer-source placeholders should count by structured id, not origin display name"
     );
 }
 

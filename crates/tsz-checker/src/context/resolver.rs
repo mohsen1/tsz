@@ -1668,16 +1668,19 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
         let canonical_name = name.rsplit('.').next().unwrap_or(name);
         let def_id = self.get_or_create_def_id_for_symbol_name(current_sym, canonical_name);
-        // Cache the resolution into `type_env` so the next solver-side
+        // Cache the resolution into BOTH environments so the next solver-side
         // evaluator pass (which uses `TypeEnvironment` as resolver) can
         // reduce `Application(UnresolvedTypeName(name), args)` without
-        // having to bounce back into the wider CheckerContext path. The
-        // first-pass evaluator runs with `&*self.type_env`, so without
-        // this cache share every nested Application keeps producing
-        // opaque results for the rest of an instantiated body.
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
-            env.insert_unresolved_resolution(name.to_string(), def_id);
-        }
+        // having to bounce back into the wider CheckerContext path. Routed
+        // through the env-write authority (deferring on borrow races instead
+        // of silently skipping, and mirroring into the flow-analyzer env so
+        // `overlay_missing_from` has nothing left to repair — #14348).
+        self.register_in_envs(
+            crate::context::DeferredFlowEnvWrite::InsertUnresolvedResolution {
+                name: name.to_string(),
+                def_id,
+            },
+        );
         Some(def_id)
     }
 

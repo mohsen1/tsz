@@ -10,8 +10,8 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
-GCP_FULL_CI = ROOT / "scripts" / "ci" / "gcp-full-ci.sh"
-GCP_FULL_CI_CONFORMANCE = ROOT / "scripts" / "ci" / "lib" / "gcp-full-ci-conformance.sh"
+FULL_CI = ROOT / "scripts" / "ci" / "full-ci.sh"
+FULL_CI_CONFORMANCE = ROOT / "scripts" / "ci" / "lib" / "full-ci-conformance.sh"
 
 
 class ConformanceArtifactHandoffTests(unittest.TestCase):
@@ -20,8 +20,8 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         cls.workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         cls.script = "\n".join(
             [
-                GCP_FULL_CI.read_text(encoding="utf-8"),
-                GCP_FULL_CI_CONFORMANCE.read_text(encoding="utf-8"),
+                FULL_CI.read_text(encoding="utf-8"),
+                FULL_CI_CONFORMANCE.read_text(encoding="utf-8"),
             ],
         )
 
@@ -37,7 +37,8 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             re.compile(
                 r"path:\s*\|\s*\n"
                 r"\s+ci-metrics/conformance\.json\s*\n"
-                r"\s+ci-metrics/conformance-failures-\*\.txt",
+                r"\s+ci-metrics/conformance-failures-\*\.txt\s*\n"
+                r"\s+ci-metrics/conformance-timings-\*\.json",
                 re.MULTILINE,
             ),
         )
@@ -47,17 +48,17 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         upload_block = upload_block[: upload_block.index("retention-days: 1")]
         self.assertNotIn("include-hidden-files", upload_block)
 
-    def test_shard_writes_failure_list_before_optional_gcs_upload(self):
+    def test_shard_writes_failure_list_before_artifact_handoff(self):
         body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
         failure_write = body.index(
             "awk '/^(FAIL|XFAIL|CRASH|TIMEOUT) / { print $2 }' \"$log_file\"",
         )
-        upload_block = body.index("# Upload shard result to GCS")
-        self.assertLess(failure_write, upload_block)
-        failure_write_block = body[failure_write:upload_block]
+        handoff_block = body.index("The workflow uploads conformance.json")
+        self.assertLess(failure_write, handoff_block)
+        failure_write_block = body[failure_write:handoff_block]
         self.assertIn("XFAIL", failure_write_block)
 
-    def test_weighted_shards_use_checked_in_weights_not_latest_gcs(self):
+    def test_weighted_shards_use_checked_in_weights(self):
         body = self.function_body("run_conformance", "\nrun_conformance_aggregate() {")
         self.assertIn(
             'cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"',
@@ -66,7 +67,7 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         self.assertIn("Using checked-in conformance shard weights.", body)
         self.assertNotIn("metrics/latest/conformance-timings.json", body)
 
-    def test_aggregate_prefers_artifact_failure_lists_before_gcs(self):
+    def test_aggregate_uses_artifact_failure_lists_only(self):
         aggregate = self.function_body(
             "run_conformance_aggregate",
             "\n# Download shard failure lists",
@@ -76,15 +77,20 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
             aggregate,
         )
         self.assertIn('cp "$artifact_failure_list" "$tmp_dir/failures-shard-${shard_name#conformance-shard-}.txt"', aggregate)
+        self.assertIn(
+            'find "$shard_dir" -maxdepth 4 -name "conformance-timings-${shard_name#conformance-shard-}.json"',
+            aggregate,
+        )
+        self.assertIn("GitHub Actions artifacts are the only shard handoff.", aggregate)
+        self.assertNotIn("gsutil", aggregate)
         allowlist = self.function_body(
             "_check_conformance_regression_allowlist",
             "\ndef normalize(path):",
         )
-        local_glob = allowlist.index('compgen -G "$tmp_dir/failures-shard-*.txt"')
-        gcs_copy = allowlist.index('gsutil -q -m cp "${prefix}/failures-shard-*.txt"')
-        self.assertLess(local_glob, gcs_copy)
+        self.assertIn('compgen -G "$tmp_dir/failures-shard-*.txt"', allowlist)
+        self.assertNotIn("gsutil", allowlist)
 
-    def test_aggregate_accepts_flat_artifact_failure_lists_before_gcs(self):
+    def test_aggregate_accepts_flat_artifact_failure_lists(self):
         aggregate = self.function_body(
             "run_conformance_aggregate",
             "\n# Download shard failure lists",
@@ -143,8 +149,6 @@ num_or_zero() {{
   esac
 }}
 cap_positive_baseline() {{ echo "$1"; }}
-ensure_gcs_auth() {{ :; }}
-gsutil() {{ return 1; }}
 publish_latest_metric() {{ :; }}
 
 {aggregate}
@@ -221,8 +225,6 @@ num_or_zero() {{
   esac
 }}
 cap_positive_baseline() {{ echo "$1"; }}
-ensure_gcs_auth() {{ :; }}
-gsutil() {{ return 1; }}
 publish_latest_metric() {{ :; }}
 
 {aggregate}
@@ -295,8 +297,6 @@ num_or_zero() {{
   esac
 }}
 cap_positive_baseline() {{ echo "$1"; }}
-ensure_gcs_auth() {{ :; }}
-gsutil() {{ return 1; }}
 publish_latest_metric() {{ :; }}
 
 {aggregate}
