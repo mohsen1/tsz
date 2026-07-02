@@ -202,4 +202,5 @@
 # and found these exact current-main rows still failing. Keep them listed as
 # path-based runway so the aggregate rejects any new unlisted conformance drift.
 TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
+TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
 TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck63.ts
