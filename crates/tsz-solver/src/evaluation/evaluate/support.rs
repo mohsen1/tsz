@@ -136,34 +136,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
-    /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
+    /// Extract the reachable type-parameter infos of a type: the node's
+    /// children's lists merged bottom-up in child order, deduplicated by
+    /// parameter name on first occurrence — the same set and order the
+    /// historical accumulate-into-one-vec DFS produced.
     ///
-    /// The reachable type-parameter set is a pure function of the immutable
-    /// interned structure of `type_id` (the walk never consults the resolver or
-    /// the substitution environment), so the result is memoized per `TypeId` on
-    /// the shared interner. The conditional evaluator extracts the params of
-    /// both the check and extends operands on every deferred-conditional
-    /// reduction; a recursive conditional re-applied over an alias `Application`
-    /// drives that re-walk thousands of times because each unwrap step mints a
-    /// fresh `TypeId`. The memo collapses the repeats to O(1) and is shared
-    /// across the many fresh evaluators created during instantiation (#14330).
-    pub(crate) fn extract_type_params_from_type(
-        &self,
-        type_id: TypeId,
-    ) -> std::sync::Arc<[TypeParamInfo]> {
-        self.type_params_of(type_id)
-    }
-
-    /// Per-node reachable-parameter list, memoized on the shared interner.
-    ///
-    /// Bottom-up: a node's list is its children's lists merged in child
-    /// order, deduplicated by parameter name on first occurrence — the same
-    /// set and order the historical accumulate-into-one-vec DFS produced.
-    /// Memoizing every visited node (not just the query root) is what lets a
+    /// The list is a pure function of the immutable interned structure (the
+    /// walk never consults the resolver or the substitution environment), so
+    /// every visited node — not just the query root — is memoized per
+    /// `TypeId` on the shared interner. That per-node sharing is what lets a
     /// fresh root over a large shared interior reuse the interior's lists
     /// instead of re-walking them: each unwrap step of a recursive
     /// conditional mints a fresh root whose subtrees were all walked before
-    /// (#13508). The interned type DAG is acyclic without resolver
+    /// (#14330, #13508). The interned type DAG is acyclic without resolver
     /// indirection (this walk never resolves `Lazy`), so no cycle guard is
     /// needed.
     ///
@@ -171,7 +156,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// or allocating: no `TypeParameter` node and no `Callable` declaring
     /// signature type parameters is reachable on this collector's child
     /// surface (see `contains_extractable_type_params_db`).
-    fn type_params_of(&self, type_id: TypeId) -> std::sync::Arc<[TypeParamInfo]> {
+    pub(crate) fn extract_type_params_from_type(
+        &self,
+        type_id: TypeId,
+    ) -> std::sync::Arc<[TypeParamInfo]> {
         fn empty_params() -> std::sync::Arc<[TypeParamInfo]> {
             static EMPTY: std::sync::OnceLock<std::sync::Arc<[TypeParamInfo]>> =
                 std::sync::OnceLock::new();
@@ -208,24 +196,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
-                    merge_params(&mut out, &self.type_params_of(prop.type_id));
+                    merge_params(&mut out, &self.extract_type_params_from_type(prop.type_id));
                 }
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in &shape.params {
-                    merge_params(&mut out, &self.type_params_of(param.type_id));
+                    merge_params(&mut out, &self.extract_type_params_from_type(param.type_id));
                 }
-                merge_params(&mut out, &self.type_params_of(shape.return_type));
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(shape.return_type),
+                );
             }
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
-                    merge_params(&mut out, &self.type_params_of(member));
+                    merge_params(&mut out, &self.extract_type_params_from_type(member));
                 }
             }
             TypeData::Array(elem) => {
-                merge_params(&mut out, &self.type_params_of(elem));
+                merge_params(&mut out, &self.extract_type_params_from_type(elem));
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.interner.get_conditional(cond_id);
@@ -235,14 +226,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     cond.true_type,
                     cond.false_type,
                 ] {
-                    merge_params(&mut out, &self.type_params_of(side));
+                    merge_params(&mut out, &self.extract_type_params_from_type(side));
                 }
             }
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
-                merge_params(&mut out, &self.type_params_of(app.base));
+                merge_params(&mut out, &self.extract_type_params_from_type(app.base));
                 for &arg in &app.args {
-                    merge_params(&mut out, &self.type_params_of(arg));
+                    merge_params(&mut out, &self.extract_type_params_from_type(arg));
                 }
             }
             TypeData::Mapped(mapped_id) => {
@@ -253,26 +244,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //   - type_param is K (iteration var, NOT the outer param)
                 //   - constraint is "keyof T" (contains T, the actual param to extract)
                 //   - template is DeepPartial<T[K]> (also contains T)
-                merge_params(&mut out, &self.type_params_of(mapped.constraint));
-                merge_params(&mut out, &self.type_params_of(mapped.template));
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(mapped.constraint),
+                );
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(mapped.template),
+                );
                 if let Some(name_type) = mapped.name_type {
-                    merge_params(&mut out, &self.type_params_of(name_type));
+                    merge_params(&mut out, &self.extract_type_params_from_type(name_type));
                 }
             }
             TypeData::KeyOf(operand) => {
                 // e.g., keyof T -> extract T
-                merge_params(&mut out, &self.type_params_of(operand));
+                merge_params(&mut out, &self.extract_type_params_from_type(operand));
             }
             TypeData::IndexAccess(obj, idx) => {
                 // e.g., T[K] -> extract T and K
-                merge_params(&mut out, &self.type_params_of(obj));
-                merge_params(&mut out, &self.type_params_of(idx));
+                merge_params(&mut out, &self.extract_type_params_from_type(obj));
+                merge_params(&mut out, &self.extract_type_params_from_type(idx));
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span {
-                        merge_params(&mut out, &self.type_params_of(*inner));
+                        merge_params(&mut out, &self.extract_type_params_from_type(*inner));
                     }
                 }
             }

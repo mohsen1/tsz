@@ -665,14 +665,9 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             false
         };
 
-        // Resolve the alias body and canonicalize recursively. A body that has
-        // not registered yet is a registration-window artifact: keep the
-        // historical `ERROR` collapse but never persist it to the shared memo.
-        let body = self.resolver.resolve_lazy(def_id, self.interner);
-        if body.is_none() {
-            self.walk_dirty = true;
-        }
-        let canonical_body = self.canonicalize(body.unwrap_or(TypeId::ERROR));
+        // Resolve the alias body and canonicalize recursively.
+        let body = self.resolve_lazy_body(def_id);
+        let canonical_body = self.canonicalize(body);
 
         // Pop scope and def_stack
         if pushed_scope {
@@ -704,12 +699,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             false
         };
 
-        let body = self.resolver.resolve_lazy(def_id, self.interner);
-        if body.is_none() {
-            // Registration-window artifact — see `canonicalize_type_alias`.
-            self.walk_dirty = true;
-        }
-        let body = body.unwrap_or(TypeId::ERROR);
+        let body = self.resolve_lazy_body(def_id);
         let instantiated = if let Some(ps) = params {
             let subst = TypeSubstitution::from_args(self.interner, &ps, args);
             instantiate_type(self.interner, body, &subst)
@@ -724,6 +714,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         self.def_stack.pop();
 
         canonical_body
+    }
+
+    /// Resolve an alias body for expansion. A body that has not registered
+    /// yet is a registration-window artifact: keep the historical `ERROR`
+    /// collapse but dirty the walk so the result is never persisted to the
+    /// shared memo.
+    fn resolve_lazy_body(&mut self, def_id: DefId) -> TypeId {
+        let body = self.resolver.resolve_lazy(def_id, self.interner);
+        if body.is_none() {
+            self.walk_dirty = true;
+        }
+        body.unwrap_or(TypeId::ERROR)
     }
 
     /// Get the recursion depth for a `DefId` if it's in the `def_stack`,
