@@ -1271,4 +1271,80 @@ impl<'a> CheckerState<'a> {
                 .resolve_element_access_type(object_type, index_type_for_access, None);
         member == TypeId::UNDEFINED || member == TypeId::ERROR
     }
+
+    /// Whether an `ESSymbolLike` element-access key resolves *only* through a
+    /// `string` index signature.
+    ///
+    /// tsc's `checkIndexedAccessIndexType` reports TS2538 ("Type 'X' cannot be
+    /// used as an index type") — not the implicit-any TS7053 — when a `symbol`
+    /// or `unique symbol` key indexes an object that (a) has a `string` index
+    /// signature (so the access still yields that signature's value type,
+    /// exactly as tsc does — no cascade), (b) has no `symbol` index signature
+    /// that would accept any symbol key, and (c) is not matched by a declared
+    /// symbol-keyed property. Arrays/tuples are excluded — a symbol key there
+    /// takes the numeric-index diagnostic paths (TS7015/TS7053).
+    ///
+    /// The resolved value type is left to the caller: tsc keeps the `string`
+    /// signature's value type, so this only governs *which diagnostic* is
+    /// emitted, never the access result.
+    pub(crate) fn symbol_key_resolves_via_string_index_only(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        index_type_for_access: TypeId,
+    ) -> bool {
+        // Cheap key discriminator first: the predicate can only ever be `true`
+        // for an ESSymbolLike key, so bail before the object-shape traversals on
+        // the common (string/number-keyed) element-access path. A bare `symbol`
+        // is a binder-converted identifier (`index_type_for_access != index_type`
+        // guards out un-converted widened well-known-symbol reads); a `unique
+        // symbol` carries its binding identity.
+        let is_wide_symbol = index_type == TypeId::SYMBOL && index_type_for_access != index_type;
+        let is_unique_symbol =
+            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, index_type)
+                .is_some();
+        if !is_wide_symbol && !is_unique_symbol {
+            return false;
+        }
+
+        // Arrays/tuples take the numeric-index diagnostic paths (TS7015/TS7053).
+        if self.is_array_like_type(object_type) {
+            return false;
+        }
+        // Without a `string` index the object reports the implicit-any TS7053
+        // family instead; TS2538 is reserved for the string-fallthrough case.
+        // (This also excludes namespace / expando receivers, which have none.)
+        if crate::query_boundaries::index_signature::resolve_string_index(
+            self.ctx.types,
+            object_type,
+        )
+        .is_none()
+        {
+            return false;
+        }
+        // A genuine `symbol` index signature accepts any symbol key — no error.
+        if crate::query_boundaries::index_signature::has_symbol_index_signature(
+            self.ctx.types,
+            object_type,
+        ) {
+            return false;
+        }
+
+        // A bare `symbol` can never name a specific declared property, so a
+        // string-index fallthrough is the only way such an access resolves.
+        if is_wide_symbol {
+            return true;
+        }
+
+        // A `unique symbol` key is legal when the object declares that exact
+        // symbol-keyed property; only an unmatched key falls through to the
+        // string index. The binding-identity key resolves through a real
+        // property or `symbol` index but NOT through the `string` signature, so
+        // an UNDEFINED/ERROR probe means "unmatched".
+        let member =
+            self.ctx
+                .types
+                .resolve_element_access_type(object_type, index_type_for_access, None);
+        member == TypeId::UNDEFINED || member == TypeId::ERROR
+    }
 }
