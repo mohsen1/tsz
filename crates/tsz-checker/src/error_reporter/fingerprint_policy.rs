@@ -45,6 +45,15 @@ pub(crate) struct RelatedInformationPolicy {
     include_primary: bool,
     dedupe: bool,
     limit: Option<usize>,
+    /// Whether to re-sort the related entries by `(file, start, depth, message)`
+    /// during normalization. The sort gives a deterministic outer-to-inner
+    /// order for a *single* elaboration chain anchored at one span. When several
+    /// independent chains share the same anchor span (e.g. one per failing
+    /// overload candidate, all pointing at the same argument), the global sort
+    /// interleaves them by depth and severs each chain from its header. Such
+    /// callers assemble the entries in their intended final order and set this
+    /// to `false` to keep that order.
+    sort: bool,
 }
 
 impl RelatedInformationPolicy {
@@ -52,6 +61,7 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        sort: true,
     };
 
     /// Demote a diagnostic's primary message into the related chain, keeping any
@@ -61,12 +71,21 @@ impl RelatedInformationPolicy {
         include_primary: true,
         dedupe: true,
         limit: None,
+        sort: true,
     };
 
+    /// One elaboration chain per failing overload candidate, every chain
+    /// anchored at the same argument span. The caller
+    /// (`error_no_overload_matches_at`) already emits the entries grouped
+    /// header-then-chain in candidate order and dedupes whole candidates by
+    /// header, so normalization must neither re-sort (which would interleave the
+    /// chains) nor dedupe across chains (which would drop a shared inner line
+    /// such as an identical `Types of parameters …` frame and orphan its leaf).
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
-        dedupe: true,
+        dedupe: false,
         limit: None,
+        sort: false,
     };
 }
 
@@ -981,13 +1000,20 @@ impl<'a> CheckerState<'a> {
         // main message and its note. Within the same depth the message-text
         // tiebreaker still gives deterministic order when distinct code paths
         // append items in different sequences.
-        normalized.sort_by(|a, b| {
-            a.file
-                .cmp(&b.file)
-                .then(a.start.cmp(&b.start))
-                .then(a.depth.cmp(&b.depth))
-                .then(a.message_text.cmp(&b.message_text))
-        });
+        //
+        // Policies that assemble several independent chains at one shared anchor
+        // (see `OVERLOAD_FAILURES`) opt out: the caller already fixed a
+        // deterministic candidate order, and a global sort would interleave the
+        // chains by depth and detach each from its header.
+        if policy.sort {
+            normalized.sort_by(|a, b| {
+                a.file
+                    .cmp(&b.file)
+                    .then(a.start.cmp(&b.start))
+                    .then(a.depth.cmp(&b.depth))
+                    .then(a.message_text.cmp(&b.message_text))
+            });
+        }
 
         normalized
     }

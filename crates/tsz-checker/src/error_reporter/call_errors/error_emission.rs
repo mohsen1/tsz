@@ -10,6 +10,7 @@ use crate::error_reporter::fingerprint_policy::{
 };
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1060,53 +1061,126 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
-        let mut related = Vec::new();
-        let mut formatter = self.ctx.create_type_formatter();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        for failure in failures {
-            let mut pending: PendingDiagnostic = PendingDiagnostic {
-                span: Some(span.clone()),
-                ..failure.clone()
-            };
-            // Mirror tsc's `reportRelationError` source generalization for each
-            // overload's argument failure, matching the single-signature TS2345
-            // path: a fresh literal source (`true`, `1`) is widened to its base
-            // (`boolean`, `number`) unless the parameter target could hold a
-            // top-level singleton type. The pre-built solver diagnostic carries
-            // the raw literal source, so without this the overload elaboration
-            // diverges from tsc (and from the single-overload TS2345 display).
-            if pending.code
-                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                && let (
-                    Some(tsz_solver::DiagnosticArg::Type(source)),
-                    Some(tsz_solver::DiagnosticArg::Type(target)),
-                ) = (pending.args.first(), pending.args.get(1))
-            {
-                let (source, target) = (*source, *target);
-                let display_source =
-                    crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                        self.ctx.types,
-                        source,
-                        target,
-                    );
-                if display_source != source {
-                    pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
+        // Phase 1 — render each candidate's top-level failure line. Rendering
+        // borrows `self.ctx` immutably through the formatter, so the finished
+        // strings are collected here and the (`&mut self`) reason analysis is
+        // deferred to phase 2. Every candidate is anchored at the same shared
+        // `span`, so the header/chain span is recovered once in phase 2 rather
+        // than stored per entry. `reason_types` carries the *original*
+        // (pre-generalization) argument/parameter pair so the nested chain
+        // reflects the real relation rather than the display-widened source.
+        struct RenderedOverloadFailure {
+            message: String,
+            code: u32,
+            reason_types: Option<(TypeId, TypeId)>,
+        }
+        let mut rendered: Vec<RenderedOverloadFailure> = Vec::new();
+        {
+            let mut formatter = self.ctx.create_type_formatter();
+            for failure in failures {
+                // The original (pre-generalization) argument/parameter pair,
+                // present only for argument-not-assignable candidates. It drives
+                // both the display generalization just below and — unwidened —
+                // phase 2's reason chain, so it is extracted once from
+                // `failure.args` (the copy `pending.args` holds the same pair).
+                let arg_types: Option<(TypeId, TypeId)> = if failure.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                {
+                    match (failure.args.first(), failure.args.get(1)) {
+                        (
+                            Some(tsz_solver::DiagnosticArg::Type(source)),
+                            Some(tsz_solver::DiagnosticArg::Type(target)),
+                        ) => Some((*source, *target)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                let mut pending: PendingDiagnostic = PendingDiagnostic {
+                    span: Some(span.clone()),
+                    ..failure.clone()
+                };
+                // Mirror tsc's `reportRelationError` source generalization for
+                // each overload's argument failure, matching the single-signature
+                // TS2345 path: a fresh literal source (`true`, `1`) is widened to
+                // its base (`boolean`, `number`) unless the parameter target could
+                // hold a top-level singleton type. The pre-built solver diagnostic
+                // carries the raw literal source, so without this the overload
+                // elaboration diverges from tsc (and from the single-overload
+                // TS2345 display).
+                if let Some((source, target)) = arg_types {
+                    let display_source =
+                        crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
+                            self.ctx.types,
+                            source,
+                            target,
+                        );
+                    if display_source != source {
+                        pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
+                    }
                 }
-            }
-            let diag = formatter.render(&pending);
-            if let Some(diag_span) = diag.span.as_ref() {
-                related.push(DiagnosticRelatedInformation {
-                    file: diag_span.file.to_string(),
-                    start: diag_span.start,
-                    length: diag_span.length,
-                    message_text: diag.message.clone(),
-                    category: DiagnosticCategory::Message,
+                // `pending.span` is always `Some` (set above) and `render`
+                // copies it through, so every candidate yields a rendered header;
+                // the entries are re-anchored to the shared `anchor` span in
+                // phase 2, so `diag.span` itself is no longer read.
+                let diag = formatter.render(&pending);
+                rendered.push(RenderedOverloadFailure {
+                    message: diag.message,
                     code: diag.code,
-                    depth: 0,
+                    reason_types: arg_types,
+                });
+            }
+        }
+
+        // Phase 2 — emit each candidate as a header line at depth 0 followed by
+        // its relation failure-reason chain nested one level deeper. The chain
+        // is built through the same `related_from_failure_reason` gateway the
+        // single-signature TS2345 path uses, so an overloaded callback mismatch
+        // carries the identical `Types of parameters 'a' and 'x' are
+        // incompatible.` sub-chain instead of a bare argument line
+        // (`getSignatureApplicabilityError` reuses the single-signature relation
+        // elaboration in tsc). Whole candidates are deduped by header so repeated
+        // identical overloads collapse to one entry exactly as before; the chain
+        // entries are re-anchored onto the header's span so they nest visually
+        // beneath it.
+        let anchor_file = span.file.to_string();
+        let mut related = Vec::new();
+        let mut seen_headers = FxHashSet::default();
+        for failure in rendered {
+            if !seen_headers.insert(failure.message.clone()) {
+                continue;
+            }
+            related.push(DiagnosticRelatedInformation {
+                file: anchor_file.clone(),
+                start: anchor.start,
+                length: anchor.length,
+                message_text: failure.message,
+                category: DiagnosticCategory::Message,
+                code: failure.code,
+                depth: 0,
+            });
+            let Some((source, target)) = failure.reason_types else {
+                continue;
+            };
+            let analysis = self.analyze_assignability_failure(source, target);
+            let Some(reason) = analysis.failure_reason else {
+                continue;
+            };
+            let Some(chain) = self.related_from_failure_reason(&reason, source, target, anchor_idx)
+            else {
+                continue;
+            };
+            for item in chain {
+                related.push(DiagnosticRelatedInformation {
+                    file: anchor_file.clone(),
+                    start: anchor.start,
+                    length: anchor.length,
+                    ..item.with_depth_shift(1)
                 });
             }
         }
