@@ -312,15 +312,11 @@ impl<'a> LoweringPass<'a> {
         let should_lower_for_of_sync = self.ctx.target_es5 && !for_in_of.await_modifier;
         let should_lower_for_await_of =
             for_in_of.await_modifier && !self.ctx.options.target.supports_es2018();
+        let lower_for_of = should_lower_for_of_sync || should_lower_for_await_of;
 
-        if should_lower_for_of_sync || should_lower_for_await_of {
+        if lower_for_of {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
-            if for_in_of.await_modifier {
-                self.transforms.helpers_mut().mark_async_values();
-            } else if self.ctx.options.downlevel_iteration {
-                self.transforms.helpers_mut().mark_values();
-            }
         }
         if !self.ctx.options.target.supports_es2025()
             && crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
@@ -345,10 +341,29 @@ impl<'a> LoweringPass<'a> {
         let init_is_assignment_target =
             self.for_of_initializer_is_assignment_target(for_in_of.initializer);
 
+        // Visit the iterable expression before requesting the loop's own
+        // iteration helper. `tsc`'s `transformForOfStatement` /
+        // `transformForAwaitOfStatement` visit the iterable first and only then
+        // request `__values` / `__asyncValues`, so those no-priority helpers are
+        // ordered *after* any helper the iterable itself pulls in
+        // (`__read`/`__spreadArray` for a spread iterable, `__await`/
+        // `__asyncGenerator` for an inline async generator). Requesting the loop
+        // helper up front reversed that order in the emitted helper block.
+        self.visit(for_in_of.expression);
+        if lower_for_of {
+            if for_in_of.await_modifier {
+                self.transforms.helpers_mut().mark_async_values();
+            } else if self.ctx.options.downlevel_iteration {
+                self.transforms.helpers_mut().mark_values();
+            }
+        }
+
         if init_has_binding_pattern || init_is_assignment_target {
             // Mark __read helper when binding-pattern destructuring is used with
             // downlevelIteration. TypeScript emits __read to convert iterator
-            // results to arrays for binding-pattern destructuring. (Bare
+            // results to arrays for binding-pattern destructuring, requesting it
+            // while lowering the binding pattern — i.e. after `__values`, so it
+            // is marked here rather than before the iterable visit. (Bare
             // assignment targets keep the existing array-indexing lowering and
             // do not add __read here.)
             if init_has_binding_pattern
@@ -365,7 +380,6 @@ impl<'a> LoweringPass<'a> {
         } else {
             self.visit(for_in_of.initializer);
         }
-        self.visit(for_in_of.expression);
         self.visit(for_in_of.statement);
     }
 
