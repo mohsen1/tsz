@@ -463,6 +463,29 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_symbol(base_sym_id)
             };
 
+            // tsc `isValidBaseType` filter (`getBaseTypes`): a heritage base that
+            // is not a valid interface base type — e.g. a generic mapped-type
+            // application such as `Pick<T, K>` / `Omit<T, K>` / `Record<K, V>`
+            // whose key still contains a type parameter — is rejected with TS2312
+            // and is NOT added to the base-type list, so the structural TS2430
+            // "incorrectly extends" comparison never runs against it. tsz reports
+            // TS2312 from `state_checking::heritage` but reached this comparison
+            // through a separate evaluation entry, spuriously emitting TS2430 on
+            // top of (or instead of) TS2312. Gate the comparison on the same
+            // validity predicate the TS2312 site uses — evaluated to apparent form
+            // so a deferred `Pick`/`Omit`/`Record` application is resolved to the
+            // generic mapped type it rejects — so an invalid base is owned by
+            // TS2312 alone. (`is_valid_interface_base_type` already returns false
+            // for a mapped type whose key constraint contains a type parameter,
+            // subsuming the generic-mapped check.)
+            let base_apparent = self.evaluate_type_for_assignability(base_type_for_relation);
+            if !crate::query_boundaries::class::is_valid_interface_base_type(
+                self.ctx.types,
+                base_apparent,
+            ) {
+                continue 'heritage_type_loop;
+            }
+
             let mut base_iface_indices = Vec::new();
             for &decl_idx in &base_symbol.declarations {
                 let decl_arena =
