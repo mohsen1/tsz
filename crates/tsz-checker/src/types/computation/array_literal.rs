@@ -1078,6 +1078,10 @@ impl<'a> CheckerState<'a> {
                     } else {
                         elem_type
                     };
+                    // Unlike a physically-present value element (below, always
+                    // required), a spread yields a `rest` slot whose element
+                    // count is unknown, so it may legitimately track the
+                    // contextual target's optionality.
                     let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
                         Some(el) => el.optional,
                         None => false,
@@ -1130,14 +1134,20 @@ impl<'a> CheckerState<'a> {
             }
 
             if tuple_context.is_some() || self.ctx.in_const_assertion {
-                let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                    Some(el) => el.optional,
-                    None => false,
-                };
+                // A physically-present array-literal element is always a value,
+                // so the source tuple slot is required — it must NOT inherit the
+                // contextual target's `optional` flag. Copying it (e.g. marking
+                // the second slot of `[1, 2, 3]` optional under a `[number,
+                // number?]` context) understated the source's minimum length, so
+                // an over-long literal against an optional-slot target rendered
+                // `TS2621` ("target allows only N … source may have more")
+                // instead of tsc's `TS2619` ("Source has N … target allows only
+                // M"). tsc types the literal's present elements as required
+                // (`[number, number, number]`) regardless of context.
                 tuple_elements.push(TupleElement {
                     type_id: elem_type,
                     name: None,
-                    optional,
+                    optional: false,
                     rest: false,
                 });
             } else if force_tuple_for_union_context {
