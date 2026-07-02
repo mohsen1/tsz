@@ -28,6 +28,10 @@ jobs:
           fetch-depth: 1
       - name: Install clippy
         run: rustup component add clippy
+      - name: Check shell portability (macOS /bin/bash 3.2)
+        run: |
+          python3 scripts/lib/check-sh-portability.py
+          python3 scripts/lib/test_check_sh_portability.py
       - name: Run cargo clippy
         run: |
           scripts/safe-run.sh --limit 88% -- \
