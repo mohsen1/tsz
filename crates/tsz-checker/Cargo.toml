@@ -2002,6 +2002,9 @@ path = "tests/issue_9785_const_type_param_satisfies_repro.rs"
 name = "issue_9730_readonly_array_element_inference_repro"
 path = "tests/issue_9730_readonly_array_element_inference_repro.rs"
 [[test]]
+name = "satisfies_nested_source_elaboration_tests"
+path = "tests/satisfies_nested_source_elaboration_tests.rs"
+[[test]]
 name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
 [[test]]
