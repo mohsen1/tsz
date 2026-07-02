@@ -344,64 +344,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Returns `true` when an array binding pattern's destructuring source is a
-    /// fresh array-literal initializer (`var [a, ...rest] = [1, 2, 3]`).
-    ///
-    /// tsc widens a fresh array literal to `ElementType[]` via
-    /// `getWidenedTypeForVariableLikeDeclaration`, so a `...rest` element binds
-    /// `createArrayType(elementType)` — *not* the residual tuple slice. tsz
-    /// keeps the un-widened literal tuple as the destructuring source (for
-    /// positional `const` literal-default precision, e.g. `const [first = 0] =
-    /// [10, 20]`), so the rest path detects the fresh-literal origin and widens,
-    /// while declared and `as const` tuple sources keep slicing
-    /// (`sliceTupleType`).
-    ///
-    /// Walks up through nested binding patterns/elements to the enclosing
-    /// `VARIABLE_DECLARATION`. A `[...] as const` initializer is an
-    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it keeps slicing;
-    /// parameter sources (annotated tuple types) are never fresh.
-    pub(crate) fn array_binding_source_is_fresh_array_literal(
-        &self,
-        pattern_idx: NodeIndex,
-    ) -> bool {
-        let mut current = pattern_idx;
-        for _ in 0..64 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-            let kind = parent_node.kind;
-            if kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node) else {
-                    return false;
-                };
-                if var_decl.initializer.is_none() {
-                    return false;
-                }
-                return self
-                    .ctx
-                    .arena
-                    .get(var_decl.initializer)
-                    .is_some_and(|init| init.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-            }
-            if kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || kind == syntax_kind_ext::BINDING_ELEMENT
-            {
-                current = parent;
-                continue;
-            }
-            return false;
-        }
-        false
-    }
-
     pub(crate) fn report_empty_array_destructuring_bounds(
         &mut self,
         pattern_idx: NodeIndex,
@@ -769,18 +711,22 @@ impl<'a> CheckerState<'a> {
                     // Array source `E[]` → `E[]`.
                     return self.rest_binding_array_type(elem);
                 } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                    // A fresh array-literal source is widened by tsc to
-                    // `createArrayType(elementType)` (it is `E[]`, not a tuple,
-                    // at the destructuring site), so the rest binds the element
-                    // array. Declared / `as const` tuple sources slice the
-                    // residual, matching tsc's `sliceTupleType`.
-                    if self.array_binding_source_is_fresh_array_literal(pattern_idx) {
-                        let elem = self.get_element_access_type(array_like, TypeId::NUMBER, None);
-                        return self.rest_binding_array_type(elem);
-                    }
+                    // Slice the residual tuple from the rest position, matching
+                    // tsc's `sliceTupleType`. Whether a fresh array-literal source
+                    // is a tuple at all (`[a, ...r]`) or an array (`[...r]`, a
+                    // pure-rest pattern) is decided upstream by the array-literal
+                    // contextual type derived from the binding pattern; once the
+                    // source resolves to a tuple, the rest always slices it.
                     return self.tuple_rest_binding_type(&elems, element_index);
                 }
-                return self.rest_binding_array_type(TypeId::ANY);
+                // Non-tuple, non-array source: fall back to the destructuring
+                // iterated element type (`checkIteratedTypeOrElementType`), so an
+                // iterable that is neither array nor tuple — a string, `Set`,
+                // `Map`, or generator — binds `E[]`, matching tsc's
+                // `getBindingElementTypeFromParentType`. Non-iterable sources
+                // resolve to `any` here, keeping the prior `any[]` fallback.
+                let elem = self.for_of_element_type(array_like, false);
+                return self.rest_binding_array_type(elem);
             }
 
             return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
@@ -897,7 +843,13 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 }
             } else {
-                TypeId::ANY
+                // Non-tuple, non-array source: bind the destructuring iterated
+                // element type positionally (`E` from a string, `Set`, `Map`, or
+                // generator), matching tsc's `getBindingElementTypeFromParentType`
+                // via `checkIteratedTypeOrElementType`. Non-iterable sources
+                // resolve to `any` here (TS2488 is emitted separately by the
+                // iterability check), preserving the prior fallback.
+                self.for_of_element_type(array_like, false)
             };
         }
 

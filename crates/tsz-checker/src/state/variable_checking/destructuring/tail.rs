@@ -497,6 +497,14 @@ impl<'a> CheckerState<'a> {
                             elem_data.initializer,
                         )
                     });
+                // A `...rest` binding element contributes a rest element to the
+                // contextual tuple (`getTypeFromArrayBindingPattern` flags it
+                // `ElementFlags.Rest`). This drives the array-vs-tuple decision
+                // for a fresh array-literal initializer: a pure-rest pattern
+                // (`[...r]`) yields an all-rest contextual type — effectively an
+                // array — so the literal widens to `E[]`, whereas `[a, ...r]`
+                // keeps a leading fixed slot and stays a tuple.
+                let is_rest = binding.is_some_and(|(_, dot_dot_dot, _)| dot_dot_dot);
                 let elem_type = match binding {
                     Some((name, _, _))
                         if matches!(
@@ -536,7 +544,7 @@ impl<'a> CheckerState<'a> {
                 tuple_elements.push(tsz_solver::TupleElement {
                     type_id: elem_type,
                     optional: false,
-                    rest: false,
+                    rest: is_rest,
                     name: None,
                 });
             }

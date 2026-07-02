@@ -288,6 +288,9 @@ path = "tests/intersection_modifier_merge_tests.rs"
 name = "array_declaration_display_summary_tests"
 path = "tests/array_declaration_display_summary_tests.rs"
 [[test]]
+name = "array_destructuring_binding_element_typing_tests"
+path = "tests/array_destructuring_binding_element_typing_tests.rs"
+[[test]]
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 [[test]]

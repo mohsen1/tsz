@@ -1374,6 +1374,19 @@ impl<'a> CheckerState<'a> {
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
+            // Seed destructured binding-element symbol types for *annotated*
+            // destructuring parameters through the shared destructuring engine,
+            // so references to array-pattern elements (positional + rest), object
+            // rest, and iterable sources resolve to their sliced / indexed /
+            // iterated element types instead of falling through the object-only
+            // lazy resolver to implicit `any`. Contextually typed (unannotated)
+            // destructuring parameters are seeded separately by
+            // `assign_contextual_types_to_destructuring_params` below. Runs for
+            // all function forms with a body (declarations, closures, methods).
+            self.assign_annotated_destructuring_parameter_binding_types(
+                &parameters.nodes,
+                &param_types,
+            );
             let refresh_body_for_contextual_param_retyping =
                 is_closure && (ctx_helper.is_some() || func_jsdoc.is_some());
             if refresh_body_for_contextual_param_retyping {

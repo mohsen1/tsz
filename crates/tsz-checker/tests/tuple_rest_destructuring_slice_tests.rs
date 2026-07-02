@@ -193,41 +193,71 @@ const show: "X" = tail;
 }
 
 #[test]
-fn fresh_array_literal_rest_widens_to_array_not_a_slice() {
-    // A *fresh* array-literal destructuring source is widened by tsc
-    // (`getWidenedTypeForVariableLikeDeclaration`), so the `...rest` binds the
-    // element array `number[]`, NOT the residual tuple slice `[number, number]`
-    // that a declared tuple would produce.
-    let assignable_to_array = r#"
+fn fresh_array_literal_fixed_rest_slices_to_residual_tuple() {
+    // A fresh array-literal destructured with a *leading fixed* element takes a
+    // tuple contextual type from the binding pattern (`[any, ...any[]]`), so the
+    // literal is a tuple at the destructuring site and the `...rest` slices its
+    // residual — exactly like a declared tuple. Pinned against tsc 6.0.2:
+    // `const [head, ...spread] = [1, 2, 3]` gives `spread: [number, number]`.
+    let residual_tuple_ok = r#"
 const [head, ...spread] = [1, 2, 3];
-const ok: number[] = spread;
+const ok: [number, number] = spread;
+const okArr: number[] = spread;
 "#;
     assert!(
-        !codes(assignable_to_array).contains(&2322),
-        "fresh-literal rest should be number[] (assignable to number[]); got {:?}",
-        codes(assignable_to_array)
+        !codes(residual_tuple_ok).contains(&2322),
+        "fresh-literal fixed+rest slices to [number, number] (assignable to it and to number[]); got {:?}",
+        codes(residual_tuple_ok)
     );
 
-    let not_a_tuple = r#"
+    // The slice is precise: it is `[number, number]`, not the full-length tuple.
+    let wrong_arity = r#"
 const [lead, ...trailing] = [1, 2, 3];
-const wrong: [number, number] = trailing;
+const wrong: [number, number, number] = trailing;
 "#;
     assert!(
-        codes(not_a_tuple).contains(&2322),
-        "fresh-literal rest is number[], not the tuple [number, number]; got {:?}",
-        codes(not_a_tuple)
+        codes(wrong_arity).contains(&2322),
+        "residual slice is [number, number], not length 3; got {:?}",
+        codes(wrong_arity)
     );
 
-    // `var` fresh literal widens identically.
+    // `var` fresh literal slices identically (widening does not turn it into an array).
     let var_form = r#"
 var [v, ...vrest] = [1, 2, 3];
-const okv: number[] = vrest;
-const wrongv: [number, number] = vrest;
+const okv: [number, number] = vrest;
+const wrongv: [number, number, number] = vrest;
 "#;
     let cs = codes(var_form);
     assert!(
         cs.iter().filter(|&&c| c == 2322).count() == 1,
-        "var fresh-literal rest is number[]: ok for number[], TS2322 for tuple; got {cs:?}"
+        "var fresh-literal fixed+rest is [number, number]: ok for it, TS2322 for length 3; got {cs:?}"
+    );
+}
+
+#[test]
+fn fresh_array_literal_pure_rest_widens_to_array() {
+    // A *pure-rest* pattern (`[...rest]`) takes an array contextual type
+    // (`any[]`), so the fresh literal widens to `E[]` and the rest binds the
+    // element array — NOT a residual tuple. Pinned against tsc 6.0.2:
+    // `const [...all] = [1, 2, 3]` gives `all: number[]`.
+    let array_ok = r#"
+const [...all] = [1, 2, 3];
+const ok: number[] = all;
+"#;
+    assert!(
+        !codes(array_ok).contains(&2322),
+        "pure-rest fresh literal is number[] (assignable to number[]); got {:?}",
+        codes(array_ok)
+    );
+
+    let not_a_tuple = r#"
+const [...every] = [1, 2, 3];
+const wrong: [number, number, number] = every;
+"#;
+    assert!(
+        codes(not_a_tuple).contains(&2322),
+        "pure-rest fresh literal is number[], not a tuple; got {:?}",
+        codes(not_a_tuple)
     );
 }
 

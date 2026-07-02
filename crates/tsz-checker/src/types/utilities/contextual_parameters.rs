@@ -505,6 +505,61 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Seed the destructured binding-element symbol types for *annotated*
+    /// destructuring parameters (e.g. `function f([a, ...r]: [number, string,
+    /// boolean])` or `({ p, ...rest }: T)`) through the shared destructuring
+    /// engine.
+    ///
+    /// `cache_parameter_types` only caches the parameter symbol itself; the
+    /// individual bindings inside the pattern are otherwise resolved lazily by
+    /// `resolve_binding_element_from_annotated_param`, which only understands
+    /// object property lookups. Array-pattern elements (positional and rest),
+    /// object rest, and non-array-like iterable sources therefore fell through
+    /// to implicit `any`. Routing annotated parameters through the same engine
+    /// used for variable-declaration destructuring makes every declaration form
+    /// bind identically to `tsc`'s `getBindingElementTypeFromParentType`.
+    ///
+    /// Contextually typed (unannotated) destructuring parameters are handled by
+    /// `assign_contextual_types_to_destructuring_params`, so this only processes
+    /// parameters that carry an explicit type annotation.
+    pub(crate) fn assign_annotated_destructuring_parameter_binding_types(
+        &mut self,
+        params: &[NodeIndex],
+        param_types: &[Option<TypeId>],
+    ) {
+        for (i, &param_idx) in params.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.type_annotation.is_none() {
+                continue;
+            }
+            let is_binding_pattern = self.ctx.arena.kind_at(param.name).is_some_and(|kind| {
+                kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            });
+            if !is_binding_pattern {
+                continue;
+            }
+            let Some(source_type) = param_types
+                .get(i)
+                .and_then(|t| *t)
+                .filter(|t| !t.is_any_unknown_or_error())
+            else {
+                continue;
+            };
+            let request = crate::context::TypingRequest::with_contextual_type(source_type);
+            self.assign_binding_pattern_symbol_types_with_request(
+                param.name,
+                source_type,
+                &request,
+            );
+        }
+    }
+
     pub(crate) fn contextual_parameter_type_from_enclosing_function(
         &mut self,
         param_idx: NodeIndex,
