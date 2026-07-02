@@ -564,7 +564,21 @@ where
     // The failure analysis runs on the same `checker`, so its relation cache is
     // already warm with the decision's sub-results: the structural reason walk
     // observes the identical outcomes the decision did and cannot contradict it.
-    let analysis = (!related && collect_analysis).then(|| {
+    //
+    // Skip the walk entirely when the decision already overflowed a relation
+    // budget (depth or iteration). An overflow means the relation was too
+    // complex to *decide*, so the diagnostic is TS2859 ("Excessive complexity
+    // comparing types") — the checker emits that from the overflow flag and
+    // discards any structural failure reason, exactly as tsc reports the
+    // relation-count overflow without elaborating. Running the reason walk on
+    // an undecidable relation is therefore both wasteful and unbounded: the
+    // elaboration re-traverses the same cross-product the decision could not
+    // finish (e.g. a template-literal union expanded to thousands of members
+    // scanned member-by-member by the union-target explain loop), so it does
+    // not terminate in reasonable time. Gating on the overflow verdict keeps
+    // the emitted diagnostic byte-identical (TS2859) while removing the hang.
+    let overflowed = !matches!(result.termination(), RelationTermination::Complete);
+    let analysis = (!related && collect_analysis && !overflowed).then(|| {
         tsz_common::perf_counters::record_relation_failure_reason_walk();
         // Single-pass weak classification: the failure-reason walk and the
         // `weak_union_violation` boolean share one set of weak probes instead of
