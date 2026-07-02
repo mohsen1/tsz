@@ -41,7 +41,6 @@ TOTAL_RAM_MB=$(detect_system_ram_mb)
 LIMIT_MB=$((TOTAL_RAM_MB * 75 / 100))
 INTERVAL=5
 VERBOSE=0
-WARN_PRINTED=0
 
 # ─── Parse options ───────────────────────────────────────────────────
 
@@ -76,6 +75,15 @@ done
 
 if [[ $# -eq 0 ]]; then
     echo "Usage: safe-run.sh [--limit MB|%] [--interval S] [--verbose] [--] COMMAND [ARGS...]" >&2
+    exit 1
+fi
+
+if ! [[ "$LIMIT_MB" =~ ^[0-9]+$ ]]; then
+    echo "safe-run: --limit must be a number of MB or a percentage (got '$LIMIT_MB')" >&2
+    exit 1
+fi
+if ! [[ "$INTERVAL" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "safe-run: --interval must be a number of seconds (got '$INTERVAL')" >&2
     exit 1
 fi
 
@@ -190,36 +198,97 @@ get_tree_memory_kb() {
     get_tree_rss_kb "$root_pid"
 }
 
-# ─── Kill process tree (bottom-up) ──────────────────────────────────
+# ─── Bounded memory probe ────────────────────────────────────────────
+# Runs get_tree_memory_kb in the background with a deadline so a slow
+# or blocked `footprint`/`ps` invocation cannot wedge the monitor loop
+# (and with it, memory enforcement). On timeout the probe's process
+# tree is killed and the sample is reported as failed.
+# SAFE_RUN_PROBE_TIMEOUT_SECS overrides the default 10s deadline.
+
+PROBE_TIMEOUT_SECS=${SAFE_RUN_PROBE_TIMEOUT_SECS:-10}
+if ! [[ "$PROBE_TIMEOUT_SECS" =~ ^[0-9]+$ ]]; then
+    echo "safe-run: SAFE_RUN_PROBE_TIMEOUT_SECS must be a whole number of seconds (got '$PROBE_TIMEOUT_SECS')" >&2
+    exit 1
+fi
+INTERVAL_WHOLE_SECS=${INTERVAL%%.*}
+if [[ "${INTERVAL_WHOLE_SECS:-0}" -gt "$PROBE_TIMEOUT_SECS" ]]; then
+    PROBE_TIMEOUT_SECS=$INTERVAL_WHOLE_SECS
+fi
+
+sample_tree_memory_kb() {
+    local root_pid=$1
+    local out="$SAFE_RUN_TMP/probe-kb"
+    local probe_pid ticks kb
+
+    get_tree_memory_kb "$root_pid" >"$out" 2>/dev/null &
+    probe_pid=$!
+
+    ticks=$((PROBE_TIMEOUT_SECS * 5))
+    while kill -0 "$probe_pid" 2>/dev/null; do
+        if [[ "$ticks" -le 0 ]]; then
+            kill_tree "$probe_pid" KILL
+            wait "$probe_pid" 2>/dev/null
+            return 1
+        fi
+        sleep 0.2 2>/dev/null || sleep 1
+        ticks=$((ticks - 1))
+    done
+    wait "$probe_pid" 2>/dev/null || return 1
+
+    kb=$(cat "$out" 2>/dev/null)
+    [[ "$kb" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$kb"
+}
+
+# ─── Kill process tree (freeze, then bottom-up) ─────────────────────
+# The root is stopped before its children are enumerated so it cannot
+# spawn new ones between the snapshot and the kill. A stopped process
+# does not act on TERM until resumed, so it is continued afterwards
+# (harmless after KILL).
 
 kill_tree() {
     local pid=$1
     local sig=${2:-TERM}
-    local children
+    kill -STOP "$pid" 2>/dev/null || true
+    local children child
     children=$(pgrep -P "$pid" 2>/dev/null) || true
     for child in $children; do
         kill_tree "$child" "$sig"
     done
     kill -"$sig" "$pid" 2>/dev/null || true
+    kill -CONT "$pid" 2>/dev/null || true
 }
 
 # ─── Cleanup on exit ────────────────────────────────────────────────
 
 MONITOR_PID=""
 CMD_PID=""
+SAFE_RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/safe-run.XXXXXX") || exit 1
+
+# Tear down the monitor and every probe/sleep child it may have in
+# flight. SIGKILL, not SIGTERM: bash defers terminating signals while
+# blocked in a foreground child (e.g. a wedged `footprint` probe on
+# macOS), so a TERM'd monitor can linger and an unbounded `wait` on it
+# hangs the wrapper; its orphaned probe children also inherit our
+# stdout/stderr and keep downstream pipe readers (`tee`, `cat`) alive
+# after the wrapped command has exited (#15439). The monitor holds no
+# state worth a graceful shutdown.
+stop_monitor() {
+    [[ -n "$MONITOR_PID" ]] || return 0
+    kill_tree "$MONITOR_PID" KILL
+    wait "$MONITOR_PID" 2>/dev/null || true
+    MONITOR_PID=""
+}
 
 cleanup() {
-    if [[ -n "$MONITOR_PID" ]]; then
-        kill "$MONITOR_PID" 2>/dev/null || true
-        wait "$MONITOR_PID" 2>/dev/null || true
-        MONITOR_PID=""
-    fi
+    stop_monitor
     if [[ -n "$CMD_PID" ]] && kill -0 "$CMD_PID" 2>/dev/null; then
         kill_tree "$CMD_PID" TERM
         sleep 1
         kill_tree "$CMD_PID" KILL
         CMD_PID=""
     fi
+    rm -rf "$SAFE_RUN_TMP"
 }
 trap cleanup EXIT
 
@@ -242,13 +311,28 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mo
 
 (
     warn_printed=0
+    probe_failures=0
     while kill -0 "$CMD_PID" 2>/dev/null; do
         sleep "$INTERVAL"
 
         # Guard: process may have exited during sleep
         kill -0 "$CMD_PID" 2>/dev/null || break
 
-        MEMORY_KB=$(get_tree_memory_kb "$CMD_PID")
+        if MEMORY_KB=$(sample_tree_memory_kb "$CMD_PID"); then
+            probe_failures=0
+        else
+            # The probe timed out or produced garbage. Fall back to a
+            # plain RSS sample for this tick so memory enforcement
+            # never silently stops, and after three consecutive
+            # failures stop paying the footprint timeout every tick.
+            probe_failures=$((probe_failures + 1))
+            if [[ "$MEMORY_MODE" != "RSS" && "$probe_failures" -ge 3 ]]; then
+                echo "[safe-run] ${MEMORY_MODE} probe failed ${probe_failures}x; switching to RSS" >&2
+                MEMORY_MODE="RSS"
+            fi
+            MEMORY_KB=$(get_tree_rss_kb "$CMD_PID")
+            [[ "$MEMORY_KB" =~ ^[0-9]+$ ]] || continue
+        fi
         MEMORY_MB=$((MEMORY_KB / 1024))
 
         if [[ "$VERBOSE" -eq 1 ]]; then
@@ -273,15 +357,20 @@ echo "[safe-run] PID $CMD_PID | limit ${LIMIT_MB}MB | interval ${INTERVAL}s | mo
 MONITOR_PID=$!
 
 # ─── Wait for command ───────────────────────────────────────────────
+# `wait` returns 128+sig when interrupted by a trapped signal (the
+# INT/TERM forwarder) before the child exits; re-wait until the child
+# is actually gone so its real status is captured and forwarded.
 
-wait "$CMD_PID" 2>/dev/null
-EXIT_CODE=$?
+while :; do
+    wait "$CMD_PID" 2>/dev/null
+    EXIT_CODE=$?
+    if [[ "$EXIT_CODE" -gt 128 ]] && kill -0 "$CMD_PID" 2>/dev/null; then
+        continue
+    fi
+    break
+done
 CMD_PID=""
 
-# ─── Stop monitor ───────────────────────────────────────────────────
-
-kill "$MONITOR_PID" 2>/dev/null || true
-wait "$MONITOR_PID" 2>/dev/null || true
-MONITOR_PID=""
+stop_monitor
 
 exit "$EXIT_CODE"
