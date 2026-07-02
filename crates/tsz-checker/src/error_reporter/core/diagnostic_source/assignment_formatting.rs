@@ -1337,6 +1337,82 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the assignment target's declared annotation is a reference to
+    /// a type alias (`x: MaybeBox`, `x: OrMissing<{ u: string }>`). tsc's
+    /// `reportErrorResults` restores the original target whenever it carried
+    /// an `aliasSymbol`; tsz's eager annotation resolution can lose the
+    /// reference surface (a bare union alias resolves to the interned union).
+    ///
+    /// Returns `None` when no declared annotation node governs the anchor —
+    /// the caller falls back to type-level provenance. When an annotation
+    /// exists, its AST is *authoritative* (`Some(bool)`): a structurally
+    /// identical anonymous annotation interns to the same `TypeId` as the
+    /// alias body, so type-level signals (display aliases, reverse def
+    /// lookups) cannot tell the two references apart, but the syntax can.
+    pub(in crate::error_reporter) fn assignment_target_annotation_alias_reference_verdict(
+        &mut self,
+        anchor_idx: NodeIndex,
+    ) -> Option<bool> {
+        let annotation_idx = self.direct_assignment_target_annotation_node(anchor_idx)?;
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return Some(false);
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return Some(false);
+        };
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return Some(false);
+        };
+        Some(
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)),
+        )
+    }
+
+    /// The declared annotation node governing the assignment target at
+    /// `anchor_idx` (variable declaration, parameter, or — for a return-value
+    /// source — the enclosing function's return annotation). Node-based
+    /// sibling of [`Self::direct_assignment_target_annotation_text`].
+    fn direct_assignment_target_annotation_node(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = anchor_idx;
+        let mut guard = 0;
+        let source_is_return = self.assignment_source_is_return_expression(anchor_idx);
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            let node = self.ctx.arena.get(current)?;
+            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
+                && var_decl.type_annotation.is_some()
+            {
+                return Some(var_decl.type_annotation);
+            }
+            if let Some(param) = self.ctx.arena.get_parameter(node)
+                && param.type_annotation.is_some()
+            {
+                return Some(param.type_annotation);
+            }
+            if source_is_return
+                && let Some(function) = self.ctx.arena.get_function(node)
+                && function.type_annotation.is_some()
+            {
+                return Some(function.type_annotation);
+            }
+            let ext = self.ctx.arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+
     fn direct_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
         let mut current = anchor_idx;
         let mut guard = 0;

@@ -47,7 +47,11 @@ impl<'a> CheckerState<'a> {
             let tgt_str = if depth == 0 {
                 self.anonymous_composite_annotation_target_display(idx, target)
                     .unwrap_or_else(|| {
-                        self.primitive_source_missing_property_target_display(target, target_type)
+                        self.primitive_source_missing_property_target_display(
+                            target,
+                            target_type,
+                            idx,
+                        )
                     })
             } else {
                 self.recursive_non_generic_alias_body_name(target_type)
@@ -630,12 +634,22 @@ impl<'a> CheckerState<'a> {
         &mut self,
         target: TypeId,
         target_type: TypeId,
+        anchor_idx: NodeIndex,
     ) -> String {
-        if crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+        // `target` here may already be the strip-rebound union member (the
+        // annotation verdict governed that rebind), so the annotation only
+        // *adds* the bare-alias-reference case (`x: MaybeBox`); a negative
+        // verdict must not veto a member's own application surface
+        // (`MappedAlias<{ m: string; }> | undefined` strips to the member,
+        // which keeps its alias).
+        let restores_alias = crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
             self.ctx.types.as_type_database(),
             &self.ctx.definition_store,
             target,
-        ) {
+        ) || self
+            .assignment_target_annotation_alias_reference_verdict(anchor_idx)
+            == Some(true);
+        if restores_alias {
             // Not the pair formatter: its top-level nullish strip would undo
             // the alias restoration (`MaybeBox` must not strip to its
             // non-nullish member).
@@ -924,7 +938,11 @@ impl<'a> CheckerState<'a> {
             let tgt_str = if depth == 0 {
                 self.anonymous_composite_annotation_target_display(idx, target)
                     .unwrap_or_else(|| {
-                        self.primitive_source_missing_property_target_display(target, target_type)
+                        self.primitive_source_missing_property_target_display(
+                            target,
+                            target_type,
+                            idx,
+                        )
                     })
             } else {
                 self.recursive_non_generic_alias_body_name(target_type)

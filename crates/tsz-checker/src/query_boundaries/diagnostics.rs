@@ -223,14 +223,16 @@ pub(crate) fn type_keeps_alias_symbol_surface(
             super::common::lazy_def_id(db, app.base)
                 .or_else(|| definitions.find_def_for_type(app.base))
         } else {
-            super::common::lazy_def_id(db, ty).or_else(|| definitions.find_def_for_type(ty))
+            super::common::lazy_def_id(db, ty)
         }
     }
-    // The as-written reference (`ty` itself), the reverse type-to-def
-    // registration (a bare alias annotation resolves eagerly to its body,
-    // losing the `Lazy` surface — the same registration
-    // `lookup_type_alias_name_for_display` consults to render the name), or
-    // the recorded display provenance of an evaluated annotation.
+    // The as-written reference (`ty` itself) or the recorded display
+    // provenance of an evaluated annotation. The raw interned identity is
+    // deliberately NOT consulted for bare types: a structurally identical
+    // anonymous annotation must not repaint to a coincidental alias — callers
+    // with an anchor recover the bare-alias-reference case from the
+    // annotation AST instead
+    // (`assignment_target_annotation_is_alias_reference`).
     alias_def_id_of(db, definitions, ty)
         .or_else(|| {
             db.get_display_alias(ty)

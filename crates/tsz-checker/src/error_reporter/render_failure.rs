@@ -787,16 +787,22 @@ impl<'a> CheckerState<'a> {
         // (`UnionAlias<{ u: string }>`, `type NullableObj = T | undefined`):
         // tsc's `reportErrorResults` restores the original target whenever it
         // carried an `aliasSymbol`, so the alias-named union renders whole.
-        let property_miss_target = if matches!(
+        let property_miss_is_target = matches!(
             reason,
             SubtypeFailureReason::MissingProperty { .. }
                 | SubtypeFailureReason::MissingProperties { .. }
-        )
-            && !crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
-                self.ctx.types.as_type_database(),
-                &self.ctx.definition_store,
-                target,
-            ) {
+        );
+        let target_restores_alias = property_miss_is_target
+            && self
+                .assignment_target_annotation_alias_reference_verdict(idx)
+                .unwrap_or_else(|| {
+                    crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        target,
+                    )
+                });
+        let property_miss_target = if property_miss_is_target && !target_restores_alias {
             self.single_non_nullish_union_member(target)
                 .unwrap_or(target)
         } else {
