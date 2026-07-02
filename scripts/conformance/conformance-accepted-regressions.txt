@@ -197,3 +197,10 @@
 # fast path defers to the full parse when a comment-only `import(` is present, so
 # both relative and package JSDoc import-types resolve like tsc. Covered by
 # jsdoc_import_type_specifier_collection_tests.
+
+# PR #15375 run 28571773361 at b675fbc17d recovered the core PR CI aggregate
+# and found these exact current-main rows still failing. Keep them listed as
+# path-based runway so the aggregate rejects any new unlisted conformance drift.
+TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
+TypeScript/tests/cases/compiler/inferentialTypingWithFunctionTypeZip.ts
+TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck63.ts

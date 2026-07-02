@@ -404,9 +404,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Helper to recursively evaluate keyof while respecting depth limits.
     /// Creates a `KeyOf` type and evaluates it through the main `evaluate()` method.
-    fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
+    pub(crate) fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
         let keyof = self.interner().keyof(operand);
-        self.evaluate(keyof)
+        self.with_meta_rereduce_recursion_identity(operand, keyof, |evaluator| {
+            evaluator.evaluate(keyof)
+        })
     }
 
     /// Whether a per-member `keyof` result is the *universal* key space and so is

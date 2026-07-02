@@ -193,41 +193,67 @@ const show: "X" = tail;
 }
 
 #[test]
-fn fresh_array_literal_rest_widens_to_array_not_a_slice() {
-    // A *fresh* array-literal destructuring source is widened by tsc
-    // (`getWidenedTypeForVariableLikeDeclaration`), so the `...rest` binds the
-    // element array `number[]`, NOT the residual tuple slice `[number, number]`
-    // that a declared tuple would produce.
+fn fresh_array_literal_trailing_rest_slices_to_widened_tuple() {
+    // A *fresh* array-literal source destructured with a trailing rest is in
+    // tuple context, so tsc slices the widened literal tuple: `...spread`
+    // over `[1, 2, 3]` binds `[number, number]` (pinned against tsc 6.0.2),
+    // which is also assignable to `number[]`.
     let assignable_to_array = r#"
 const [head, ...spread] = [1, 2, 3];
 const ok: number[] = spread;
 "#;
     assert!(
         !codes(assignable_to_array).contains(&2322),
-        "fresh-literal rest should be number[] (assignable to number[]); got {:?}",
+        "fresh-literal trailing rest [number, number] is assignable to number[]; got {:?}",
         codes(assignable_to_array)
     );
 
-    let not_a_tuple = r#"
+    let is_a_tuple = r#"
 const [lead, ...trailing] = [1, 2, 3];
-const wrong: [number, number] = trailing;
+const ok: [number, number] = trailing;
 "#;
     assert!(
-        codes(not_a_tuple).contains(&2322),
-        "fresh-literal rest is number[], not the tuple [number, number]; got {:?}",
-        codes(not_a_tuple)
+        !codes(is_a_tuple).contains(&2322),
+        "fresh-literal trailing rest is the slice [number, number]; got {:?}",
+        codes(is_a_tuple)
     );
 
-    // `var` fresh literal widens identically.
+    let widens_literals = r#"
+const [first, ...rem] = [1, "x", true];
+const show: "X" = rem;
+"#;
+    let msgs = messages_2322(widens_literals);
+    assert!(
+        msgs.iter().any(|m| m.contains("[string, boolean]")),
+        "fresh-literal slice widens element literals to [string, boolean]; got {msgs:?}"
+    );
+
+    // `var` fresh literal slices identically.
     let var_form = r#"
 var [v, ...vrest] = [1, 2, 3];
 const okv: number[] = vrest;
-const wrongv: [number, number] = vrest;
+const okv2: [number, number] = vrest;
 "#;
     let cs = codes(var_form);
     assert!(
-        cs.iter().filter(|&&c| c == 2322).count() == 1,
-        "var fresh-literal rest is number[]: ok for number[], TS2322 for tuple; got {cs:?}"
+        !cs.contains(&2322),
+        "var fresh-literal trailing rest slices to [number, number]; got {cs:?}"
+    );
+}
+
+#[test]
+fn fresh_array_literal_leading_rest_stays_widened_array() {
+    // A rest element at index 0 never puts the fresh literal in tuple
+    // context, so `[...r] = [0, 1]` binds the widened element array
+    // `number[]`, not a slice (pinned against tsc 6.0.2).
+    let source = r#"
+var [...whole] = [0, 1];
+const show: "X" = whole;
+"#;
+    let msgs = messages_2322(source);
+    assert!(
+        msgs.iter().any(|m| m.contains("number[]")),
+        "leading rest over a fresh literal binds number[]; got {msgs:?}"
     );
 }
 
@@ -235,9 +261,9 @@ const wrongv: [number, number] = vrest;
 fn rest_element_object_pattern_over_fresh_literal_reports_number_array() {
     // restElementWithBindingPattern2.ts conformance shape: tsc reports
     //   TS2339 Property 'b' does not exist on type 'number[]'.
-    // The rest source `[0, 1]` widens to `number[]`, so the nested object
-    // pattern resolves the missing property against `number[]`, not against a
-    // tuple `[number, number]`.
+    // The leading rest keeps the fresh source `[0, 1]` out of tuple context,
+    // so the nested object pattern resolves the missing property against
+    // `number[]`, not against a tuple `[number, number]`.
     let source = "var [...{0: a, b }] = [0, 1];\n";
     let msgs: Vec<String> = check_source_diagnostics(source)
         .into_iter()

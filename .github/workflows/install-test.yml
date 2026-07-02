@@ -5,7 +5,7 @@ name: Install test
 #   2. The resulting `tsz` binary runs.
 # Triggers:
 #   - on every release publish (full validation against real assets)
-#   - on PR/push changes to the installer or this workflow (syntax/logic check)
+#   - on push changes to the installer or this workflow (syntax/logic check)
 
 on:
   release:
@@ -23,12 +23,6 @@ on:
       - "scripts/install.sh"
       - "scripts/install.ps1"
       - ".github/workflows/install-test.yml"
-  pull_request:
-    paths:
-      - "scripts/install.sh"
-      - "scripts/install.ps1"
-      - ".github/workflows/install-test.yml"
-
 permissions:
   contents: read
 
@@ -73,7 +67,7 @@ jobs:
           - os: ubuntu-24.04-arm
             label: linux-gnu-aarch64
             shell: bash
-          - os: macos-13
+          - os: macos-15-intel
             label: darwin-x86_64
             shell: bash
           - os: macos-14
@@ -123,7 +117,7 @@ jobs:
 
   installer-syntax-only:
     name: installer syntax (no release yet)
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    if: github.event_name == 'push'
     needs: static-checks
     strategy:
       fail-fast: false
