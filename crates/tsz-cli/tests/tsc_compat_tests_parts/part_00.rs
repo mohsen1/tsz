@@ -1258,6 +1258,67 @@ fn assert_tsc_tsz_match_with_exit_code(cwd: &Path, args: &[&str], label: &str) {
     }
 }
 
+/// tsz's deliberate `--generateCpuProfile` help description (#3941): tsz *rejects* that
+/// flag as unsupported (see the `unsupported --generateCpuProfile` exit test), so it is
+/// honest about it rather than advertising tsc's "Generates a CPU profile." text.
+const TSZ_GENERATE_CPU_PROFILE_HELP: &str =
+    "Unsupported in tsz; use --generateTrace for native trace output.";
+
+/// Replace the single line immediately following a `--generateCpuProfile` header with a
+/// stable placeholder, so the surrounding `--help --all` output can be diffed for exact
+/// parity while tolerating the one documented tsz divergence (see `assert_tsc_tsz_help_all_match`).
+fn mask_generate_cpu_profile_description(normalized: &str) -> String {
+    let mut mask_next = false;
+    normalized
+        .lines()
+        .map(|line| {
+            if std::mem::take(&mut mask_next) {
+                "<generateCpuProfile description>"
+            } else {
+                mask_next = line.trim() == "--generateCpuProfile";
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The description line immediately following the `--generateCpuProfile` header, if present.
+fn generate_cpu_profile_description(normalized: &str) -> Option<String> {
+    let mut lines = normalized.lines();
+    for line in lines.by_ref() {
+        if line.trim() == "--generateCpuProfile" {
+            return lines.next().map(|next| next.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Like `assert_tsc_tsz_match_with_exit_code`, but tolerant of the single documented
+/// `--generateCpuProfile` help-line divergence. tsz's own divergent line is pinned to the
+/// expected #3941 text (so an accidental revert is caught, not masked away); every other
+/// line is held to exact parity with tsc.
+fn assert_tsc_tsz_help_all_match(cwd: &Path, args: &[&str], label: &str) {
+    let (tsc_code, tsc_out) = run_tsc_with_exit_code(cwd, args).expect("tsc failed to run");
+    let (tsz_code, tsz_out) = run_tsz_with_exit_code(cwd, args).expect("tsz failed to run");
+    assert_eq!(
+        tsc_code, tsz_code,
+        "{label}: exit code mismatch: tsc={tsc_code}, tsz={tsz_code}\ntsc output:\n{tsc_out}\ntsz output:\n{tsz_out}"
+    );
+    let tsc_norm = normalize_output(&tsc_out);
+    let tsz_norm = normalize_output(&tsz_out);
+    assert_eq!(
+        generate_cpu_profile_description(&tsz_norm).as_deref(),
+        Some(TSZ_GENERATE_CPU_PROFILE_HELP),
+        "{label}: tsz should keep its honest --generateCpuProfile help text.\ntsz output:\n{tsz_norm}"
+    );
+    let tsc_masked = mask_generate_cpu_profile_description(&tsc_norm);
+    let tsz_masked = mask_generate_cpu_profile_description(&tsz_norm);
+    if let Some(diff) = diff_outputs(&tsc_masked, &tsz_masked) {
+        panic!("{label}: output mismatch (after masking the documented --generateCpuProfile divergence).\n{diff}\n\ntsc:\n{tsc_masked}\n\ntsz:\n{tsz_masked}");
+    }
+}
+
 /// Find the tsz binary in the target directory.
 fn find_tsz_binary() -> Option<PathBuf> {
     // Cargo sets this for integration tests when the package builds a `tsz` binary.

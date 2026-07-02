@@ -1173,7 +1173,10 @@ fn tsc_parity_help_all() {
         return;
     }
     let temp = TempDir::new("help_all").expect("temp dir");
-    assert_tsc_tsz_match_with_exit_code(&temp.path, &["--help", "--all"], "--help --all output");
+    // tsz intentionally diverges on the single `--generateCpuProfile` description line
+    // (#3941): tsz rejects that flag as unsupported, so its help text is honest about it.
+    // Every other `--help --all` line is held to byte-exact parity with tsc.
+    assert_tsc_tsz_help_all_match(&temp.path, &["--help", "--all"], "--help --all output");
 }
 
 #[test]
