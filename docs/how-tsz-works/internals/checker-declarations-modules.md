@@ -120,7 +120,7 @@ The checker never walks the filesystem. The driver populates several maps that
 | `resolve_import_target_from_file_with_mode(idx, spec, mode)` | mode-keyed variant for `import type` resolution-mode overrides | Node16/NodeNext dual resolution |
 | `get_resolution_error(spec)` / `..._with_mode` / `..._for_request` | `ResolutionError` map recorded by the driver | exact TS2307/TS2792/TS2834/TS6142 code from the resolver |
 | `resolved_modules` (`FxHashSet<String>`) via `resolved_module_set_contains_specifier` | driver's successful-resolution set | O(1) "did this resolve?" test |
-| `declared_modules_contains(binder, name)` / `global_declared_modules` | binder ambient-module tables, prebuilt `GlobalDeclaredModules` (exact set + compiled `GlobSet`) | ambient `declare module "x"` and wildcard `declare module "*.css"` |
+| `declared_modules_contains(binder, name)` / `global_declared_modules` | binder ambient-module tables, prebuilt `GlobalDeclaredModules` (exact set + tsc-faithful prefix/suffix wildcard scan) | ambient `declare module "x"` and wildcard `declare module "*.css"` |
 | `module_exports_contains_module(binder, name)` | binder `module_exports` table | bare module export surface lookup |
 | `files_for_module_specifier(spec)` / `global_module_binder_index` | `FxHashMap<String, Vec<usize>>` | O(1) candidate binders for cross-file re-export resolution |
 
@@ -336,7 +336,8 @@ Ambient module declarations participate at three points:
 - **Resolution suppression.** `is_ambient_module_match`,
   `any_ambient_module_declared`, and `wildcard_ambient_module_declared`
   (`core/ambient_modules.rs`) consult `global_declared_modules` (an exact
-  `FxHashSet` plus a compiled `GlobSet` for wildcard `declare module "*.css"`),
+  `FxHashSet` plus a tsc-faithful prefix/suffix scan for wildcard
+  `declare module "*.css"`),
   falling back to a per-binder scan of `declared_modules` /
   `shorthand_ambient_modules` / `module_exports`. A matching ambient module
   suppresses TS2307 — but `check_imported_members` still runs (so missing named
@@ -450,7 +451,7 @@ aliases).
 | `modules_with_ts2307_emitted: CowCache<FxHashSet<String>>` | Dedup of module-not-found emissions within one statement's resolution attempts | Each import/import-equals/re-export *site* `.remove`s its specifier up front, so every declaration gets one chance; insert-on-emit prevents the resolution-error path and the fallback path from double-emitting within the same statement. |
 | `import_resolution_stack: Vec<String>` | Re-entrancy / cycle detection across `import` + `export ... from` chains | Push on entry, pop on every return path; `would_create_cycle` tests membership. Pairs with "Circular import/re-export detected" under the TS2307 code. |
 | `import_conflict_names: FxHashSet<String>` | Names that triggered TS2440/TS2865 | Read by the TS2456 circular-type-alias check to suppress a follow-on false positive. |
-| `global_declared_modules: Arc<GlobalDeclaredModules>` | O(1) exact + compiled-`GlobSet` ambient-module membership | Prebuilt once by the driver; read-only during checking. |
+| `global_declared_modules: Arc<GlobalDeclaredModules>` | O(1) exact + tsc-faithful wildcard-scan ambient-module membership | Prebuilt once by the driver; read-only during checking. |
 | `global_module_binder_index: Arc<FxHashMap<String, Vec<usize>>>` | O(1) candidate binders for a module specifier | Prebuilt; falls back to an O(N) binder scan when absent. |
 | `resolved_module_paths` / `resolved_modules` | Authoritative driver resolution map + success set | Prebuilt by the driver; the checker only reads them. |
 | `CANDIDATES_MEMO` (thread-local in `module_resolution.rs`) | Memoized `module_specifier_candidates` fan-out | Per-thread; lives for the process. |

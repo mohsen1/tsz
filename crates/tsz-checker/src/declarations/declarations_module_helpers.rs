@@ -133,12 +133,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 self.ctx.binder.shorthand_ambient_modules.as_ref(),
             ] {
                 for pattern in patterns {
-                    let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
                     if pattern.contains('*')
-                        && let Ok(glob) = globset::GlobBuilder::new(pattern)
-                            .literal_separator(false)
-                            .build()
-                        && glob.compile_matcher().is_match(module_name)
+                        && crate::context::ambient_pattern_matches(pattern, module_name)
                     {
                         return true;
                     }
@@ -148,12 +144,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // Also check module_exports keys for wildcard patterns
         for pattern in self.ctx.binder.module_exports.keys() {
-            let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
             if pattern.contains('*')
-                && let Ok(glob) = globset::GlobBuilder::new(pattern)
-                    .literal_separator(false)
-                    .build()
-                && glob.compile_matcher().is_match(module_name)
+                && crate::context::ambient_pattern_matches(pattern, module_name)
             {
                 return true;
             }

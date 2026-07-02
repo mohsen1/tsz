@@ -439,7 +439,6 @@ impl ProgramContext {
                     Default::default(),
                 ),
                 patterns: Vec::new(),
-                pattern_set: None,
             })
         };
         let arena_to_file_idx: FxHashMap<usize, usize> = self

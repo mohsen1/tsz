@@ -1823,14 +1823,10 @@ impl<'a> CheckerState<'a> {
             if declared.exact.contains(normalized) {
                 return true;
             }
-            // Small linear scan over wildcard patterns only
-            for pattern in &declared.patterns {
-                let p = pattern.trim().trim_matches('"').trim_matches('\'');
-                if let Some(prefix) = p.strip_suffix('*')
-                    && normalized.starts_with(prefix)
-                {
-                    return true;
-                }
+            // Wildcard ambient modules (`declare module "*.css"`, `prefix/*`)
+            // resolved through the shared tsc-faithful matcher.
+            if declared.matches_wildcard(normalized) {
+                return true;
             }
         }
 
