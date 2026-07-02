@@ -260,12 +260,11 @@ pub struct QueryCache<'a> {
     property_cache: RefCell<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
     /// Computed variance masks for generic `DefIds`.
     variance_cache: RefCell<FxHashMap<DefId, Arc<[Variance]>>>,
-    /// Canonical `TypeId` for structurally identical types — *stable* entries
-    /// only (clean, closed subtrees), written and read by the canonicalizer
-    /// as its cross-probe interior memo (see `Canonicalizer::shared_cache`).
+    /// Canonical `TypeId` for structurally identical types — stable entries
+    /// only, used as the canonicalizer cross-probe interior memo.
     canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
-    /// Dirty canonical results (registration-window or guard-truncated
-    /// artifacts), memoized so repeat probes stay O(1). Kept separate from
+    /// Dirty canonical results (registration-window or guard-truncated artifacts),
+    /// memoized so repeat probes stay O(1). Kept separate from
     /// `canonical_cache` because reusing one must taint the consumer (see
     /// `Canonicalizer::shared_artifacts`) — merging the tiers would launder
     /// artifacts into stable entries for every type containing them.
