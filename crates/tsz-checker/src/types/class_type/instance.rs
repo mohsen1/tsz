@@ -634,16 +634,16 @@ impl<'a> CheckerState<'a> {
                         // `class Foo { name = "" }` → `name: string`.
                         // Readonly properties keep literal types:
                         // `class Foo { readonly tag = "x" }` → `tag: "x"`.
-                        // Skip widening when the initializer is not a fresh
-                        // literal expression (e.g. `D = DEFAULT` where DEFAULT
-                        // is a typed identifier reference) — its type already
-                        // came from a declared annotation that should not be
-                        // widened, matching tsc's
+                        // The freshness boundary skips widening when the
+                        // initializer is not a fresh literal expression
+                        // (e.g. `D = DEFAULT` where DEFAULT is a typed
+                        // identifier reference) — its type already came from
+                        // a declared annotation, matching tsc's
                         // getWidenedLiteralLikeTypeForContextualType.
-                        if is_readonly || !self.is_fresh_literal_expression(prop.initializer) {
+                        if is_readonly {
                             init_type
                         } else {
-                            self.widen_literal_type(init_type)
+                            self.widen_expression_type_if_fresh(prop.initializer, init_type)
                         }
                     } else if self.has_accessor_modifier(&prop.modifiers) {
                         self.infer_property_type_from_class_member_assignments(

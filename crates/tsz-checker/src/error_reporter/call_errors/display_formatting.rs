@@ -729,7 +729,7 @@ impl<'a> CheckerState<'a> {
                     raw_param.type_id,
                 )?;
                 (raw_tp.name == type_param_name)
-                    .then(|| self.literal_type_from_initializer(call_arg_idx))
+                    .then(|| self.fresh_literal_type_of(call_arg_idx))
                     .flatten()
             })
     }
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
         let mut replacements = FxHashMap::default();
         for (raw_param, &call_arg_idx) in raw_sig.params.iter().zip(args.nodes.iter()) {
             let actual_arg_type = self
-                .literal_type_from_initializer(call_arg_idx)
+                .fresh_literal_type_of(call_arg_idx)
                 .unwrap_or_else(|| self.elaboration_source_expression_type(call_arg_idx));
             self.collect_type_param_display_replacements(
                 raw_param.type_id,

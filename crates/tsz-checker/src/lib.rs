@@ -262,6 +262,9 @@ mod flow_truthy_proves_assignment_tests;
 #[path = "tests/flow_usage_relation_routing_arch_tests.rs"]
 mod flow_usage_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "../tests/fresh_literal_boundary_tests.rs"]
+mod fresh_literal_boundary_tests;
+#[cfg(test)]
 #[path = "tests/function_callee_spread_ts2556_tests.rs"]
 mod function_callee_spread_ts2556_tests;
 #[cfg(test)]

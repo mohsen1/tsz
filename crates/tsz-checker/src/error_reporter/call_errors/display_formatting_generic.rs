@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                         return false;
                     }
                     let prev_type = self
-                        .literal_type_from_initializer(prev_arg_idx)
+                        .fresh_literal_type_of(prev_arg_idx)
                         .unwrap_or_else(|| self.elaboration_source_expression_type(prev_arg_idx));
                     self.primitive_display_base(prev_type) == Some(param_base)
                 });

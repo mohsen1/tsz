@@ -937,16 +937,10 @@ impl<'a> CheckerState<'a> {
                 }
                 return (init_type, jsdoc_declared_type);
             }
-            // Only widen when the initializer is a "fresh" literal expression
-            // (direct literal in source code). Types from variable references,
-            // narrowing, or computed expressions are "non-fresh" and NOT widened.
-            // EXCEPTION: Enum member types are always widened for mutable bindings.
-            let is_enum_member = self.is_enum_member_type_for_widening(init_type);
-            let widened = if is_enum_member || self.is_fresh_literal_expression(facts.initializer) {
-                self.widen_initializer_type_for_mutable_binding(init_type)
-            } else {
-                init_type
-            };
+            // The freshness boundary widens fresh literal (and enum member)
+            // initializers for mutable bindings; non-fresh sources keep
+            // their type.
+            let widened = self.widen_mutable_binding_initializer_type(facts.initializer, init_type);
             // Route null/undefined widening through the flow observation boundary.
             let final_type = flow_boundary::widen_null_undefined_to_any(
                 self.ctx.types,
