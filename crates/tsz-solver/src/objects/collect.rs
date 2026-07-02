@@ -185,6 +185,45 @@ impl PropertyCollectionCacheVerdict {
     }
 }
 
+#[derive(Default)]
+struct PropertyCollectionOperationMemo {
+    results: FxHashMap<(TypeId, u64), PropertyCollectionResult>,
+}
+
+impl PropertyCollectionOperationMemo {
+    fn get(&self, type_id: TypeId, resolver_generation: u64) -> Option<PropertyCollectionResult> {
+        self.results.get(&(type_id, resolver_generation)).cloned()
+    }
+
+    fn insert(
+        &mut self,
+        type_id: TypeId,
+        resolver_generation: u64,
+        result: PropertyCollectionResult,
+    ) {
+        self.results.insert((type_id, resolver_generation), result);
+    }
+}
+
+fn operation_memo_eligible(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    // Local reuse is narrower than the cross-call `QueryCache` memo: it exists
+    // only for one outer collection and never serves in-flight or infer-pattern
+    // conditional members.
+    !collect_properties_stack_contains(type_id)
+        && !is_infer_bearing_conditional_member(interner, type_id)
+}
+
+fn is_infer_bearing_conditional_member(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(TypeData::Conditional(cond_id)) = interner.lookup(type_id) else {
+        return false;
+    };
+    let cond = interner.conditional_type(cond_id);
+    crate::type_queries::contains_infer_types_db(interner, cond.check_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.extends_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.true_type)
+        || crate::type_queries::contains_infer_types_db(interner, cond.false_type)
+}
+
 /// Cross-call memo surface for context-free `collect_properties_cached` results.
 ///
 /// A supertrait of `QueryDatabase` so the result memo can be reached through a
@@ -304,6 +343,20 @@ pub fn collect_properties_cached<'a, R>(
 where
     R: TypeResolver,
 {
+    let mut operation_memo = PropertyCollectionOperationMemo::default();
+    collect_properties_cached_inner(type_id, interner, resolver, query_db, &mut operation_memo)
+}
+
+fn collect_properties_cached_inner<'a, R>(
+    type_id: TypeId,
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    query_db: Option<&'a dyn QueryDatabase>,
+    operation_memo: &'a mut PropertyCollectionOperationMemo,
+) -> PropertyCollectionResult
+where
+    R: TypeResolver,
+{
     // Context-free result memo (issue #13242, workstream B).
     //
     // A `collect_properties` result is a pure function of `(resolved TypeId,
@@ -341,11 +394,18 @@ where
     // generation-0 result is only ever served back to another generation-0
     // (same `NOOP`) collection.
     let entry_floor = collect_properties_stack_depth();
-    let generation = if query_db.is_some() {
-        resolver.resolver_generation()
+    let resolver_generation = resolver.resolver_generation();
+    let query_cache_generation = if query_db.is_some() {
+        resolver_generation
     } else {
         0
     };
+    let can_use_operation_memo = operation_memo_eligible(interner, type_id);
+    if can_use_operation_memo && let Some(cached) = operation_memo.get(type_id, resolver_generation)
+    {
+        return cached;
+    }
+
     // Only serve the cache when this `type_id` is not itself already in flight on
     // an ancestor frame. The stored result is the type's full (context-free)
     // closure; in the not-in-flight case it can only *replace* a fresh standalone
@@ -355,7 +415,7 @@ where
     // and let the existing cross-collector guard truncate as before.
     if let Some(db) = query_db
         && !collect_properties_stack_contains(type_id)
-        && let Some(cached) = db.collect_properties_result_cached(type_id, generation)
+        && let Some(cached) = db.collect_properties_result_cached(type_id, query_cache_generation)
     {
         return cached;
     }
@@ -384,7 +444,7 @@ where
         seen: FxHashSet::default(),
         found_any: false,
     };
-    collector.collect(type_id);
+    collector.collect(type_id, operation_memo);
 
     let subtree_min = COLLECT_PROPERTIES_MIN_TRUNCATION.with(|min| {
         let subtree = min.get();
@@ -425,10 +485,15 @@ where
 
     // Store only context-free results (no outer-ancestor truncation); see the
     // cache contract at the top of this function.
+    let context_free = subtree_min >= entry_floor;
+    if context_free && can_use_operation_memo {
+        operation_memo.insert(type_id, resolver_generation, result.clone());
+    }
+
     if cache_verdict.should_publish()
         && let Some(db) = query_db
     {
-        db.set_collect_properties_result_cache(type_id, generation, result.clone());
+        db.set_collect_properties_result_cache(type_id, query_cache_generation, result.clone());
     }
 
     result
@@ -472,7 +537,7 @@ struct PropertyCollector<'a, R> {
 }
 
 impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
-    fn collect(&mut self, type_id: TypeId) {
+    fn collect(&mut self, type_id: TypeId, operation_memo: &mut PropertyCollectionOperationMemo) {
         let mut stack = vec![type_id];
         let mut processed = 0usize;
 
@@ -580,7 +645,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 }
                 // Union: collect common properties (present in ALL members)
                 Some(TypeData::Union(members_id)) => {
-                    self.collect_union_common(members_id);
+                    self.collect_union_common(members_id, operation_memo);
                 }
                 // Never in intersection makes the whole thing Never
                 // This is handled by the caller, not here
@@ -718,7 +783,11 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     /// Collect common properties from all union members.
     /// Only properties present in ALL members are included.
     /// Property types become the union of the individual types.
-    fn collect_union_common(&mut self, members_id: TypeListId) {
+    fn collect_union_common(
+        &mut self,
+        members_id: TypeListId,
+        operation_memo: &mut PropertyCollectionOperationMemo,
+    ) {
         let member_list = self.interner.type_list(members_id);
         if member_list.is_empty() {
             return;
@@ -727,8 +796,13 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
         // Collect properties from each union member using sub-collectors
         let mut member_props: Vec<PropertyCollectionResult> = Vec::new();
         for &member in member_list.iter() {
-            let result =
-                collect_properties_cached(member, self.interner, self.resolver, self.query_db);
+            let result = collect_properties_cached_inner(
+                member,
+                self.interner,
+                self.resolver,
+                self.query_db,
+                operation_memo,
+            );
             member_props.push(result);
         }
 
