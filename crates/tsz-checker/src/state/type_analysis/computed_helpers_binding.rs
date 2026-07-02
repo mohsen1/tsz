@@ -287,7 +287,10 @@ impl<'a> CheckerState<'a> {
         be_idx: NodeIndex,
         depth: usize,
     ) -> Option<TypeId> {
-        if depth > 10 {
+        // The walk terminates at the parameter on well-formed arenas; this is
+        // a stack-safety net for malformed parent chains, not a semantic cap.
+        const MAX_BINDING_PATTERN_NESTING: usize = 10;
+        if depth > MAX_BINDING_PATTERN_NESTING {
             return None;
         }
         let ext = self.ctx.arena.get_extended(be_idx)?;

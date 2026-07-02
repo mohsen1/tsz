@@ -347,19 +347,13 @@ impl<'a> CheckerState<'a> {
     /// Returns `true` when an array binding pattern's destructuring source is a
     /// fresh array-literal initializer (`var [a, ...rest] = [1, 2, 3]`).
     ///
-    /// tsc slices every tuple source for a `...rest` element
-    /// (`sliceTupleType`), but it slices the *widened* literal tuple, so the
-    /// slice of `[1, 'x', true]` is `[string, boolean]`. tsz keeps the
-    /// un-widened literal tuple as the destructuring source (for positional
-    /// `const` literal-default precision, e.g. `const [first = 0] = [10, 20]`
-    /// → `0 | 10`), so the rest path detects the fresh-literal origin and
-    /// widens the slice, while declared and `as const` tuple sources slice
-    /// as-is.
+    /// tsz keeps fresh array literals as un-widened literal tuples, so the
+    /// rest-binding path uses this to decide widening (see the call site).
     ///
     /// Walks up through nested binding patterns/elements to the enclosing
     /// `VARIABLE_DECLARATION`. A `[...] as const` initializer is an
-    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it slices
-    /// as-is; parameter sources (annotated tuple types) are never fresh.
+    /// `AS_EXPRESSION` (not an `ARRAY_LITERAL_EXPRESSION`), so it is not
+    /// fresh; parameter sources (annotated tuple types) are never fresh.
     pub(crate) fn array_binding_source_is_fresh_array_literal(
         &self,
         pattern_idx: NodeIndex,
@@ -805,8 +799,6 @@ impl<'a> CheckerState<'a> {
                 // Non-array-like iterable sources (string, `Iterable<T>`,
                 // `Map`, generators) bind an array of the iterated element
                 // type, mirroring tsc's `checkIteratedTypeOrElementType`.
-                // Unlike the union paths there is no better fallback here, so
-                // an ANY result flows through as `any[]`.
                 let iterated = self.for_of_element_type(array_like, false);
                 if iterated == TypeId::ERROR {
                     return self.rest_binding_array_type(TypeId::ANY);
@@ -931,8 +923,6 @@ impl<'a> CheckerState<'a> {
                 // Non-array-like iterable sources (string, `Iterable<T>`,
                 // `Map`, generators) bind the iterated element type at every
                 // position, mirroring tsc's `checkIteratedTypeOrElementType`.
-                // Unlike the union paths there is no better fallback here, so
-                // an ANY result flows through unchanged.
                 let iterated = self.for_of_element_type(array_like, false);
                 if iterated == TypeId::ERROR {
                     TypeId::ANY

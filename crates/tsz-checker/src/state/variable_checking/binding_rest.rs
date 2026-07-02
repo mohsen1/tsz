@@ -409,16 +409,20 @@ impl<'a> CheckerState<'a> {
         // Classify each member once: collect tuple elements, and note plain
         // arrays and non-array-like members (string, `Iterable<T>`, `Set`, ...).
         let mut member_elements: Vec<Vec<TupleElement>> = Vec::with_capacity(members.len());
+        let mut every_tuple = true;
         let mut saw_non_array_like = false;
         for &member in members {
             let member = query::unwrap_readonly_deep(self.ctx.types, member);
             if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
                 member_elements.push(elems);
-            } else if query::array_element_type(self.ctx.types, member).is_none() {
-                saw_non_array_like = true;
+            } else {
+                every_tuple = false;
+                if query::array_element_type(self.ctx.types, member).is_none() {
+                    saw_non_array_like = true;
+                }
             }
         }
-        if member_elements.len() == members.len() {
+        if every_tuple {
             let slices: Vec<TypeId> = member_elements
                 .iter()
                 .map(|elems| self.tuple_rest_binding_type(elems, rest_index))
