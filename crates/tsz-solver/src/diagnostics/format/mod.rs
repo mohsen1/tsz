@@ -196,7 +196,7 @@ pub struct TypeFormatter<'a> {
     /// Formatting a generic `Application` attempts up to four alias-reduction
     /// strategies (`scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`,
+    /// `reducing_application_display`,
     /// `variadic_tuple_alias_application_display`). Each strategy runs a fresh
     /// `instantiate_generic` + `evaluate_type` over the alias body. Deeply
     /// nested generic receiver types (e.g. drizzle's relational builders) form
@@ -389,7 +389,7 @@ impl<'a> TypeFormatter<'a> {
             .then_some(evaluated)
     }
 
-    /// Maximum times [`Self::reducing_conditional_application_display`] re-applies
+    /// Maximum times [`Self::reducing_application_display`] re-applies
     /// its instantiate + evaluate step while a reduction keeps producing another
     /// reducing-alias application (alias forwarding or a converging recursive
     /// conditional). A converging chain resolves in a handful of steps; the cap
@@ -419,7 +419,7 @@ impl<'a> TypeFormatter<'a> {
     /// [`alias_underlying::application_reduces_to_displayable_shape`]) keeps the
     /// application form. The distributive form is handled earlier by
     /// [`Self::distributed_conditional_application_display`].
-    fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
+    fn reducing_application_display(&self, type_id: TypeId) -> Option<TypeId> {
         let def_store = self.def_store?;
         // Cheap structural gate (shared with the checker boundary): the base
         // must resolve to a generic alias whose declared body reduces through a
@@ -517,7 +517,7 @@ impl<'a> TypeFormatter<'a> {
     ///
     /// Tries, in order, `scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`, and
+    /// `reducing_application_display`, and
     /// `variadic_tuple_alias_application_display`; the first that fires wins and
     /// its reduced `TypeId` is returned for the caller to format in place of the
     /// `Name<Args>` application surface. Each strategy runs an
@@ -540,7 +540,7 @@ impl<'a> TypeFormatter<'a> {
         let reduced = self
             .scalar_mapped_alias_application_display(type_id, app.base, &app.args)
             .or_else(|| self.distributed_conditional_application_display(app.base, &app.args))
-            .or_else(|| self.reducing_conditional_application_display(type_id))
+            .or_else(|| self.reducing_application_display(type_id))
             .or_else(|| self.variadic_tuple_alias_application_display(app.base, &app.args));
         self.application_reduction_cache
             .borrow_mut()

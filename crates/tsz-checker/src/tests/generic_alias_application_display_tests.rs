@@ -11,7 +11,7 @@
 //! constructor* — mapped, union, intersection, object — keeps its alias symbol
 //! and renders `Name<Args>`.
 //!
-//! The solver's `reducing_conditional_application_display` strategy (generalized
+//! The solver's `reducing_application_display` strategy (generalized
 //! from conditional-only to the full reducing-operator set, with bounded
 //! resolution of forwarded / recursive reductions) owns this for the direct
 //! assignment-target render. Binder names vary so a hardcoded fix fails.

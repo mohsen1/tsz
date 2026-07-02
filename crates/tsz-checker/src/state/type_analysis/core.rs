@@ -1685,7 +1685,7 @@ impl CheckerState<'_> {
                 //
                 // The shape gate stays object/mapped-only here on purpose,
                 // even though the solver formatter's
-                // `reducing_conditional_application_display` reduces *every*
+                // `reducing_application_display` reduces *every*
                 // resolved shape (scalar, tuple, union, object) for direct and
                 // nested `Application` display. The two paths own different
                 // surfaces: the formatter renders an application node in place,
