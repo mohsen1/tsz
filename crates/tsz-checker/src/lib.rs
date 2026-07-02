@@ -973,6 +973,9 @@ mod flow_boundary_contract_tests;
 #[path = "tests/flow_cache_policy_arch_tests.rs"]
 mod flow_cache_policy_arch_tests;
 #[cfg(test)]
+#[path = "../tests/for_in_intersection_operand_tests.rs"]
+mod for_in_intersection_operand_tests;
+#[cfg(test)]
 #[path = "tests/for_in_lhs_relation_routing_arch_tests.rs"]
 mod for_in_lhs_relation_routing_arch_tests;
 #[cfg(test)]

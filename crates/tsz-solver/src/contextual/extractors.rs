@@ -155,7 +155,7 @@ impl<'a> ThisTypeExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ThisTypeExtractor<'a> {
+impl TypeVisitor for ThisTypeExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -202,7 +202,7 @@ impl<'a> ReturnTypeExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
+impl TypeVisitor for ReturnTypeExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -325,7 +325,7 @@ impl<'a> ThisTypeMarkerExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ThisTypeMarkerExtractor<'a> {
+impl TypeVisitor for ThisTypeMarkerExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -420,7 +420,7 @@ impl<'a> ArrayElementExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ArrayElementExtractor<'a> {
+impl TypeVisitor for ArrayElementExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -492,7 +492,7 @@ impl<'a> TupleElementExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for TupleElementExtractor<'a> {
+impl TypeVisitor for TupleElementExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -668,7 +668,7 @@ impl<'a> PropertyExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for PropertyExtractor<'a> {
+impl TypeVisitor for PropertyExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1227,7 +1227,7 @@ impl<'a> ParameterExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ParameterExtractor<'a> {
+impl TypeVisitor for ParameterExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1378,7 +1378,7 @@ impl<'a> RestParameterExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for RestParameterExtractor<'a> {
+impl TypeVisitor for RestParameterExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1476,7 +1476,7 @@ impl<'a> ParameterForCallExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
+impl TypeVisitor for ParameterForCallExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1652,7 +1652,7 @@ impl<'a> ApplicationArgExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for ApplicationArgExtractor<'a> {
+impl TypeVisitor for ApplicationArgExtractor<'_> {
     type Output = Option<TypeId>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1714,7 +1714,7 @@ impl<'a> RestPositionCheckExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for RestPositionCheckExtractor<'a> {
+impl TypeVisitor for RestPositionCheckExtractor<'_> {
     type Output = Option<bool>;
 
     fn visit_intrinsic(&mut self, _kind: IntrinsicKind) -> Self::Output {
@@ -1836,7 +1836,7 @@ impl<'a> RestOrOptionalTailPositionExtractor<'a> {
     }
 }
 
-impl<'a> TypeVisitor for RestOrOptionalTailPositionExtractor<'a> {
+impl TypeVisitor for RestOrOptionalTailPositionExtractor<'_> {
     type Output = Option<bool>;
 
     fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> Self::Output {
