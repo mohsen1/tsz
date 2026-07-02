@@ -7,6 +7,7 @@ use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -669,6 +670,29 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // Non-null assertions return the operand's type unchanged, so they
+        // inherit its freshness: `let x = "a"!` widens to `string` and
+        // `let x = E.A!` widens to `E`, exactly as without the `!`. (Type
+        // assertions — `as` / angle-bracket — are intentionally absent: tsc
+        // treats an asserted expression as non-fresh and keeps the literal.)
+        if kind == syntax_kind_ext::NON_NULL_EXPRESSION
+            && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node)
+        {
+            return self.is_fresh_literal_expression_inner(unary.expression, depth + 1);
+        }
+
+        // Enum member accesses (`E.A`, `E["A"]`, `ns.E.A`) mint fresh enum
+        // literal types: tsc models enum literals as freshable exactly like
+        // primitive literals, so a direct member access widens to the parent
+        // enum at mutable observation points while a non-fresh source — an
+        // annotated const reference, a property read from an object typed
+        // `E.A`, a call result — keeps the member type (#15445).
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return self.is_direct_enum_member_access(idx);
+        }
+
         // Identifier referencing an unannotated `const` declaration whose
         // initializer is itself a fresh literal expression. tsc tracks these
         // bindings as widening literal types, so copying them into a `let`/`var`
@@ -689,6 +713,107 @@ impl<'a> CheckerState<'a> {
         // Everything else (identifiers, call expressions, binary expressions, etc.)
         // produces non-fresh types that should NOT be widened
         false
+    }
+
+    /// Does `idx` directly reference an enum member — `E.A`, `E["A"]`,
+    /// `ns.E.A`, or an access through a value typed as the enum object
+    /// (`m.Color.Blue` with `m: typeof M`)? Such an access selects the enum
+    /// member's own declared type, which is fresh in tsc's model.
+    ///
+    /// A property read from a value merely *typed* as an enum member (`o.p`
+    /// with `p: E.A`) resolves through a non-enum base and stays non-fresh.
+    fn is_direct_enum_member_access(&self, idx: NodeIndex) -> bool {
+        // Cheap screen: the initializer was checked before the widening
+        // policy runs, so a cached non-enum-member node type rules the access
+        // out without any symbol resolution.
+        if let Some(&cached) = self.ctx.node_types.get(&idx.0)
+            && !self.is_enum_member_type_for_widening(cached)
+        {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(member_name) = self.access_expression_member_name(node.kind, access) else {
+            return false;
+        };
+        let Some(base_symbol) = self
+            .enum_base_symbol_of_expression(access.expression)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+        base_symbol
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(member_name))
+            .and_then(|member_sym_id| self.ctx.binder.get_symbol(member_sym_id))
+            .is_some_and(|member| member.has_any_flags(symbol_flags::ENUM_MEMBER))
+    }
+
+    /// Resolve the base expression of a member access to an *enum* symbol,
+    /// or `None` when the base is not an enum.
+    ///
+    /// Two routes mirror how an enum object can be reached in value space:
+    /// a direct (possibly import-aliased) reference to the enum declaration
+    /// (`E.A`), resolved by symbol; or any expression whose checked type is
+    /// the enum object type (`ns.E.A`, `m.Color.Blue` with `m: typeof M`),
+    /// resolved through the type's declaring symbol — the member type
+    /// carries freshness in tsc regardless of how the object was reached.
+    fn enum_base_symbol_of_expression(&self, base_idx: NodeIndex) -> Option<SymbolId> {
+        let Some(base_node) = self.ctx.arena.get(base_idx) else {
+            return None;
+        };
+        if base_node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(base_idx)
+            && let Some(resolved) = self
+                .resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+                .or(Some(sym_id))
+            && self
+                .ctx
+                .binder
+                .get_symbol(resolved)
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ENUM))
+        {
+            return Some(resolved);
+        }
+        let base_type = self.ctx.node_types.get(&base_idx.0).copied()?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base_type)?;
+        self.ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| {
+                symbol.has_any_flags(symbol_flags::ENUM)
+                    && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
+            })
+            .then_some(sym_id)
+    }
+
+    /// The member name selected by a property access (`.name`) or a
+    /// string-keyed element access (`["name"]`), when statically known.
+    fn access_expression_member_name<'n>(
+        &'n self,
+        kind: u16,
+        access: &tsz_parser::parser::node::AccessExprData,
+    ) -> Option<&'n str> {
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return self.ctx.arena.get_identifier_text(access.name_or_argument);
+        }
+        let arg_node = self.ctx.arena.get(access.name_or_argument)?;
+        if arg_node.kind == SyntaxKind::StringLiteral as u16
+            || arg_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return self
+                .ctx
+                .arena
+                .get_literal(arg_node)
+                .map(|lit| lit.text.as_str());
+        }
+        None
     }
 
     /// Map an expanded argument index back to the original argument node index.
