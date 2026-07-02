@@ -171,16 +171,15 @@ pub(crate) fn alias_application_body_reduces_through_conditional_or_indexed(
     definitions: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(def_id) = super::common::get_application_lazy_def_id(db, type_id) else {
-        return false;
-    };
-    let Some(def) = definitions.get(def_id) else {
-        return false;
-    };
-    def.kind == DefKind::TypeAlias
-        && def.body.is_some_and(|body| {
-            alias_body_reduces_through_conditional_or_indexed(db, definitions, body, 0)
-        })
+    use tsz_solver::type_queries::ReducingAliasBodyKind;
+    matches!(
+        tsz_solver::type_queries::application_base_reducing_alias_body_kind(
+            db,
+            definitions,
+            type_id
+        ),
+        Some(ReducingAliasBodyKind::Conditional | ReducingAliasBodyKind::IndexAccess)
+    )
 }
 
 pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
@@ -200,46 +199,13 @@ pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
             ))
 }
 
-/// Whether `ty` carries a type-alias surface that tsc's error reporting
-/// restores: a generic alias application (`UnionAlias<{ u: string }>`) or a
-/// bare `Lazy` alias reference (`NullableObj`).
-///
-/// Mirrors tsc's `reportErrorResults`, which rebinds the reported pair to the
-/// *original* source/target whenever the original carried an `aliasSymbol` —
-/// so relation-time reductions (e.g. stripping `undefined` from a nullable
-/// union target) never replace an alias-named type in the rendered message.
-/// Anonymous types (no alias surface) keep the reduced form.
+/// See [`tsz_solver::type_queries::type_carries_alias_symbol_surface`].
 pub(crate) fn type_keeps_alias_symbol_surface(
     db: &dyn TypeDatabase,
     definitions: &DefinitionStore,
     ty: TypeId,
 ) -> bool {
-    fn alias_def_id_of(
-        db: &dyn TypeDatabase,
-        definitions: &DefinitionStore,
-        ty: TypeId,
-    ) -> Option<tsz_solver::def::DefId> {
-        if let Some(app) = super::common::type_application(db, ty) {
-            super::common::lazy_def_id(db, app.base)
-                .or_else(|| definitions.find_def_for_type(app.base))
-        } else {
-            super::common::lazy_def_id(db, ty)
-        }
-    }
-    // The as-written reference (`ty` itself) or the recorded display
-    // provenance of an evaluated annotation. The raw interned identity is
-    // deliberately NOT consulted for bare types: a structurally identical
-    // anonymous annotation must not repaint to a coincidental alias — callers
-    // with an anchor recover the bare-alias-reference case from the
-    // annotation AST instead
-    // (`assignment_target_annotation_is_alias_reference`).
-    alias_def_id_of(db, definitions, ty)
-        .or_else(|| {
-            db.get_display_alias(ty)
-                .and_then(|alias| alias_def_id_of(db, definitions, alias))
-        })
-        .and_then(|def_id| definitions.get(def_id))
-        .is_some_and(|def| def.kind == DefKind::TypeAlias)
+    tsz_solver::type_queries::type_carries_alias_symbol_surface(db, definitions, ty)
 }
 
 pub(crate) fn evaluated_alias_application_has_concrete_display(
@@ -256,39 +222,6 @@ pub(crate) fn evaluated_alias_application_has_concrete_display(
 
 pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
-}
-
-fn alias_body_reduces_through_conditional_or_indexed(
-    db: &dyn TypeDatabase,
-    definitions: &DefinitionStore,
-    type_id: TypeId,
-    depth: usize,
-) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    if super::common::is_index_access_type(db, type_id)
-        || super::common::is_conditional_type(db, type_id)
-    {
-        return true;
-    }
-    if let Some(app) = super::common::type_application(db, type_id)
-        && let Some(def_id) = super::common::lazy_def_id(db, app.base)
-        && let Some(def) = definitions.get(def_id)
-        && def.kind == DefKind::TypeAlias
-        && let Some(body) = def.body
-        && alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1)
-    {
-        return true;
-    }
-    if let Some(def_id) = super::common::lazy_def_id(db, type_id)
-        && let Some(def) = definitions.get(def_id)
-        && def.kind == DefKind::TypeAlias
-        && let Some(body) = def.body
-    {
-        return alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1);
-    }
-    false
 }
 
 pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

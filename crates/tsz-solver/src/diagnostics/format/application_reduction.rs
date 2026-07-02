@@ -132,15 +132,17 @@ impl<'a> TypeFormatter<'a> {
         // result is no longer an alias application or evaluation stops making
         // progress.
         let mut current = type_id;
-        let mut last_keyof_operand = None;
+        let mut last_keyof_step = None;
         for _ in 0..8 {
             let Some(TypeData::Application(app_id)) = self.interner.lookup(current) else {
                 break;
             };
             let app = self.interner.type_application(app_id);
-            let Some(def_id) = crate::type_queries::get_lazy_def_id(self.interner, app.base)
-                .or_else(|| def_store.find_def_for_type(app.base))
-            else {
+            let Some(def_id) = crate::type_queries::application_base_alias_def_id(
+                self.interner,
+                def_store,
+                app.base,
+            ) else {
                 break;
             };
             let Some(def) = def_store.get(def_id) else {
@@ -152,21 +154,13 @@ impl<'a> TypeFormatter<'a> {
             let Some(body) = def.body else {
                 break;
             };
-            if crate::type_queries::contains_type_parameters_db(self.interner, current) {
-                break;
-            }
             // A `keyof` body is evaluated eagerly during instantiation (the
             // substituted body arrives as the key union, not `KeyOf(obj)`), so
-            // capture the operand from the *declared* body and instantiate it
-            // separately — the ordered-union path below needs the operand's
-            // property declaration order.
-            if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(body) {
-                last_keyof_operand = Some(crate::computation::instantiate_generic(
-                    self.interner,
-                    operand,
-                    &def.type_params,
-                    &app.args,
-                ));
+            // remember the step whose *declared* body is the `keyof` — the
+            // ordered-union path below instantiates its operand on demand to
+            // recover the property declaration order.
+            if matches!(self.interner.lookup(body), Some(TypeData::KeyOf(_))) {
+                last_keyof_step = Some((def_id, app.args.to_vec()));
             }
             let instantiated = crate::computation::instantiate_generic(
                 self.interner,
@@ -212,7 +206,18 @@ impl<'a> TypeFormatter<'a> {
         // on the application surface (tsc applies literal-union display
         // widening there, a separate display concern).
         if body_kind == crate::type_queries::ReducingAliasBodyKind::KeyOf {
-            let members = self.keyof_reduction_ordered_members(last_keyof_operand?, current)?;
+            let (def_id, args) = last_keyof_step?;
+            let def = def_store.get(def_id)?;
+            let Some(TypeData::KeyOf(operand)) = self.interner.lookup(def.body?) else {
+                return None;
+            };
+            let operand = crate::computation::instantiate_generic(
+                self.interner,
+                operand,
+                &def.type_params,
+                &args,
+            );
+            let members = self.keyof_reduction_ordered_members(operand, current)?;
             return Some(ApplicationDisplayReduction::OrderedUnion(members));
         }
         None
@@ -259,8 +264,7 @@ impl<'a> TypeFormatter<'a> {
             .map(|prop| self.interner.literal_string_atom(prop.name))
             .collect();
         let member_set: FxHashSet<TypeId> = members.iter().copied().collect();
-        if ordered.len() != member_set.len() || !ordered.iter().all(|key| member_set.contains(key))
-        {
+        if !ordered.iter().all(|key| member_set.contains(key)) {
             return None;
         }
         Some(ordered)
@@ -358,7 +362,7 @@ impl<'a> TypeFormatter<'a> {
             return None;
         };
 
-        if let Some(def_store) = self.def_store {
+        {
             let positions: Vec<_> = members
                 .iter()
                 .map(|&member| self.get_source_position_for_type(member, def_store))
@@ -492,57 +496,13 @@ impl<'a> TypeFormatter<'a> {
     /// alias and re-entering the same evaluated form (which trips the
     /// `format_visiting` cycle protection and prints `...`).
     pub(super) fn application_alias_distributes(&self, alias_origin: TypeId) -> bool {
-        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
-            return false;
-        };
-        let app = self.interner.type_application(app_id);
-        let Some(def_store) = self.def_store else {
-            return false;
-        };
-        let def_id = match self.interner.lookup(app.base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => match def_store.find_def_for_type(app.base) {
-                Some(def_id) => def_id,
-                None => return false,
-            },
-        };
-        let Some(def) = def_store.get(def_id) else {
-            return false;
-        };
-        if def.kind != crate::def::DefKind::TypeAlias {
-            return false;
-        }
-        let Some(body) = def.body else {
-            return false;
-        };
-        let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(body) else {
-            return false;
-        };
-        let cond = self.interner.conditional_type(cond_id);
-        if !cond.is_distributive {
-            return false;
-        }
-        let Some(TypeData::TypeParameter(check_tp)) = self.interner.lookup(cond.check_type) else {
-            return false;
-        };
-        let Some(check_index) = def
-            .type_params
-            .iter()
-            .position(|param| param.name == check_tp.name)
-        else {
-            return false;
-        };
-        let Some(&raw_check_arg) = app.args.get(check_index) else {
-            return false;
-        };
-        let check_arg = self.resolve_distributive_check_arg(raw_check_arg);
-        if check_arg == TypeId::BOOLEAN {
-            return true;
-        }
-        if let Some(TypeData::Union(member_list_id)) = self.interner.lookup(check_arg) {
-            return self.interner.type_list(member_list_id).len() >= 2;
-        }
-        false
+        self.def_store.is_some_and(|def_store| {
+            crate::type_queries::application_distributes_over_union_check_arg(
+                self.interner,
+                def_store,
+                alias_origin,
+            )
+        })
     }
 
     /// Returns `true` when an `Application` display alias is a direct application

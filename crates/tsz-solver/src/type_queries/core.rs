@@ -165,9 +165,7 @@ pub fn application_base_has_conditional_alias_body(
         return false;
     };
     let app = db.type_application(app_id);
-    let Some(def_id) =
-        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
-    else {
+    let Some(def_id) = application_base_alias_def_id(db, def_store, app.base) else {
         return false;
     };
     def_store
@@ -207,8 +205,19 @@ pub fn application_base_reducing_alias_body_kind(
         return None;
     };
     let app = db.type_application(app_id);
-    let def_id = get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))?;
+    let def_id = application_base_alias_def_id(db, def_store, app.base)?;
     alias_def_reducing_body_kind(db, def_store, def_id, 0)
+}
+
+/// Resolve an application *base* to its definition id: a `Lazy(DefId)`
+/// reference directly, or the reverse type-to-def registration for a base
+/// that was already resolved to its structural form.
+pub fn application_base_alias_def_id(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    base: TypeId,
+) -> Option<crate::def::DefId> {
+    get_lazy_def_id(db, base).or_else(|| def_store.find_def_for_type(base))
 }
 
 /// Whether `type_id` is an application of a *distributive* conditional type
@@ -289,6 +298,45 @@ pub fn resolve_distributive_union_check_arg(
         .and_then(|def| def.body)
         .filter(|&body| matches!(db.lookup(body), Some(TypeData::Union(_))))
         .unwrap_or(check_arg)
+}
+
+/// Whether `ty` carries a type-alias surface that tsc's error reporting
+/// restores: a generic alias application (`UnionAlias<{ u: string }>`), a bare
+/// `Lazy` alias reference, or a type whose recorded display provenance points
+/// back at one.
+///
+/// Mirrors tsc's `reportErrorResults`, which rebinds the reported pair to the
+/// *original* source/target whenever the original carried an `aliasSymbol` —
+/// so relation-time reductions (e.g. stripping `undefined` from a nullable
+/// union target) never replace an alias-named type in the rendered message.
+/// The raw interned identity is deliberately NOT consulted for bare types: a
+/// structurally identical anonymous annotation must not repaint to a
+/// coincidental alias — checker callers with an anchor recover the
+/// bare-alias-reference case from the annotation AST instead.
+pub fn type_carries_alias_symbol_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    ty: TypeId,
+) -> bool {
+    fn alias_def_id_of(
+        db: &dyn TypeDatabase,
+        def_store: &DefinitionStore,
+        ty: TypeId,
+    ) -> Option<crate::def::DefId> {
+        if let Some(TypeData::Application(app_id)) = db.lookup(ty) {
+            let app = db.type_application(app_id);
+            application_base_alias_def_id(db, def_store, app.base)
+        } else {
+            get_lazy_def_id(db, ty)
+        }
+    }
+    alias_def_id_of(db, def_store, ty)
+        .or_else(|| {
+            db.get_display_alias(ty)
+                .and_then(|alias| alias_def_id_of(db, def_store, alias))
+        })
+        .and_then(|def_id| def_store.get(def_id))
+        .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
 }
 
 fn alias_def_reducing_body_kind(

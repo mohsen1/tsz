@@ -1197,13 +1197,12 @@ impl<'a> CheckerState<'a> {
             // cycle) keeps the annotation surface.
             if self.is_recursive_type_alias_application_for_display(target) {
                 let evaluated = self.evaluate_type_for_assignability(display_target);
-                let converges = evaluated != display_target
-                    && evaluated != TypeId::ERROR
-                    && !crate::query_boundaries::common::contains_type_parameters(
-                        self.ctx.types,
+                let converges =
+                    crate::query_boundaries::diagnostics::evaluated_alias_application_has_concrete_display(
+                        self.ctx.types.as_type_database(),
+                        display_target,
                         evaluated,
-                    )
-                    && crate::query_boundaries::diagnostics::application_reduces_to_displayable_shape(
+                    ) && crate::query_boundaries::diagnostics::application_reduces_to_displayable_shape(
                         self.ctx.types.as_type_database(),
                         evaluated,
                     );
@@ -1414,51 +1413,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn direct_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
-        let mut current = anchor_idx;
-        let mut guard = 0;
-        let source_is_return = self.assignment_source_is_return_expression(anchor_idx);
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
-                && var_decl.type_annotation.is_some()
-            {
-                return self.node_text(var_decl.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-            if let Some(param) = self.ctx.arena.get_parameter(node)
-                && param.type_annotation.is_some()
-            {
-                return self.node_text(param.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-            if source_is_return
-                && let Some(function) = self.ctx.arena.get_function(node)
-                && function.type_annotation.is_some()
-            {
-                return self.node_text(function.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
+        if let Some(annotation_idx) = self.direct_assignment_target_annotation_node(anchor_idx) {
+            return self
+                .node_text(annotation_idx)
+                .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, true));
         }
-
         self.source_assignment_target_annotation_text(anchor_idx)
     }
 
