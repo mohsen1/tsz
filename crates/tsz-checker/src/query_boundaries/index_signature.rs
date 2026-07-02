@@ -28,6 +28,19 @@ pub(crate) fn resolve_number_index(db: &dyn TypeDatabase, type_id: TypeId) -> Op
     IndexSignatureResolver::new(db).resolve_number_index(type_id)
 }
 
+/// Resolve the `symbol` index signature value type from `type_id`.
+///
+/// Returns `Some` only for a signature keyed by the bare `symbol` intrinsic; a
+/// `string` index signature (which cannot accept `symbol` keys) yields `None`.
+pub(crate) fn resolve_symbol_index(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    IndexSignatureResolver::new(db).resolve_symbol_index(type_id)
+}
+
+/// Return whether `type_id` exposes a `symbol` index signature.
+pub(crate) fn has_symbol_index_signature(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    resolve_symbol_index(db, type_id).is_some()
+}
+
 /// Return the declared string index signature for `type_id`, if present.
 pub(crate) fn string_index_signature(
     db: &dyn TypeDatabase,
