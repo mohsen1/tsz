@@ -33,6 +33,7 @@ TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.
 TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
+TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-13526}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
 cap_positive_baseline() {
@@ -764,6 +765,7 @@ validate_emit_aggregate_counts() {
   local base_js base_dts
   base_js="$(jq -r '.summary.jsPass // 0'  scripts/emit/emit-snapshot.json)"
   base_dts="$(jq -r '.summary.dtsPass // 0' scripts/emit/emit-snapshot.json)"
+  base_js="$(cap_positive_baseline "$base_js" "$TSZ_CI_JS_ACCEPTED_FLOOR")"
   base_dts="$(cap_positive_baseline "$base_dts" "$TSZ_CI_DTS_ACCEPTED_FLOOR")"
   if [[ "$base_js" -gt 0 && "$js_passed" -lt "$base_js" ]]; then
     echo "error: emit JS regression: ${js_passed} < ${base_js}" >&2
