@@ -823,7 +823,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let template_app = self.interner.type_application(template_app_id);
             if let Some(TypeData::Application(source_app_id)) = self.interner.lookup(source_value) {
                 let source_app = self.interner.type_application(source_app_id);
-                if template_app.base == source_app.base {
+                if self.application_bases_share_declaration(template_app.base, source_app.base) {
                     if template_app.args.len() == source_app.args.len() {
                         for (t_arg, s_arg) in template_app.args.iter().zip(source_app.args.iter()) {
                             if let Some(rev) = self.reverse_infer_through_template(
@@ -1428,7 +1428,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (TypeData::Application(s_app_id), TypeData::Application(t_app_id)) => {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                s_app.base == t_app.base
+                self.application_bases_share_declaration(s_app.base, t_app.base)
                     || self
                         .checker
                         .promise_like_type_argument(source)
