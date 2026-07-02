@@ -1219,6 +1219,9 @@ mod jsx_union_props_relation_routing_arch_tests;
 #[path = "tests/keyof_alias_composite_display_tests.rs"]
 mod keyof_alias_composite_display_tests;
 #[cfg(test)]
+#[path = "tests/keyof_binding_assignment_narrowing_tests.rs"]
+mod keyof_binding_assignment_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_function_type_is_never_tests.rs"]
 mod keyof_function_type_is_never_tests;
 #[cfg(test)]
