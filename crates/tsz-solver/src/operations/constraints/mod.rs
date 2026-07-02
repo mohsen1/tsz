@@ -5,6 +5,7 @@
 //! recursive traversal of complex type structures (objects, functions, tuples,
 //! conditionals, mapped types, etc.) to extract inference candidates.
 
+mod deferred_conditional;
 mod indexed_access;
 mod reverse_mapped;
 mod signatures;
