@@ -1142,9 +1142,12 @@ impl<'a> CheckerState<'a> {
     /// mismatch is emitted; returns `false` — deferring to the argument-level
     /// diagnostic — for `void` expected returns, explicitly-annotated callback
     /// parameters (the `elaborateArrowFunction` gate keys on parameters), an
-    /// `error`/`any` on either side, an already-related pair, or a
-    /// callable-vs-non-callable body/return shape (where `tsc` keeps the
-    /// whole-callback TS2345).
+    /// `error`/`any` on either side, or an already-related pair. A body whose
+    /// type is itself callable is *not* exempt: `tsc`'s `elaborateArrowFunction`
+    /// anchors the return mismatch at the body expression regardless of the
+    /// body type's shape (e.g. `const f: () => number = () => g` where
+    /// `g: () => string` reports `Type '() => string' is not assignable to type
+    /// 'number'.` at `g`, not the whole arrow).
     fn elaborate_expression_body_return_mismatch(
         &mut self,
         arg_idx: NodeIndex,
@@ -1165,13 +1168,6 @@ impl<'a> CheckerState<'a> {
             || self
                 .return_relation_outcome(body_type, expected_return_type)
                 .related
-        {
-            return false;
-        }
-        if self.first_callable_return_type(body_type).is_some()
-            && self
-                .first_callable_return_type(expected_return_type)
-                .is_none()
         {
             return false;
         }
