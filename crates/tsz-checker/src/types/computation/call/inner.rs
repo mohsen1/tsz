@@ -23,53 +23,59 @@ use super::post_generic::PostGenericCallDiagnostics;
 mod argument_collection;
 
 impl<'a> CheckerState<'a> {
-    fn spread_arg_pins_returned_rest_tuple_param(
+    /// Whether the call's arguments pin a bare rest-tuple type parameter that the
+    /// generic call also returns — i.e. some argument lands in a `...rest: T`
+    /// (`T extends any[]`, or `...rest: [...T]`) parameter whose type parameter is
+    /// returned and was bound by the contextual-return substitution.
+    ///
+    /// This covers both a spread argument (`f(...xs)`) and plain positional value
+    /// arguments (`f(1, 2)`). In either case the `contextual_params_fit_args` probe
+    /// below compares each such argument against the rest parameter's *element*
+    /// type, which discards tuple arity: two `number` arguments spuriously "fit" a
+    /// contextual `...rest: [number]`, so the contextual-return type would clamp the
+    /// argument-inferred `[number, number]` down to `[number]` and hide a real
+    /// `TS2322`/`TS2345` arity mismatch. When the arguments pin the returned rest
+    /// tuple parameter the argument-inferred tuple is authoritative, so the
+    /// contextual-return override must be skipped (tsc infers the tuple arity from
+    /// the arguments and only takes element hints — not arity — from the contextual
+    /// type). Non-rest wrapped returns like `wrap("x")` → `Wrap<"x">` are
+    /// unaffected: they never reach a `rest` parameter.
+    fn args_pin_returned_rest_tuple_param(
         &self,
         args: &[NodeIndex],
         shape: &tsz_solver::FunctionShape,
         substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> bool {
-        args.iter().enumerate().any(|(index, &arg_idx)| {
-            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-                return false;
-            };
-            if arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT {
-                return false;
-            }
-            let Some(param) = shape
-                .params
-                .get(index)
-                .or_else(|| shape.params.last().filter(|param| param.rest))
-            else {
-                return false;
-            };
-            if !param.rest {
-                return false;
-            }
+        // Only the trailing rest parameter can be pinned this way, and only when
+        // at least one argument actually reaches it. The rest parameter is last, so
+        // an argument lands in it exactly when there are at least as many arguments
+        // as declared parameters (this also covers a single spread argument). The
+        // predicate is otherwise a function of the shape and substitution alone, so
+        // it is evaluated once rather than per argument.
+        let Some(rest_param) = shape.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        if args.len() < shape.params.len() {
+            return false;
+        }
 
-            let mut rest_param_type_param_names = Vec::new();
-            if let Some(info) = common::type_param_info(self.ctx.types, param.type_id) {
-                rest_param_type_param_names.push(info.name);
-            }
-            if let Some(elements) = common::tuple_elements(self.ctx.types, param.type_id) {
-                rest_param_type_param_names.extend(elements.into_iter().filter_map(|element| {
-                    if element.rest {
-                        common::type_param_info(self.ctx.types, element.type_id)
-                            .map(|info| info.name)
-                    } else {
-                        None
-                    }
-                }));
-            }
+        let mut rest_param_type_param_names = Vec::new();
+        if let Some(info) = common::type_param_info(self.ctx.types, rest_param.type_id) {
+            rest_param_type_param_names.push(info.name);
+        }
+        if let Some(elements) = common::tuple_elements(self.ctx.types, rest_param.type_id) {
+            rest_param_type_param_names.extend(elements.into_iter().filter_map(|element| {
+                if element.rest {
+                    common::type_param_info(self.ctx.types, element.type_id).map(|info| info.name)
+                } else {
+                    None
+                }
+            }));
+        }
 
-            rest_param_type_param_names.into_iter().any(|name| {
-                substitution.get(name).is_some()
-                    && common::contains_type_parameter_named(
-                        self.ctx.types,
-                        shape.return_type,
-                        name,
-                    )
-            })
+        rest_param_type_param_names.into_iter().any(|name| {
+            substitution.get(name).is_some()
+                && common::contains_type_parameter_named(self.ctx.types, shape.return_type, name)
         })
     }
 
@@ -1428,21 +1434,21 @@ impl<'a> CheckerState<'a> {
                         self.call_arg_relation_outcome_with_env(actual, expected)
                             .related
                     });
-                    let spread_arg_pins_returned_rest_tuple_param = self
-                        .spread_arg_pins_returned_rest_tuple_param(
+                    // Skip the contextual-return override when the arguments pin a
+                    // returned bare rest-tuple parameter: `contextual_params_fit_args`
+                    // is unreliable there because it compares against the rest
+                    // element type and so discards tuple arity (see
+                    // `args_pin_returned_rest_tuple_param`). Otherwise keep tsc's
+                    // ordinary contextual-return literal preservation for wrapped
+                    // returns like `wrap("x")` → `Wrap<"x">`.
+                    let args_pin_returned_rest_tuple_param = self
+                        .args_pin_returned_rest_tuple_param(
                             args,
                             &shape,
                             &return_context_substitution,
                         );
-                    // The `contextual_params_fit_args` probe compares each spread
-                    // argument against a rest parameter's element type, which discards
-                    // tuple positions. When a spread argument feeds the same bare rest
-                    // type parameter returned by the generic call, the argument-inferred
-                    // tuple is authoritative; otherwise this branch must keep tsc's
-                    // ordinary contextual-return literal preservation for calls like
-                    // `wrap("x")` returned as `Wrap<"x">`.
                     if contextual_params_fit_args
-                        && !spread_arg_pins_returned_rest_tuple_param
+                        && !args_pin_returned_rest_tuple_param
                         && self
                             .return_relation_outcome_with_env(instantiated_shape_return, ctx_type)
                             .related
