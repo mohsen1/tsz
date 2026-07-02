@@ -1,4 +1,4 @@
-//! Literal-freshness query boundary (#15390).
+//! Literal-freshness policy owner (#15390).
 //!
 //! `tsc` mints a fresh literal type when it checks a literal expression and
 //! consults the freshness bit *on the type* when deciding whether an
@@ -9,48 +9,21 @@
 //! call site — and every consumer that forgot the recovery or re-modeled the
 //! rule wrongly diverged from `tsc` (#15366, #15373).
 //!
-//! This module is the single owner of those rules:
-//!
-//! * **Recovery** — [`CheckerState::fresh_literal_type_of`] and
-//!   [`CheckerState::expression_display_type_preferring_literal`] recover the
-//!   unwidened literal type from the expression node for diagnostic display.
-//! * **Widening timing** —
-//!   [`CheckerState::widen_mutable_binding_initializer_type`] (mutable
-//!   `let`/`var`/parameter/property-flow bindings, including `tsc`'s
-//!   enum-member widening) and [`CheckerState::widen_expression_type_if_fresh`]
-//!   (plain literal widening gated on freshness) own *when* a fresh literal
-//!   widens.
-//!
+//! This checker-side module owns the freshness *policy* rules (literal
+//! recovery itself stays with `literal_type_from_initializer`; the
+//! underlying type widening lives in `crate::query_boundaries::widening`).
 //! New display or binding consumers must route through these methods instead
 //! of pairing raw `literal_type_from_initializer` /
-//! `is_fresh_literal_expression` calls with ad-hoc widening at the call site.
+//! `is_fresh_literal_expression` calls with ad-hoc widening at the call
+//! site. The long-term fix is carrying a freshness bit on primitive literal
+//! types (as the solver already does for fresh object literals) so widening
+//! can consult the type instead of the AST.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Recover the fresh (unwidened) literal type of an expression from its
-    /// AST node, or `None` when the expression is not a literal.
-    ///
-    /// This is the recovery entry point of the freshness boundary: it owns
-    /// the AST walk (`literal_type_from_initializer`) plus the fallback for
-    /// `NumericLiteral` nodes minted on secondary parser paths with
-    /// `value: None`, whose value is recoverable from the literal text
-    /// (hex/binary/octal/separator forms).
-    pub(crate) fn fresh_literal_type_of(&self, expr: NodeIndex) -> Option<TypeId> {
-        self.literal_type_from_initializer(expr).or_else(|| {
-            let node = self.ctx.arena.get(expr)?;
-            if node.kind != SyntaxKind::NumericLiteral as u16 {
-                return None;
-            }
-            let lit = self.ctx.arena.get_literal(node)?;
-            tsz_common::numeric::parse_numeric_literal_value(&lit.text)
-                .map(|value| self.ctx.types.literal_number(value))
-        })
-    }
-
     /// The type a diagnostic should display for `expr`: its own fresh
     /// literal type when the expression is a literal, otherwise the checked
     /// (possibly widened) type the caller already computed.
@@ -64,26 +37,35 @@ impl<'a> CheckerState<'a> {
         expr: NodeIndex,
         checked: TypeId,
     ) -> TypeId {
-        self.fresh_literal_type_of(expr).unwrap_or(checked)
+        self.literal_type_from_initializer(expr).unwrap_or(checked)
+    }
+
+    /// Does `expr`/`type_id` observe `tsc`'s literal-widening rule at a
+    /// widening point? True for a fresh literal expression and for an enum
+    /// member value (`E.A` widens to `E` even though it is not an AST
+    /// literal); false for non-fresh sources — variable references, narrowed
+    /// values, computed expressions — which keep their type.
+    pub(crate) fn is_widening_literal_source(&self, expr: NodeIndex, type_id: TypeId) -> bool {
+        self.is_fresh_literal_expression(expr) || self.is_enum_member_type_for_widening(type_id)
     }
 
     /// Widen a mutable binding's initializer type exactly when `tsc` would:
     /// the initializer is a fresh literal expression, or the type is an enum
-    /// member literal (`let x = E.A` widens to `E` even though `E.A` is not
-    /// an AST literal). Non-fresh sources — variable references, narrowed
-    /// values, computed expressions — keep their type.
+    /// member literal. Non-fresh, non-enum sources keep their type.
     pub(crate) fn widen_mutable_binding_initializer_type(
         &mut self,
         initializer: NodeIndex,
         init_type: TypeId,
     ) -> TypeId {
-        if self.is_enum_member_type_for_widening(init_type)
-            || self.is_fresh_literal_expression(initializer)
-        {
-            self.widen_initializer_type_for_mutable_binding(init_type)
-        } else {
-            init_type
+        // Freshness first: a direct literal token answers on a cheap AST kind
+        // check, and `widen_initializer_type_for_mutable_binding` owns the
+        // enum-member arm internally, so the enum resolution runs at most
+        // once on either path.
+        if self.is_fresh_literal_expression(initializer) {
+            return self.widen_initializer_type_for_mutable_binding(init_type);
         }
+        self.enum_member_widened_parent_type(init_type)
+            .unwrap_or(init_type)
     }
 
     /// Widen `ty` to its base only when `expr` is a fresh literal

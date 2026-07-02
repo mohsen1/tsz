@@ -1410,7 +1410,7 @@ impl<'a> CheckerState<'a> {
             // name only affects the fallback anchor for non-elaborated value
             // mismatches.
             if check_default_assignability {
-                let literal_source = self.fresh_literal_type_of(element_data.initializer);
+                let literal_source = self.literal_type_from_initializer(element_data.initializer);
                 let source_type = literal_source.unwrap_or(default_value_type);
                 let source_for_display = literal_source
                     .map(|ty| self.widen_literal_type(ty))

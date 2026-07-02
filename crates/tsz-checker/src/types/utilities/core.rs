@@ -494,13 +494,11 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::widen_type_for_display(self.ctx.types, type_id)
     }
 
-    /// Widen a mutable binding initializer type (let/var semantics).
-    ///
-    /// In addition to primitive literal widening, TypeScript widens enum member
-    /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
-    /// specific member.
-    pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
+    /// Resolve an enum member type to its parent enum type, or `None` when
+    /// `type_id` is not an enum member. TypeScript widens enum member values
+    /// (`E.A`) to the parent enum (`E`) at mutable observation points; this is
+    /// the single owner of that member-to-parent resolution.
+    pub(crate) fn enum_member_widened_parent_type(&mut self, type_id: TypeId) -> Option<TypeId> {
         if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
         {
             // Check if this DefId is an enum member (has a parent enum)
@@ -511,11 +509,10 @@ impl<'a> CheckerState<'a> {
                 .ok()
                 .and_then(|env| env.get_enum_parent(def_id));
 
-            if let Some(parent_def_id) = parent_def_id {
-                // This is an enum member - widen to parent enum type
-                if let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id) {
-                    return self.get_type_of_symbol(parent_sym_id);
-                }
+            if let Some(parent_def_id) = parent_def_id
+                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
+            {
+                return Some(self.get_type_of_symbol(parent_sym_id));
             }
         }
 
@@ -524,7 +521,20 @@ impl<'a> CheckerState<'a> {
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
         {
-            return self.get_type_of_symbol(symbol.parent);
+            return Some(self.get_type_of_symbol(symbol.parent));
+        }
+
+        None
+    }
+
+    /// Widen a mutable binding initializer type (let/var semantics).
+    ///
+    /// In addition to primitive literal widening, TypeScript widens enum member
+    /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
+    /// specific member.
+    pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(parent) = self.enum_member_widened_parent_type(type_id) {
+            return parent;
         }
         // Use the mutable-binding widening entry so fresh array/object members
         // nested inside a top-level union widen too. tsc collapses a conditional
@@ -540,33 +550,8 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            let parent_def_id = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id
-                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
-            {
-                return self.get_type_of_symbol(parent_sym_id);
-            }
-        }
-
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-        {
-            return self.get_type_of_symbol(symbol.parent);
-        }
-
-        // Do NOT widen literal types - return as-is
-        type_id
+        self.enum_member_widened_parent_type(type_id)
+            .unwrap_or(type_id)
     }
 
     /// Check if a type is an enum member type (not the parent enum type).

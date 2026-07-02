@@ -764,9 +764,10 @@ impl<'a> CheckerState<'a> {
                 {
                     // For TS2418, use the literal type from the initializer
                     // expression when available.
-                    let computed_source = self
-                        .literal_type_from_initializer(prop_value_idx)
-                        .unwrap_or(source_prop_type);
+                    let computed_source = self.expression_display_type_preferring_literal(
+                        prop_value_idx,
+                        source_prop_type,
+                    );
                     let src_str = self.format_type_for_assignability_message(computed_source);
                     let tgt_str =
                         self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
@@ -791,11 +792,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let source_prop_type_for_diagnostic =
-                        if self.is_fresh_literal_expression(prop_value_idx) {
-                            self.widen_literal_type(source_prop_type)
-                        } else {
-                            source_prop_type
-                        };
+                        self.widen_expression_type_if_fresh(prop_value_idx, source_prop_type);
                     let source_prop_type_for_diagnostic =
                         self.widen_function_like_call_source(source_prop_type_for_diagnostic);
                     // TSC's elaborateElementwise uses TS2322 ("Type X is not

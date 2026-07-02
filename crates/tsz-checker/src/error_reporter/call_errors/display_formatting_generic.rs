@@ -136,9 +136,7 @@ impl<'a> CheckerState<'a> {
                     if prev_type_param_name != Some(type_param_name) {
                         return false;
                     }
-                    let prev_type = self
-                        .fresh_literal_type_of(prev_arg_idx)
-                        .unwrap_or_else(|| self.elaboration_source_expression_type(prev_arg_idx));
+                    let prev_type = self.elaboration_display_type_of(prev_arg_idx);
                     self.primitive_display_base(prev_type) == Some(param_base)
                 });
 

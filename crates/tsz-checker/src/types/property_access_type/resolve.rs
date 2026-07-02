@@ -578,8 +578,7 @@ impl<'a> CheckerState<'a> {
             original_object_type,
             TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT
         ) {
-            self.literal_type_from_initializer(access.expression)
-                .unwrap_or(original_object_type)
+            self.expression_display_type_preferring_literal(access.expression, original_object_type)
         } else {
             self.enum_member_initializer_display_type(access.expression)
                 .unwrap_or(original_object_type)
