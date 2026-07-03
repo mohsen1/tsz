@@ -14,6 +14,7 @@ use super::function_type_helpers::{
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -861,7 +862,8 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         // Only widen when the initializer is a "fresh" literal expression
-                        let is_enum_member = self.is_enum_member_type_for_widening(init_type);
+                        let is_enum_member =
+                            enum_query::is_enum_member_for_widening(&self.ctx, init_type);
                         if is_enum_member || self.is_fresh_literal_expression(param.initializer) {
                             self.widen_initializer_type_for_mutable_binding(init_type)
                         } else {

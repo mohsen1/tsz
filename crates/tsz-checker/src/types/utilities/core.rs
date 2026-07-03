@@ -2,6 +2,7 @@
 //! for `CheckerState`.
 
 use super::heritage_walk_state::HeritageSymbolWalkState;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -500,32 +501,12 @@ impl<'a> CheckerState<'a> {
     /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
     /// specific member.
     pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        if let Some(parent_sym_id) =
+            enum_query::enum_member_parent_symbol_for_widening(&self.ctx, type_id)
         {
-            // Check if this DefId is an enum member (has a parent enum)
-            let parent_def_id = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id {
-                // This is an enum member - widen to parent enum type
-                if let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id) {
-                    return self.get_type_of_symbol(parent_sym_id);
-                }
-            }
+            return self.get_type_of_symbol(parent_sym_id);
         }
 
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-        {
-            return self.get_type_of_symbol(symbol.parent);
-        }
         // Use the mutable-binding widening entry so fresh array/object members
         // nested inside a top-level union widen too. tsc collapses a conditional
         // over array literals (`cond ? [1, 2, 3] : [4, 5]`) to `number[]`; the
@@ -540,51 +521,14 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        if let Some(parent_sym_id) =
+            enum_query::enum_member_parent_symbol_for_widening(&self.ctx, type_id)
         {
-            let parent_def_id = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id
-                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
-            {
-                return self.get_type_of_symbol(parent_sym_id);
-            }
-        }
-
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-        {
-            return self.get_type_of_symbol(symbol.parent);
+            return self.get_type_of_symbol(parent_sym_id);
         }
 
         // Do NOT widen literal types - return as-is
         type_id
-    }
-
-    /// Check if a type is an enum member type (not the parent enum type).
-    ///
-    /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
-    /// when assigned to mutable bindings, even if they're not "fresh" literals.
-    pub(crate) fn is_enum_member_type_for_widening(&self, type_id: TypeId) -> bool {
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            // Check if this DefId has a parent (meaning it's a member, not the enum itself)
-            return self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .is_some_and(|env| env.get_enum_parent(def_id).is_some());
-        }
-        false
     }
 
     /// Check if an expression produces a "fresh" literal type that should be widened.

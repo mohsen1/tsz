@@ -5,7 +5,10 @@
 
 use std::sync::Arc;
 
+use crate::context::CheckerContext;
+use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::def::DefId;
 use tsz_solver::{ObjectShape, TypeId};
 
 pub(crate) fn enum_def_id(
@@ -13,6 +16,90 @@ pub(crate) fn enum_def_id(
     type_id: TypeId,
 ) -> Option<tsz_solver::def::DefId> {
     super::common::enum_def_id(db, type_id)
+}
+
+/// Whether `type_id` names a TypeScript enum symbol. This is a checker boundary
+/// rather than a pure solver query because unresolved `Lazy(DefId)` aliases may
+/// still require binder-backed symbol resolution.
+pub(crate) fn is_enum_type(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
+    enum_symbol_with_flags(ctx, type_id, symbol_flags::ENUM).is_some()
+}
+
+/// Check if a type is an enum-family fallback operand for arithmetic
+/// validation: either a direct enum type/member, or a union whose every member
+/// resolves to an enum or enum member.
+///
+/// Callers use this only at the same fallback points where the binary operator
+/// evaluator could not fully resolve the operand. Resolved operands still go
+/// through the evaluator, which owns numeric-vs-string enum validation.
+pub(crate) fn is_arithmetic_enum_like_type(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
+    if is_enum_type(ctx, type_id) {
+        return true;
+    }
+
+    let Some(members) = super::common::union_list_id(ctx.types, type_id) else {
+        return is_enum_or_enum_member_type(ctx, type_id);
+    };
+
+    let member_list = ctx.types.type_list(members);
+    !member_list.is_empty()
+        && member_list
+            .iter()
+            .all(|&member| is_enum_or_enum_member_type(ctx, member))
+}
+
+/// Check if the type is still an unresolved `Lazy(DefId)`.
+pub(crate) fn is_unresolved_lazy_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    super::common::is_lazy_type(db, type_id)
+}
+
+/// DefId for the parent enum when `type_id` is an enum member type.
+pub(crate) fn enum_member_parent_def_id(
+    ctx: &CheckerContext<'_>,
+    type_id: TypeId,
+) -> Option<DefId> {
+    let def_id = enum_def_id(ctx.types, type_id)?;
+    ctx.type_env
+        .try_borrow()
+        .ok()
+        .and_then(|env| env.get_enum_parent(def_id))
+}
+
+/// Binder symbol for the parent enum when a type should widen from an enum
+/// member to its containing enum. Falls back to symbol flags for legacy lazy
+/// member aliases that have not been materialized into enum `DefId` metadata.
+pub(crate) fn enum_member_parent_symbol_for_widening(
+    ctx: &CheckerContext<'_>,
+    type_id: TypeId,
+) -> Option<SymbolId> {
+    if let Some(parent_def_id) = enum_member_parent_def_id(ctx, type_id)
+        && let Some(parent_sym_id) = ctx.def_to_symbol_id(parent_def_id)
+    {
+        return Some(parent_sym_id);
+    }
+
+    let sym_id = enum_symbol_with_flags(ctx, type_id, symbol_flags::ENUM_MEMBER)?;
+    ctx.binder.get_symbol(sym_id).map(|symbol| symbol.parent)
+}
+
+/// Whether `type_id` is an enum member that widens to its parent enum in mutable
+/// binding and fresh-return positions.
+pub(crate) fn is_enum_member_for_widening(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
+    enum_member_parent_symbol_for_widening(ctx, type_id).is_some()
+}
+
+fn is_enum_or_enum_member_type(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
+    enum_symbol_with_flags(ctx, type_id, symbol_flags::ENUM | symbol_flags::ENUM_MEMBER).is_some()
+}
+
+fn enum_symbol_with_flags(
+    ctx: &CheckerContext<'_>,
+    type_id: TypeId,
+    flags: u32,
+) -> Option<SymbolId> {
+    let sym_id = ctx.resolve_type_to_symbol_id(type_id)?;
+    let symbol = ctx.binder.get_symbol(sym_id)?;
+    symbol.has_any_flags(flags).then_some(sym_id)
 }
 
 /// The structural member-value union of an enum type (e.g. `"red" | "blue"` for

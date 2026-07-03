@@ -5,6 +5,7 @@
 //! and checking for explicit `any` assertion returns.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::function_returns as return_type_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -577,7 +578,8 @@ impl<'a> CheckerState<'a> {
         // returned, so enum members observe the same preservation rules. The widen
         // itself runs through `widen_enum_member_type` at each widenable site,
         // since the primitive literal widener leaves `TypeData::Enum` untouched.
-        self.is_fresh_literal_expression(expr_idx) || self.is_enum_member_type_for_widening(type_id)
+        self.is_fresh_literal_expression(expr_idx)
+            || enum_query::is_enum_member_for_widening(&self.ctx, type_id)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal

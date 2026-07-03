@@ -6,6 +6,7 @@
 
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -941,7 +942,7 @@ impl<'a> CheckerState<'a> {
             // (direct literal in source code). Types from variable references,
             // narrowing, or computed expressions are "non-fresh" and NOT widened.
             // EXCEPTION: Enum member types are always widened for mutable bindings.
-            let is_enum_member = self.is_enum_member_type_for_widening(init_type);
+            let is_enum_member = enum_query::is_enum_member_for_widening(&self.ctx, init_type);
             let widened = if is_enum_member || self.is_fresh_literal_expression(facts.initializer) {
                 self.widen_initializer_type_for_mutable_binding(init_type)
             } else {

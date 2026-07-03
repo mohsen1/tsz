@@ -3,6 +3,7 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1242,7 +1243,7 @@ impl<'a> CheckerState<'a> {
                                 left_type,
                             );
                             if !evaluator.is_arithmetic_operand(left_stripped)
-                                && !self.is_enum_type(left_stripped)
+                                && !enum_query::is_enum_type(&self.ctx, left_stripped)
                                 && let Some(node) = self.ctx.arena.get(left_idx)
                             {
                                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -1268,7 +1269,7 @@ impl<'a> CheckerState<'a> {
                                 right_type,
                             );
                             if !evaluator.is_arithmetic_operand(right_stripped)
-                                && !self.is_enum_type(right_stripped)
+                                && !enum_query::is_enum_type(&self.ctx, right_stripped)
                                 && let Some(node) = self.ctx.arena.get(right_idx)
                             {
                                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -1373,8 +1374,8 @@ impl<'a> CheckerState<'a> {
                     // Check if this is actually valid because we have enum types
                     // The evaluator doesn't have access to symbol information, so it can't
                     // detect enum types. We need to check here at the checker layer.
-                    let left_is_enum = self.is_enum_type(left_type);
-                    let right_is_enum = self.is_enum_type(right_type);
+                    let left_is_enum = enum_query::is_enum_type(&self.ctx, left_type);
+                    let right_is_enum = enum_query::is_enum_type(&self.ctx, right_type);
                     let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
 
                     // If both operands are enum types and this is an arithmetic operation,
