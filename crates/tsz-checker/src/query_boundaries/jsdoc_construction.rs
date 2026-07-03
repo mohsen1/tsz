@@ -7,8 +7,8 @@
 use tsz_common::Atom;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
-    FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
-    TypePredicate,
+    ConditionalType, FunctionShape, IndexSignature, MappedModifier, MappedType, ObjectShape,
+    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypeParamOrigin, TypePredicate,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +60,119 @@ pub(crate) const fn jsdoc_object_index_fact(
 
 pub(crate) fn jsdoc_empty_object_type(db: &dyn TypeDatabase) -> TypeId {
     db.object(Vec::new())
+}
+
+pub(crate) fn jsdoc_array_type(db: &dyn TypeDatabase, element: TypeId) -> TypeId {
+    db.array(element)
+}
+
+pub(crate) fn jsdoc_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn jsdoc_union_pair_type(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> TypeId {
+    db.union2(left, right)
+}
+
+pub(crate) fn jsdoc_intersection_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.intersection(members)
+}
+
+pub(crate) fn jsdoc_intersection_pair_type(
+    db: &dyn TypeDatabase,
+    left: TypeId,
+    right: TypeId,
+) -> TypeId {
+    db.intersection2(left, right)
+}
+
+pub(crate) fn jsdoc_application_type(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    db.application(base, args)
+}
+
+pub(crate) fn jsdoc_index_access_type(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+) -> TypeId {
+    db.index_access(object_type, index_type)
+}
+
+pub(crate) fn jsdoc_keyof_type(db: &dyn TypeDatabase, operand: TypeId) -> TypeId {
+    db.keyof(operand)
+}
+
+pub(crate) const fn jsdoc_type_param_info(
+    name: Atom,
+    constraint: Option<TypeId>,
+    default: Option<TypeId>,
+) -> TypeParamInfo {
+    TypeParamInfo {
+        name,
+        constraint,
+        default,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    }
+}
+
+pub(crate) fn jsdoc_type_param_type(db: &dyn TypeDatabase, type_param: TypeParamInfo) -> TypeId {
+    db.type_param(type_param)
+}
+
+pub(crate) fn jsdoc_tuple_type(db: &dyn TypeDatabase, elements: Vec<TupleElement>) -> TypeId {
+    db.tuple(elements)
+}
+
+pub(crate) const fn jsdoc_tuple_element(
+    type_id: TypeId,
+    name: Option<Atom>,
+    optional: bool,
+    rest: bool,
+) -> TupleElement {
+    TupleElement {
+        type_id,
+        name,
+        optional,
+        rest,
+    }
+}
+
+pub(crate) fn jsdoc_mapped_type(
+    db: &dyn TypeDatabase,
+    type_param: TypeParamInfo,
+    constraint: TypeId,
+    template: TypeId,
+    optional_modifier: Option<MappedModifier>,
+) -> TypeId {
+    db.mapped(MappedType {
+        type_param,
+        constraint,
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier,
+    })
+}
+
+pub(crate) fn jsdoc_conditional_type(
+    db: &dyn TypeDatabase,
+    check_type: TypeId,
+    extends_type: TypeId,
+    true_type: TypeId,
+    false_type: TypeId,
+) -> TypeId {
+    db.conditional(ConditionalType {
+        check_type,
+        extends_type,
+        true_type,
+        false_type,
+        is_distributive: true,
+    })
 }
 
 pub(crate) fn jsdoc_object_type(

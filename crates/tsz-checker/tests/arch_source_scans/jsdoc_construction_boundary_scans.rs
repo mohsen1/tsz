@@ -1,16 +1,19 @@
 //! JSDoc construction boundary scans.
 //!
 //! JSDoc resolution code parses source text and gathers facts. Raw solver
-//! `FunctionShape`, `ObjectShape`, and indexed-object construction belongs in
-//! `query_boundaries::jsdoc_construction`.
+//! `FunctionShape`, `ObjectShape`, indexed-object construction, and expression
+//! type construction belongs in `query_boundaries::jsdoc_construction`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const JSDOC_CONSTRUCTION_CALLERS: &[&str] = &[
+    "src/jsdoc/resolution/generic_typedef.rs",
     "src/jsdoc/resolution/type_construction.rs",
     "src/jsdoc/resolution/name_resolution.rs",
     "src/jsdoc/params_type_strings.rs",
+    "src/jsdoc/diagnostics_import_type_constraints.rs",
+    "src/jsdoc/lookup.rs",
 ];
 
 const JSDOC_CONSTRUCTION_BOUNDARY: &str = "src/query_boundaries/jsdoc_construction.rs";
@@ -48,6 +51,23 @@ fn jsdoc_callers_route_solver_shape_construction_through_boundary() {
         ".object(",
         ".object_with_index(",
         ".callable(",
+        ".array(",
+        ".union(",
+        ".union2(",
+        ".intersection(",
+        ".intersection2(",
+        ".application(",
+        ".tuple(",
+        ".index_access(",
+        ".keyof(",
+        ".mapped(",
+        ".conditional(",
+        ".type_param(",
+        "TupleElement {",
+        "MappedType {",
+        "ConditionalType {",
+        "TypeParamInfo {",
+        "TypeParamOrigin::User",
     ];
 
     let mut violations = Vec::new();
@@ -75,6 +95,20 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         "jsdoc_object_type",
         "jsdoc_object_index_type",
         "jsdoc_function_type",
+        "jsdoc_array_type",
+        "jsdoc_union_type",
+        "jsdoc_union_pair_type",
+        "jsdoc_intersection_type",
+        "jsdoc_intersection_pair_type",
+        "jsdoc_application_type",
+        "jsdoc_index_access_type",
+        "jsdoc_keyof_type",
+        "jsdoc_type_param_info",
+        "jsdoc_type_param_type",
+        "jsdoc_tuple_type",
+        "jsdoc_tuple_element",
+        "jsdoc_mapped_type",
+        "jsdoc_conditional_type",
     ] {
         assert!(
             source.contains(&format!("fn {helper}(")),
@@ -86,7 +120,16 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         );
     }
 
-    for shape_pattern in ["FunctionShape {", "ObjectShape {", "IndexSignature {"] {
+    for shape_pattern in [
+        "FunctionShape {",
+        "ObjectShape {",
+        "IndexSignature {",
+        "TupleElement {",
+        "MappedType {",
+        "ConditionalType {",
+        "TypeParamInfo {",
+        "TypeParamOrigin::User",
+    ] {
         assert!(
             source.contains(shape_pattern),
             "query_boundaries::jsdoc_construction should own `{shape_pattern}`"

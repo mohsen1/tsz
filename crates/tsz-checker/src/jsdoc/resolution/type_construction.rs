@@ -14,16 +14,14 @@
 
 use super::super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::query_boundaries::jsdoc_construction::{
-    JsdocObjectIndexFact, JsdocObjectIndexKind, jsdoc_empty_object_type, jsdoc_function_type,
-    jsdoc_object_index_fact, jsdoc_object_type,
+    self as jsdoc_construct, JsdocObjectIndexFact, JsdocObjectIndexKind, jsdoc_empty_object_type,
+    jsdoc_function_type, jsdoc_object_index_fact, jsdoc_object_type,
 };
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{
-    ParamInfo, PropertyInfo, TupleElement, TypeId, TypePredicate, TypePredicateTarget, Visibility,
-};
+use tsz_solver::{ParamInfo, PropertyInfo, TypeId, TypePredicate, TypePredicateTarget, Visibility};
 impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
         &mut self,
@@ -534,10 +532,7 @@ impl<'a> CheckerState<'a> {
             return instance_type;
         }
 
-        self.ctx
-            .types
-            .factory()
-            .intersection2(instance_type, prototype_type)
+        jsdoc_construct::jsdoc_intersection_pair_type(self.ctx.types, instance_type, prototype_type)
     }
     fn ensure_jsdoc_typedef_def(
         &mut self,
@@ -659,11 +654,11 @@ impl<'a> CheckerState<'a> {
             if body_type == TypeId::ERROR {
                 if !type_args.is_empty() && !type_params.is_empty() {
                     let base_type = self.ctx.create_lazy_type_ref(sym_id);
-                    let instantiated = self
-                        .ctx
-                        .types
-                        .factory()
-                        .application(base_type, type_args.clone());
+                    let instantiated = jsdoc_construct::jsdoc_application_type(
+                        self.ctx.types,
+                        base_type,
+                        type_args.clone(),
+                    );
                     self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
                     return Some(instantiated);
                 }
@@ -731,11 +726,11 @@ impl<'a> CheckerState<'a> {
         if body_type == TypeId::ERROR {
             if !type_args.is_empty() && !type_params.is_empty() {
                 let base_type = self.ctx.create_lazy_type_ref(sym_id);
-                let instantiated = self
-                    .ctx
-                    .types
-                    .factory()
-                    .application(base_type, type_args.clone());
+                let instantiated = jsdoc_construct::jsdoc_application_type(
+                    self.ctx.types,
+                    base_type,
+                    type_args.clone(),
+                );
                 self.register_jsdoc_generic_display_name(base_name, &type_args, instantiated);
                 return Some(instantiated);
             }
@@ -797,11 +792,11 @@ impl<'a> CheckerState<'a> {
             instantiate_generic(self.ctx.types, body_type, type_params, type_args);
         if contains_this_type(self.ctx.types, instantiated) {
             let base_type = self.ctx.create_lazy_type_ref(sym_id);
-            let self_type = self
-                .ctx
-                .types
-                .factory()
-                .application(base_type, type_args.to_vec());
+            let self_type = jsdoc_construct::jsdoc_application_type(
+                self.ctx.types,
+                base_type,
+                type_args.to_vec(),
+            );
             instantiated = substitute_this_type(self.ctx.types, instantiated, self_type);
         }
         instantiated
@@ -812,7 +807,10 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
-            return Some(self.ctx.types.factory().tuple(Vec::new()));
+            return Some(jsdoc_construct::jsdoc_tuple_type(
+                self.ctx.types,
+                Vec::new(),
+            ));
         }
 
         let mut elements = Vec::new();
@@ -847,15 +845,12 @@ impl<'a> CheckerState<'a> {
             };
 
             let type_id = self.resolve_jsdoc_type_str(type_str)?;
-            elements.push(TupleElement {
-                type_id,
-                name,
-                optional,
-                rest,
-            });
+            elements.push(jsdoc_construct::jsdoc_tuple_element(
+                type_id, name, optional, rest,
+            ));
         }
 
-        Some(self.ctx.types.factory().tuple(elements))
+        Some(jsdoc_construct::jsdoc_tuple_type(self.ctx.types, elements))
     }
 
     pub(in crate::jsdoc::resolution) fn parse_jsdoc_index_access_segments(
@@ -1117,19 +1112,13 @@ impl<'a> CheckerState<'a> {
         let constraint = if let Some(operand_str) = Self::strip_jsdoc_keyof_keyword(constraint_str)
         {
             let operand = self.resolve_jsdoc_type_str(operand_str)?;
-            self.ctx.types.factory().keyof(operand)
+            jsdoc_construct::jsdoc_keyof_type(self.ctx.types, operand)
         } else {
             self.resolve_jsdoc_type_str(constraint_str)?
         };
         let atom = self.ctx.types.intern_string(type_param_name);
-        let type_param = tsz_solver::TypeParamInfo {
-            name: atom,
-            constraint: Some(constraint),
-            default: None,
-            is_const: false,
-            origin: tsz_solver::TypeParamOrigin::User,
-        };
-        let type_param_id = self.ctx.types.factory().type_param(type_param);
+        let type_param = jsdoc_construct::jsdoc_type_param_info(atom, Some(constraint), None);
+        let type_param_id = jsdoc_construct::jsdoc_type_param_type(self.ctx.types, type_param);
         let previous = self
             .ctx
             .type_parameter_scope
@@ -1146,14 +1135,13 @@ impl<'a> CheckerState<'a> {
         }
 
         template.map(|template| {
-            self.ctx.types.factory().mapped(tsz_solver::MappedType {
+            jsdoc_construct::jsdoc_mapped_type(
+                self.ctx.types,
                 type_param,
                 constraint,
-                name_type: None,
                 template,
-                readonly_modifier: None,
                 optional_modifier,
-            })
+            )
         })
     }
 
@@ -1190,18 +1178,13 @@ impl<'a> CheckerState<'a> {
         let true_type =
             self.resolve_jsdoc_type_str(type_expr[question_idx + 1..colon_idx].trim())?;
         let false_type = self.resolve_jsdoc_type_str(type_expr[colon_idx + 1..].trim())?;
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .conditional(tsz_solver::ConditionalType {
-                    check_type,
-                    extends_type,
-                    true_type,
-                    false_type,
-                    is_distributive: true,
-                }),
-        )
+        Some(jsdoc_construct::jsdoc_conditional_type(
+            self.ctx.types,
+            check_type,
+            extends_type,
+            true_type,
+            false_type,
+        ))
     }
 
     fn find_jsdoc_conditional_separators(type_expr: &str) -> Option<(usize, usize, usize)> {
@@ -1600,7 +1583,6 @@ impl<'a> CheckerState<'a> {
         info: JsdocTypedefInfo,
         recursive_alias_name: Option<&str>,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        let factory = self.ctx.types.factory();
         let import_alias_body = info
             .base_type
             .as_deref()
@@ -1613,14 +1595,8 @@ impl<'a> CheckerState<'a> {
                 .as_deref()
                 .and_then(|expr| self.resolve_jsdoc_type_str(expr));
             let atom = self.ctx.types.intern_string(&template.name);
-            let param = tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            };
-            let type_id = factory.type_param(param);
+            let param = jsdoc_construct::jsdoc_type_param_info(atom, constraint, None);
+            let type_id = jsdoc_construct::jsdoc_type_param_type(self.ctx.types, param);
             let previous = self
                 .ctx
                 .type_parameter_scope
@@ -1679,7 +1655,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_from_jsdoc_callback(&mut self, cb: JsdocCallbackInfo) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
         let mut params = Vec::new();
         let mut this_type = None;
         let nested_entries: Vec<(String, String, bool)> = cb
@@ -1730,7 +1705,7 @@ impl<'a> CheckerState<'a> {
                 };
 
             if param.rest {
-                type_id = factory.array(type_id);
+                type_id = jsdoc_construct::jsdoc_array_type(self.ctx.types, type_id);
             }
 
             if param.name == "this" {
@@ -1807,7 +1782,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn type_from_jsdoc_object_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
         let base_type = if let Some(base_type_expr) = &info.base_type {
             let expr = base_type_expr.trim();
             if expr != "Object" && expr != "object" {
@@ -1856,7 +1830,11 @@ impl<'a> CheckerState<'a> {
                 && prop_type != TypeId::ANY
                 && prop_type != TypeId::UNDEFINED
             {
-                prop_type = factory.union2(prop_type, TypeId::UNDEFINED);
+                prop_type = jsdoc_construct::jsdoc_union_pair_type(
+                    self.ctx.types,
+                    prop_type,
+                    TypeId::UNDEFINED,
+                );
             }
             let name_atom = self.ctx.types.intern_string(&prop.name);
             prop_infos.push(PropertyInfo {
@@ -1878,7 +1856,11 @@ impl<'a> CheckerState<'a> {
         }
         let object_type = jsdoc_object_type(self.ctx.types, prop_infos, None, None);
         match (object_type, base_type) {
-            (Some(obj), Some(base)) => Some(factory.intersection2(obj, base)),
+            (Some(obj), Some(base)) => Some(jsdoc_construct::jsdoc_intersection_pair_type(
+                self.ctx.types,
+                obj,
+                base,
+            )),
             (Some(obj), None) => Some(obj),
             (None, Some(base)) => Some(base),
             (None, None) => None,
