@@ -8,6 +8,7 @@
 
 use crate::context::CheckerContext;
 use crate::state::{CheckerState, EnumKind};
+use crate::types_domain::queries::core::get_literal_property_name;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::numeric::{to_int32, to_uint32};
@@ -101,6 +102,72 @@ pub(crate) fn isolated_decl_enum_initializer_is_computable(
 ) -> bool {
     let mut seen_members = FxHashSet::default();
     isolated_decl_enum_value_is_computable(ctx, init_idx, enum_idx, &mut seen_members)
+}
+
+pub(crate) fn enum_member_decl_for_name(
+    ctx: &CheckerContext<'_>,
+    enum_idx: NodeIndex,
+    member_name: &str,
+) -> Option<NodeIndex> {
+    let enum_data = ctx
+        .arena
+        .get(enum_idx)
+        .and_then(|node| ctx.arena.get_enum(node))?;
+    enum_member_decl_for_name_in_data(ctx, enum_data, member_name)
+}
+
+pub(crate) fn enum_member_decl_for_name_in_data(
+    ctx: &CheckerContext<'_>,
+    enum_data: &EnumData,
+    member_name: &str,
+) -> Option<NodeIndex> {
+    enum_data
+        .members
+        .nodes
+        .iter()
+        .copied()
+        .find(|&member_idx| enum_member_name(ctx, member_idx).as_deref() == Some(member_name))
+}
+
+pub(crate) fn enum_member_name(ctx: &CheckerContext<'_>, member_idx: NodeIndex) -> Option<String> {
+    let member_node = ctx.arena.get(member_idx)?;
+    let member_data = ctx.arena.get_enum_member(member_node)?;
+    enum_member_name_from_node(ctx, member_data.name)
+}
+
+fn enum_member_name_from_node(ctx: &CheckerContext<'_>, name_idx: NodeIndex) -> Option<String> {
+    if let Some(name) = get_literal_property_name(ctx.arena, name_idx) {
+        return Some(name);
+    }
+
+    let name_node = ctx.arena.get(name_idx)?;
+    if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+        return None;
+    }
+    let computed = ctx.arena.get_computed_property(name_node)?;
+    let expr_node = ctx.arena.get(computed.expression)?;
+    if ctx.arena.get_identifier(expr_node).is_some() {
+        return None;
+    }
+    get_literal_property_name(ctx.arena, computed.expression)
+}
+
+pub(crate) fn enum_symbol_member_decl_for_name(
+    ctx: &CheckerContext<'_>,
+    enum_sym_id: SymbolId,
+    property_name: &str,
+) -> Option<NodeIndex> {
+    let symbol = ctx.binder.get_symbol(enum_sym_id)?;
+    if !symbol.has_any_flags(symbol_flags::ENUM) {
+        return None;
+    }
+
+    symbol
+        .declarations
+        .iter()
+        .copied()
+        .filter_map(|decl_idx| ctx.arena.get_enum_at(decl_idx))
+        .find_map(|enum_decl| enum_member_decl_for_name_in_data(ctx, enum_decl, property_name))
 }
 
 fn isolated_decl_enum_value_is_computable(
@@ -216,35 +283,25 @@ fn same_isolated_decl_enum_member_named_is_computable(
     enum_idx: NodeIndex,
     seen_members: &mut FxHashSet<NodeIndex>,
 ) -> bool {
-    let Some(enum_node) = ctx.arena.get(enum_idx) else {
+    let Some(member_idx) = enum_member_decl_for_name(ctx, enum_idx, name) else {
         return false;
     };
-    let Some(enum_data) = ctx.arena.get_enum(enum_node) else {
+    let Some(member_node) = ctx.arena.get(member_idx) else {
         return false;
     };
-    for &member_idx in &enum_data.members.nodes {
-        if let Some(member_node) = ctx.arena.get(member_idx)
-            && let Some(member) = ctx.arena.get_enum_member(member_node)
-            && let Some(member_ident) = ctx.arena.get_identifier_at(member.name)
-            && member_ident.escaped_text == name
-        {
-            if !seen_members.insert(member_idx) {
-                return true;
-            }
+    let Some(member) = ctx.arena.get_enum_member(member_node) else {
+        return false;
+    };
 
-            let result = member.initializer.is_none()
-                || isolated_decl_enum_value_is_computable(
-                    ctx,
-                    member.initializer,
-                    enum_idx,
-                    seen_members,
-                );
-
-            seen_members.remove(&member_idx);
-            return result;
-        }
+    if !seen_members.insert(member_idx) {
+        return true;
     }
-    false
+
+    let result = member.initializer.is_none()
+        || isolated_decl_enum_value_is_computable(ctx, member.initializer, enum_idx, seen_members);
+
+    seen_members.remove(&member_idx);
+    result
 }
 
 fn is_same_isolated_decl_enum_access(
@@ -293,22 +350,21 @@ fn is_numeric_constant_enum_expr_inner(
         k if k == SyntaxKind::NumericLiteral as u16 => true,
         k if k == SyntaxKind::Identifier as u16 => {
             if let Some(name_text) = ctx.arena.get_identifier_text(expr_idx) {
-                for &member_idx in &enum_data.members.nodes {
-                    if let Some(member_node) = ctx.arena.get(member_idx)
-                        && let Some(member_data) = ctx.arena.get_enum_member(member_node)
-                        && let Some(member_name_text) =
-                            ctx.arena.get_identifier_text(member_data.name)
-                        && member_name_text == name_text
-                    {
-                        if member_data.initializer.is_none() {
-                            return true;
-                        }
-                        return is_numeric_constant_enum_expr_inner(
-                            ctx,
-                            member_data.initializer,
-                            enum_data,
-                            depth + 1,
-                        );
+                if let Some(member_idx) =
+                    enum_member_decl_for_name_in_data(ctx, enum_data, name_text)
+                {
+                    let member_data = ctx
+                        .arena
+                        .get(member_idx)
+                        .and_then(|member_node| ctx.arena.get_enum_member(member_node));
+                    if let Some(member_data) = member_data {
+                        return member_data.initializer.is_none()
+                            || is_numeric_constant_enum_expr_inner(
+                                ctx,
+                                member_data.initializer,
+                                enum_data,
+                                depth + 1,
+                            );
                     }
                 }
                 if matches!(name_text, "NaN" | "Infinity") {
@@ -711,7 +767,7 @@ impl<'a> CheckerState<'a> {
 
                 let should_stop = visit(
                     member_idx,
-                    self.get_property_name(member_data.name),
+                    enum_member_name(&self.ctx, member_idx),
                     value.clone(),
                 );
 

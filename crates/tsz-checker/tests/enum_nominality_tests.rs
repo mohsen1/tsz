@@ -472,6 +472,22 @@ const b = Mixed['B'];
 }
 
 #[test]
+fn test_string_literal_enum_member_access_no_error() {
+    let diagnostics = collect_diagnostics(
+        r#"
+enum Mixed { "dash-key" = 0, Other = 1 }
+const member = Mixed["dash-key"];
+const okEnum: Mixed = member;
+const okNumber: number = member;
+"#,
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for string-literal enum member access, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_numeric_enum_reverse_lookup_with_different_iteration_var() {
     // The fix must not be tied to a specific iteration variable name — it's structural.
     // Test auto-incremented members too.

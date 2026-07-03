@@ -360,8 +360,30 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         "enum_eval should expose one-pass declaration-order enum value recovery"
     );
     assert!(
+        enum_eval_source.contains("fn enum_member_decl_for_name_in_data(")
+            && enum_eval_source.contains("fn enum_symbol_member_decl_for_name(")
+            && enum_eval_source.contains("fn enum_member_name("),
+        "enum_eval should own enum declaration member-name lookup helpers"
+    );
+    assert!(
         enum_eval_source.contains("visit_enum_member_declared_const_values(sym_id,"),
         "enum compatibility maps should share the declaration-order value visitor"
+    );
+    assert!(
+        enum_eval_source.contains("enum_member_decl_for_name_in_data(ctx, enum_data, name_text)"),
+        "isolatedModules numeric enum classification should share enum member lookup"
+    );
+
+    let enum_utils_source = fs::read_to_string("src/types/utilities/enum_utils.rs")
+        .expect("failed to read enum_utils.rs");
+    assert!(
+        enum_utils_source
+            .contains("enum_symbol_member_decl_for_name(&self.ctx, sym_id, property_name)"),
+        "enum member type lookup should ask enum_eval for declaration membership"
+    );
+    assert!(
+        !enum_utils_source.contains("for &decl_idx in &symbol.declarations"),
+        "enum_utils should not own a local enum declaration/member lookup scan"
     );
 
     let truthiness_source = fs::read_to_string("src/types/queries/callable_truthiness.rs")
