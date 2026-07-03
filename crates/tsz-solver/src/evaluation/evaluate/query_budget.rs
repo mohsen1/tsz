@@ -19,6 +19,7 @@
 //! runaway regardless of which boundary it bounces through.
 
 use super::TypeEvaluator;
+use crate::evaluation::session::EvaluationSession;
 use crate::relations::subtype::TypeResolver;
 
 impl<R: TypeResolver> TypeEvaluator<'_, R> {
@@ -30,7 +31,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// depth-bailout arms) and returns `None`, signalling the caller to leave the
     /// type opaque so the cross-instance runaway unwinds instead of hanging.
     pub(super) fn enter_eval_query_budget(&mut self) -> Option<EvalQueryFrame> {
-        let frame = EvalQueryFrame::enter(resolved_max_eval_ops());
+        let frame = EvalQueryFrame::enter(resolved_max_eval_ops(), self.eval_session);
         if frame.budget_state.is_exhausted() {
             self.mark_deep_recursion_seen();
             self.mark_silent_depth_bailed();
@@ -116,17 +117,20 @@ impl EvalQueryBudgetState {
 
 impl EvalQueryFrame {
     #[inline]
-    pub(super) fn enter(max_ops: u32) -> Self {
+    pub(super) fn enter(max_ops: u32, explicit_session: Option<&EvaluationSession>) -> Self {
         // Single consolidated TLS access bumps the live frame count, resets
         // the op counter on a fresh top-level query, and bumps the op count.
         let entry = crate::limits::eval_query_enter();
         if entry.began_top_level_query {
             // A fresh top-level query begins: drop any cross-evaluator result
-            // memo from the previous query so results never leak across queries,
-            // threads, or files (#11586).
+            // memo and compound-probe memo from the previous query so results
+            // never leak across queries, threads, or files (#11586, #14351).
             crate::evaluation::session::with_current_session(
                 crate::evaluation::cross_eval_guard::reset_query_memo,
             );
+            if let Some(session) = explicit_session {
+                crate::evaluation::cross_eval_guard::reset_query_memo(session);
+            }
         }
         Self {
             budget_state: EvalQueryBudgetState::from_exhausted(entry.ops > max_ops),
@@ -166,9 +170,9 @@ mod tests {
     #[test]
     fn op_counter_resets_per_top_level_query() {
         {
-            let _f1 = EvalQueryFrame::enter(1000);
-            let _f2 = EvalQueryFrame::enter(1000);
-            let _f3 = EvalQueryFrame::enter(1000);
+            let _f1 = EvalQueryFrame::enter(1000, None);
+            let _f2 = EvalQueryFrame::enter(1000, None);
+            let _f3 = EvalQueryFrame::enter(1000, None);
             assert_eq!(eval_query_ops(), 3);
             assert_eq!(eval_query_active(), 3);
         }
@@ -176,7 +180,7 @@ mod tests {
         assert_eq!(eval_query_active(), 0);
 
         // Second top-level query starts fresh: op counter reset to 1, not 4.
-        let _f = EvalQueryFrame::enter(1000);
+        let _f = EvalQueryFrame::enter(1000, None);
         assert_eq!(eval_query_ops(), 1);
     }
 
@@ -185,13 +189,13 @@ mod tests {
     /// the query unwinds.
     #[test]
     fn budget_exhaustion_is_reported_until_query_unwinds() {
-        let f1 = EvalQueryFrame::enter(2);
+        let f1 = EvalQueryFrame::enter(2, None);
         assert_eq!(f1.budget_state, EvalQueryBudgetState::WithinBudget);
-        let f2 = EvalQueryFrame::enter(2);
+        let f2 = EvalQueryFrame::enter(2, None);
         assert_eq!(f2.budget_state, EvalQueryBudgetState::WithinBudget);
-        let f3 = EvalQueryFrame::enter(2);
+        let f3 = EvalQueryFrame::enter(2, None);
         assert_eq!(f3.budget_state, EvalQueryBudgetState::Exhausted);
-        let f4 = EvalQueryFrame::enter(2);
+        let f4 = EvalQueryFrame::enter(2, None);
         assert_eq!(f4.budget_state, EvalQueryBudgetState::Exhausted);
         drop((f1, f2, f3, f4));
         assert_eq!(eval_query_active(), 0);

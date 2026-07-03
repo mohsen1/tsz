@@ -109,6 +109,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.bypass_evaluation = true;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
+        checker.exact_optional_property_types = self.exact_optional_property_types;
 
         // Pre-compute property name sets for all members once, avoiding O(N^2) FxHashSet
         // allocations in the inner loop. Each entry is None for non-object types.
@@ -269,7 +270,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         target: TypeId,
     ) -> bool {
         let key = CompoundSubtypePairKey::from_checker(checker, source, target);
-        if let Some(&cached) = self.compound_subtype_cache.get(&key) {
+        let session = self.eval_session;
+        if let Some(session) = session {
+            if let Some(cached) = session.compound_subtype_probe_get(key) {
+                return cached;
+            }
+        } else if let Some(&cached) = self.compound_subtype_cache.get(&key) {
             return cached;
         }
 
@@ -288,7 +294,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && checker.unresolved_lazy_relation_event_count() == lazy_events_at_entry
             && crate::limits::weak_type_sensitivity_count() == weak_sensitivity_at_entry
         {
-            self.compound_subtype_cache.insert(key, related);
+            if let Some(session) = session {
+                session.compound_subtype_probe_put(key, related);
+            } else {
+                self.compound_subtype_cache.insert(key, related);
+            }
         }
         related
     }
@@ -508,5 +518,168 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 None => false,
             },
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use crate::evaluation::session::EvaluationSession;
+    use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
+    use crate::types::{PropertyInfo, TypeId};
+
+    fn exact_optional_probe_pair(interner: &TypeInterner) -> (TypeId, TypeId) {
+        let prop = interner.intern_string("value");
+        let present_undefined = interner.object(vec![PropertyInfo::new(prop, TypeId::UNDEFINED)]);
+        let optional_number = interner.object(vec![PropertyInfo::opt(prop, TypeId::NUMBER)]);
+        (present_undefined, optional_number)
+    }
+
+    fn compound_probe_checker<'a>(
+        interner: &'a TypeInterner,
+        exact_optional_property_types: bool,
+    ) -> SubtypeChecker<'a> {
+        let mut checker = SubtypeChecker::new(interner);
+        checker.bypass_evaluation = true;
+        checker.max_depth = MAX_SUBTYPE_DEPTH;
+        checker.exact_optional_property_types = exact_optional_property_types;
+        checker
+    }
+
+    #[test]
+    fn union_simplification_threads_exact_optional_mode_into_local_subtype_checker() {
+        let interner = TypeInterner::new();
+        let (present_undefined, optional_number) = exact_optional_probe_pair(&interner);
+
+        let mut legacy_members = vec![present_undefined, optional_number];
+        let mut legacy_evaluator = TypeEvaluator::new(&interner);
+        legacy_evaluator.set_exact_optional_property_types(false);
+        legacy_evaluator.simplify_union_members(&mut legacy_members);
+        assert_eq!(
+            legacy_members,
+            vec![optional_number],
+            "legacy optional mode treats an optional number property as accepting present undefined",
+        );
+
+        let mut exact_members = vec![present_undefined, optional_number];
+        let mut exact_evaluator = TypeEvaluator::new(&interner);
+        exact_evaluator.set_exact_optional_property_types(true);
+        exact_evaluator.simplify_union_members(&mut exact_members);
+        assert_eq!(
+            exact_members,
+            vec![present_undefined, optional_number],
+            "exact optional mode must not reuse legacy optional-property subtyping",
+        );
+    }
+
+    #[test]
+    fn compound_subtype_cache_partitions_seeded_probe_by_exact_optional_mode() {
+        let interner = TypeInterner::new();
+        let (present_undefined, optional_number) = exact_optional_probe_pair(&interner);
+
+        let mut evaluator = TypeEvaluator::new(&interner);
+        evaluator.set_exact_optional_property_types(false);
+        let legacy_checker = compound_probe_checker(&interner, false);
+        evaluator.seed_compound_subtype_cache_for_test(
+            &legacy_checker,
+            present_undefined,
+            optional_number,
+            true,
+        );
+
+        // Flip the mode without clearing the memo so this test proves the key
+        // partition itself, not only `set_exact_optional_property_types` reset.
+        evaluator.exact_optional_property_types = true;
+        let mut exact_members = vec![present_undefined, optional_number];
+        evaluator.simplify_union_members(&mut exact_members);
+
+        assert_eq!(
+            exact_members,
+            vec![present_undefined, optional_number],
+            "a legacy-mode seeded verdict must not be read by an exact-mode compound probe",
+        );
+    }
+
+    #[test]
+    fn compound_simplification_reads_session_probe_cache() {
+        let interner = TypeInterner::new();
+        let lit_a = interner.literal_string("a");
+        let narrow = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            lit_a,
+        )]);
+        let wide = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::STRING,
+        )]);
+        let checker = compound_probe_checker(&interner, false);
+        let key = CompoundSubtypePairKey::from_checker(&checker, narrow, wide);
+        let session = EvaluationSession::new();
+        session.compound_subtype_probe_put(key, false);
+
+        let mut members = vec![narrow, wide];
+        let mut evaluator = TypeEvaluator::new(&interner).with_evaluation_session(&session);
+        evaluator.simplify_union_members(&mut members);
+
+        assert_eq!(
+            members,
+            vec![narrow, wide],
+            "a fresh evaluator should read raw subtype probes from the owning session",
+        );
+        assert_eq!(
+            session.compound_subtype_probe_cache_entries(),
+            2,
+            "the seeded decisive probe and the reverse miss should live in the session",
+        );
+        assert_eq!(
+            evaluator.cache_statistics().compound_subtype_entries,
+            0,
+            "session-backed probes should not duplicate entries in the evaluator-local fallback",
+        );
+    }
+
+    #[test]
+    fn compound_subtype_probe_key_tracks_relation_and_simplifier_modes() {
+        let interner = TypeInterner::new();
+        let (source, target) = exact_optional_probe_pair(&interner);
+
+        let legacy_checker = compound_probe_checker(&interner, false);
+        let mut exact_checker = compound_probe_checker(&interner, true);
+        let mut unchecked_checker = compound_probe_checker(&interner, false);
+        unchecked_checker.no_unchecked_indexed_access = true;
+        let mut normal_eval_checker = compound_probe_checker(&interner, false);
+        normal_eval_checker.bypass_evaluation = false;
+        let mut shallow_checker = compound_probe_checker(&interner, false);
+        shallow_checker.max_depth = MAX_SUBTYPE_DEPTH - 1;
+
+        let legacy_key = CompoundSubtypePairKey::from_checker(&legacy_checker, source, target);
+        assert_ne!(
+            legacy_key,
+            CompoundSubtypePairKey::from_checker(&exact_checker, source, target),
+            "exactOptionalPropertyTypes is part of compound subtype probe identity",
+        );
+        assert_ne!(
+            legacy_key,
+            CompoundSubtypePairKey::from_checker(&unchecked_checker, source, target),
+            "noUncheckedIndexedAccess is part of the underlying relation identity",
+        );
+        assert_ne!(
+            legacy_key,
+            CompoundSubtypePairKey::from_checker(&normal_eval_checker, source, target),
+            "bypass-evaluation mode is specific to compound simplification probes",
+        );
+        assert_ne!(
+            legacy_key,
+            CompoundSubtypePairKey::from_checker(&shallow_checker, source, target),
+            "compound subtype probe depth participates in the local memo key",
+        );
+
+        exact_checker.exact_optional_property_types = false;
+        assert_eq!(
+            legacy_key,
+            CompoundSubtypePairKey::from_checker(&exact_checker, source, target),
+            "matching relation and simplifier modes should address the same local memo slot",
+        );
     }
 }

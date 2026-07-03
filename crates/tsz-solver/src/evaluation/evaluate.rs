@@ -30,7 +30,7 @@ use crate::evaluation::result::EvaluationMemoResult;
 use crate::evaluation::result::EvaluationRequestStability;
 use crate::evaluation::result::EvaluationResult;
 use crate::evaluation::result::TerminationKind;
-use crate::evaluation::session::EvaluationSession;
+use crate::evaluation::session::{CompoundSubtypePairKey, EvaluationSession};
 #[cfg(test)]
 #[allow(unused_imports)]
 use crate::instantiation::instantiate::instantiate_generic;
@@ -293,28 +293,30 @@ impl TypeEvaluatorCacheStatistics {
     }
 }
 
-/// Operation-local cache key for subtype probes performed by compound
-/// simplification. `RelationCacheKey` owns the regular relation mode bits; the
-/// extra fields separate simplifier-only relation configuration that the shared
-/// relation cache deliberately does not encode.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CompoundSubtypePairKey {
-    relation: crate::types::RelationCacheKey,
-    bypass_evaluation: bool,
-    max_depth: u32,
-}
-
 impl CompoundSubtypePairKey {
     pub(crate) fn from_checker<R: TypeResolver>(
         checker: &crate::relations::subtype::SubtypeChecker<'_, R>,
         source: TypeId,
         target: TypeId,
     ) -> Self {
-        Self {
-            relation: checker.make_cache_key(source, target),
-            bypass_evaluation: checker.bypass_evaluation,
-            max_depth: checker.max_depth,
-        }
+        let resolver_identity = if checker.resolver.is_noop() {
+            0
+        } else {
+            checker.resolver.resolver_identity()
+        };
+        let resolver_generation = if checker.resolver.is_noop() {
+            0
+        } else {
+            checker.resolver.resolver_generation()
+        };
+        Self::new(
+            checker.make_cache_key(source, target),
+            checker.interner.type_database_identity(),
+            resolver_identity,
+            resolver_generation,
+            checker.bypass_evaluation,
+            checker.max_depth,
+        )
     }
 }
 
