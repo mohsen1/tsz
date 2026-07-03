@@ -6,6 +6,8 @@ fn type_formatter_cache_statistics_account_for_atom_cache_entries_and_size() {
 
     let empty_stats = fmt.cache_statistics();
     assert_eq!(empty_stats.atom_cache_entries, 0);
+    assert_eq!(empty_stats.application_reduction_cache_entries, 0);
+    assert_eq!(empty_stats.recursive_alias_base_cache_entries, 0);
     assert!(empty_stats.estimated_size_bytes > 0);
 
     assert_eq!(&*fmt.atom(atom), "cachedName");
@@ -17,6 +19,31 @@ fn type_formatter_cache_statistics_account_for_atom_cache_entries_and_size() {
     assert_eq!(
         fmt.cache_statistics().atom_cache_entries,
         populated_stats.atom_cache_entries
+    );
+}
+
+#[test]
+fn type_formatter_cache_statistics_account_for_application_memos() {
+    let db = TypeInterner::new();
+    let fmt = TypeFormatter::new(&db);
+
+    let empty_stats = fmt.cache_statistics();
+    assert_eq!(empty_stats.application_reduction_cache_entries, 0);
+    assert_eq!(empty_stats.recursive_alias_base_cache_entries, 0);
+
+    fmt.application_reduction_cache
+        .borrow_mut()
+        .insert(TypeId::STRING, Some(TypeId::NUMBER));
+    fmt.recursive_alias_base_cache
+        .borrow_mut()
+        .insert(TypeId::OBJECT, false);
+
+    let populated_stats = fmt.cache_statistics();
+    assert_eq!(populated_stats.application_reduction_cache_entries, 1);
+    assert_eq!(populated_stats.recursive_alias_base_cache_entries, 1);
+    assert!(
+        populated_stats.estimated_size_bytes > empty_stats.estimated_size_bytes,
+        "populated formatter application memo caches must be visible to residency estimates",
     );
 }
 

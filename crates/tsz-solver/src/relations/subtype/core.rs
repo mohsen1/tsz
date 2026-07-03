@@ -690,6 +690,8 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
 pub struct SubtypeCheckerCacheStatistics {
     /// Entries in the evaluation memo keyed by input `TypeId` and evaluation mode.
     pub eval_entries: usize,
+    /// Entries in the instance-local relation memo for unshared relation verdicts.
+    pub local_relation_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -1006,18 +1008,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     #[must_use]
     pub fn cache_statistics(&self) -> SubtypeCheckerCacheStatistics {
         let eval_entries = self.eval_cache.len();
+        let local_relation_entries = self.local_relation_cache.len();
         let estimated_size_bytes = eval_entries
             .saturating_mul(std::mem::size_of::<(
                 EvaluationCacheKey,
                 RelationEvaluationResult,
             )>())
             .saturating_add(
-                self.local_relation_cache
-                    .len()
+                local_relation_entries
                     .saturating_mul(std::mem::size_of::<(RelationCacheKey, bool)>()),
             );
         SubtypeCheckerCacheStatistics {
             eval_entries,
+            local_relation_entries,
             estimated_size_bytes,
         }
     }
