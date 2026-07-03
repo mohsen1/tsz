@@ -58,11 +58,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let value_type = if computed_value_types.len() == 1 {
-            computed_value_types[0]
-        } else {
-            self.ctx.types.factory().union(computed_value_types)
-        };
+        let value_type = crate::query_boundaries::diagnostics::source_display_union_type(
+            self.ctx.types,
+            computed_value_types,
+        );
         let value_display = self.format_type_for_assignability_message(value_type);
         Some(format!("{{ [x: {key_kind}]: {value_display}; }}"))
     }

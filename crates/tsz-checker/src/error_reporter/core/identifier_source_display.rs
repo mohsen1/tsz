@@ -146,11 +146,10 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .map(|ty| self.widen_type_for_display(ty))
                     .collect::<Vec<_>>();
-                let value_type = if widened_types.len() == 1 {
-                    widened_types[0]
-                } else {
-                    self.ctx.types.factory().union(widened_types)
-                };
+                let value_type = crate::query_boundaries::diagnostics::source_display_union_type(
+                    self.ctx.types,
+                    widened_types,
+                );
                 let display = self.format_assignability_type_for_message(value_type, target);
                 format!("{name}: {display}")
             })

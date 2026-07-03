@@ -121,17 +121,11 @@ impl<'a> CheckerState<'a> {
                 element_type,
             ),
         );
-        let rebuilt = self.ctx.types.array(widened_element);
-        // Preserve the readonly modifier: tsc displays `readonly number[]` not `number[]`
-        // when the source type was a readonly array (ReadonlyType(Array(...))).
-        let rebuilt = if crate::query_boundaries::type_computation::complex::is_readonly_type(
+        let rebuilt = diagnostic_query::rebuilt_array_source_display_type(
             self.ctx.types,
             source_type,
-        ) {
-            self.ctx.types.readonly_type(rebuilt)
-        } else {
-            rebuilt
-        };
+            widened_element,
+        );
         Some(self.format_assignability_type_for_message(rebuilt, target))
     }
 

@@ -42,10 +42,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let key_kind = contextual_index_key_kind?;
-        let value_type = match contextual_index_value_types.as_slice() {
-            [single] => *single,
-            _ => self.ctx.types.factory().union(contextual_index_value_types),
-        };
+        let value_type = crate::query_boundaries::diagnostics::source_display_union_type(
+            self.ctx.types,
+            contextual_index_value_types,
+        );
         let value_display = self.format_type_for_assignability_message(value_type);
         Some(format!("{{ [x: {key_kind}]: {value_display}; }}"))
     }

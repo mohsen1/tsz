@@ -167,6 +167,36 @@ pub(crate) fn display_property_literals_widened_for_related_info(
     }
 }
 
+pub(crate) fn source_display_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    match members.as_slice() {
+        [single] => *single,
+        _ => db.union(members),
+    }
+}
+
+pub(crate) fn source_display_union_type_from_slice(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> TypeId {
+    match members {
+        [single] => *single,
+        _ => db.union_from_slice(members),
+    }
+}
+
+pub(crate) fn rebuilt_array_source_display_type(
+    db: &dyn TypeDatabase,
+    source_type: TypeId,
+    element_type: TypeId,
+) -> TypeId {
+    let rebuilt = db.array(element_type);
+    if tsz_solver::type_queries::is_readonly_type(db, source_type) {
+        db.readonly_type(rebuilt)
+    } else {
+        rebuilt
+    }
+}
+
 fn type_includes_undefined(db: &dyn TypeDatabase, ty: TypeId) -> bool {
     ty == TypeId::UNDEFINED
         || super::common::union_members(db, ty)

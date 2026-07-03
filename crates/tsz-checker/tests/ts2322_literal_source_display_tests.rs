@@ -191,3 +191,23 @@ var o: I = {
         "TS2322 should not expose expanded computed number key text, got: {ts2322:?}",
     );
 }
+
+#[test]
+fn ts2322_identifier_array_object_literal_source_display_unions_property_values() {
+    let diagnostics = diagnostic_messages(
+        r#"
+const rows = [{ name: "a" }, { name: 1 }];
+const out: { name: boolean }[] = rows;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .expect("expected TS2322 for identifier array-object source display");
+
+    assert!(
+        ts2322.1.contains("Type '{ name: string | number; }[]'"),
+        "identifier array-object source should display unioned property values, got: {ts2322:?}",
+    );
+}
