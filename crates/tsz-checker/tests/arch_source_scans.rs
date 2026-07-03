@@ -46,6 +46,9 @@
 //! - `declaration_export_construction_boundary_scans`: namespace/module
 //!   declaration checkers route export-surface construction through
 //!   `query_boundaries::declaration_exports`.
+//! - `decorator_construction_boundary_scans`: class-member decorator
+//!   signature checking routes semantic helper-type construction through
+//!   `query_boundaries::checkers::decorators`.
 //! - `import_attribute_construction_boundary_scans`: static and dynamic import
 //!   callers route import-attribute object construction through
 //!   `query_boundaries::import_attributes`.
@@ -89,6 +92,8 @@ mod construction_boundary_signature_scans;
 mod cross_arena_delegation_scope_scans;
 #[path = "arch_source_scans/declaration_export_construction_boundary_scans.rs"]
 mod declaration_export_construction_boundary_scans;
+#[path = "arch_source_scans/decorator_construction_boundary_scans.rs"]
+mod decorator_construction_boundary_scans;
 #[path = "arch_source_scans/diagnostic_construction_boundary_scans.rs"]
 mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]
