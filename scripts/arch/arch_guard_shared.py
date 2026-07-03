@@ -1631,7 +1631,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
             r".*\bwith_parent_cache_attributed\s*\("
         ),
-        33,
+        28,
     ),
     (
         "Checker residency boundary: copy_symbol_file_targets_to_attributed migration callsites (Track 10)",
@@ -1640,7 +1640,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
             r".*\bcopy_symbol_file_targets_to_attributed\s*\("
         ),
-        23,
+        18,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",

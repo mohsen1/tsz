@@ -149,8 +149,10 @@ perf_counter_enum! {
         BindingHelpers = 14 => "BindingHelpers",
         /// `class_abstract_checker` cross-file abstract-method check.
         ClassAbstract = 15 => "ClassAbstract",
+        /// Module augmentation export value recovery in a delegate checker.
+        ModuleAugmentationValue = 16 => "ModuleAugmentationValue",
         /// Anything not explicitly classified above.
-        Other = 16 => "Other",
+        Other = 17 => "Other",
     }
 
     pub const CHECKER_CREATION_REASON_COUNT;

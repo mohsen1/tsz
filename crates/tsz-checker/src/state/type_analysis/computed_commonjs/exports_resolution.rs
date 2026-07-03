@@ -70,42 +70,10 @@ impl<'a> CheckerState<'a> {
             return cached_type;
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(arena) = all_arenas.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(binder) = all_binders.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(source_file) = arena.source_files.first() else {
-            return TypeId::ANY;
-        };
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            arena.as_ref(),
-            binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let ty = checker.get_type_of_symbol(sym_id);
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-        ty
+        self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
+            checker.get_type_of_symbol(sym_id)
+        })
+        .unwrap_or(TypeId::ANY)
     }
 
     pub(crate) fn commonjs_export_assignment_expression_value_type(
@@ -126,9 +94,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let all_arenas = self.ctx.all_arenas.clone()?;
-        let all_binders = self.ctx.all_binders.clone()?;
         let target_arena = all_arenas.get(target_file_idx)?;
-        let target_binder = all_binders.get(target_file_idx)?;
         let source_file = target_arena.source_files.first()?;
         let expr_idx = source_file.statements.nodes.iter().find_map(|&stmt_idx| {
             let stmt = target_arena.get(stmt_idx)?;
@@ -140,26 +106,11 @@ impl<'a> CheckerState<'a> {
         })?;
 
         let cross_arena_guard = Self::enter_cross_arena_delegation()?;
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            target_arena.as_ref(),
-            target_binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let ty = checker.get_type_of_node(expr_idx);
-        drop(cross_arena_guard);
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
+        let ty = self.with_commonjs_child_checker_for_file_before_merge(
+            target_file_idx,
+            |checker| checker.get_type_of_node(expr_idx),
+            || drop(cross_arena_guard),
+        )?;
 
         (ty != TypeId::UNKNOWN && ty != TypeId::ERROR).then_some(ty)
     }
@@ -192,42 +143,10 @@ impl<'a> CheckerState<'a> {
             return self.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx);
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(arena) = all_arenas.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(binder) = all_binders.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(source_file) = arena.source_files.first() else {
-            return TypeId::ANY;
-        };
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            arena.as_ref(),
-            binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let ty = checker.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx);
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-        ty
+        self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
+            checker.infer_descriptor_parameter_type_in_current_checker(owner_idx, param_idx)
+        })
+        .unwrap_or(TypeId::ANY)
     }
 
     fn infer_getter_return_type_for_file(
@@ -239,42 +158,10 @@ impl<'a> CheckerState<'a> {
             return self.infer_getter_return_type(body_idx);
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(arena) = all_arenas.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(binder) = all_binders.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(source_file) = arena.source_files.first() else {
-            return TypeId::ANY;
-        };
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            arena.as_ref(),
-            binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let ty = checker.infer_getter_return_type(body_idx);
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-        ty
+        self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
+            checker.infer_getter_return_type(body_idx)
+        })
+        .unwrap_or(TypeId::ANY)
     }
 
     /// tsc's binder-time recognition of `Object.defineProperty(exports, X, ...)`
