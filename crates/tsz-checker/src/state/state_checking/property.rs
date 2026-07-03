@@ -482,7 +482,7 @@ impl<'a> CheckerState<'a> {
                     // Example: type T = { x: { a: number } } | { x: { b: number } }
                     // Assigning { x: { b: 1 } } should NOT error on 'b'.
                     // =============================================================
-                    let nested_target = tsz_solver::utils::union_or_single(
+                    let nested_target = query::excess_property_target_union(
                         self.ctx.types,
                         target_prop_types.clone(),
                     );

@@ -145,6 +145,17 @@ pub(crate) fn excess_property_any_object_type_from_names(
     (!props.is_empty()).then(|| db.object(props))
 }
 
+pub(crate) fn excess_property_target_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    tsz_solver::utils::union_or_single(db, members)
+}
+
+pub(crate) fn excess_property_display_target_union(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    tsz_solver::utils::union_or_single_literal_reduce(db, members)
+}
+
 pub(crate) fn get_finite_mapped_property_type(
     db: &dyn TypeDatabase,
     mapped_id: tsz_solver::MappedTypeId,

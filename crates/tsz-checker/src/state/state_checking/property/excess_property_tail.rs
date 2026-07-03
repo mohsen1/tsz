@@ -306,7 +306,7 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&member| self.excess_property_annotation_component_type(member, visited))
                 .collect::<Vec<_>>();
-            return Some(tsz_solver::utils::union_or_single_literal_reduce(
+            return Some(query::excess_property_display_target_union(
                 self.ctx.types,
                 member_types,
             ));
@@ -538,7 +538,7 @@ impl<'a> CheckerState<'a> {
         let display_target = if narrowed_member_types.len() == 1 {
             narrowed_member_types[0]
         } else {
-            tsz_solver::utils::union_or_single_literal_reduce(
+            query::excess_property_display_target_union(
                 self.ctx.types,
                 narrowed_member_types.clone(),
             )
@@ -1038,7 +1038,7 @@ impl<'a> CheckerState<'a> {
                 && !matching_members.is_empty()
                 && matching_members.len() < members.len()
             {
-                return tsz_solver::utils::union_or_single(self.ctx.types, matching_members);
+                return query::excess_property_target_union(self.ctx.types, matching_members);
             }
         }
 
