@@ -38,6 +38,17 @@ const SIGNATURE_DATA_BUILDER: &str = "src/checkers/signature_builder.rs";
 /// solver shape construction belongs to query boundaries.
 const TYPE_LITERAL_CHECKER: &str = "src/types/type_literal_checker.rs";
 
+/// Declaration/member type analysis may assemble call signatures from syntax,
+/// but function/callable shape interning belongs to the construction boundary.
+const DECLARATION_FUNCTION_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
+    "src/classes/class_member_info.rs",
+    "src/classes/class_summary.rs",
+    "src/state/type_analysis/computed/mod.rs",
+    "src/state/type_analysis/computed_helpers_binding.rs",
+    "src/state/type_analysis/cross_file_direct_functions.rs",
+    "src/state/type_analysis/symbol_type_helpers.rs",
+];
+
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
@@ -168,6 +179,32 @@ fn type_literal_checker_routes_shape_construction_through_boundaries() {
     );
 }
 
+/// Declaration/member type paths can build `CallSignature` data with existing
+/// checker helpers, but direct solver function/callable shape interning stays
+/// behind `query_boundaries::construct_signatures`.
+#[test]
+fn declaration_function_paths_route_shape_construction_through_boundaries() {
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        ".function(",
+        ".callable(",
+        "CallableShape {",
+        "CallableShape::default()",
+        "FunctionShape {",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    for module in DECLARATION_FUNCTION_CONSTRUCTION_CLEAN_MODULES {
+        scan_for_patterns(module, FORBIDDEN_PATTERNS, &mut violations);
+    }
+    assert!(
+        violations.is_empty(),
+        "declaration/member type paths must route function/callable solver \
+         shape construction through query_boundaries::construct_signatures:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The boundary helpers this campaign introduced must keep their definitions
 /// in `query_boundaries/construct_signatures.rs` (not drift back into
 /// `common.rs` or call sites).
@@ -179,12 +216,14 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "function_shape_from_call_signature",
         "call_signature_from_function_shape",
         "function_type_from_shape",
+        "function_type_from_parts",
         "function_type_from_call_signature",
         "method_function_type_from_call_signature",
         "call_only_callable_type",
         "construct_only_callable_type",
         "type_literal_callable_type",
         "callable_with_signatures_replaced",
+        "callable_with_call_signatures_and_erased_metadata",
         "instantiated_callable_from_base",
         "map_function_shape_types",
     ] {
@@ -201,6 +240,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "construct_only_callable_type",
         "type_literal_callable_type",
         "callable_with_signatures_replaced",
+        "callable_with_call_signatures_and_erased_metadata",
         "instantiated_callable_from_base",
         "map_function_shape_types",
     ] {

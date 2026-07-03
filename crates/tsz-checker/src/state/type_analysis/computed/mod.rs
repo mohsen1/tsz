@@ -8,6 +8,7 @@ mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
+use crate::query_boundaries::construct_signatures::call_only_callable_type;
 
 struct SymbolAliasCtx<'a> {
     sym_id: SymbolId,
@@ -826,7 +827,6 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use tsz_lowering::TypeLowering;
-        use tsz_solver::CallableShape;
 
         // PERF: see `docs/plan/PERFORMANCE_PLAN.md`. Counts every entry to
         // type-of-symbol computation; attribution uses this against
@@ -1511,16 +1511,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let function_type = if !overloads.is_empty() {
-                let shape = CallableShape {
-                    call_signatures: overloads,
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(shape)
+                call_only_callable_type(self.ctx.types, overloads)
             } else if value_decl.is_some() {
                 self.get_type_of_function(value_decl)
             } else if implementation_decl.is_some() {
