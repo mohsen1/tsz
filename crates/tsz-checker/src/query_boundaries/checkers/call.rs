@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
+use tsz_common::Atom;
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
-use tsz_solver::{FunctionShape, ObjectShape, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, ObjectShape, PropertyInfo, TupleElement, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
@@ -447,4 +448,41 @@ pub(crate) fn extract_predicate_signature(
     type_id: TypeId,
 ) -> Option<tsz_solver::type_queries::flow::ExtractedPredicateSignature> {
     tsz_solver::type_queries::flow::extract_predicate_signature(db, type_id)
+}
+
+pub(crate) fn call_inference_partial_object_type(
+    db: &dyn TypeDatabase,
+    properties: Vec<(Atom, TypeId)>,
+) -> TypeId {
+    db.object_fresh(
+        properties
+            .into_iter()
+            .map(|(name, type_id)| PropertyInfo::new(name, type_id))
+            .collect(),
+    )
+}
+
+pub(crate) fn call_inference_zero_arg_function_type(
+    db: &dyn TypeDatabase,
+    return_type: TypeId,
+) -> TypeId {
+    db.function(FunctionShape::new(Vec::new(), return_type))
+}
+
+pub(crate) fn call_inference_string_key_type(db: &dyn TypeDatabase, name: &str) -> TypeId {
+    db.literal_string(name)
+}
+
+pub(crate) fn call_inference_tuple_type(db: &dyn TypeDatabase, elements: Vec<TypeId>) -> TypeId {
+    db.tuple(
+        elements
+            .into_iter()
+            .map(|type_id| TupleElement {
+                type_id,
+                optional: false,
+                rest: false,
+                name: None,
+            })
+            .collect(),
+    )
 }
