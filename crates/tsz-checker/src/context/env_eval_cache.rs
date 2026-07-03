@@ -1,7 +1,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_solver::{DefId, TypeId};
 
-use super::{CheckerContext, EnvEvalCacheEntry};
+use super::{AssignabilityEvalStamp, CheckerContext, EnvEvalCacheEntry};
 
 /// Soft cap on the number of persistent `env_eval_cache` entries that the
 /// per-evaluation *intermediate* seed/persist memo will marshal.
@@ -23,11 +23,127 @@ use super::{CheckerContext, EnvEvalCacheEntry};
 /// invariant), not by any fixture, file name, or identifier.
 pub(crate) const ENV_EVAL_SEED_PERSIST_SOFT_CAP: usize = 256;
 
+pub(crate) type ContextualSignatureNormalizationStamp =
+    (AssignabilityEvalStamp, bool, bool, bool, bool);
+
 #[derive(Default)]
 pub(crate) struct EnvEvalCache {
     entries: FxHashMap<TypeId, EnvEvalCacheEntry>,
     defs_by_key: FxHashMap<TypeId, Box<[DefId]>>,
     keys_by_def: FxHashMap<DefId, FxHashSet<TypeId>>,
+    contextual_signature_normalizations: TypeIdResultCache,
+}
+
+#[derive(Default)]
+struct TypeIdResultCache {
+    entries: FxHashMap<TypeId, StampedTypeIdResult>,
+    defs_by_key: FxHashMap<TypeId, Box<[DefId]>>,
+    keys_by_def: FxHashMap<DefId, FxHashSet<TypeId>>,
+}
+
+#[derive(Clone, Copy)]
+struct StampedTypeIdResult {
+    stamp: ContextualSignatureNormalizationStamp,
+    result: TypeId,
+}
+
+impl TypeIdResultCache {
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn entry_capacity(&self) -> usize {
+        self.entries.capacity()
+    }
+
+    fn get(&self, type_id: TypeId, stamp: ContextualSignatureNormalizationStamp) -> Option<TypeId> {
+        let entry = self.entries.get(&type_id).copied()?;
+        (entry.stamp == stamp).then_some(entry.result)
+    }
+
+    fn insert(
+        &mut self,
+        type_id: TypeId,
+        stamp: ContextualSignatureNormalizationStamp,
+        result: TypeId,
+        dependency_defs: Box<[DefId]>,
+    ) {
+        let entry = StampedTypeIdResult { stamp, result };
+        if self.entries.insert(type_id, entry).is_some() {
+            self.remove_key_from_index(type_id);
+        }
+        self.insert_key_into_index(type_id, dependency_defs);
+    }
+
+    fn remove(&mut self, type_id: TypeId) -> Option<StampedTypeIdResult> {
+        let removed = self.entries.remove(&type_id);
+        if removed.is_some() {
+            self.remove_key_from_index(type_id);
+        }
+        removed
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.defs_by_key.clear();
+        self.keys_by_def.clear();
+    }
+
+    fn invalidate_for_def(&mut self, def_id: DefId) -> usize {
+        let Some(keys) = self.keys_by_def.remove(&def_id) else {
+            return 0;
+        };
+        let keys: Vec<_> = keys.into_iter().collect();
+        let removed = keys.len();
+        for key in keys {
+            self.entries.remove(&key);
+            self.remove_key_from_index(key);
+        }
+        removed
+    }
+
+    fn invalidate_matching(
+        &mut self,
+        should_remove: impl Fn(TypeId, StampedTypeIdResult) -> bool,
+    ) -> usize {
+        if self.entries.is_empty() {
+            return 0;
+        }
+        let keys: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|(&key, &value)| should_remove(key, value).then_some(key))
+            .collect();
+        let removed = keys.len();
+        for key in keys {
+            self.remove(key);
+        }
+        removed
+    }
+
+    fn insert_key_into_index(&mut self, type_id: TypeId, dependency_defs: Box<[DefId]>) {
+        if dependency_defs.is_empty() {
+            return;
+        }
+        for &def_id in &dependency_defs {
+            self.keys_by_def.entry(def_id).or_default().insert(type_id);
+        }
+        self.defs_by_key.insert(type_id, dependency_defs);
+    }
+
+    fn remove_key_from_index(&mut self, type_id: TypeId) {
+        let Some(defs) = self.defs_by_key.remove(&type_id) else {
+            return;
+        };
+        for def_id in &defs {
+            if let Some(keys) = self.keys_by_def.get_mut(def_id) {
+                keys.remove(&type_id);
+                if keys.is_empty() {
+                    self.keys_by_def.remove(def_id);
+                }
+            }
+        }
+    }
 }
 
 impl EnvEvalCache {
@@ -49,6 +165,50 @@ impl EnvEvalCache {
 
     pub(crate) fn entry_capacity(&self) -> usize {
         self.entries.capacity()
+    }
+
+    pub(crate) fn contextual_signature_normalization_len(&self) -> usize {
+        self.contextual_signature_normalizations.len()
+    }
+
+    pub(crate) fn contextual_signature_normalization_entry_capacity(&self) -> usize {
+        self.contextual_signature_normalizations.entry_capacity()
+    }
+
+    pub(crate) fn get_contextual_signature_normalization(
+        &self,
+        type_id: TypeId,
+        stamp: ContextualSignatureNormalizationStamp,
+    ) -> Option<TypeId> {
+        self.contextual_signature_normalizations.get(type_id, stamp)
+    }
+
+    pub(crate) fn insert_contextual_signature_normalization(
+        &mut self,
+        type_id: TypeId,
+        stamp: ContextualSignatureNormalizationStamp,
+        result: TypeId,
+        dependency_defs: Box<[DefId]>,
+    ) {
+        self.contextual_signature_normalizations
+            .insert(type_id, stamp, result, dependency_defs);
+    }
+
+    pub(crate) fn remove_contextual_signature_normalization(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        self.contextual_signature_normalizations
+            .remove(type_id)
+            .map(|entry| entry.result)
+    }
+
+    pub(crate) fn invalidate_contextual_signature_normalizations_matching(
+        &mut self,
+        should_remove: impl Fn(TypeId, TypeId) -> bool,
+    ) -> usize {
+        self.contextual_signature_normalizations
+            .invalidate_matching(|key, entry| should_remove(key, entry.result))
     }
 
     pub(crate) fn insert(
@@ -88,6 +248,7 @@ impl EnvEvalCache {
         self.entries.clear();
         self.defs_by_key.clear();
         self.keys_by_def.clear();
+        self.contextual_signature_normalizations.clear();
     }
 
     pub(crate) fn seed_entries(&self) -> Vec<(TypeId, TypeId)> {
@@ -101,14 +262,15 @@ impl EnvEvalCache {
     }
 
     pub(crate) fn invalidate_for_def(&mut self, def_id: DefId) {
-        let Some(keys) = self.keys_by_def.remove(&def_id) else {
-            return;
-        };
-        let keys: Vec<_> = keys.into_iter().collect();
-        for key in keys {
-            self.entries.remove(&key);
-            self.remove_key_from_index(key);
+        if let Some(keys) = self.keys_by_def.remove(&def_id) {
+            let keys: Vec<_> = keys.into_iter().collect();
+            for key in keys {
+                self.entries.remove(&key);
+                self.remove_key_from_index(key);
+            }
         }
+        self.contextual_signature_normalizations
+            .invalidate_for_def(def_id);
     }
 
     pub(crate) fn invalidate_matching(
@@ -282,6 +444,16 @@ impl<'a> CheckerContext<'a> {
         self.env_eval_cache.borrow().get(type_id)
     }
 
+    pub(crate) fn lookup_contextual_signature_normalization_cache(
+        &self,
+        type_id: TypeId,
+        stamp: ContextualSignatureNormalizationStamp,
+    ) -> Option<TypeId> {
+        self.env_eval_cache
+            .borrow()
+            .get_contextual_signature_normalization(type_id, stamp)
+    }
+
     pub(crate) fn env_eval_cache_seed_entries(&self) -> Vec<(TypeId, TypeId)> {
         let cache = self.env_eval_cache.borrow();
         if cache.is_empty() {
@@ -353,6 +525,18 @@ impl<'a> CheckerContext<'a> {
         );
     }
 
+    pub(crate) fn cache_contextual_signature_normalization_result(
+        &self,
+        type_id: TypeId,
+        stamp: ContextualSignatureNormalizationStamp,
+        result: TypeId,
+    ) {
+        let dependency_defs = self.env_eval_entry_dependency_defs(type_id, result);
+        self.env_eval_cache
+            .borrow_mut()
+            .insert_contextual_signature_normalization(type_id, stamp, result, dependency_defs);
+    }
+
     pub(crate) fn clear_env_eval_cache(&self) {
         self.env_eval_cache.borrow_mut().clear();
     }
@@ -369,7 +553,13 @@ impl<'a> CheckerContext<'a> {
     /// so the next [`Self::lookup_env_eval_cache`] recomputes rather than
     /// short-circuiting to the stale entry.
     pub(crate) fn invalidate_env_eval_for(&self, type_id: TypeId) -> bool {
-        self.env_eval_cache.borrow_mut().remove(type_id).is_some()
+        let mut cache = self.env_eval_cache.borrow_mut();
+        let removed = cache.remove(type_id).is_some();
+        cache.remove_contextual_signature_normalization(type_id);
+        cache.invalidate_contextual_signature_normalizations_matching(|key, value| {
+            key == type_id || value == type_id
+        });
+        removed
     }
 
     /// Drop every `env_eval_cache` entry structurally reachable from `type_id`:
@@ -398,19 +588,26 @@ impl<'a> CheckerContext<'a> {
     /// those are invalidated through the def-keyed path and are not part of a
     /// per-type evaluation closure.
     pub(crate) fn invalidate_env_eval_reachable_from(&self, type_id: TypeId) -> usize {
-        if self.env_eval_cache.borrow().is_empty() {
-            // Nothing to drop: skip the structural walk entirely (mirrors the
-            // empty-cache early-out in `env_eval_cache_seed_entries`).
-            return 0;
+        {
+            let cache = self.env_eval_cache.borrow();
+            if cache.is_empty() && cache.contextual_signature_normalization_len() == 0 {
+                // Nothing to drop: skip the structural walk entirely (mirrors the
+                // empty-cache early-out in `env_eval_cache_seed_entries`).
+                return 0;
+            }
         }
         let reachable = crate::query_boundaries::type_computation::core::collect_referenced_types(
             self.types, type_id,
         );
-        self.env_eval_cache
-            .borrow_mut()
-            .invalidate_matching(|key, value| {
-                reachable.contains(&key) || reachable.contains(&value.result)
-            })
+        let mut cache = self.env_eval_cache.borrow_mut();
+        let removed = cache.invalidate_matching(|key, value| {
+            reachable.contains(&key) || reachable.contains(&value.result)
+        });
+        let normalization_removed =
+            cache.invalidate_contextual_signature_normalizations_matching(|key, value| {
+                reachable.contains(&key) || reachable.contains(&value)
+            });
+        removed + normalization_removed
     }
 
     pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
@@ -510,5 +707,115 @@ impl<'a> CheckerContext<'a> {
         self.env_eval_cache
             .borrow()
             .indexed_key_count_for_def(def_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deps(defs: &[DefId]) -> Box<[DefId]> {
+        defs.to_vec().into_boxed_slice()
+    }
+
+    fn stamp(seed: u64) -> ContextualSignatureNormalizationStamp {
+        (
+            (seed, seed + 1, seed + 2, seed + 3),
+            true,
+            false,
+            true,
+            false,
+        )
+    }
+
+    #[test]
+    fn contextual_signature_normalization_cache_invalidates_by_def_dependency() {
+        let mut cache = EnvEvalCache::default();
+        cache.insert_contextual_signature_normalization(
+            TypeId(10),
+            stamp(1),
+            TypeId(20),
+            deps(&[DefId(7)]),
+        );
+
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(1)),
+            Some(TypeId(20))
+        );
+        cache.invalidate_for_def(DefId(8));
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(1)),
+            Some(TypeId(20))
+        );
+
+        cache.invalidate_for_def(DefId(7));
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_signature_normalization_cache_serves_only_matching_stamp() {
+        let mut cache = EnvEvalCache::default();
+        cache.insert_contextual_signature_normalization(
+            TypeId(10),
+            stamp(1),
+            TypeId(20),
+            deps(&[]),
+        );
+
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(1)),
+            Some(TypeId(20))
+        );
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(2)),
+            None
+        );
+    }
+
+    #[test]
+    fn contextual_signature_normalization_cache_invalidates_reachable_key_or_result() {
+        let mut cache = EnvEvalCache::default();
+        cache.insert_contextual_signature_normalization(
+            TypeId(10),
+            stamp(1),
+            TypeId(20),
+            deps(&[]),
+        );
+        cache.insert_contextual_signature_normalization(
+            TypeId(30),
+            stamp(1),
+            TypeId(40),
+            deps(&[]),
+        );
+
+        let removed =
+            cache.invalidate_contextual_signature_normalizations_matching(|key, value| {
+                key == TypeId(30) || value == TypeId(20)
+            });
+
+        assert_eq!(removed, 2);
+        assert_eq!(cache.contextual_signature_normalization_len(), 0);
+    }
+
+    #[test]
+    fn contextual_signature_normalization_cache_clear_drops_entries() {
+        let mut cache = EnvEvalCache::default();
+        cache.insert_contextual_signature_normalization(
+            TypeId(10),
+            stamp(1),
+            TypeId(20),
+            deps(&[DefId(7)]),
+        );
+
+        cache.clear();
+
+        assert_eq!(
+            cache.get_contextual_signature_normalization(TypeId(10), stamp(1)),
+            None
+        );
+        assert_eq!(cache.contextual_signature_normalization_len(), 0);
     }
 }

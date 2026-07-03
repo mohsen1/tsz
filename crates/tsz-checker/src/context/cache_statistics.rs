@@ -8,8 +8,9 @@ use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::{
-    CheckerContext, cross_file_type_params_cache_statistics, export_equals_named_cache_entries,
-    export_equals_named_cache_estimated_size_bytes, namespace_member_resolution_cache_entries,
+    CheckerContext, cross_file_type_params_cache_statistics, env_eval_cache,
+    export_equals_named_cache_entries, export_equals_named_cache_estimated_size_bytes,
+    namespace_member_resolution_cache_entries,
     namespace_member_resolution_cache_estimated_size_bytes,
     nested_namespace_candidates_cache_entries,
     nested_namespace_candidates_cache_estimated_size_bytes,
@@ -67,6 +68,8 @@ pub struct CheckerContextCacheStatistics {
     pub class_chain_summary_cache_estimated_size_bytes: usize,
     pub env_eval_cache_entries: usize,
     pub env_eval_cache_estimated_size_bytes: usize,
+    pub contextual_signature_normalization_cache_entries: usize,
+    pub contextual_signature_normalization_cache_estimated_size_bytes: usize,
     pub class_symbol_to_decl_cache_entries: usize,
     pub class_symbol_to_decl_cache_estimated_size_bytes: usize,
     pub heritage_symbol_cache_entries: usize,
@@ -104,6 +107,7 @@ impl CheckerContextCacheStatistics {
             + self.class_constructor_type_cache_estimated_size_bytes
             + self.class_chain_summary_cache_estimated_size_bytes
             + self.env_eval_cache_estimated_size_bytes
+            + self.contextual_signature_normalization_cache_estimated_size_bytes
             + self.class_symbol_to_decl_cache_estimated_size_bytes
             + self.heritage_symbol_cache_estimated_size_bytes
             + self.base_constructor_expr_cache_estimated_size_bytes
@@ -135,6 +139,7 @@ impl CheckerContextCacheStatistics {
             + self.class_constructor_type_cache_entries
             + self.class_chain_summary_cache_entries
             + self.env_eval_cache_entries
+            + self.contextual_signature_normalization_cache_entries
             + self.class_symbol_to_decl_cache_entries
             + self.heritage_symbol_cache_entries
             + self.base_constructor_expr_cache_entries
@@ -308,6 +313,17 @@ impl<'a> CheckerContext<'a> {
                     .saturating_add(mem::size_of::<super::EnvEvalCacheEntry>())
                     .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
             ),
+            contextual_signature_normalization_cache_entries: env_eval_cache
+                .contextual_signature_normalization_len(),
+            contextual_signature_normalization_cache_estimated_size_bytes: env_eval_cache
+                .contextual_signature_normalization_entry_capacity()
+                .saturating_mul(
+                    mem::size_of::<TypeId>()
+                        .saturating_add(mem::size_of::<
+                            env_eval_cache::ContextualSignatureNormalizationStamp,
+                        >())
+                        .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
+                ),
             class_symbol_to_decl_cache_entries: class_symbol_to_decl_cache.len(),
             class_symbol_to_decl_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &class_symbol_to_decl_cache,
