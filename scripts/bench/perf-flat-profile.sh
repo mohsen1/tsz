@@ -18,6 +18,7 @@
 #   scripts/bench/perf-flat-profile.sh path/to/file.ts
 #   scripts/bench/perf-flat-profile.sh -p path/to/tsconfig.json
 #   scripts/bench/perf-flat-profile.sh -p tsconfig.json --iterations 12 --top 30
+#   scripts/bench/perf-flat-profile.sh -p tsconfig.json --json-file /tmp/profile.json
 #   scripts/bench/perf-flat-profile.sh --no-build -p tsconfig.json   # reuse symbol build
 #
 # Options:
@@ -27,6 +28,7 @@
 #   --top N            Rows to print (default 25).
 #   --no-build         Skip the symbol-retaining build; reuse the existing binary.
 #   --bin <path>       Use this tsz binary instead of building.
+#   --json-file <path> Write the ranked flat profile as JSON.
 #   --help
 #
 # macOS only for symbol resolution (uses `atos`). On Linux, swap the resolver
@@ -52,6 +54,7 @@ ITERATIONS=8
 TOP=25
 NO_BUILD=false
 BIN_OVERRIDE=""
+JSON_FILE=""
 declare -a TSZ_ARGS=()
 
 usage() { sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -63,6 +66,7 @@ while [[ $# -gt 0 ]]; do
         --top) TOP="$2"; shift 2 ;;
         --no-build) NO_BUILD=true; shift ;;
         --bin) BIN_OVERRIDE="$2"; shift 2 ;;
+        --json-file) JSON_FILE="$2"; shift 2 ;;
         --help|-h) usage; exit 0 ;;
         *) TSZ_ARGS+=("$1"); shift ;;
     esac
@@ -110,10 +114,12 @@ samply record --save-only -o "$PROFILE_JSON" -- \
 #             the resolved name (not the frame/func index) is essential: inlining
 #             splits one source function across many frames, and counting those
 #             separately would push a function past 100% inclusive.
-python3 - "$PROFILE_JSON" "$TSZ_BIN" "$TEXT_BASE" "$TOP" <<'PY'
+python3 - "$PROFILE_JSON" "$TSZ_BIN" "$TEXT_BASE" "$TOP" "$JSON_FILE" "${TSZ_ARGS[@]}" <<'PY'
 import gzip, json, sys, re, subprocess, collections
+from pathlib import Path
 prof = json.load(gzip.open(sys.argv[1]))
-binary, base, top = sys.argv[2], int(sys.argv[3], 16), int(sys.argv[4])
+binary, base, top, json_file = sys.argv[2], int(sys.argv[3], 16), int(sys.argv[4]), sys.argv[5]
+tsz_args = sys.argv[6:]
 
 # Per-thread frame address arrays differ, so resolve names per (thread, frame).
 threads = []
@@ -175,6 +181,32 @@ if total == 0:
 print()
 print(f"=== tsz flat profile: {total} samples (self / inclusive) ===")
 print(f"{'self%':>7} {'incl%':>7}  function")
+rows = []
 for nm, sc in self_ct.most_common(top):
-    print(f"{100 * sc / total:6.1f}% {100 * incl_ct.get(nm, 0) / total:6.1f}%  {nm}")
+    incl = incl_ct.get(nm, 0)
+    self_pct = 100 * sc / total
+    incl_pct = 100 * incl / total
+    rows.append({
+        "function": nm,
+        "self_samples": sc,
+        "inclusive_samples": incl,
+        "self_percent": self_pct,
+        "inclusive_percent": incl_pct,
+    })
+    print(f"{self_pct:6.1f}% {incl_pct:6.1f}%  {nm}")
+
+if json_file:
+    payload = {
+        "schema_version": 1,
+        "samples": total,
+        "binary": binary,
+        "text_base": hex(base),
+        "args": tsz_args,
+        "top": top,
+        "rows": rows,
+    }
+    path = Path(json_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf8")
+    print(f"flat profile JSON written to {json_file}")
 PY

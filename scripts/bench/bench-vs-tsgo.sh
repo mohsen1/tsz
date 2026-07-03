@@ -65,6 +65,8 @@ TSC_NPM_SPEC="${TSC_NPM_SPEC:-}"
 EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$SCRIPT_DIR/project-fixtures.sh"
+# shellcheck source=scripts/bench/lib/large-ts-repo-fixture.sh
+source "$SCRIPT_DIR/lib/large-ts-repo-fixture.sh"
 # Keep benchmark/CI project metadata aligned with a single source of truth.
 tsz_sync_project_row_groups
 if command -v node >/dev/null 2>&1; then
@@ -119,18 +121,7 @@ NEVERTHROW_DIR="$EXTERNAL_BENCH_DIR/neverthrow"
 XSTATE_DIR="$EXTERNAL_BENCH_DIR/xstate"
 MOBX_DIR="$EXTERNAL_BENCH_DIR/mobx"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
-# The local fallback was previously implicit, which silently contaminated
-# PR-quality numbers on any developer machine that happened to have a
-# checkout. Gate it behind TSZ_BENCH_ALLOW_LOCAL_FIXTURE=1 so the default
-# is the pinned external clone. See docs/plan/PERFORMANCE_PLAN.md §3.5.1.
-if [ -n "${LARGE_TS_DIR:-}" ]; then
-    LARGE_TS_DIR="$LARGE_TS_DIR"
-elif [ "${TSZ_BENCH_ALLOW_LOCAL_FIXTURE:-0}" = "1" ] \
-     && [ -d "$LARGE_TS_LOCAL_DIR/.git" ]; then
-    LARGE_TS_DIR="$LARGE_TS_LOCAL_DIR"
-else
-    LARGE_TS_DIR="$EXTERNAL_BENCH_DIR/large-ts-repo"
-fi
+LARGE_TS_DIR="$(tsz_large_ts_repo_default_dir "$EXTERNAL_BENCH_DIR")"
 LARGE_TS_NODE_OPTIONS="${LARGE_TS_NODE_OPTIONS:---max-old-space-size=8192}"
 # Deep project fixtures can exhaust Rust's default worker-thread stack before
 # producing a benchmark result. Keep the default overrideable for local runs.
@@ -1521,34 +1512,6 @@ run_vite_app_project_benchmarks() {
 }
 
 ensure_large_ts_repo_fixture() {
-    mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$LARGE_TS_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning large-ts-repo fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$LARGE_TS_REPO" "$LARGE_TS_DIR"
-    fi
-
-    if [ -n "$LARGE_TS_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$LARGE_TS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$LARGE_TS_REF" ]; then
-            echo -e "${CYAN}Pinning large-ts-repo to ${LARGE_TS_REF:0:12}...${NC}"
-            git -C "$LARGE_TS_DIR" fetch --quiet --depth 1 origin "$LARGE_TS_REF"
-            git -C "$LARGE_TS_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
-
-    if ! command -v pnpm &>/dev/null; then
-        echo -e "${RED}✗ pnpm not found. Install pnpm to prepare large-ts-repo dependencies.${NC}"
-        return
-    fi
-
-    local deps_stamp="$LARGE_TS_DIR/.deps-installed"
-    if [ ! -f "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-lock.yaml" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/package.json" -nt "$deps_stamp" ] || [ "$LARGE_TS_DIR/pnpm-workspace.yaml" -nt "$deps_stamp" ]; then
-        echo -e "${CYAN}Installing large-ts-repo dependencies...${NC}"
-        pnpm --dir "$LARGE_TS_DIR" install --frozen-lockfile --silent
-        touch "$deps_stamp"
-    fi
     # The root tsconfig.json in large-ts-repo uses project references, so
     # `tsc/tsgo/tsz --noEmit -p tsconfig.json` exits almost immediately
     # without type-checking anything. Use a flat tsconfig that directly
@@ -1558,36 +1521,7 @@ ensure_large_ts_repo_fixture() {
     # extends tsconfig.base.json which contains the 200+ `paths` mappings
     # for cross-package @scope/pkg imports. Without those paths, tsc itself
     # emits resolution errors and the benchmark is skipped.
-    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
-        return
-    fi
-    local flat_tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        local extends_base=""
-        if [ -f "$LARGE_TS_DIR/tsconfig.base.json" ]; then
-            extends_base='"extends": "./tsconfig.base.json",'
-        fi
-        cat > "$flat_tsconfig" << FLATEOF
-{
-  ${extends_base}
-  "compilerOptions": {
-    "target": "ES2023",
-    "lib": ["ES2024", "esnext.disposable"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false
-  },
-  "include": ["packages/**/src/**/*.ts"]
-}
-FLATEOF
-    fi
+    tsz_ensure_large_ts_repo_fixture "$LARGE_TS_DIR" "$LARGE_TS_REPO" "$LARGE_TS_REF"
 }
 
 run_large_ts_repo_benchmarks() {
@@ -1605,11 +1539,7 @@ run_large_ts_repo_benchmarks() {
     # Prefer tsconfig.flat.bench.json (ships with the repo, extends base
     # with full path mappings) over our generated tsconfig.flat.json.
     local tsconfig
-    if [ -f "$LARGE_TS_DIR/tsconfig.flat.bench.json" ]; then
-        tsconfig="$LARGE_TS_DIR/tsconfig.flat.bench.json"
-    elif [ -f "$LARGE_TS_DIR/tsconfig.flat.json" ]; then
-        tsconfig="$LARGE_TS_DIR/tsconfig.flat.json"
-    else
+    if ! tsconfig="$(tsz_large_ts_repo_select_tsconfig "$LARGE_TS_DIR")"; then
         echo -e "${RED}✗ No flat tsconfig found (ensure_large_ts_repo_fixture should have created one)${NC}"
         return
     fi
