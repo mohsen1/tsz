@@ -25,6 +25,28 @@ use rustc_hash::FxHashSet;
 
 use super::compat::CompatChecker;
 
+#[derive(Clone, Copy)]
+struct PrivateBrandOverrideEval {
+    result: Option<bool>,
+    complete: bool,
+}
+
+impl PrivateBrandOverrideEval {
+    const fn complete(result: Option<bool>) -> Self {
+        Self {
+            result,
+            complete: true,
+        }
+    }
+
+    const fn incomplete(result: Option<bool>) -> Self {
+        Self {
+            result,
+            complete: false,
+        }
+    }
+}
+
 // =============================================================================
 // Assignability Override Functions
 // =============================================================================
@@ -83,6 +105,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             let mut visiting = FxHashSet::default();
             self.private_brand_assignability_override_inner(source, target, &mut visiting)
+                .result
         })
     }
 
@@ -91,14 +114,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
         visiting: &mut FxHashSet<(TypeId, TypeId)>,
-    ) -> Option<bool> {
+    ) -> PrivateBrandOverrideEval {
         let pair = (source, target);
+        if let Some(result) = self.lookup_private_brand_override_cache(source, target) {
+            return PrivateBrandOverrideEval::complete(result);
+        }
         if !visiting.insert(pair) {
-            return None;
+            return PrivateBrandOverrideEval::incomplete(None);
         }
 
         let result = self.private_brand_assignability_override_body(source, target, visiting);
         visiting.remove(&pair);
+        if result.complete {
+            self.cache_private_brand_override_result(source, target, result.result);
+        }
         result
     }
 
@@ -107,20 +136,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         source: TypeId,
         target: TypeId,
         visiting: &mut FxHashSet<(TypeId, TypeId)>,
-    ) -> Option<bool> {
+    ) -> PrivateBrandOverrideEval {
         use crate::types::Visibility;
 
         // Fast path: identical types don't need nominal brand override logic.
         // Let the regular assignability path decide.
         if source == target {
-            return None;
+            return PrivateBrandOverrideEval::complete(None);
         }
 
         // Fast path: intrinsics never resolve to Union/Intersection/Lazy/Object,
         // so there's no nominal brand to enforce. Skip the cascade of dyn-
         // dispatched lookups and let the regular path decide.
         if source.is_intrinsic() && target.is_intrinsic() {
-            return None;
+            return PrivateBrandOverrideEval::complete(None);
         }
 
         // 1. Handle Source Union (AND logic) — MUST run before target union.
@@ -131,14 +160,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // require the entire source union to match a single target member.
         if let Some(TypeData::Union(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
+            let mut complete = true;
             for &member in members.iter() {
-                if let Some(false) =
-                    self.private_brand_assignability_override_inner(member, target, visiting)
-                {
-                    return Some(false); // Fail if any member fails
+                let member_result =
+                    self.private_brand_assignability_override_inner(member, target, visiting);
+                complete &= member_result.complete;
+                if let Some(false) = member_result.result {
+                    return PrivateBrandOverrideEval::complete(Some(false)); // Fail if any member fails
                 }
             }
-            return None; // All passed or fell back
+            return if complete {
+                PrivateBrandOverrideEval::complete(None)
+            } else {
+                PrivateBrandOverrideEval::incomplete(None)
+            }; // All passed or fell back
         }
 
         // 2. Handle Target Union (OR logic)
@@ -147,26 +182,40 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             let members = self.interner.type_list(members);
             // If source matches ANY target member, it's valid
             for &member in members.iter() {
-                match self.private_brand_assignability_override_inner(source, member, visiting) {
-                    Some(true) | None => return None, // Pass (or structural fallback)
-                    Some(false) => {}                 // Keep checking other members
+                let member_result =
+                    self.private_brand_assignability_override_inner(source, member, visiting);
+                match member_result.result {
+                    Some(true) | None => {
+                        return if member_result.complete {
+                            PrivateBrandOverrideEval::complete(None)
+                        } else {
+                            PrivateBrandOverrideEval::incomplete(None)
+                        };
+                    } // Pass (or structural fallback)
+                    Some(false) => {} // Keep checking other members
                 }
             }
-            return Some(false); // Failed against all members
+            return PrivateBrandOverrideEval::complete(Some(false)); // Failed against all members
         }
 
         // 3. Handle Target Intersection (AND logic)
         // S -> (A & B) : Valid if S -> A AND S -> B
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(target) {
             let members = self.interner.type_list(members);
+            let mut complete = true;
             for &member in members.iter() {
-                if let Some(false) =
-                    self.private_brand_assignability_override_inner(source, member, visiting)
-                {
-                    return Some(false); // Fail if any member fails
+                let member_result =
+                    self.private_brand_assignability_override_inner(source, member, visiting);
+                complete &= member_result.complete;
+                if let Some(false) = member_result.result {
+                    return PrivateBrandOverrideEval::complete(Some(false)); // Fail if any member fails
                 }
             }
-            return None; // All passed or fell back
+            return if complete {
+                PrivateBrandOverrideEval::complete(None)
+            } else {
+                PrivateBrandOverrideEval::incomplete(None)
+            }; // All passed or fell back
         }
 
         // 4. Handle Source Intersection (OR logic)
@@ -174,12 +223,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         if let Some(TypeData::Intersection(members)) = self.interner.lookup(source) {
             let members = self.interner.type_list(members);
             for &member in members.iter() {
-                match self.private_brand_assignability_override_inner(member, target, visiting) {
-                    Some(true) | None => return None, // Pass (or structural fallback)
-                    Some(false) => {}                 // Keep checking other members
+                let member_result =
+                    self.private_brand_assignability_override_inner(member, target, visiting);
+                match member_result.result {
+                    Some(true) | None => {
+                        return if member_result.complete {
+                            PrivateBrandOverrideEval::complete(None)
+                        } else {
+                            PrivateBrandOverrideEval::incomplete(None)
+                        };
+                    } // Pass (or structural fallback)
+                    Some(false) => {} // Keep checking other members
                 }
             }
-            return Some(false); // Failed against all members
+            return PrivateBrandOverrideEval::complete(Some(false)); // Failed against all members
         }
 
         // 5. Handle Lazy types (recursive resolution)
@@ -189,7 +246,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Guard against non-progressing lazy resolution (e.g. DefId -> same Lazy type),
             // which would otherwise recurse forever.
             if resolved == source {
-                return None;
+                return PrivateBrandOverrideEval::complete(None);
             }
             return self.private_brand_assignability_override_inner(resolved, target, visiting);
         }
@@ -199,7 +256,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         {
             // Same non-progress guard for target-side lazy resolution.
             if resolved == target {
-                return None;
+                return PrivateBrandOverrideEval::complete(None);
             }
             return self.private_brand_assignability_override_inner(source, resolved, visiting);
         }
@@ -208,14 +265,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
 
         // Get source shape
-        let source_shape_id = extractor.extract(source)?;
+        let Some(source_shape_id) = extractor.extract(source) else {
+            return PrivateBrandOverrideEval::complete(None);
+        };
         let source_shape = self
             .interner
             .object_shape(crate::types::ObjectShapeId(source_shape_id));
 
         // Get target shape
         let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
-        let target_shape_id = extractor.extract(target)?;
+        let Some(target_shape_id) = extractor.extract(target) else {
+            return PrivateBrandOverrideEval::complete(None);
+        };
         let target_shape = self
             .interner
             .object_shape(crate::types::ObjectShapeId(target_shape_id));
@@ -248,11 +309,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         target_prop.parent_id,
                         target_prop.visibility,
                     ) {
-                        return Some(false);
+                        return PrivateBrandOverrideEval::complete(Some(false));
                     }
                 }
                 None => {
-                    return Some(false);
+                    return PrivateBrandOverrideEval::complete(Some(false));
                 }
             }
         }
@@ -271,11 +332,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 )
                 && target_prop.visibility == Visibility::Public
             {
-                return Some(false);
+                return PrivateBrandOverrideEval::complete(Some(false));
             }
         }
 
-        None
+        PrivateBrandOverrideEval::complete(None)
     }
 
     /// Enum member assignability override.

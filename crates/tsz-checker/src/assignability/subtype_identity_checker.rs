@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
         if is_cacheable {
             // Note: For subtype checks in the checker, we use AnyPropagationMode::All (0)
             // since the checker doesn't track depth like SubtypeChecker does
-            let cache_key = subtype_cache_key(source, target, flags);
+            let cache_key = subtype_cache_key(source, target, flags, &self.ctx.inheritance_graph);
 
             if let Some(cached) = self.ctx.types.lookup_subtype_cache(cache_key) {
                 return cached;
@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
 
         // Cache the result for non-inference types
         if is_cacheable {
-            let cache_key = subtype_cache_key(source, target, flags);
+            let cache_key = subtype_cache_key(source, target, flags, &self.ctx.inheritance_graph);
 
             self.ctx.types.insert_subtype_cache(cache_key, result);
         }

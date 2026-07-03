@@ -354,6 +354,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         this_context: TypeId,
     ) -> RelationCacheKey {
+        let (inheritance_graph_id, inheritance_graph_generation) = self
+            .inheritance_graph
+            .map_or((0, 0), |graph| (graph.identity(), graph.generation()));
         RelationCacheKey::for_subtype(
             source,
             target,
@@ -361,6 +364,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .cache_config_with_cached_any_mode(self.effective_cached_any_mode()),
         )
         .with_this_context(this_context)
+        .with_inheritance_graph_context(inheritance_graph_id, inheritance_graph_generation)
     }
 
     /// Resolve the polymorphic-`this` discriminator for a `(source, target)`

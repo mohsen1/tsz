@@ -1586,6 +1586,11 @@ fn test_private_brand_lazy_cycle_does_not_recurse() {
         checker.private_brand_assignability_override(first_type, target),
         None
     );
+    assert_eq!(
+        checker.cache_statistics().private_brand_entries,
+        0,
+        "cycle-truncated private-brand probes must not be cached"
+    );
 }
 
 #[test]
@@ -1754,4 +1759,3 @@ fn test_private_brand_neither_has_brand_falls_through() {
     // Structural check passes
     assert!(checker.is_assignable(source, target));
 }
-

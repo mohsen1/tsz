@@ -15,7 +15,9 @@ use crate::construction::RelationCacheProbe;
 use crate::intern::TypeInterner;
 use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationFlags, TypeId};
+use crate::types::{
+    PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationFlags, TypeId, Visibility,
+};
 
 fn assert_repeated_subtype_check_reuses_entries(
     db: &QueryCache<'_>,
@@ -76,6 +78,49 @@ fn cache_hit_with_literal_types() {
     let hello = interner.literal_string("hello");
 
     assert_repeated_subtype_check_reuses_entries(&db, hello, TypeId::STRING, true);
+}
+
+#[test]
+fn subtype_relation_cache_partitions_by_inheritance_graph_generation() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let graph = crate::classes::inheritance::InheritanceGraph::new();
+
+    let protected_name = interner.intern_string("value");
+    let base = tsz_binder::SymbolId(20);
+    let derived = tsz_binder::SymbolId(21);
+    let mut source_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    source_prop.visibility = Visibility::Protected;
+    source_prop.parent_id = Some(derived);
+    let mut target_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    target_prop.visibility = Visibility::Protected;
+    target_prop.parent_id = Some(base);
+    let source = interner.object(vec![source_prop]);
+    let target = interner.object(vec![target_prop]);
+
+    let mut before = SubtypeChecker::new(&interner)
+        .with_query_db(&db)
+        .with_inheritance_graph(&graph);
+    let before_key = before.debug_cache_key_for(source, target);
+    assert_eq!(before_key.inheritance_graph_id, graph.identity());
+    assert_eq!(before_key.inheritance_graph_generation, graph.generation());
+    assert!(!before.is_subtype_of(source, target));
+    assert_eq!(db.lookup_subtype_cache(before_key), Some(false));
+
+    graph.add_inheritance(derived, &[base]);
+
+    let mut after = SubtypeChecker::new(&interner)
+        .with_query_db(&db)
+        .with_inheritance_graph(&graph);
+    let after_key = after.debug_cache_key_for(source, target);
+    assert_eq!(after_key.inheritance_graph_id, graph.identity());
+    assert_eq!(after_key.inheritance_graph_generation, graph.generation());
+    assert_ne!(
+        before_key, after_key,
+        "graph mutation must partition shared relation cache entries"
+    );
+    assert!(after.is_subtype_of(source, target));
+    assert_eq!(db.lookup_subtype_cache(after_key), Some(true));
 }
 
 #[test]

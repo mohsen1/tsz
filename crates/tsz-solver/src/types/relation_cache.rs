@@ -175,6 +175,8 @@ impl RelationCacheConfig {
 /// - `target`: The target type being compared.
 /// - `relation`: Which relation is being cached. See [`RelationCacheKind`].
 /// - `config`:   The behavior-affecting configuration. See [`RelationCacheConfig`].
+/// - `inheritance_graph_id` / `inheritance_graph_generation`: Class graph
+///   context for nominal protected/private-origin checks.
 ///
 /// ## Construction
 ///
@@ -195,10 +197,14 @@ pub struct RelationCacheKey {
     /// receiver. Encoding the resolved binding here lets such verdicts live in
     /// the cross-checker shared cache without poisoning a sibling checker that
     /// compares the same `(source, target)` under a different receiver (issue
-    /// #13828). It is [`TypeId::NONE`] for every non-`this` pair, so ordinary
-    /// keys are byte-identical to the pre-`this`-context protocol and share
-    /// their existing cache slots unchanged.
+    /// #13828). It is [`TypeId::NONE`] for every non-`this` pair.
     pub this_context: TypeId,
+    /// Process-local identity of the active inheritance graph, or `0` when no
+    /// graph participates in this relation verdict.
+    pub inheritance_graph_id: u64,
+    /// Mutation generation of the active inheritance graph. This partitions
+    /// protected/ES-private origin verdicts across graph edge changes.
+    pub inheritance_graph_generation: u64,
 }
 
 impl RelationCacheKey {
@@ -236,6 +242,8 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Subtype,
             config,
             this_context: TypeId::NONE,
+            inheritance_graph_id: 0,
+            inheritance_graph_generation: 0,
         }
     }
 
@@ -251,6 +259,8 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Assignable,
             config,
             this_context: TypeId::NONE,
+            inheritance_graph_id: 0,
+            inheritance_graph_generation: 0,
         }
     }
 
@@ -270,6 +280,8 @@ impl RelationCacheKey {
             relation: RelationCacheKind::CheckerAssignable,
             config,
             this_context: TypeId::NONE,
+            inheritance_graph_id: 0,
+            inheritance_graph_generation: 0,
         }
     }
 
@@ -285,16 +297,27 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Identical,
             config,
             this_context: TypeId::NONE,
+            inheritance_graph_id: 0,
+            inheritance_graph_generation: 0,
         }
     }
 
     /// Return this key discriminated by a resolved polymorphic-`this` binding.
     ///
-    /// Passing [`TypeId::NONE`] (the default) is a no-op, leaving the key
-    /// byte-identical to the undiscriminated form. See [`Self::this_context`].
+    /// Passing [`TypeId::NONE`] (the default) leaves the key in the
+    /// receiver-free partition. See [`Self::this_context`].
     #[must_use]
     pub const fn with_this_context(mut self, this_context: TypeId) -> Self {
         self.this_context = this_context;
+        self
+    }
+
+    /// Return this key discriminated by an inheritance graph identity and
+    /// mutation generation. Passing `(0, 0)` is the graph-free default.
+    #[must_use]
+    pub const fn with_inheritance_graph_context(mut self, identity: u64, generation: u64) -> Self {
+        self.inheritance_graph_id = identity;
+        self.inheritance_graph_generation = generation;
         self
     }
 }

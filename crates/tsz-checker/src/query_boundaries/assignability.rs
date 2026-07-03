@@ -711,7 +711,10 @@ mod final_relation;
 mod overload_subtype_pass;
 mod relation_kind_variants;
 mod shape;
-pub(crate) use cache_key::{RelationFlags, assignability_cache_key, subtype_cache_key};
+pub(crate) use cache_key::{
+    RelationFlags, assignability_cache_key, assignability_cache_key_for_policy,
+    checker_final_assignability_cache_key, subtype_cache_key,
+};
 pub(crate) use final_relation::cached_final_assignability;
 pub(crate) use overload_subtype_pass::cached_overload_subtype_pass_assignability;
 pub(crate) use relation_kind_variants::{
@@ -928,7 +931,12 @@ pub(crate) fn cached_assignability_with_overrides<
     let is_cacheable =
         is_relation_cacheable(inputs.db.as_type_database(), inputs.source, inputs.target);
     if is_cacheable {
-        let cache_key = assignability_cache_key(inputs.source, inputs.target, inputs.flags);
+        let cache_key = assignability_cache_key(
+            inputs.source,
+            inputs.target,
+            inputs.flags,
+            inputs.inheritance_graph,
+        );
         if let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
             return tsz_solver::relations::relation_queries::RelationResult::complete(
                 tsz_solver::relations::relation_queries::RelationKind::Assignable,
@@ -940,7 +948,12 @@ pub(crate) fn cached_assignability_with_overrides<
     let relation_result = is_assignable_with_overrides(inputs, overrides);
 
     if is_cacheable {
-        let cache_key = assignability_cache_key(inputs.source, inputs.target, inputs.flags);
+        let cache_key = assignability_cache_key(
+            inputs.source,
+            inputs.target,
+            inputs.flags,
+            inputs.inheritance_graph,
+        );
         inputs
             .db
             .insert_assignability_cache(cache_key, relation_result.is_related());
