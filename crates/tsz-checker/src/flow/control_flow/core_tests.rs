@@ -1,6 +1,8 @@
-use super::{FLOW_STEP_BUDGET_MAX, FLOW_STEP_BUDGET_MIN, FLOW_STEP_BUDGET_SCALE, flow_step_budget};
 use super::{
-    FlowCache, ReferenceMatchCache, ReferenceSymbolCache, flow_cache_entries,
+    AliasBaseAssignmentCache, AliasPathAssignmentCache, FlowCache, ReferenceMatchCache,
+    ReferenceSymbolCache, alias_base_assignment_cache_entries,
+    alias_base_assignment_cache_estimated_size_bytes, alias_path_assignment_cache_entries,
+    alias_path_assignment_cache_estimated_size_bytes, flow_cache_entries,
     flow_cache_estimated_size_bytes, numeric_atom_cache_entries,
     numeric_atom_cache_estimated_size_bytes, reference_match_cache_entries,
     reference_match_cache_estimated_size_bytes, reference_symbol_cache_entries,
@@ -8,6 +10,7 @@ use super::{
     shared_numeric_atom_cache_estimated_size_bytes, switch_reference_cache_entries,
     switch_reference_cache_estimated_size_bytes,
 };
+use super::{FLOW_STEP_BUDGET_MAX, FLOW_STEP_BUDGET_MIN, FLOW_STEP_BUDGET_SCALE, flow_step_budget};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
 use tsz_binder::{FlowNodeId, SymbolId};
@@ -142,4 +145,27 @@ fn shared_numeric_atom_cache_statistics_report_borrowed_entries_and_zero_owned_s
         shared_numeric_atom_cache_estimated_size_bytes(Some(&cache)),
         0
     );
+}
+
+#[test]
+fn alias_assignment_cache_statistics_report_entries_and_size() {
+    let base_cache = AliasBaseAssignmentCache::default();
+    assert_eq!(alias_base_assignment_cache_entries(&base_cache), 0);
+    assert_eq!(
+        alias_base_assignment_cache_estimated_size_bytes(&base_cache),
+        0
+    );
+    base_cache.borrow_mut().insert((1, 2), true);
+    assert_eq!(alias_base_assignment_cache_entries(&base_cache), 1);
+    assert!(alias_base_assignment_cache_estimated_size_bytes(&base_cache) > 0);
+
+    let path_cache = AliasPathAssignmentCache::default();
+    assert_eq!(alias_path_assignment_cache_entries(&path_cache), 0);
+    assert_eq!(
+        alias_path_assignment_cache_estimated_size_bytes(&path_cache),
+        0
+    );
+    path_cache.borrow_mut().insert((1, 2, 3), false);
+    assert_eq!(alias_path_assignment_cache_entries(&path_cache), 1);
+    assert!(alias_path_assignment_cache_estimated_size_bytes(&path_cache) > 0);
 }

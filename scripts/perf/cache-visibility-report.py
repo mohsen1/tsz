@@ -271,23 +271,40 @@ def scan_file(path: Path, signal_text: str | None = None) -> list[CacheCandidate
     signal_text = signal_text if signal_text is not None else file_text
     rel = relative(path)
     owner = "<module>"
+    pending_owner: str | None = None
     struct_depth = 0
     candidates: list[CacheCandidate] = []
     index = 0
     while index < len(code_lines):
         line = code_lines[index]
         line_no = index + 1
+        opened_pending_on_line = False
+        if pending_owner is not None and "{" in line:
+            owner = pending_owner
+            pending_owner = None
+            struct_depth = line.count("{") - line.count("}")
+            opened_pending_on_line = True
+            if struct_depth <= 0:
+                owner = "<module>"
+                struct_depth = 0
+
         struct_match = STRUCT_RE.search(line)
         if struct_match:
-            owner = struct_match.group(1)
-            struct_depth = max(1, line.count("{") - line.count("}"))
+            if "{" in line:
+                owner = struct_match.group(1)
+                struct_depth = line.count("{") - line.count("}")
+                if struct_depth <= 0:
+                    owner = "<module>"
+                    struct_depth = 0
+            elif ";" not in line:
+                pending_owner = struct_match.group(1)
 
         alias_match = TYPE_ALIAS_RE.search(line)
         match = alias_match
         if match is None and struct_depth > 0:
             match = FIELD_RE.search(line)
         if not match:
-            if struct_depth > 0 and not struct_match:
+            if struct_depth > 0 and not struct_match and not opened_pending_on_line:
                 struct_depth += line.count("{") - line.count("}")
                 if struct_depth <= 0:
                     owner = "<module>"
@@ -296,7 +313,7 @@ def scan_file(path: Path, signal_text: str | None = None) -> list[CacheCandidate
         name = match.group("name")
         type_text, end_index = collect_type_text(code_lines, index, match.group("type"))
         if not is_cache_type(type_text):
-            if struct_depth > 0 and not struct_match:
+            if struct_depth > 0 and not struct_match and not opened_pending_on_line:
                 for depth_line in code_lines[index : end_index + 1]:
                     struct_depth += depth_line.count("{") - depth_line.count("}")
                 if struct_depth <= 0:
@@ -315,7 +332,7 @@ def scan_file(path: Path, signal_text: str | None = None) -> list[CacheCandidate
                 size_signal=has_size_signal(signal_text, name),
             )
         )
-        if struct_depth > 0 and not struct_match:
+        if struct_depth > 0 and not struct_match and not opened_pending_on_line:
             for depth_line in code_lines[index : end_index + 1]:
                 struct_depth += depth_line.count("{") - depth_line.count("}")
             if struct_depth <= 0:

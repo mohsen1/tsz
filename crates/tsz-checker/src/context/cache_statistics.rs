@@ -8,12 +8,15 @@ use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::{
-    CheckerContext, cross_file_type_params_cache_statistics, env_eval_cache,
-    export_equals_named_cache_entries, export_equals_named_cache_estimated_size_bytes,
-    namespace_member_resolution_cache_entries,
+    CheckerContext, accessor_levels_cache_entries, accessor_levels_cache_estimated_size_bytes,
+    callback_mismatch_memo_entries, callback_mismatch_memo_estimated_size_bytes,
+    cross_file_type_params_cache_statistics, env_eval_cache, export_equals_named_cache_entries,
+    export_equals_named_cache_estimated_size_bytes, member_access_info_cache_entries,
+    member_access_info_cache_estimated_size_bytes, namespace_member_resolution_cache_entries,
     namespace_member_resolution_cache_estimated_size_bytes,
     nested_namespace_candidates_cache_entries,
-    nested_namespace_candidates_cache_estimated_size_bytes,
+    nested_namespace_candidates_cache_estimated_size_bytes, reexport_resolution_cache_entries,
+    reexport_resolution_cache_estimated_size_bytes,
 };
 
 const HASH_MAP_ENTRY_OVERHEAD_ESTIMATE: usize = 8;
@@ -36,6 +39,8 @@ pub struct CheckerContextCacheStatistics {
     pub lazy_lib_member_resolution_cache_estimated_size_bytes: usize,
     pub symbol_name_candidates_cache_entries: usize,
     pub symbol_name_candidates_cache_estimated_size_bytes: usize,
+    pub suggestion_scan_cache_entries: usize,
+    pub suggestion_scan_cache_estimated_size_bytes: usize,
     pub namespace_member_resolution_cache_entries: usize,
     pub namespace_member_resolution_cache_estimated_size_bytes: usize,
     pub export_equals_named_cache_entries: usize,
@@ -44,6 +49,14 @@ pub struct CheckerContextCacheStatistics {
     pub nested_namespace_candidates_cache_estimated_size_bytes: usize,
     pub lowering_entity_name_resolution_cache_entries: usize,
     pub lowering_entity_name_resolution_cache_estimated_size_bytes: usize,
+    pub reexport_resolution_cache_entries: usize,
+    pub reexport_resolution_cache_estimated_size_bytes: usize,
+    pub member_access_info_cache_entries: usize,
+    pub member_access_info_cache_estimated_size_bytes: usize,
+    pub enclosing_class_declares_member_cache_entries: usize,
+    pub enclosing_class_declares_member_cache_estimated_size_bytes: usize,
+    pub accessor_levels_cache_entries: usize,
+    pub accessor_levels_cache_estimated_size_bytes: usize,
     pub shared_lib_type_cache_entries: usize,
     pub shared_lib_type_cache_estimated_size_bytes: usize,
     pub flow_analysis_cache_entries: usize,
@@ -52,6 +65,10 @@ pub struct CheckerContextCacheStatistics {
     pub flow_switch_reference_cache_estimated_size_bytes: usize,
     pub flow_numeric_atom_cache_entries: usize,
     pub flow_numeric_atom_cache_estimated_size_bytes: usize,
+    pub flow_switch_case_literal_cache_entries: usize,
+    pub flow_switch_case_literal_cache_estimated_size_bytes: usize,
+    pub flow_switch_all_distinct_literals_cache_entries: usize,
+    pub flow_switch_all_distinct_literals_cache_estimated_size_bytes: usize,
     pub flow_reference_match_cache_entries: usize,
     pub flow_reference_match_cache_estimated_size_bytes: usize,
     pub flow_alias_base_assignment_cache_entries: usize,
@@ -70,6 +87,14 @@ pub struct CheckerContextCacheStatistics {
     pub env_eval_cache_estimated_size_bytes: usize,
     pub contextual_signature_normalization_cache_entries: usize,
     pub contextual_signature_normalization_cache_estimated_size_bytes: usize,
+    pub lazy_def_ids_cache_entries: usize,
+    pub lazy_def_ids_cache_estimated_size_bytes: usize,
+    pub type_queries_cache_entries: usize,
+    pub type_queries_cache_estimated_size_bytes: usize,
+    pub type_position_resolution_cache_entries: usize,
+    pub type_position_resolution_cache_estimated_size_bytes: usize,
+    pub package_json_cache_entries: usize,
+    pub package_json_cache_estimated_size_bytes: usize,
     pub class_symbol_to_decl_cache_entries: usize,
     pub class_symbol_to_decl_cache_estimated_size_bytes: usize,
     pub heritage_symbol_cache_entries: usize,
@@ -78,6 +103,10 @@ pub struct CheckerContextCacheStatistics {
     pub base_constructor_expr_cache_estimated_size_bytes: usize,
     pub base_instance_expr_cache_entries: usize,
     pub base_instance_expr_cache_estimated_size_bytes: usize,
+    pub inferred_return_type_memo_entries: usize,
+    pub inferred_return_type_memo_estimated_size_bytes: usize,
+    pub callback_mismatch_memo_entries: usize,
+    pub callback_mismatch_memo_estimated_size_bytes: usize,
     pub jsx_intrinsic_props_cache_entries: usize,
     pub jsx_intrinsic_props_cache_estimated_size_bytes: usize,
 }
@@ -91,14 +120,21 @@ impl CheckerContextCacheStatistics {
             + self.lib_type_resolution_cache_estimated_size_bytes
             + self.lazy_lib_member_resolution_cache_estimated_size_bytes
             + self.symbol_name_candidates_cache_estimated_size_bytes
+            + self.suggestion_scan_cache_estimated_size_bytes
             + self.namespace_member_resolution_cache_estimated_size_bytes
             + self.export_equals_named_cache_estimated_size_bytes
             + self.nested_namespace_candidates_cache_estimated_size_bytes
             + self.lowering_entity_name_resolution_cache_estimated_size_bytes
+            + self.reexport_resolution_cache_estimated_size_bytes
+            + self.member_access_info_cache_estimated_size_bytes
+            + self.enclosing_class_declares_member_cache_estimated_size_bytes
+            + self.accessor_levels_cache_estimated_size_bytes
             + self.shared_lib_type_cache_estimated_size_bytes
             + self.flow_analysis_cache_estimated_size_bytes
             + self.flow_switch_reference_cache_estimated_size_bytes
             + self.flow_numeric_atom_cache_estimated_size_bytes
+            + self.flow_switch_case_literal_cache_estimated_size_bytes
+            + self.flow_switch_all_distinct_literals_cache_estimated_size_bytes
             + self.flow_reference_match_cache_estimated_size_bytes
             + self.flow_alias_base_assignment_cache_estimated_size_bytes
             + self.flow_alias_path_assignment_cache_estimated_size_bytes
@@ -108,10 +144,16 @@ impl CheckerContextCacheStatistics {
             + self.class_chain_summary_cache_estimated_size_bytes
             + self.env_eval_cache_estimated_size_bytes
             + self.contextual_signature_normalization_cache_estimated_size_bytes
+            + self.lazy_def_ids_cache_estimated_size_bytes
+            + self.type_queries_cache_estimated_size_bytes
+            + self.type_position_resolution_cache_estimated_size_bytes
+            + self.package_json_cache_estimated_size_bytes
             + self.class_symbol_to_decl_cache_estimated_size_bytes
             + self.heritage_symbol_cache_estimated_size_bytes
             + self.base_constructor_expr_cache_estimated_size_bytes
             + self.base_instance_expr_cache_estimated_size_bytes
+            + self.inferred_return_type_memo_estimated_size_bytes
+            + self.callback_mismatch_memo_estimated_size_bytes
             + self.jsx_intrinsic_props_cache_estimated_size_bytes
     }
 
@@ -123,14 +165,21 @@ impl CheckerContextCacheStatistics {
             + self.lib_type_resolution_cache_entries
             + self.lazy_lib_member_resolution_cache_entries
             + self.symbol_name_candidates_cache_entries
+            + self.suggestion_scan_cache_entries
             + self.namespace_member_resolution_cache_entries
             + self.export_equals_named_cache_entries
             + self.nested_namespace_candidates_cache_entries
             + self.lowering_entity_name_resolution_cache_entries
+            + self.reexport_resolution_cache_entries
+            + self.member_access_info_cache_entries
+            + self.enclosing_class_declares_member_cache_entries
+            + self.accessor_levels_cache_entries
             + self.shared_lib_type_cache_entries
             + self.flow_analysis_cache_entries
             + self.flow_switch_reference_cache_entries
             + self.flow_numeric_atom_cache_entries
+            + self.flow_switch_case_literal_cache_entries
+            + self.flow_switch_all_distinct_literals_cache_entries
             + self.flow_reference_match_cache_entries
             + self.flow_alias_base_assignment_cache_entries
             + self.flow_alias_path_assignment_cache_entries
@@ -140,10 +189,16 @@ impl CheckerContextCacheStatistics {
             + self.class_chain_summary_cache_entries
             + self.env_eval_cache_entries
             + self.contextual_signature_normalization_cache_entries
+            + self.lazy_def_ids_cache_entries
+            + self.type_queries_cache_entries
+            + self.type_position_resolution_cache_entries
+            + self.package_json_cache_entries
             + self.class_symbol_to_decl_cache_entries
             + self.heritage_symbol_cache_entries
             + self.base_constructor_expr_cache_entries
             + self.base_instance_expr_cache_entries
+            + self.inferred_return_type_memo_entries
+            + self.callback_mismatch_memo_entries
             + self.jsx_intrinsic_props_cache_entries
     }
 }
@@ -168,14 +223,27 @@ impl<'a> CheckerContext<'a> {
             .lazy_member_receiver_properties
             .borrow();
         let symbol_name_candidates_cache = self.symbol_name_candidates_cache.borrow();
+        let suggestion_scan_cache = self
+            .name_resolution_diagnostics
+            .suggestion_scan_cache
+            .borrow();
         let namespace_member_resolution_cache = self.namespace_member_resolution_cache.borrow();
         let export_equals_named_cache = self.export_equals_named_cache.borrow();
         let nested_namespace_candidates_cache = self.nested_namespace_candidates_cache.borrow();
         let lowering_entity_name_resolution_cache =
             self.lowering_entity_name_resolution_cache.borrow();
+        let reexport_resolution_cache = self.reexport_resolution_cache.borrow();
+        let enclosing_class_declares_member_cache =
+            self.enclosing_class_declares_member_cache.borrow();
         let flow_analysis_cache = self.flow_shared.flow_analysis_cache.borrow();
         let flow_switch_reference_cache = self.flow_shared.flow_switch_reference_cache.borrow();
         let flow_numeric_atom_cache = self.flow_shared.flow_numeric_atom_cache.borrow();
+        let flow_switch_case_literal_cache =
+            self.flow_shared.flow_switch_case_literal_cache.borrow();
+        let flow_switch_all_distinct_literals_cache = self
+            .flow_shared
+            .flow_switch_all_distinct_literals_cache
+            .borrow();
         let flow_reference_match_cache = self.flow_shared.flow_reference_match_cache.borrow();
         let flow_alias_base_assignment_cache = self
             .flow_shared
@@ -191,6 +259,10 @@ impl<'a> CheckerContext<'a> {
         let class_constructor_type_cache = self.class_constructor_type_cache.borrow();
         let class_chain_summary_cache = self.class_chain_summary_cache.borrow();
         let env_eval_cache = self.env_eval_cache.borrow();
+        let lazy_def_ids_cache = self.lazy_def_ids_cache.borrow();
+        let type_queries_cache = self.type_queries_cache.borrow();
+        let type_position_resolution_cache = self.type_position_resolution_cache.borrow();
+        let package_json_cache = self.package_json_cache.borrow();
         let class_symbol_to_decl_cache = self.class_symbol_to_decl_cache.borrow();
         let heritage_symbol_cache = self.heritage_symbol_cache.borrow();
         let base_constructor_expr_cache = self.base_constructor_expr_cache.borrow();
@@ -242,6 +314,10 @@ impl<'a> CheckerContext<'a> {
             symbol_name_candidates_cache_entries: symbol_name_candidates_cache.len(),
             symbol_name_candidates_cache_estimated_size_bytes:
                 string_symbol_vec_cache_estimated_size_bytes(&symbol_name_candidates_cache),
+            suggestion_scan_cache_entries: suggestion_scan_cache.len(),
+            suggestion_scan_cache_estimated_size_bytes: keyed_string_vec_cache_estimated_size_bytes(
+                &suggestion_scan_cache,
+            ),
             namespace_member_resolution_cache_entries: namespace_member_resolution_cache_entries(
                 &namespace_member_resolution_cache,
             ),
@@ -265,6 +341,26 @@ impl<'a> CheckerContext<'a> {
                 .len(),
             lowering_entity_name_resolution_cache_estimated_size_bytes:
                 string_option_def_cache_estimated_size_bytes(&lowering_entity_name_resolution_cache),
+            reexport_resolution_cache_entries: reexport_resolution_cache_entries(
+                &reexport_resolution_cache,
+            ),
+            reexport_resolution_cache_estimated_size_bytes:
+                reexport_resolution_cache_estimated_size_bytes(&reexport_resolution_cache),
+            member_access_info_cache_entries: member_access_info_cache_entries(
+                &self.member_access_info_cache,
+            ),
+            member_access_info_cache_estimated_size_bytes:
+                member_access_info_cache_estimated_size_bytes(&self.member_access_info_cache),
+            enclosing_class_declares_member_cache_entries: enclosing_class_declares_member_cache
+                .len(),
+            enclosing_class_declares_member_cache_estimated_size_bytes:
+                fx_hash_map_estimated_size_bytes(&enclosing_class_declares_member_cache),
+            accessor_levels_cache_entries: accessor_levels_cache_entries(
+                &self.accessor_levels_cache,
+            ),
+            accessor_levels_cache_estimated_size_bytes: accessor_levels_cache_estimated_size_bytes(
+                &self.accessor_levels_cache,
+            ),
             shared_lib_type_cache_entries,
             shared_lib_type_cache_estimated_size_bytes,
             flow_analysis_cache_entries: flow_analysis_cache.len(),
@@ -279,6 +375,14 @@ impl<'a> CheckerContext<'a> {
             flow_numeric_atom_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &flow_numeric_atom_cache,
             ),
+            flow_switch_case_literal_cache_entries: flow_switch_case_literal_cache.len(),
+            flow_switch_case_literal_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
+                &flow_switch_case_literal_cache,
+            ),
+            flow_switch_all_distinct_literals_cache_entries:
+                flow_switch_all_distinct_literals_cache.len(),
+            flow_switch_all_distinct_literals_cache_estimated_size_bytes:
+                fx_hash_map_estimated_size_bytes(&flow_switch_all_distinct_literals_cache),
             flow_reference_match_cache_entries: flow_reference_match_cache.len(),
             flow_reference_match_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &flow_reference_match_cache,
@@ -325,6 +429,22 @@ impl<'a> CheckerContext<'a> {
                         .saturating_add(mem::size_of::<TypeId>())
                         .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
                 ),
+            lazy_def_ids_cache_entries: lazy_def_ids_cache.len(),
+            lazy_def_ids_cache_estimated_size_bytes: type_id_rc_slice_cache_estimated_size_bytes(
+                &lazy_def_ids_cache,
+            ),
+            type_queries_cache_entries: type_queries_cache.len(),
+            type_queries_cache_estimated_size_bytes: type_id_rc_slice_cache_estimated_size_bytes(
+                &type_queries_cache,
+            ),
+            type_position_resolution_cache_entries: type_position_resolution_cache.len(),
+            type_position_resolution_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
+                &type_position_resolution_cache,
+            ),
+            package_json_cache_entries: package_json_cache.len(),
+            package_json_cache_estimated_size_bytes: package_json_cache_estimated_size_bytes(
+                &package_json_cache,
+            ),
             class_symbol_to_decl_cache_entries: class_symbol_to_decl_cache.len(),
             class_symbol_to_decl_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &class_symbol_to_decl_cache,
@@ -341,6 +461,15 @@ impl<'a> CheckerContext<'a> {
             base_instance_expr_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &base_instance_expr_cache,
             ),
+            inferred_return_type_memo_entries: self.inferred_return_type_memo.len(),
+            inferred_return_type_memo_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
+                &self.inferred_return_type_memo,
+            ),
+            callback_mismatch_memo_entries: callback_mismatch_memo_entries(
+                &self.callback_mismatch_memo,
+            ),
+            callback_mismatch_memo_estimated_size_bytes:
+                callback_mismatch_memo_estimated_size_bytes(&self.callback_mismatch_memo),
             jsx_intrinsic_props_cache_entries: self.jsx_intrinsic_props_cache.len(),
             jsx_intrinsic_props_cache_estimated_size_bytes: fx_hash_map_estimated_size_bytes(
                 &self.jsx_intrinsic_props_cache,
@@ -354,6 +483,28 @@ fn fx_hash_map_estimated_size_bytes<K, V>(cache: &FxHashMap<K, V>) -> usize {
         mem::size_of::<K>()
             .saturating_add(mem::size_of::<V>())
             .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
+    )
+}
+
+fn type_id_rc_slice_cache_estimated_size_bytes<T>(
+    cache: &FxHashMap<TypeId, std::rc::Rc<[T]>>,
+) -> usize {
+    fx_hash_map_estimated_size_bytes(cache).saturating_add(
+        cache
+            .values()
+            .map(|items| items.len().saturating_mul(mem::size_of::<T>()))
+            .sum::<usize>(),
+    )
+}
+
+fn package_json_cache_estimated_size_bytes(
+    cache: &FxHashMap<std::path::PathBuf, Option<std::rc::Rc<serde_json::Value>>>,
+) -> usize {
+    fx_hash_map_estimated_size_bytes(cache).saturating_add(
+        cache
+            .keys()
+            .map(|path| path.as_os_str().len())
+            .sum::<usize>(),
     )
 }
 
@@ -380,6 +531,20 @@ fn def_atom_option_type_cache_estimated_size_bytes(
     cache: &FxHashMap<(DefId, Atom), Option<TypeId>>,
 ) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
+}
+
+fn keyed_string_vec_cache_estimated_size_bytes<K>(cache: &FxHashMap<K, Vec<String>>) -> usize {
+    fx_hash_map_estimated_size_bytes(cache).saturating_add(
+        cache
+            .values()
+            .map(|values| {
+                values
+                    .capacity()
+                    .saturating_mul(mem::size_of::<String>())
+                    .saturating_add(values.iter().map(String::len).sum::<usize>())
+            })
+            .sum::<usize>(),
+    )
 }
 
 fn string_symbol_vec_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<SymbolId>>) -> usize {
@@ -416,5 +581,32 @@ mod tests {
 
         assert_eq!(cache.len(), 1);
         assert!(type_param_node_cache_estimated_size_bytes(&cache) > 0);
+    }
+
+    #[test]
+    fn suggestion_scan_cache_statistics_report_entries_and_size() {
+        let mut cache = FxHashMap::default();
+        assert_eq!(keyed_string_vec_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert((7, 1), vec!["candidate".to_string()]);
+
+        assert_eq!(cache.len(), 1);
+        assert!(keyed_string_vec_cache_estimated_size_bytes(&cache) > 0);
+    }
+
+    #[test]
+    fn checker_context_cache_statistics_roll_up_diagnostic_and_switch_caches() {
+        let stats = CheckerContextCacheStatistics {
+            suggestion_scan_cache_entries: 1,
+            suggestion_scan_cache_estimated_size_bytes: 2,
+            flow_switch_case_literal_cache_entries: 4,
+            flow_switch_case_literal_cache_estimated_size_bytes: 8,
+            flow_switch_all_distinct_literals_cache_entries: 16,
+            flow_switch_all_distinct_literals_cache_estimated_size_bytes: 32,
+            ..CheckerContextCacheStatistics::default()
+        };
+
+        assert_eq!(stats.entries(), 21);
+        assert_eq!(stats.estimated_size_bytes(), 42);
     }
 }
