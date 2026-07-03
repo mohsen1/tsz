@@ -170,6 +170,47 @@ numeric[42];
 }
 
 #[test]
+fn test_union_numeric_index_common_surfaces_are_repeatable_and_order_independent() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+interface StrIdx { [k: string]: string; }
+interface StrIdx2 { [key: string]: boolean; }
+interface NumIdx { [k: number]: number; }
+interface NumIdx2 { [n: number]: boolean; }
+
+type StringIdxUnion = StrIdx | StrIdx2;
+type ReversedStringIdxUnion = StrIdx2 | StrIdx;
+type NumberIdxUnion = NumIdx | NumIdx2;
+type ReversedNumberIdxUnion = NumIdx2 | NumIdx;
+
+declare const stringIndexed: StringIdxUnion;
+declare const stringIndexedReversed: ReversedStringIdxUnion;
+declare const numeric: NumberIdxUnion;
+declare const numericReversed: ReversedNumberIdxUnion;
+
+const stringFirst: string | boolean = stringIndexed[42];
+const stringAgain: string | boolean = stringIndexed[42];
+const stringReversed: string | boolean = stringIndexedReversed[42];
+const numberFirst: number | boolean = numeric[42];
+const numberAgain: number | boolean = numeric[42];
+const numberReversed: number | boolean = numericReversed[42];
+"#,
+        CheckerOptions {
+            strict: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 7053),
+        "Did not expect TS7053 for repeated or reversed unions with a common numeric index surface. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_parenthesized_nullish_and_logical_expressions_do_not_emit_false_ts2322() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

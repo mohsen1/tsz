@@ -71,6 +71,7 @@ OPERATION_LOCAL_OWNERS = {
     "FlowAnalyzer",
     "FreeTypeParamCollector",
     "InferenceContext",
+    "NumericIndexSurfaceWalk",
     "SubtypeChecker",
     "TypeEvaluator",
     "TypeFormatter",
