@@ -26,6 +26,27 @@ fn computed_enum_member_ts18033_uses_relation_outcome_boundary() {
             && !source.contains("assign_relation_outcome(init_type, TypeId::STRING)"),
         "computed enum-member diagnostics should not use generic assign relation outcomes"
     );
+    assert!(
+        source.contains("enum_initializer_evaluation_status(init_idx)"),
+        "computed enum-member diagnostics should ask enum_eval for evaluator success"
+    );
+    for forbidden_helper in [
+        "fn would_enum_eval_succeed(",
+        "fn is_identifier_evaluatable_in_enum(",
+    ] {
+        assert!(
+            !source.contains(forbidden_helper),
+            "statement helpers should not own enum initializer evaluator helper `{forbidden_helper}`"
+        );
+    }
+
+    let enum_eval_source = fs::read_to_string("src/types/utilities/enum_eval.rs")
+        .expect("failed to read enum_eval.rs");
+    assert!(
+        enum_eval_source.contains("fn enum_initializer_evaluation_status(")
+            && enum_eval_source.contains("fn identifier_evaluates_as_enum_initializer("),
+        "enum_eval should own TS18033 initializer evaluator status helpers"
+    );
 }
 
 #[test]

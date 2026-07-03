@@ -610,3 +610,58 @@ const n: number = z;
         0,
     );
 }
+
+#[test]
+fn test_ts18033_uses_enum_initializer_evaluation_status() {
+    let diagnostics = collect_diagnostics(
+        r#"
+const text = "x";
+const widened = "x" as string;
+const numeric = 1 as number;
+
+enum Good {
+    A = text,
+    B = numeric,
+}
+
+enum Ref {
+    A = 1,
+    B = A,
+    C = Ref.B,
+}
+
+enum Bad {
+    A = widened,
+    B = ({} as object),
+}
+"#,
+    );
+    let ts18033 = diagnostics.iter().filter(|d| d.0 == 18033).count();
+    assert_eq!(
+        ts18033, 2,
+        "Only widened string/object computed enum members should report TS18033, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts18033_template_expression_requires_evaluable_spans() {
+    let diagnostics = collect_diagnostics(
+        r#"
+const text = "x";
+const bad = ({} as object);
+
+enum Good {
+    A = `${text}`,
+}
+
+enum Bad {
+    A = `${bad}`,
+}
+"#,
+    );
+    let ts18033 = diagnostics.iter().filter(|d| d.0 == 18033).count();
+    assert_eq!(
+        ts18033, 1,
+        "Template enum initializers should require every span to evaluate, got: {diagnostics:?}"
+    );
+}

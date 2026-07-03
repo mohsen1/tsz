@@ -354,6 +354,116 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Model whether tsc's `evaluate()` would succeed for a non-const enum
+    /// member initializer before TS18033 falls back to type assignability.
+    pub(crate) fn enum_initializer_evaluation_status(&self, expr_idx: NodeIndex) -> Option<bool> {
+        if expr_idx.is_none() {
+            return Some(false);
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return Some(false);
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some(true)
+            }
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.identifier_evaluates_as_enum_initializer(expr_idx)
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                let Some(tmpl) = self.ctx.arena.get_template_expr(node) else {
+                    return Some(false);
+                };
+
+                let mut result = Some(true);
+                for &span_idx in &tmpl.template_spans.nodes {
+                    let Some(span_node) = self.ctx.arena.get(span_idx) else {
+                        return Some(false);
+                    };
+                    let Some(span_data) = self.ctx.arena.get_template_span(span_node) else {
+                        return Some(false);
+                    };
+                    match self.enum_initializer_evaluation_status(span_data.expression) {
+                        Some(false) => return Some(false),
+                        None => result = None,
+                        Some(true) => {}
+                    }
+                }
+                result
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                None
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                    return Some(false);
+                };
+                let left = self.enum_initializer_evaluation_status(binary.left);
+                let right = self.enum_initializer_evaluation_status(binary.right);
+                match (left, right) {
+                    (Some(false), _) | (_, Some(false)) => Some(false),
+                    (Some(true), Some(true)) => Some(true),
+                    _ => None,
+                }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let Some(unary) = self.ctx.arena.get_unary_expr(node) else {
+                    return Some(false);
+                };
+                self.enum_initializer_evaluation_status(unary.operand)
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
+                    return Some(false);
+                };
+                self.enum_initializer_evaluation_status(paren.expression)
+            }
+            _ => Some(false),
+        }
+    }
+
+    fn identifier_evaluates_as_enum_initializer(&self, ident_idx: NodeIndex) -> Option<bool> {
+        let Some(sym_id) = self.resolve_identifier_symbol(ident_idx) else {
+            return Some(false);
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return Some(false);
+        };
+
+        if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
+            return Some(true);
+        }
+
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return None;
+        }
+
+        let decl_node = self.ctx.arena.get(value_decl)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        if !self.ctx.arena.is_const_variable_declaration(value_decl) {
+            return Some(false);
+        }
+
+        let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return Some(false);
+        };
+        let init = var_data.initializer;
+        if init.is_none() {
+            return Some(false);
+        }
+
+        self.enum_initializer_evaluation_status(init)
+    }
+
     /// Resolve a property access or element access expression that references
     /// an enum member, and evaluate its numeric value.
     ///
