@@ -67,6 +67,7 @@ OPERATION_LOCAL_OWNERS = {
     "CompatChecker",
     "DeepContainsChecker",
     "DefaultJudge",
+    "ElementIndexableMemo",
     "FlowAnalyzer",
     "FreeTypeParamCollector",
     "InferenceContext",
