@@ -763,8 +763,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 eval_session.increment_refs_resolution_fuel();
-                eval_session.increment_lazy_resolution_fuel();
-                let at_fuel_limit = eval_session.lazy_resolution_fuel_exhausted();
                 // Always call resolve_and_insert_def_type even when global fuel is
                 // exhausted: the call is typically a fast cache hit for lib types that
                 // were computed during type-environment building, and the resolver needs
@@ -787,7 +785,12 @@ impl<'a> CheckerState<'a> {
                 // byte-parity. With the kill-switch set, `transitive` is always true
                 // (legacy eager pre-walk).
                 let push_tail = transitive || !self.force_eligible_lib_def(def_id);
-                if let Some(result) = self.resolve_and_insert_def_type(def_id)
+                let shared_fuel_exhausted_before_resolution =
+                    eval_session.lazy_resolution_fuel_exhausted();
+                let resolved = self.resolve_and_insert_def_type(def_id);
+                let at_fuel_limit = shared_fuel_exhausted_before_resolution
+                    || eval_session.lazy_resolution_fuel_exhausted();
+                if let Some(result) = resolved
                     && result != TypeId::ERROR
                     && result != TypeId::ANY
                     && !at_fuel_limit
