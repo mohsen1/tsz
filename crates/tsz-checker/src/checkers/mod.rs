@@ -200,7 +200,7 @@ pub fn reset_per_file_resolution_guards() {
     STACK_STATE.set(0);
 
     // Clear enum evaluation memos (use NodeIndex keys that are arena-local)
-    crate::types_domain::utilities::enum_utils::clear_enum_eval_memo();
+    crate::types_domain::utilities::enum_eval::clear_enum_eval_memo();
     crate::types_domain::utilities::const_enum_eval::clear_const_eval_memo();
 
     // Clear cycle guard visited sets

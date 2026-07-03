@@ -1,7 +1,7 @@
 //! Shared cycle detection utility for enum initializer evaluation.
 //!
 //! Both const enum evaluation (`const_enum_eval`) and non-const enum evaluation
-//! (`enum_utils`) need to detect re-entrant evaluation of the same enum member.
+//! (`enum_eval`) need to detect re-entrant evaluation of the same enum member.
 //! This module provides a unified `CycleGuard` pattern:
 //!
 //! 1. A thread-local `FxHashSet<NodeIndex>` tracks members currently being evaluated.
@@ -33,7 +33,7 @@ pub(crate) struct CycleGuard {
 pub(crate) enum CycleSetId {
     /// Used by `const_enum_eval` during declaration checking.
     ConstEnum,
-    /// Used by `enum_utils` during type checking.
+    /// Used by `enum_eval` during type checking.
     NonConstEnum,
 }
 
