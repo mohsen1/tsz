@@ -8,7 +8,7 @@
 
 use crate::context::CheckerContext;
 use crate::state::{CheckerState, EnumKind};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::numeric::{to_int32, to_uint32};
 use tsz_parser::parser::node::{EnumData, NodeAccess};
@@ -92,6 +92,184 @@ pub(crate) fn classify_isolated_enum_initializer(
     enum_data: &EnumData,
 ) -> IsolatedEnumInitializerKind {
     classify_isolated_enum_initializer_inner(ctx, expr_idx, enum_data, 0)
+}
+
+pub(crate) fn isolated_decl_enum_initializer_is_computable(
+    ctx: &CheckerContext<'_>,
+    init_idx: NodeIndex,
+    enum_idx: NodeIndex,
+) -> bool {
+    let mut seen_members = FxHashSet::default();
+    isolated_decl_enum_value_is_computable(ctx, init_idx, enum_idx, &mut seen_members)
+}
+
+fn isolated_decl_enum_value_is_computable(
+    ctx: &CheckerContext<'_>,
+    init_idx: NodeIndex,
+    enum_idx: NodeIndex,
+    seen_members: &mut FxHashSet<NodeIndex>,
+) -> bool {
+    let Some(init_node) = ctx.arena.get(init_idx) else {
+        return true;
+    };
+    match init_node.kind {
+        k if k == SyntaxKind::NumericLiteral as u16 || k == SyntaxKind::StringLiteral as u16 => {
+            true
+        }
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+            ctx.arena.get_unary_expr(init_node).is_some_and(|unary| {
+                isolated_decl_enum_value_is_computable(ctx, unary.operand, enum_idx, seen_members)
+            })
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            ctx.arena.get_binary_expr(init_node).is_some_and(|bin| {
+                isolated_decl_enum_value_is_computable(ctx, bin.left, enum_idx, seen_members)
+                    && isolated_decl_enum_value_is_computable(
+                        ctx,
+                        bin.right,
+                        enum_idx,
+                        seen_members,
+                    )
+            })
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            ctx.arena.get_parenthesized(init_node).is_some_and(|paren| {
+                isolated_decl_enum_value_is_computable(
+                    ctx,
+                    paren.expression,
+                    enum_idx,
+                    seen_members,
+                )
+            })
+        }
+        // Runtime-computed enum members are allowed for isolated declarations.
+        // TS9020 is about references to external symbols, not arbitrary computations.
+        k if k == syntax_kind_ext::CALL_EXPRESSION => true,
+        k if k == SyntaxKind::Identifier as u16 => {
+            same_isolated_decl_enum_member_reference_is_computable(
+                ctx,
+                init_idx,
+                enum_idx,
+                seen_members,
+            )
+        }
+        k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+            let Some(access) = ctx.arena.get_access_expr(init_node) else {
+                return false;
+            };
+            if !is_same_isolated_decl_enum_access(ctx, access.expression, enum_idx) {
+                return false;
+            }
+            ctx.arena
+                .get_identifier_at(access.name_or_argument)
+                .is_some_and(|member_ident| {
+                    same_isolated_decl_enum_member_named_is_computable(
+                        ctx,
+                        &member_ident.escaped_text,
+                        enum_idx,
+                        seen_members,
+                    )
+                })
+        }
+        k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+            let Some(access) = ctx.arena.get_access_expr(init_node) else {
+                return false;
+            };
+            if !is_same_isolated_decl_enum_access(ctx, access.expression, enum_idx) {
+                return false;
+            }
+            ctx.arena
+                .get_literal_at(access.name_or_argument)
+                .is_some_and(|literal| {
+                    same_isolated_decl_enum_member_named_is_computable(
+                        ctx,
+                        &literal.text,
+                        enum_idx,
+                        seen_members,
+                    )
+                })
+        }
+        _ => false,
+    }
+}
+
+fn same_isolated_decl_enum_member_reference_is_computable(
+    ctx: &CheckerContext<'_>,
+    id_idx: NodeIndex,
+    enum_idx: NodeIndex,
+    seen_members: &mut FxHashSet<NodeIndex>,
+) -> bool {
+    let Some(ident) = ctx.arena.get_identifier_at(id_idx) else {
+        return false;
+    };
+    same_isolated_decl_enum_member_named_is_computable(
+        ctx,
+        &ident.escaped_text,
+        enum_idx,
+        seen_members,
+    )
+}
+
+fn same_isolated_decl_enum_member_named_is_computable(
+    ctx: &CheckerContext<'_>,
+    name: &str,
+    enum_idx: NodeIndex,
+    seen_members: &mut FxHashSet<NodeIndex>,
+) -> bool {
+    let Some(enum_node) = ctx.arena.get(enum_idx) else {
+        return false;
+    };
+    let Some(enum_data) = ctx.arena.get_enum(enum_node) else {
+        return false;
+    };
+    for &member_idx in &enum_data.members.nodes {
+        if let Some(member_node) = ctx.arena.get(member_idx)
+            && let Some(member) = ctx.arena.get_enum_member(member_node)
+            && let Some(member_ident) = ctx.arena.get_identifier_at(member.name)
+            && member_ident.escaped_text == name
+        {
+            if !seen_members.insert(member_idx) {
+                return true;
+            }
+
+            let result = member.initializer.is_none()
+                || isolated_decl_enum_value_is_computable(
+                    ctx,
+                    member.initializer,
+                    enum_idx,
+                    seen_members,
+                );
+
+            seen_members.remove(&member_idx);
+            return result;
+        }
+    }
+    false
+}
+
+fn is_same_isolated_decl_enum_access(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+    enum_idx: NodeIndex,
+) -> bool {
+    let Some(expr_node) = ctx.arena.get(expr_idx) else {
+        return false;
+    };
+    if expr_node.kind != SyntaxKind::Identifier as u16 {
+        return false;
+    }
+    let Some(ident) = ctx.arena.get_identifier_at(expr_idx) else {
+        return false;
+    };
+    let Some(enum_node) = ctx.arena.get(enum_idx) else {
+        return false;
+    };
+    let Some(enum_data) = ctx.arena.get_enum(enum_node) else {
+        return false;
+    };
+    ctx.arena
+        .get_identifier_at(enum_data.name)
+        .is_some_and(|enum_ident| enum_ident.escaped_text == ident.escaped_text)
 }
 
 fn is_numeric_constant_enum_expr_inner(
