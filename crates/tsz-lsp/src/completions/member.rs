@@ -3,12 +3,14 @@
 
 mod contextual_type;
 mod member_filters;
+mod traversal_state;
 
 use super::*;
 use member_filters::{
     OBJECT_PROTOTYPE_ONLY_MEMBERS, dot_access_member_label_is_completion_eligible,
     primitive_member_is_completion_eligible,
 };
+use traversal_state::MemberTraversalState;
 use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 
 #[derive(Clone, Copy, Debug)]
@@ -307,7 +309,15 @@ impl<'a> Completions<'a> {
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
-        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, false);
+        let mut traversal = MemberTraversalState::new(visited);
+        self.collect_properties_for_type_inner(
+            type_id,
+            interner,
+            checker,
+            &mut traversal,
+            props,
+            false,
+        );
     }
 
     /// Collect properties including private/protected members.
@@ -320,7 +330,15 @@ impl<'a> Completions<'a> {
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
-        self.collect_properties_for_type_inner(type_id, interner, checker, visited, props, true);
+        let mut traversal = MemberTraversalState::new(visited);
+        self.collect_properties_for_type_inner(
+            type_id,
+            interner,
+            checker,
+            &mut traversal,
+            props,
+            true,
+        );
     }
 
     fn collect_properties_for_type_inner(
@@ -328,11 +346,11 @@ impl<'a> Completions<'a> {
         type_id: TypeId,
         interner: &TypeInterner,
         checker: &mut CheckerState,
-        visited: &mut FxHashSet<TypeId>,
+        traversal: &mut MemberTraversalState<'_>,
         props: &mut FxHashMap<String, PropertyCompletion>,
         include_private: bool,
     ) {
-        if !visited.insert(type_id) {
+        if !traversal.enter(type_id) {
             return;
         }
 
@@ -343,7 +361,7 @@ impl<'a> Completions<'a> {
                 evaluated,
                 interner,
                 checker,
-                visited,
+                traversal,
                 props,
                 include_private,
             );
@@ -356,7 +374,7 @@ impl<'a> Completions<'a> {
                 inner,
                 interner,
                 checker,
-                visited,
+                traversal,
                 props,
                 include_private,
             );
@@ -392,7 +410,7 @@ impl<'a> Completions<'a> {
                 IntrinsicKind::Function,
                 interner,
                 checker,
-                visited,
+                traversal,
                 props,
             );
             return;
@@ -409,7 +427,7 @@ impl<'a> Completions<'a> {
                 self.collect_array_prototype_props(
                     array_base,
                     interner,
-                    visited,
+                    traversal,
                     props,
                     include_private,
                 );
@@ -429,15 +447,16 @@ impl<'a> Completions<'a> {
                     Vec::with_capacity(members.len());
                 for &member in members.iter() {
                     let mut member_props = FxHashMap::default();
-                    let mut member_visited = visited.clone();
+                    let checkpoint = traversal.checkpoint();
                     self.collect_properties_for_type_inner(
                         member,
                         interner,
                         checker,
-                        &mut member_visited,
+                        traversal,
                         &mut member_props,
                         include_private,
                     );
+                    traversal.rollback(checkpoint);
                     per_member_props.push(member_props);
                 }
                 // Intersect: keep only properties present in ALL members,
@@ -473,7 +492,7 @@ impl<'a> Completions<'a> {
                         member,
                         interner,
                         checker,
-                        visited,
+                        traversal,
                         props,
                         include_private,
                     );
@@ -490,7 +509,7 @@ impl<'a> Completions<'a> {
                     member,
                     interner,
                     checker,
-                    visited,
+                    traversal,
                     props,
                     include_private,
                 );
@@ -504,7 +523,7 @@ impl<'a> Completions<'a> {
                 self.collect_array_prototype_props(
                     app.base,
                     interner,
-                    visited,
+                    traversal,
                     props,
                     include_private,
                 );
@@ -513,7 +532,7 @@ impl<'a> Completions<'a> {
                     app.base,
                     interner,
                     checker,
-                    visited,
+                    traversal,
                     props,
                     include_private,
                 );
@@ -526,14 +545,14 @@ impl<'a> Completions<'a> {
                 IntrinsicKind::String,
                 interner,
                 checker,
-                visited,
+                traversal,
                 props,
             );
             return;
         }
 
         if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
-            self.collect_intrinsic_members_or_boxed(kind, interner, checker, visited, props);
+            self.collect_intrinsic_members_or_boxed(kind, interner, checker, traversal, props);
         }
     }
 
@@ -1320,11 +1339,11 @@ impl<'a> Completions<'a> {
         &self,
         type_id: TypeId,
         interner: &TypeInterner,
-        visited: &mut FxHashSet<TypeId>,
+        traversal: &mut MemberTraversalState<'_>,
         props: &mut FxHashMap<String, PropertyCompletion>,
         include_private: bool,
     ) {
-        if !visited.insert(type_id) {
+        if !traversal.enter(type_id) {
             return;
         }
         if let Some(id) = visitor::callable_shape_id(interner, type_id) {
@@ -1345,7 +1364,7 @@ impl<'a> Completions<'a> {
                 self.collect_array_prototype_props(
                     member,
                     interner,
-                    visited,
+                    traversal,
                     props,
                     include_private,
                 );
@@ -1419,12 +1438,12 @@ impl<'a> Completions<'a> {
         kind: IntrinsicKind,
         interner: &TypeInterner,
         checker: &mut CheckerState,
-        visited: &mut FxHashSet<TypeId>,
+        traversal: &mut MemberTraversalState<'_>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
         if let Some(boxed_type) = interner.get_boxed_type(kind) {
             self.collect_properties_for_type_inner(
-                boxed_type, interner, checker, visited, props, false,
+                boxed_type, interner, checker, traversal, props, false,
             );
             Self::remove_hidden_primitive_boxed_completions(props);
         } else {

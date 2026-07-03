@@ -149,6 +149,29 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
         self.assertIn("new_predicate.rs:2", hits[0])
         self.assertIn("memoized DP", hits[0])
 
+    def test_flags_clones_of_renamed_visited_state(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/new_predicate.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "    let mut fork = branch_visited.clone();\n"
+                    "    let other = names.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        allowlist = (
+            (
+                "crates/tsz-checker/src/flow/new_predicate.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], allowlist)
+        self.assertEqual(len(hits), 1, f"unexpected hits: {hits!r}")
+        self.assertIn("new_predicate.rs:3", hits[0])
+        self.assertIn("memoized DP", hits[0])
+
     def test_allows_pinned_site_by_file_and_statement_text(self):
         root = self._make_tree(
             {
@@ -201,6 +224,9 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
                 ),
                 "crates/tsz-checker/src/commented.rs": (
                     "// let mut branch_visited = visited.clone();\n"
+                ),
+                "crates/tsz-checker/src/inline_commented.rs": (
+                    "let other = names.clone(); // let x = visited.clone();\n"
                 ),
             }
         )

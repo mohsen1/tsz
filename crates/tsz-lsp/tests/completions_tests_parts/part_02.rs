@@ -268,6 +268,54 @@ fn test_completions_function_prototype_members_on_function_expression() {
     );
 }
 
+#[test]
+fn test_completions_union_shared_intersection_members_survive_arm_traversal() {
+    let names = member_names_at_end(
+        "type Core = { shared: string; common(): number };\n\
+         type LeftBox = Core & { leftOnly: number };\n\
+         type RightBox = Core & { rightOnly: boolean };\n\
+         declare const value: LeftBox | RightBox;\n\
+         value.",
+    );
+
+    for expected in ["shared", "common"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected shared union member '{expected}', got: {names:?}"
+        );
+    }
+    for forbidden in ["leftOnly", "rightOnly"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Union completions must exclude arm-only member '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_union_shared_intersection_members_survive_renamed_aliases() {
+    let names = member_names_at_end(
+        "type Payload = { alphaShared: number; alphaMethod(): void };\n\
+         type FirstArm = Payload & { firstOnly: string };\n\
+         type SecondArm = Payload & { secondOnly: string };\n\
+         declare const subject: FirstArm | SecondArm;\n\
+         subject.",
+    );
+
+    for expected in ["alphaShared", "alphaMethod"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected renamed shared union member '{expected}', got: {names:?}"
+        );
+    }
+    for forbidden in ["firstOnly", "secondOnly"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Union completions must exclude renamed arm-only member '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
 // ── Array member completions ─────────────────────────────────────────────────
 
 /// Build member completions using a custom interner that has a mock

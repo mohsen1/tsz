@@ -858,7 +858,13 @@ def scan_regex_line_count(
     return []
 
 
-VISITED_CLONE_PATTERN = re.compile(r"\bvisited\.clone\s*\(")
+VISITED_CLONE_PATTERN = re.compile(
+    r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*clone\s*\("
+)
+
+
+def strip_line_comment(line: str) -> str:
+    return line.split("//", 1)[0]
 
 
 def scan_branch_local_visited_clones(
@@ -895,10 +901,14 @@ def scan_branch_local_visited_clones(
             except OSError:
                 continue
             for line_no, line in enumerate(text.splitlines(), start=1):
-                stripped = line.strip()
+                stripped = strip_line_comment(line).strip()
                 if stripped.startswith("//"):
                     continue
-                if not VISITED_CLONE_PATTERN.search(stripped):
+                matches_visited_clone = any(
+                    "visited" in match.group("name").lower()
+                    for match in VISITED_CLONE_PATTERN.finditer(stripped)
+                )
+                if not matches_visited_clone:
                     continue
 
                 key = (rel_to_root, stripped)
