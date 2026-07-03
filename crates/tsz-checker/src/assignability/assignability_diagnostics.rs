@@ -5,6 +5,7 @@ use crate::query_boundaries::assignability::{
 };
 use crate::query_boundaries::diagnostics as assignability_diagnostic_common;
 use crate::query_boundaries::diagnostics::type_param_info;
+use crate::query_boundaries::enum_analysis::{self as enum_query, NumericEnumAssignmentTarget};
 use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use tsz_parser::parser::NodeIndex;
@@ -934,68 +935,45 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn numeric_enum_assignment_override_from_source(
+    pub(crate) fn numeric_enum_assignment_override_from_source(
         &mut self,
         source: TypeId,
         target: TypeId,
         source_idx: NodeIndex,
     ) -> Option<bool> {
-        use crate::query_boundaries::diagnostics::TypeResolver;
         let target = self.evaluate_type_for_assignability(target);
-        let target_def_id =
-            crate::query_boundaries::diagnostics::enum_def_id(self.ctx.types, target)?;
-        if !self.ctx.is_numeric_enum(target_def_id) {
-            return None;
-        }
+        let target_fact = enum_query::numeric_enum_assignment_target(&self.ctx, target)?;
 
         let source_literal = self.literal_type_from_initializer(source_idx);
         let source_is_number_like = source == TypeId::NUMBER
-            || source_literal.is_some_and(|lit| {
-                crate::query_boundaries::diagnostics::is_number_literal(self.ctx.types, lit)
-            });
+            || source_literal
+                .and_then(|lit| enum_query::numeric_literal_value(self.ctx.types, lit))
+                .is_some();
         if !source_is_number_like {
             return None;
         }
 
-        if self.ctx.is_enum_type(target, self.ctx.types) {
-            if let Some(source_literal) = source_literal {
-                let structural_target =
-                    crate::query_boundaries::diagnostics::enum_member_type(self.ctx.types, target)
-                        .unwrap_or(target);
-                return Some(
-                    self.numeric_enum_assignment_relation_outcome(
-                        source_literal,
-                        structural_target,
-                    )
-                    .related,
-                );
-            }
-            return None;
-        }
-
-        let target_member =
-            crate::query_boundaries::diagnostics::enum_member_type(self.ctx.types, target);
-        let target_literal = target_member.and_then(|member| {
-            crate::query_boundaries::diagnostics::literal_value(self.ctx.types, member)
-        });
-
-        target_member?;
-
-        match source_literal {
-            Some(source_literal) => {
-                let source_val = crate::query_boundaries::diagnostics::literal_value(
-                    self.ctx.types,
-                    source_literal,
-                );
-                match (source_val, target_literal) {
-                    (
-                        Some(tsz_solver::LiteralValue::Number(source_num)),
-                        Some(tsz_solver::LiteralValue::Number(target_num)),
-                    ) => Some(source_num == target_num),
-                    _ => Some(false),
+        match target_fact {
+            NumericEnumAssignmentTarget::Enum { structural_target } => {
+                if let Some(source_literal) = source_literal {
+                    return Some(
+                        self.numeric_enum_assignment_relation_outcome(
+                            source_literal,
+                            structural_target,
+                        )
+                        .related,
+                    );
                 }
+                None
             }
-            None => (source == TypeId::NUMBER).then_some(true),
+            NumericEnumAssignmentTarget::Member { target_literal } => match source_literal {
+                Some(source_literal) => {
+                    let source_val =
+                        enum_query::numeric_literal_value(self.ctx.types, source_literal);
+                    Some(source_val == Some(target_literal))
+                }
+                None => (source == TypeId::NUMBER).then_some(true),
+            },
         }
     }
 
@@ -1020,6 +998,15 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         if force_nested_error_nullish_report {
+            self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+            return false;
+        }
+        if let Some(allowed) =
+            self.numeric_enum_assignment_override_from_source(source, target, source_idx)
+        {
+            if allowed {
+                return true;
+            }
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
@@ -1118,6 +1105,15 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
+        if let Some(allowed) =
+            self.numeric_enum_assignment_override_from_source(source, target, source_idx)
+        {
+            if allowed {
+                return true;
+            }
+            self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
+            return false;
+        }
         let outcome = self.assignability_reason_relation_outcome(source, target);
         if outcome.related {
             return true;
@@ -1154,6 +1150,15 @@ impl<'a> CheckerState<'a> {
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
+        }
+        if let Some(allowed) =
+            self.numeric_enum_assignment_override_from_source(source, target, source_idx)
+        {
+            if allowed {
+                return true;
+            }
+            self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
+            return false;
         }
 
         let outcome = self.assignability_reason_relation_outcome(source, target);

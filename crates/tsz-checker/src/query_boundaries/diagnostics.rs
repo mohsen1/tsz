@@ -12,13 +12,13 @@ pub(crate) use super::common::{
     get_indexed_access_type, get_type_query_symbol_ref, has_call_signatures,
     has_construct_signatures, has_function_shape, index_access_types, instantiate_type,
     intersection_list_id, intersection_members, is_fresh_object_type, is_generic_mapped_type,
-    is_intersection_type, is_merged_intersection_object, is_number_literal,
-    is_symbol_or_unique_symbol, is_template_literal_type, keyof_inner_type, lazy_def_id,
-    literal_value, mapped_type_id, mapped_type_info, no_infer_inner_type, object_shape_for_type,
-    readonly_inner_type, return_type_for_type, string_literal_value, tuple_elements,
-    type_has_displayable_name, type_is_conditional_type_result_with_unresolved_inference,
-    type_param_info, type_parameter_constraint, union_list_id, union_members,
-    widen_literal_to_primitive, widen_type_deep,
+    is_intersection_type, is_merged_intersection_object, is_symbol_or_unique_symbol,
+    is_template_literal_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id,
+    mapped_type_info, no_infer_inner_type, object_shape_for_type, readonly_inner_type,
+    return_type_for_type, string_literal_value, tuple_elements, type_has_displayable_name,
+    type_is_conditional_type_result_with_unresolved_inference, type_param_info,
+    type_parameter_constraint, union_list_id, union_members, widen_literal_to_primitive,
+    widen_type_deep,
 };
 // Display-only type-shape predicates routed off the catch-all `common` boundary
 // so `error_reporter/` presentation code depends on `diagnostics` exclusively
