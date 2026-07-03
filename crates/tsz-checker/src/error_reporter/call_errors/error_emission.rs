@@ -632,19 +632,13 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        let mut property = tsz_solver::PropertyInfo::new(*property_name, *target_property_type);
-        property.optional = Self::type_includes_undefined(self.ctx.types, *target_property_type);
-        let display_type = self.ctx.types.factory().object(vec![property]);
+        let display_type =
+            crate::query_boundaries::diagnostics::mapped_property_mismatch_parameter_display_type(
+                self.ctx.types,
+                *property_name,
+                *target_property_type,
+            );
         Some(self.format_type_for_assignability_message(display_type))
-    }
-
-    fn type_includes_undefined(
-        db: &dyn tsz_solver::construction::TypeDatabase,
-        ty: TypeId,
-    ) -> bool {
-        ty == TypeId::UNDEFINED
-            || crate::query_boundaries::common::union_members(db, ty)
-                .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
     }
 
     /// Report an argument count mismatch error using solver diagnostics with source tracking.
