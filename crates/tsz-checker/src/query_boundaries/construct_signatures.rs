@@ -116,6 +116,26 @@ pub(crate) fn function_type_from_parts(
     function_type_from_shape(db, FunctionShape::new(params, return_type))
 }
 
+/// Intern a function type preserving `shape` metadata with a new parameter list.
+pub(crate) fn function_type_with_params_replaced(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    params: Vec<ParamInfo>,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params,
+            this_type: shape.this_type,
+            return_type: shape.return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        },
+    )
+}
+
 /// Intern the standalone function type for one signature (a constructor
 /// function when `is_constructor` is set).
 pub(crate) fn function_type_from_call_signature(
