@@ -272,6 +272,57 @@ fn test_numeric_enum_assignment_uses_enum_analysis_boundary() {
     }
 }
 
+/// Enum-member condition truthiness and TS2559 parent display are enum facts,
+/// but their callers still own syntax, declaration fallback, and rendering.
+#[test]
+fn test_enum_truthiness_and_ts2559_use_enum_analysis_boundary() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/enum_analysis.rs")
+        .expect("failed to read enum_analysis.rs");
+    assert!(
+        boundary_source.contains("fn enum_member_literal_condition_result("),
+        "query_boundaries::enum_analysis must own enum-member literal truthiness"
+    );
+
+    let truthiness_source = fs::read_to_string("src/types/queries/callable_truthiness.rs")
+        .expect("failed to read callable_truthiness.rs");
+    assert!(
+        truthiness_source.contains("enum_query::enum_member_literal_condition_result("),
+        "callable truthiness should ask enum_analysis for enum-member literal truthiness"
+    );
+    for forbidden_probe in ["enum_member_type(", "classify_literal_type("] {
+        assert!(
+            !truthiness_source.contains(forbidden_probe),
+            "callable truthiness should not own enum member literal probe `{forbidden_probe}`"
+        );
+    }
+
+    let assignability_source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+    let ts2559_start = assignability_source
+        .find("fn ts2559_source_display")
+        .expect("missing ts2559_source_display");
+    let ts2559_end = assignability_source[ts2559_start..]
+        .find("pub(crate) fn error_no_common_properties")
+        .map(|offset| ts2559_start + offset)
+        .expect("missing error_no_common_properties");
+    let ts2559_helper = &assignability_source[ts2559_start..ts2559_end];
+    assert!(
+        ts2559_helper.contains("enum_query::enum_member_like_parent_escaped_name("),
+        "TS2559 enum-member parent display should ask enum_analysis"
+    );
+    for forbidden_probe in [
+        "ctx.binder.get_symbol",
+        "resolve_type_to_symbol_id",
+        "symbol_flags::ENUM_MEMBER",
+        ".parent",
+    ] {
+        assert!(
+            !ts2559_helper.contains(forbidden_probe),
+            "TS2559 source display should not locally inspect enum parent facts with `{forbidden_probe}`"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]

@@ -12,7 +12,7 @@ use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::DefId;
 use tsz_solver::{LiteralValue, ObjectShape, TypeId};
 
-use super::common::TypeResolver;
+use super::common::{LiteralTypeKind, TypeResolver};
 
 pub(crate) fn enum_def_id(
     db: &dyn TypeDatabase,
@@ -97,6 +97,12 @@ pub(crate) enum NumericEnumAssignmentTarget {
     Member { target_literal: LiteralValue },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EnumMemberTruthiness {
+    AlwaysFalse,
+    AlwaysTrue,
+}
+
 /// Numeric-enum target facts needed by assignment diagnostics. Whole enum
 /// targets relate numeric literal sources to the enum member-value union, while
 /// enum member targets compare against the member's literal value.
@@ -128,6 +134,42 @@ pub(crate) fn numeric_literal_value(
     matches!(value, LiteralValue::Number(_)).then_some(value)
 }
 
+/// Truthiness of an enum member when either the expression type or declared
+/// member type has materialized to a literal enum-member value. Declaration
+/// fallback remains in the checker because it needs AST/cross-file arena access.
+pub(crate) fn enum_member_literal_condition_result(
+    db: &dyn TypeDatabase,
+    member_ty: TypeId,
+    expr_ty: TypeId,
+) -> Option<EnumMemberTruthiness> {
+    let member_underlying = enum_member_type(db, member_ty).unwrap_or(member_ty);
+    let expr_underlying = enum_member_type(db, expr_ty).unwrap_or(expr_ty);
+    [member_underlying, expr_underlying, member_ty, expr_ty]
+        .into_iter()
+        .find_map(|candidate| literal_condition_result(db, candidate))
+}
+
+fn literal_condition_result(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<EnumMemberTruthiness> {
+    match super::common::classify_literal_type(db, type_id) {
+        LiteralTypeKind::Number(value) => Some(if value == 0.0 {
+            EnumMemberTruthiness::AlwaysFalse
+        } else {
+            EnumMemberTruthiness::AlwaysTrue
+        }),
+        LiteralTypeKind::String(atom) => Some(if db.resolve_atom_ref(atom).is_empty() {
+            EnumMemberTruthiness::AlwaysFalse
+        } else {
+            EnumMemberTruthiness::AlwaysTrue
+        }),
+        LiteralTypeKind::Boolean(false) => Some(EnumMemberTruthiness::AlwaysFalse),
+        LiteralTypeKind::Boolean(true) => Some(EnumMemberTruthiness::AlwaysTrue),
+        LiteralTypeKind::BigInt(_) | LiteralTypeKind::NotLiteral => None,
+    }
+}
+
 /// Parent enum symbol when `type_id` is an enum member or an indexed access
 /// that names a declared enum member (for example `(typeof E)["A"]`).
 pub(crate) fn enum_member_like_parent_symbol(
@@ -135,6 +177,16 @@ pub(crate) fn enum_member_like_parent_symbol(
     type_id: TypeId,
 ) -> Option<SymbolId> {
     enum_member_fact(ctx, type_id).map(|fact| fact.parent_symbol)
+}
+
+pub(crate) fn enum_member_like_parent_escaped_name(
+    ctx: &CheckerContext<'_>,
+    type_id: TypeId,
+) -> Option<String> {
+    let parent_sym = enum_member_like_parent_symbol(ctx, type_id)?;
+    ctx.binder
+        .get_symbol(parent_sym)
+        .map(|symbol| symbol.escaped_name.clone())
 }
 
 /// Whether `members` contains exactly every declared member of `enum_sym`,

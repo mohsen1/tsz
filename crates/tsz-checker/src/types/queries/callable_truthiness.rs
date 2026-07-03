@@ -9,7 +9,7 @@
 //! - TS2801: "This condition will always return true since this '{type}' is
 //!   always defined." (for Promise/awaitable types in conditions)
 
-use crate::query_boundaries::common::{LiteralTypeKind, classify_literal_type, enum_member_type};
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
@@ -254,26 +254,12 @@ impl<'a> CheckerState<'a> {
 
         let member_ty = self.get_type_of_symbol(sym_id);
         let member_ty = self.evaluate_type_with_env(member_ty);
-        let member_underlying = enum_member_type(self.ctx.types, member_ty).unwrap_or(member_ty);
-        let expr_underlying = enum_member_type(self.ctx.types, ty).unwrap_or(ty);
-        let underlying = [member_underlying, expr_underlying, member_ty, ty]
-            .into_iter()
-            .find(|candidate| {
-                !matches!(
-                    classify_literal_type(self.ctx.types, *candidate),
-                    LiteralTypeKind::NotLiteral
-                )
-            });
-        match underlying.map(|candidate| classify_literal_type(self.ctx.types, candidate)) {
-            Some(LiteralTypeKind::Number(value)) => {
-                Some(if value == 0.0 { "false" } else { "true" })
-            }
-            Some(LiteralTypeKind::String(value)) => {
-                Some(if value.is_none() { "false" } else { "true" })
-            }
-            Some(LiteralTypeKind::Boolean(value)) => Some(if value { "true" } else { "false" }),
-            _ => self.enum_member_condition_result_from_decl(sym_id),
-        }
+        enum_query::enum_member_literal_condition_result(self.ctx.types, member_ty, ty)
+            .map(|truthiness| match truthiness {
+                enum_query::EnumMemberTruthiness::AlwaysFalse => "false",
+                enum_query::EnumMemberTruthiness::AlwaysTrue => "true",
+            })
+            .or_else(|| self.enum_member_condition_result_from_decl(sym_id))
     }
 
     fn enum_member_condition_result_from_decl(&mut self, sym_id: SymbolId) -> Option<&'static str> {
