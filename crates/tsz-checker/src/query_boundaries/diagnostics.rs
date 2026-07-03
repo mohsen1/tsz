@@ -1,7 +1,9 @@
 use super::state::checking as state_checking;
-use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::{DefKind, DefinitionStore};
+use tsz_solver::{
+    CallSignature, CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+};
 
 pub(crate) use super::common::{
     PropertyAccessResult, TypeResolver, TypeSubstitution, application_info, array_element_type,
@@ -39,6 +41,116 @@ pub(crate) fn get_object_symbol(
     type_id: TypeId,
 ) -> Option<tsz_binder::SymbolId> {
     tsz_solver::type_queries::get_object_symbol(db, type_id)
+}
+
+pub(crate) fn object_type_from_properties(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn object_type_from_shape(db: &dyn TypeDatabase, shape: ObjectShape) -> TypeId {
+    db.object_with_index(shape)
+}
+
+pub(crate) fn object_type_preserving_display_properties(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    shape: ObjectShape,
+) -> TypeId {
+    let new_ty = object_type_from_shape(db, shape);
+    if let Some(display_props) = db.get_display_properties(source) {
+        db.store_display_properties(new_ty, display_props.as_ref().clone());
+    }
+    new_ty
+}
+
+pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
+    crate::query_boundaries::construct_signatures::function_type_from_shape(db, shape)
+}
+
+pub(crate) fn function_type_with_params_replaced(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    params: Vec<ParamInfo>,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params,
+            this_type: shape.this_type,
+            return_type: shape.return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        },
+    )
+}
+
+pub(crate) fn function_type_with_return_replaced(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: shape.params.clone(),
+            this_type: shape.this_type,
+            return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        },
+    )
+}
+
+pub(crate) fn function_type_with_params_and_return_replaced(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    params: Vec<ParamInfo>,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params,
+            this_type: shape.this_type,
+            return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        },
+    )
+}
+
+pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableShape) -> TypeId {
+    db.callable(shape)
+}
+
+pub(crate) fn call_only_callable_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+) -> TypeId {
+    crate::query_boundaries::construct_signatures::call_only_callable_type(db, call_signatures)
+}
+
+pub(crate) fn callable_type_with_signatures_replaced(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    call_signatures: Vec<CallSignature>,
+    construct_signatures: Vec<CallSignature>,
+) -> TypeId {
+    crate::query_boundaries::construct_signatures::callable_with_signatures_replaced(
+        db,
+        base,
+        call_signatures,
+        construct_signatures,
+    )
 }
 
 pub(crate) fn assignment_numeric_display_children(

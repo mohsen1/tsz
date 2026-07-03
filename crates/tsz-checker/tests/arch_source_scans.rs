@@ -21,6 +21,9 @@
 //!   constructs signature-bearing solver types only through
 //!   `query_boundaries::construct_signatures`, never via inline shape
 //!   literals or direct interning calls.
+//! - `diagnostic_construction_boundary_scans`: diagnostic reporters route
+//!   display-only solver shape construction through
+//!   `query_boundaries::diagnostics`.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
 //!   named checker-owned walk state instead of paired raw visited sets.
 //! - `cross_arena_delegation_scope_scans`: cross-arena delegation depth uses a
@@ -41,6 +44,8 @@ mod common_boundary_export_ratchets;
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]
 mod cross_arena_delegation_scope_scans;
+#[path = "arch_source_scans/diagnostic_construction_boundary_scans.rs"]
+mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]
