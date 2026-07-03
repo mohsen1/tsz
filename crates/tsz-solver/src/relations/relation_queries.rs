@@ -13,7 +13,9 @@ use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{CachedAnyMode, RelationCacheConfig, RelationFlags, SymbolRef, TypeId};
+use crate::types::{
+    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, SymbolRef, TypeId,
+};
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -625,6 +627,14 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
     policy: RelationPolicy,
     context: RelationContext<'a>,
 ) -> RelationResult {
+    if matches!(kind, RelationKind::Assignable)
+        && let Some(result) = query_cached_assignability_with_resolver(
+            interner, resolver, source, target, policy, context,
+        )
+    {
+        return result;
+    }
+
     let overrides = NoopOverrideProvider;
     query_relation_with_overrides(RelationQueryInputs {
         interner,
@@ -636,6 +646,74 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
         context,
         overrides: &overrides,
     })
+}
+
+fn query_cached_assignability_with_resolver<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> Option<RelationResult> {
+    let query_db = context.query_db?;
+    let cache_key =
+        assignability_relation_cache_key(interner, resolver, source, target, policy, context)?;
+    if let Some(cached) = query_db.lookup_assignability_cache(cache_key) {
+        return Some(RelationResult::complete(RelationKind::Assignable, cached));
+    }
+
+    let mut checker = configured_compat_checker(interner, resolver, policy, context);
+    let lazy_events_at_entry = checker.subtype.unresolved_lazy_relation_event_count();
+    let weak_sensitivity_at_entry = crate::limits::weak_type_sensitivity_count();
+    let overrides = NoopOverrideProvider;
+    let related = checker.is_assignable_with_overrides(source, target, &overrides);
+    let result = relation_result_from_compat_checker(RelationKind::Assignable, related, &checker);
+
+    if matches!(result.termination(), RelationTermination::Complete)
+        && !checker.subtype.bypass_evaluation
+        && checker.subtype.type_param_equivalences.is_empty()
+        && checker.subtype.unresolved_lazy_relation_event_count() == lazy_events_at_entry
+        && crate::limits::weak_type_sensitivity_count() == weak_sensitivity_at_entry
+    {
+        query_db.insert_assignability_cache(cache_key, result.related);
+    }
+
+    Some(result)
+}
+
+fn assignability_relation_cache_key<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
+) -> Option<RelationCacheKey> {
+    if context.class_check.is_some()
+        || crate::type_queries::contains_infer_types_db(interner, source)
+        || crate::type_queries::contains_infer_types_db(interner, target)
+    {
+        return None;
+    }
+
+    let has_this_type =
+        crate::contains_this_type(interner, source) || crate::contains_this_type(interner, target);
+    let this_context = if has_this_type {
+        resolver.resolve_this_type(interner)?
+    } else {
+        TypeId::NONE
+    };
+    let (inheritance_graph_id, inheritance_graph_generation) = context
+        .inheritance_graph
+        .map_or((0, 0), |graph| (graph.identity(), graph.generation()));
+
+    Some(
+        RelationCacheKey::for_assignability(source, target, policy.cache_config())
+            .with_this_context(this_context)
+            .with_resolver_generation(resolver.resolver_generation())
+            .with_inheritance_graph_context(inheritance_graph_id, inheritance_graph_generation),
+    )
 }
 
 /// Query a relation using a custom resolver and checker-provided overrides.
@@ -747,6 +825,9 @@ pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     checker.set_inheritance_graph(context.inheritance_graph);
     if let Some(query_db) = context.query_db {
         checker.set_query_db(query_db);
+    }
+    if let Some(session) = context.evaluation_session {
+        checker.subtype.eval_session = Some(session);
     }
     if let Some(class_check) = context.class_check {
         checker.set_class_check(class_check);

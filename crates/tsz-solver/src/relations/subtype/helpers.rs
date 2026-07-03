@@ -364,6 +364,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .cache_config_with_cached_any_mode(self.effective_cached_any_mode()),
         )
         .with_this_context(this_context)
+        .with_resolver_generation(self.resolver.resolver_generation())
         .with_inheritance_graph_context(inheritance_graph_id, inheritance_graph_generation)
     }
 

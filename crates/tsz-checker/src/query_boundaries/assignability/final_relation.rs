@@ -15,6 +15,7 @@
 
 use tracing::trace;
 use tsz_solver::TypeId;
+use tsz_solver::relations::subtype::TypeResolver;
 
 use super::{
     AssignabilityQueryInputs, checker_final_assignability_cache_key, is_assignable_with_overrides,
@@ -43,10 +44,16 @@ pub(crate) fn cached_final_assignability(
 ) -> bool {
     let flags = checker.ctx.pack_relation_flags();
     let is_cacheable = is_relation_cacheable(checker.ctx.types.as_type_database(), source, target);
+    let resolver_generation = if use_env_resolver {
+        checker.ctx.type_env.borrow().resolver_generation()
+    } else {
+        checker.ctx.resolver_generation()
+    };
     let cache_key = checker_final_assignability_cache_key(
         source,
         target,
         flags,
+        resolver_generation,
         &checker.ctx.inheritance_graph,
     );
     if is_cacheable && let Some(cached) = checker.ctx.types.lookup_assignability_cache(cache_key) {

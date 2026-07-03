@@ -63,7 +63,9 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
     assert!(
         compact_boundary.contains("fnflow_relation_outcome(")
             && compact_boundary.contains("fnflow_relation_related(")
+            && compact_boundary.contains("db:&dynQueryDatabase")
             && compact_boundary.contains("query_relation_with_resolver(")
+            && compact_boundary.contains("query_db:Some(db)")
             && compact_boundary
                 .contains("flow_relation_outcome(db,env,source,member,true).related")
             && compact_boundary.contains(

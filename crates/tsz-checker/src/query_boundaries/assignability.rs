@@ -935,6 +935,7 @@ pub(crate) fn cached_assignability_with_overrides<
             inputs.source,
             inputs.target,
             inputs.flags,
+            inputs.resolver.resolver_generation(),
             inputs.inheritance_graph,
         );
         if let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
@@ -952,6 +953,7 @@ pub(crate) fn cached_assignability_with_overrides<
             inputs.source,
             inputs.target,
             inputs.flags,
+            inputs.resolver.resolver_generation(),
             inputs.inheritance_graph,
         );
         inputs

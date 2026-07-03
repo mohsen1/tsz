@@ -36,6 +36,7 @@ pub(crate) fn cached_overload_subtype_pass_assignability<
         inputs.source,
         inputs.target,
         policy,
+        inputs.resolver.resolver_generation(),
         inputs.inheritance_graph,
     );
     if is_cacheable && let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {

@@ -175,6 +175,7 @@ impl RelationCacheConfig {
 /// - `target`: The target type being compared.
 /// - `relation`: Which relation is being cached. See [`RelationCacheKind`].
 /// - `config`:   The behavior-affecting configuration. See [`RelationCacheConfig`].
+/// - `resolver_generation`: Resolver-visible type environment generation.
 /// - `inheritance_graph_id` / `inheritance_graph_generation`: Class graph
 ///   context for nominal protected/private-origin checks.
 ///
@@ -199,6 +200,12 @@ pub struct RelationCacheKey {
     /// compares the same `(source, target)` under a different receiver (issue
     /// #13828). It is [`TypeId::NONE`] for every non-`this` pair.
     pub this_context: TypeId,
+    /// Monotonic generation of the resolver state under which this verdict was
+    /// computed, or `0` for resolver-free checks. Lazy `DefId`, type-query, and
+    /// merged-environment lookups can change as the checker publishes more
+    /// bodies; this stamp prevents relation verdicts from surviving such
+    /// resolver-visible mutations under the same type pair.
+    pub resolver_generation: u64,
     /// Process-local identity of the active inheritance graph, or `0` when no
     /// graph participates in this relation verdict.
     pub inheritance_graph_id: u64,
@@ -242,6 +249,7 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Subtype,
             config,
             this_context: TypeId::NONE,
+            resolver_generation: 0,
             inheritance_graph_id: 0,
             inheritance_graph_generation: 0,
         }
@@ -259,6 +267,7 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Assignable,
             config,
             this_context: TypeId::NONE,
+            resolver_generation: 0,
             inheritance_graph_id: 0,
             inheritance_graph_generation: 0,
         }
@@ -280,6 +289,7 @@ impl RelationCacheKey {
             relation: RelationCacheKind::CheckerAssignable,
             config,
             this_context: TypeId::NONE,
+            resolver_generation: 0,
             inheritance_graph_id: 0,
             inheritance_graph_generation: 0,
         }
@@ -297,6 +307,7 @@ impl RelationCacheKey {
             relation: RelationCacheKind::Identical,
             config,
             this_context: TypeId::NONE,
+            resolver_generation: 0,
             inheritance_graph_id: 0,
             inheritance_graph_generation: 0,
         }
@@ -309,6 +320,14 @@ impl RelationCacheKey {
     #[must_use]
     pub const fn with_this_context(mut self, this_context: TypeId) -> Self {
         self.this_context = this_context;
+        self
+    }
+
+    /// Return this key discriminated by the resolver-visible environment
+    /// generation. Passing `0` is the resolver-free default.
+    #[must_use]
+    pub const fn with_resolver_generation(mut self, generation: u64) -> Self {
+        self.resolver_generation = generation;
         self
     }
 

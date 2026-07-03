@@ -1,6 +1,19 @@
 use super::*;
-use crate::construction::TypeInterner;
-use crate::{FunctionShape, ParamInfo, PropertyInfo};
+use crate::construction::{QueryCache, QueryDatabase, TypeDatabase, TypeInterner};
+use crate::types::RelationCacheKey;
+use crate::{FunctionShape, ParamInfo, PropertyInfo, SymbolRef};
+
+struct GenerationResolver(u64);
+
+impl TypeResolver for GenerationResolver {
+    fn resolver_generation(&self) -> u64 {
+        self.0
+    }
+
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+}
 
 fn make_animal_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     let name = interner.intern_string("name");
@@ -60,6 +73,113 @@ fn query_relation_assignable_respects_strict_null_flags() {
 
     assert!(!strict_result.is_related());
     assert!(non_strict_result.is_related());
+}
+
+#[test]
+fn query_relation_assignability_uses_query_cache_for_no_override_path() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..Default::default()
+    };
+
+    let first = query_relation(
+        db.as_type_database(),
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        policy,
+        context,
+    );
+    assert!(!first.is_related());
+    let after_first = db.statistics();
+    assert_eq!(after_first.relation.assignability_entries, 1);
+    assert_eq!(after_first.relation.assignability_misses, 1);
+    assert_eq!(after_first.relation.assignability_hits, 0);
+
+    let second = query_relation(
+        db.as_type_database(),
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        policy,
+        context,
+    );
+    assert!(!second.is_related());
+    let after_second = db.statistics();
+    assert_eq!(after_second.relation.assignability_entries, 1);
+    assert_eq!(after_second.relation.assignability_misses, 1);
+    assert_eq!(after_second.relation.assignability_hits, 1);
+}
+
+#[test]
+fn query_relation_assignability_cache_partitions_by_resolver_generation() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..Default::default()
+    };
+    let generation_one = GenerationResolver(1);
+    let generation_two = GenerationResolver(2);
+    let key_one =
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, policy.cache_config())
+            .with_resolver_generation(1);
+    let key_two =
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, policy.cache_config())
+            .with_resolver_generation(2);
+
+    let first = query_relation_with_resolver(
+        db.as_type_database(),
+        &generation_one,
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        policy,
+        context,
+    );
+    assert!(!first.is_related());
+    assert_eq!(db.lookup_assignability_cache(key_one), Some(false));
+    assert_eq!(db.lookup_assignability_cache(key_two), None);
+
+    let second = query_relation_with_resolver(
+        db.as_type_database(),
+        &generation_two,
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        policy,
+        context,
+    );
+    assert!(!second.is_related());
+    assert_eq!(db.lookup_assignability_cache(key_two), Some(false));
+}
+
+#[test]
+fn query_relation_assignability_skips_cache_for_unbound_this_type() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let this_type = interner.this_type();
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..Default::default()
+    };
+
+    let result = query_relation(
+        db.as_type_database(),
+        this_type,
+        TypeId::STRING,
+        RelationKind::Assignable,
+        policy,
+        context,
+    );
+
+    assert!(!result.is_related());
+    assert_eq!(db.statistics().relation.assignability_entries, 0);
 }
 
 #[test]

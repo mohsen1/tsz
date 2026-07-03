@@ -702,7 +702,7 @@ fn resolve_assignment_reduction_type(
 }
 
 fn assignment_source_assignable_to_member(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     member: TypeId,
@@ -711,7 +711,7 @@ fn assignment_source_assignable_to_member(
 }
 
 fn non_nullish_constraint_reduction_for_assignment(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_type: TypeId,
     assigned_type: TypeId,
@@ -858,7 +858,7 @@ pub(crate) fn narrow_enum_assignment_target(
 /// enum identity, and filtering union members by one-way assignability from the
 /// assigned type.
 pub(crate) fn narrow_assignment(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     initial_type: TypeId,
     assigned_type: TypeId,
@@ -933,7 +933,7 @@ pub(crate) fn are_types_mutually_subtype(
 }
 
 fn flow_relation_related(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     target: TypeId,
@@ -946,18 +946,21 @@ fn flow_relation_related(
     }
 
     tsz_solver::relations::relation_queries::query_relation(
-        db,
+        db.as_type_database(),
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
         tsz_solver::relations::relation_queries::RelationPolicy::default(),
-        tsz_solver::relations::relation_queries::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext {
+            query_db: Some(db),
+            ..Default::default()
+        },
     )
     .is_related()
 }
 
 fn flow_relation_outcome(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
     source: TypeId,
     target: TypeId,
@@ -985,13 +988,7 @@ pub(crate) fn flow_assignability_outcome(
 ) -> RelationOutcome {
     let source = substitute_flow_this_type(db, concrete_this_type, source);
     let target = substitute_flow_this_type(db, concrete_this_type, target);
-    flow_relation_outcome(
-        db.as_type_database(),
-        env,
-        source,
-        target,
-        strict_null_checks,
-    )
+    flow_relation_outcome(db, env, source, target, strict_null_checks)
 }
 
 fn substitute_flow_this_type(
@@ -1062,7 +1059,7 @@ pub(crate) fn are_types_mutually_subtype_with_env(
 }
 
 pub(crate) fn is_assignable_with_env(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     env: &tsz_solver::relations::subtype::TypeEnvironment,
     source: TypeId,
     target: TypeId,
@@ -1074,13 +1071,16 @@ pub(crate) fn is_assignable_with_env(
     }
 
     tsz_solver::relations::relation_queries::query_relation_with_resolver(
-        db,
+        db.as_type_database(),
         env,
         source,
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
         relation_policy::from_checker_flags_u16(flags),
-        tsz_solver::relations::relation_queries::RelationContext::default(),
+        tsz_solver::relations::relation_queries::RelationContext {
+            query_db: Some(db),
+            ..Default::default()
+        },
     )
     .is_related()
 }

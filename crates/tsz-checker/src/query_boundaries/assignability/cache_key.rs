@@ -50,21 +50,28 @@ pub(crate) use tsz_solver::RelationCacheKey;
 /// The resulting config is produced by the solver's typed `RelationPolicy`
 /// bridge, so this write path lands in the same cache slot as the solver's
 /// internal write path.
-const fn with_inheritance_graph_context(
+const fn with_relation_context(
     key: RelationCacheKey,
+    resolver_generation: u64,
     inheritance_graph: &InheritanceGraph,
 ) -> RelationCacheKey {
-    key.with_inheritance_graph_context(inheritance_graph.identity(), inheritance_graph.generation())
+    key.with_resolver_generation(resolver_generation)
+        .with_inheritance_graph_context(
+            inheritance_graph.identity(),
+            inheritance_graph.generation(),
+        )
 }
 
 pub(crate) const fn assignability_cache_key_for_policy(
     source: TypeId,
     target: TypeId,
     policy: RelationPolicy,
+    resolver_generation: u64,
     inheritance_graph: &InheritanceGraph,
 ) -> RelationCacheKey {
-    with_inheritance_graph_context(
+    with_relation_context(
         RelationCacheKey::for_assignability(source, target, policy.cache_config()),
+        resolver_generation,
         inheritance_graph,
     )
 }
@@ -73,12 +80,14 @@ pub(crate) const fn assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
+    resolver_generation: u64,
     inheritance_graph: &InheritanceGraph,
 ) -> RelationCacheKey {
     assignability_cache_key_for_policy(
         source,
         target,
         relation_policy::from_checker_flags_u16(flags),
+        resolver_generation,
         inheritance_graph,
     )
 }
@@ -87,14 +96,16 @@ pub(crate) const fn checker_final_assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
+    resolver_generation: u64,
     inheritance_graph: &InheritanceGraph,
 ) -> RelationCacheKey {
-    with_inheritance_graph_context(
+    with_relation_context(
         RelationCacheKey::for_checker_assignability(
             source,
             target,
             relation_policy::from_checker_flags_u16(flags).cache_config(),
         ),
+        resolver_generation,
         inheritance_graph,
     )
 }
@@ -104,14 +115,16 @@ pub(crate) const fn subtype_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
+    resolver_generation: u64,
     inheritance_graph: &InheritanceGraph,
 ) -> RelationCacheKey {
-    with_inheritance_graph_context(
+    with_relation_context(
         RelationCacheKey::for_subtype(
             source,
             target,
             relation_policy::from_checker_flags_u16(flags).cache_config(),
         ),
+        resolver_generation,
         inheritance_graph,
     )
 }
@@ -125,14 +138,15 @@ mod tests {
     fn checker_relation_cache_keys_partition_by_inheritance_graph_generation() {
         let graph = InheritanceGraph::new();
         let before_assignability =
-            assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
+            assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
         let before_final =
-            checker_final_assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
-        let before_subtype = subtype_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
+            checker_final_assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
+        let before_subtype = subtype_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
 
         assert_eq!(before_assignability.inheritance_graph_id, graph.identity());
         assert_eq!(before_final.inheritance_graph_id, graph.identity());
         assert_eq!(before_subtype.inheritance_graph_id, graph.identity());
+        assert_eq!(before_assignability.resolver_generation, 11);
         assert_eq!(
             before_assignability.inheritance_graph_generation,
             graph.generation()
@@ -141,14 +155,17 @@ mod tests {
         graph.add_inheritance(SymbolId(1), &[SymbolId(2)]);
 
         let after_assignability =
-            assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
+            assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
         let after_final =
-            checker_final_assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
-        let after_subtype = subtype_cache_key(TypeId::STRING, TypeId::NUMBER, 0, &graph);
+            checker_final_assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
+        let after_subtype = subtype_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 11, &graph);
 
         assert_eq!(after_assignability.inheritance_graph_id, graph.identity());
         assert_ne!(before_assignability, after_assignability);
         assert_ne!(before_final, after_final);
         assert_ne!(before_subtype, after_subtype);
+
+        let after_resolver = assignability_cache_key(TypeId::STRING, TypeId::NUMBER, 0, 12, &graph);
+        assert_ne!(after_assignability, after_resolver);
     }
 }
