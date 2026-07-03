@@ -109,11 +109,12 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// individual members instead of the full intersection type.
     suppress_this_binding: bool,
     /// PERF: Cache for subtype check results used in conditional type evaluation.
-    /// Key: (`check_type`, `extends_type`), Value: `is_subtype`.
+    /// Key: (`check_type`, `extends_type`, `noUncheckedIndexedAccess`,
+    /// `exactOptionalPropertyTypes`), Value: `is_subtype`.
     /// Deeply recursive conditional types (`DeepReadonly`, `Compute`, etc.) often check
     /// the same (check, extends) pair many times across distributed branches and
     /// tail-recursion iterations. Caching avoids redundant structural comparison.
-    conditional_subtype_cache: FxHashMap<(TypeId, TypeId), bool>,
+    conditional_subtype_cache: FxHashMap<ConditionalSubtypeCacheKey, bool>,
     /// PERF: Cache whether a type contains `infer`.
     /// Recursive conditionals can revisit the same application-shaped `extends`
     /// pattern thousands of times while checking whether the application-level
@@ -284,7 +285,7 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
 /// are never shared across resolver, substitution, or compiler-option modes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TypeEvaluatorCacheStatistics {
-    /// Entries in the conditional subtype memo keyed by `(check_type, extends_type)`.
+    /// Entries in the option-sensitive conditional subtype memo.
     pub conditional_subtype_entries: usize,
     /// Entries in the `contains infer` predicate memo keyed by `TypeId`.
     pub contains_infer_entries: usize,
@@ -332,6 +333,15 @@ impl CompoundSubtypePairKey {
 /// gate in conditional type evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct PermissiveFalseBranchKey {
+    check_type: TypeId,
+    extends_type: TypeId,
+    no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
+}
+
+/// Operation-local cache key for definitive conditional branch subtype probes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ConditionalSubtypeCacheKey {
     check_type: TypeId,
     extends_type: TypeId,
     no_unchecked_indexed_access: bool,
@@ -422,7 +432,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let compound_subtype_entries = self.compound_subtype_cache.len();
         let permissive_false_branch_entries = self.permissive_false_branch_cache.len();
         let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
-            .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
+            .saturating_mul(std::mem::size_of::<(ConditionalSubtypeCacheKey, bool)>())
             .saturating_add(
                 contains_infer_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>()),
             )
@@ -831,7 +841,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends: TypeId,
     ) -> Option<bool> {
         self.conditional_subtype_cache
-            .get(&(check, extends))
+            .get(&self.conditional_subtype_cache_key(check, extends))
             .copied()
     }
 
@@ -843,8 +853,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         extends: TypeId,
         result: bool,
     ) {
-        self.conditional_subtype_cache
-            .insert((check, extends), result);
+        let key = self.conditional_subtype_cache_key(check, extends);
+        self.conditional_subtype_cache.insert(key, result);
+    }
+
+    #[inline]
+    const fn conditional_subtype_cache_key(
+        &self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> ConditionalSubtypeCacheKey {
+        ConditionalSubtypeCacheKey {
+            check_type,
+            extends_type,
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
+            exact_optional_property_types: self.exact_optional_property_types,
+        }
     }
 
     /// PERF: Look up whether a type contains `infer`.
