@@ -181,11 +181,18 @@ impl PropertyAccessResult {
 /// Key for the deferred-property memo table.
 ///
 /// `(obj_type, prop_atom)` is the logical identity of a property access, but the
-/// resolved result of a *deferred* (`Application`/`Lazy`) access also depends on
-/// the two mutable evaluator flags that gate `this`-binding and private-field
-/// visibility. Both are folded into the key so the memo never reuses a result
-/// computed under a different flag configuration.
-type DeferredPropertyMemoKey = (TypeId, Atom, bool, bool);
+/// resolved result of a deferred access also depends on evaluator behavior modes.
+/// All modes that can change the returned type are folded into the key so the
+/// memo never reuses a result computed under a different configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct DeferredPropertyMemoKey {
+    obj_type: TypeId,
+    prop_atom: Atom,
+    skip_this_binding: bool,
+    allow_private_identifier_properties: bool,
+    no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
+}
 
 /// Memo entry for the deferred-property cache.
 ///
@@ -223,17 +230,20 @@ pub struct PropertyAccessEvaluator<'a> {
     /// be resolved by the current resolver. Such results depend on publication
     /// timing, so callers must not publish them into resolver-independent caches.
     unresolved_lazy_property_seen: Cell<bool>,
-    /// Per-access memo for deferred (`Application`/`Lazy`) property resolution.
+    /// Set when the property recursion guard denies entry. Guard-denied
+    /// fallbacks depend on the current traversal depth/path, so they are not
+    /// pure property-cache answers.
+    property_guard_denied_seen: Cell<bool>,
+    /// Per-access memo for deferred property resolution.
     ///
-    /// `resolve_application_property` and the deferred-`Lazy` walk re-instantiate
-    /// the base body and re-traverse heritage on every access. When a type
-    /// carries deferred base refs that form a cycle (e.g. interface heritage
-    /// retention), the recursion guard alone only prevents *infinite* recursion
-    /// within a single access — it resets between accesses and never reuses the
-    /// resolved property type, so each access re-walks the whole cycle and the
-    /// cost compounds combinatorially. This table memoizes the resolved result
-    /// per [`DeferredPropertyMemoKey`] so repeated and cyclic accesses collapse
-    /// to an O(1) lookup. It is scoped to a single top-level access tree (the
+    /// Deferred forms (`Application`, `Lazy`, `Mapped`, `Conditional`,
+    /// `IndexAccess`, and `TypeQuery`) can re-instantiate bases, evaluate
+    /// apparent forms, and re-traverse heritage on every access. When those
+    /// forms carry cyclic refs, the recursion guard alone only prevents
+    /// *infinite* recursion within a single access; it does not reuse the
+    /// resolved property type. This table memoizes the resolved result per
+    /// [`DeferredPropertyMemoKey`] so repeated and cyclic accesses collapse to
+    /// an O(1) lookup. It is scoped to a single top-level access tree (the
     /// evaluator is constructed per access), so it needs no cross-access
     /// invalidation: the table is dropped when the access completes.
     deferred_property_memo: RefCell<FxHashMap<DeferredPropertyMemoKey, DeferredPropertyMemo>>,
@@ -263,6 +273,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             skip_this_binding: Cell::new(false),
             allow_private_identifier_properties: Cell::new(false),
             unresolved_lazy_property_seen: Cell::new(false),
+            property_guard_denied_seen: Cell::new(false),
             deferred_property_memo: RefCell::new(FxHashMap::default()),
         }
     }
@@ -306,7 +317,12 @@ impl<'a> PropertyAccessEvaluator<'a> {
     }
 
     pub const fn property_result_cacheable(&self) -> bool {
-        !self.unresolved_lazy_property_seen.get()
+        !self.unresolved_lazy_property_seen.get() && !self.property_guard_denied_seen.get()
+    }
+
+    #[cfg(test)]
+    fn deferred_property_memo_entries(&self) -> usize {
+        self.deferred_property_memo.borrow().len()
     }
 
     /// Helper to access the underlying `TypeDatabase`
@@ -613,6 +629,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             RecursionResult::Cycle
             | RecursionResult::DepthExceeded
             | RecursionResult::IterationExceeded => {
+                self.property_guard_denied_seen.set(true);
                 return None;
             }
         }
@@ -624,7 +641,22 @@ impl<'a> PropertyAccessEvaluator<'a> {
         })
     }
 
-    /// Memoize a deferred (`Application`/`Lazy`) property resolution.
+    const fn deferred_property_memo_key(
+        &self,
+        obj_type: TypeId,
+        prop_atom: Atom,
+    ) -> DeferredPropertyMemoKey {
+        DeferredPropertyMemoKey {
+            obj_type,
+            prop_atom,
+            skip_this_binding: self.skip_this_binding.get(),
+            allow_private_identifier_properties: self.allow_private_identifier_properties.get(),
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
+            exact_optional_property_types: self.exact_optional_property_types,
+        }
+    }
+
+    /// Memoize a deferred property resolution.
     ///
     /// This is pure memoization: `resolve` is invoked at most once per
     /// [`DeferredPropertyMemoKey`] within a single access tree, and its result is
@@ -635,10 +667,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
     /// resolution re-enters the *same* key through a cyclic deferred base, the
     /// re-entry observes the marker and returns the `on_cycle` value (the same
     /// deferred fallback the recursion guard already produces for these branches)
-    /// instead of re-walking the cycle. The cycle re-entry itself is not cached —
-    /// only the fully resolved outermost result is stored — so the final memoized
-    /// value is identical to the un-memoized computation. `on_cycle` is a closure
-    /// so it runs only on an actual cyclic re-entry, never on the hot path.
+    /// instead of re-walking the cycle. The cycle re-entry taints the outer
+    /// resolution so the fallback-derived result is returned to the current
+    /// caller but not cached.
     ///
     /// Truncation-safety: the recursion guard can return a *degraded* fallback
     /// when its depth or iteration budget is exhausted, and that fallback depends
@@ -659,30 +690,31 @@ impl<'a> PropertyAccessEvaluator<'a> {
         R: FnOnce() -> PropertyAccessResult,
         C: FnOnce() -> PropertyAccessResult,
     {
-        let key = (
-            obj_type,
-            prop_atom,
-            self.skip_this_binding.get(),
-            self.allow_private_identifier_properties.get(),
-        );
+        let key = self.deferred_property_memo_key(obj_type, prop_atom);
 
         match self.deferred_property_memo.borrow().get(&key) {
             Some(DeferredPropertyMemo::Done(result)) => return *result,
-            Some(DeferredPropertyMemo::InProgress) => return on_cycle(),
+            Some(DeferredPropertyMemo::InProgress) => {
+                self.property_guard_denied_seen.set(true);
+                return on_cycle();
+            }
             None => {}
         }
 
         let exceeded_before = self.guard.borrow().is_exceeded();
+        let guard_denied_before = self.property_guard_denied_seen.get();
         self.deferred_property_memo
             .borrow_mut()
             .insert(key, DeferredPropertyMemo::InProgress);
         let result = resolve();
         let truncated = !exceeded_before && self.guard.borrow().is_exceeded();
+        let guard_denied = !guard_denied_before && self.property_guard_denied_seen.get();
         let unresolved_lazy_seen = self.unresolved_lazy_property_seen.get();
-        if truncated || unresolved_lazy_seen {
+        if truncated || guard_denied || unresolved_lazy_seen {
             // Degraded by a depth/iteration limit: not a pure function of the
-            // key, or by an unresolved lazy body whose answer depends on the
-            // current resolver window, so drop the marker without caching.
+            // key, by a guard-denied cycle/path fallback, or by an unresolved
+            // lazy body whose answer depends on the current resolver window, so
+            // drop the marker without caching.
             self.deferred_property_memo.borrow_mut().remove(&key);
         } else {
             self.deferred_property_memo
@@ -1113,156 +1145,192 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
             // Mapped: try lazy property resolution first to avoid OOM on large mapped types
             TypeData::Mapped(mapped_id) => {
-                // Try lazy resolution first - only computes the requested property
+                // Try lazy resolution first - only computes the requested property.
+                // Keep this outside the deferred memo: unresolved lazy constraints
+                // are intentionally permissive here and do not mark
+                // `unresolved_lazy_property_seen`.
                 if let Some(result) = self.resolve_mapped_property_lazy(mapped_id, prop_atom) {
                     return result;
                 }
 
-                // Lazy resolution failed (complex constraint) - fall back to eager expansion
-                let _guard = match self.enter_property_access_guard(obj_type) {
-                    Some(guard) => guard,
-                    None => {
-                        return self.resolve_object_member_or_not_found(obj_type, prop_atom);
-                    }
-                };
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        // Lazy resolution failed (complex constraint) - fall back to eager expansion
+                        let _guard = match self.enter_property_access_guard(obj_type) {
+                            Some(guard) => guard,
+                            None => {
+                                return self
+                                    .resolve_object_member_or_not_found(obj_type, prop_atom);
+                            }
+                        };
 
-                let evaluated = self
-                    .db
-                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
-                if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_atom)
-                } else {
-                    // Evaluation didn't change the type - try apparent members first
-                    if let Some(result) = self.resolve_object_member(prop_atom) {
-                        result
-                    } else {
-                        // Type is deferred (contains type parameters that prevent evaluation).
-                        // Return ANY to avoid false TS2339 errors - the checker will handle
-                        // the actual error reporting for circular or unresolvable types.
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
-                }
+                        let evaluated = self
+                            .db
+                            .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
+                        if evaluated != obj_type {
+                            // Successfully evaluated - resolve property on the concrete type
+                            self.resolve_property_access_inner(evaluated, prop_atom)
+                        } else {
+                            // Evaluation didn't change the type - try apparent members first
+                            if let Some(result) = self.resolve_object_member(prop_atom) {
+                                result
+                            } else {
+                                // Type is deferred (contains type parameters that prevent evaluation).
+                                // Return ANY to avoid false TS2339 errors - the checker will handle
+                                // the actual error reporting for circular or unresolvable types.
+                                PropertyAccessResult::simple(TypeId::ANY)
+                            }
+                        }
+                    },
+                )
             }
 
             // TypeQuery types: typeof queries that need resolution to their structural form
             TypeData::TypeQuery(_) => {
-                let evaluated = self
-                    .db
-                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
-                if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_atom)
-                } else {
-                    // Evaluation didn't change the type - try apparent members
-                    if let Some(result) = self.resolve_object_member(prop_atom) {
-                        result
-                    } else {
-                        // TypeQuery type is deferred - return ANY to avoid false TS2339
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
-                }
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        let evaluated = self
+                            .db
+                            .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
+                        if evaluated != obj_type {
+                            // Successfully evaluated - resolve property on the concrete type
+                            self.resolve_property_access_inner(evaluated, prop_atom)
+                        } else {
+                            // Evaluation didn't change the type - try apparent members
+                            if let Some(result) = self.resolve_object_member(prop_atom) {
+                                result
+                            } else {
+                                // TypeQuery type is deferred - return ANY to avoid false TS2339
+                                PropertyAccessResult::simple(TypeId::ANY)
+                            }
+                        }
+                    },
+                )
             }
 
             // Conditional types need evaluation to their resolved form
             TypeData::Conditional(_) => {
-                // Add recursion guard for consistency with other recursive type resolutions
-                let _guard = match self.enter_property_access_guard(obj_type) {
-                    Some(guard) => guard,
-                    None => {
-                        return self.resolve_object_member_or_not_found(obj_type, prop_atom);
-                    }
-                };
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        // Add recursion guard for consistency with other recursive type resolutions
+                        let _guard = match self.enter_property_access_guard(obj_type) {
+                            Some(guard) => guard,
+                            None => {
+                                return self
+                                    .resolve_object_member_or_not_found(obj_type, prop_atom);
+                            }
+                        };
 
-                let evaluated = self
-                    .db
-                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
-                if evaluated != obj_type {
-                    // Successfully evaluated - resolve property on the concrete type
-                    self.resolve_property_access_inner(evaluated, prop_atom)
-                } else {
-                    // Evaluation didn't change the type - try apparent members
-                    if let Some(result) = self.resolve_object_member(prop_atom) {
-                        result
-                    } else {
-                        // Conditional type is deferred - return ANY to avoid false TS2339
-                        // in union/intersection member contexts. The top-level entry point
-                        // (resolve_property_access) will re-check via union(branches).
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
-                }
+                        let evaluated = self
+                            .db
+                            .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
+                        if evaluated != obj_type {
+                            // Successfully evaluated - resolve property on the concrete type
+                            self.resolve_property_access_inner(evaluated, prop_atom)
+                        } else {
+                            // Evaluation didn't change the type - try apparent members
+                            if let Some(result) = self.resolve_object_member(prop_atom) {
+                                result
+                            } else {
+                                // Conditional type is deferred - return ANY to avoid false TS2339
+                                // in union/intersection member contexts. The top-level entry point
+                                // (resolve_property_access) will re-check via union(branches).
+                                PropertyAccessResult::simple(TypeId::ANY)
+                            }
+                        }
+                    },
+                )
             }
 
             // Index access types need evaluation
             TypeData::IndexAccess(_, _) => {
-                // Add recursion guard for consistency with other recursive type resolutions
-                let _guard = match self.enter_property_access_guard(obj_type) {
-                    Some(guard) => guard,
-                    None => {
-                        return self.resolve_object_member_or_not_found(obj_type, prop_atom);
-                    }
-                };
+                self.memoize_deferred_property(
+                    obj_type,
+                    prop_atom,
+                    || self.resolve_object_member_or_not_found(obj_type, prop_atom),
+                    || {
+                        // Add recursion guard for consistency with other recursive type resolutions
+                        let _guard = match self.enter_property_access_guard(obj_type) {
+                            Some(guard) => guard,
+                            None => {
+                                return self
+                                    .resolve_object_member_or_not_found(obj_type, prop_atom);
+                            }
+                        };
 
-                let evaluated = self
-                    .db
-                    .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
-                if evaluated != obj_type {
-                    self.resolve_property_access_inner(evaluated, prop_atom)
-                } else {
-                    // Evaluation didn't change the type (still deferred).
-                    if let Some(TypeData::IndexAccess(ia_obj, ia_idx)) =
-                        self.interner().lookup(obj_type)
-                        && let Some(TypeData::TypeParameter(info)) = self.interner().lookup(ia_idx)
-                        && let Some(constraint) = info.constraint
-                    {
-                        // Accessing a property `p` on a deferred *homomorphic*
-                        // generic indexed access `O[K]` (K extends keyof O, O an
-                        // object without an applicable index signature) keeps the
-                        // result deferred as `O[K]["p"]`, matching tsc. Resolving
-                        // it through `K`'s constraint here would distribute to the
-                        // value-union property type (`O[keyof O]["p"]`), e.g.
-                        // `myObj.name: MyObj[K]["name"]` collapsing to
-                        // `string | number` (correlatedUnions #47890), which then
-                        // fails to relate to the declared `O[K]["name"]` return.
-                        // Indexing through a string/number index signature
-                        // (`{[s:string]:V}[K]`) is unaffected: it has no named
-                        // properties to keep deferred and still resolves to `V`
-                        // via the constraint fallback below.
-                        if self.deferred_homomorphic_property_access_stays_deferred(
-                            ia_obj, constraint, prop_atom,
-                        ) {
-                            let prop_literal = self.db.literal_string_atom(prop_atom);
-                            return PropertyAccessResult::simple(
-                                self.db.index_access(obj_type, prop_literal),
-                            );
+                        let evaluated = self
+                            .db
+                            .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
+                        if evaluated != obj_type {
+                            self.resolve_property_access_inner(evaluated, prop_atom)
+                        } else {
+                            // Evaluation didn't change the type (still deferred).
+                            if let Some(TypeData::IndexAccess(ia_obj, ia_idx)) =
+                                self.interner().lookup(obj_type)
+                                && let Some(TypeData::TypeParameter(info)) =
+                                    self.interner().lookup(ia_idx)
+                                && let Some(constraint) = info.constraint
+                            {
+                                // Accessing a property `p` on a deferred *homomorphic*
+                                // generic indexed access `O[K]` (K extends keyof O, O an
+                                // object without an applicable index signature) keeps the
+                                // result deferred as `O[K]["p"]`, matching tsc. Resolving
+                                // it through `K`'s constraint here would distribute to the
+                                // value-union property type (`O[keyof O]["p"]`), e.g.
+                                // `myObj.name: MyObj[K]["name"]` collapsing to
+                                // `string | number` (correlatedUnions #47890), which then
+                                // fails to relate to the declared `O[K]["name"]` return.
+                                // Indexing through a string/number index signature
+                                // (`{[s:string]:V}[K]`) is unaffected: it has no named
+                                // properties to keep deferred and still resolves to `V`
+                                // via the constraint fallback below.
+                                if self.deferred_homomorphic_property_access_stays_deferred(
+                                    ia_obj, constraint, prop_atom,
+                                ) {
+                                    let prop_literal = self.db.literal_string_atom(prop_atom);
+                                    return PropertyAccessResult::simple(
+                                        self.db.index_access(obj_type, prop_literal),
+                                    );
+                                }
+
+                                // Otherwise resolve the base constraint of the indexed
+                                // access: evaluate object[constraint] to get the apparent
+                                // result type. E.g. {[s:string]:V}[K] where K extends
+                                // keyof T => V.
+                                let base_constraint = self.db.evaluate_index_access_with_options(
+                                    ia_obj,
+                                    constraint,
+                                    self.no_unchecked_indexed_access,
+                                );
+                                if base_constraint != obj_type
+                                    && !matches!(
+                                        self.interner().lookup(base_constraint),
+                                        Some(TypeData::IndexAccess(_, _))
+                                    )
+                                {
+                                    return self
+                                        .resolve_property_access_inner(base_constraint, prop_atom);
+                                }
+                            }
+
+                            if let Some(result) = self.resolve_object_member(prop_atom) {
+                                result
+                            } else {
+                                // IndexAccess type is deferred - return ANY to avoid false TS2339
+                                PropertyAccessResult::simple(TypeId::ANY)
+                            }
                         }
-
-                        // Otherwise resolve the base constraint of the indexed
-                        // access: evaluate object[constraint] to get the apparent
-                        // result type. E.g. {[s:string]:V}[K] where K extends
-                        // keyof T => V.
-                        let base_constraint = self.db.evaluate_index_access_with_options(
-                            ia_obj,
-                            constraint,
-                            self.no_unchecked_indexed_access,
-                        );
-                        if base_constraint != obj_type
-                            && !matches!(
-                                self.interner().lookup(base_constraint),
-                                Some(TypeData::IndexAccess(_, _))
-                            )
-                        {
-                            return self.resolve_property_access_inner(base_constraint, prop_atom);
-                        }
-                    }
-
-                    if let Some(result) = self.resolve_object_member(prop_atom) {
-                        result
-                    } else {
-                        // IndexAccess type is deferred - return ANY to avoid false TS2339
-                        PropertyAccessResult::simple(TypeId::ANY)
-                    }
-                }
+                    },
+                )
             }
 
             // KeyOf types need evaluation
@@ -1501,6 +1569,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
 mod deferred_memo_tests {
     use super::*;
     use crate::construction::TypeInterner;
+    use crate::{ConditionalType, PropertyInfo, TypeParamInfo};
     use std::cell::Cell;
 
     fn marker(id: u32) -> PropertyAccessResult {
@@ -1565,9 +1634,12 @@ mod deferred_memo_tests {
     #[test]
     fn memo_key_includes_flags() {
         let interner = TypeInterner::new();
-        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let mut evaluator = PropertyAccessEvaluator::new(&interner);
         let obj = TypeId(100);
         let prop = interner.intern_string("x");
+        let options_prop = interner.intern_string("options");
+        let exact_prop = interner.intern_string("exact");
+        let private_prop = interner.intern_string("private");
         let panic_cycle = || panic!("no cycle expected");
 
         evaluator.set_skip_this_binding(false);
@@ -1582,6 +1654,42 @@ mod deferred_memo_tests {
         assert_eq!(a.success_type(), Some(TypeId(10)));
         assert_eq!(b.success_type(), Some(TypeId(20)));
         assert_eq!(a_again.success_type(), Some(TypeId(10)));
+
+        evaluator.set_no_unchecked_indexed_access(false);
+        let c0 = evaluator.memoize_deferred_property(obj, options_prop, panic_cycle, || marker(30));
+        evaluator.set_no_unchecked_indexed_access(true);
+        let c1 = evaluator.memoize_deferred_property(obj, options_prop, panic_cycle, || marker(31));
+        evaluator.set_no_unchecked_indexed_access(false);
+        let c0_again = evaluator.memoize_deferred_property(obj, options_prop, panic_cycle, || {
+            panic!("noUncheckedIndexedAccess=false entry must stay cached separately")
+        });
+        assert_eq!(c0.success_type(), Some(TypeId(30)));
+        assert_eq!(c1.success_type(), Some(TypeId(31)));
+        assert_eq!(c0_again.success_type(), Some(TypeId(30)));
+
+        evaluator.set_exact_optional_property_types(false);
+        let d = evaluator.memoize_deferred_property(obj, exact_prop, panic_cycle, || marker(40));
+        evaluator.set_exact_optional_property_types(true);
+        let e = evaluator.memoize_deferred_property(obj, exact_prop, panic_cycle, || marker(50));
+        evaluator.set_exact_optional_property_types(false);
+        let d_again = evaluator.memoize_deferred_property(obj, exact_prop, panic_cycle, || {
+            panic!("exactOptionalPropertyTypes=false entry must stay cached separately")
+        });
+        assert_eq!(d.success_type(), Some(TypeId(40)));
+        assert_eq!(e.success_type(), Some(TypeId(50)));
+        assert_eq!(d_again.success_type(), Some(TypeId(40)));
+
+        evaluator.set_allow_private_identifier_properties(true);
+        let f = evaluator.memoize_deferred_property(obj, private_prop, panic_cycle, || marker(60));
+        evaluator.set_allow_private_identifier_properties(false);
+        let g = evaluator.memoize_deferred_property(obj, private_prop, panic_cycle, || marker(70));
+        evaluator.set_allow_private_identifier_properties(true);
+        let f_again = evaluator.memoize_deferred_property(obj, private_prop, panic_cycle, || {
+            panic!("private-visibility=true entry must stay cached separately")
+        });
+        assert_eq!(f.success_type(), Some(TypeId(60)));
+        assert_eq!(g.success_type(), Some(TypeId(70)));
+        assert_eq!(f_again.success_type(), Some(TypeId(60)));
     }
 
     /// Cycle-safety: a re-entry of the same key while it is in progress returns
@@ -1628,16 +1736,29 @@ mod deferred_memo_tests {
         assert_eq!(outer.success_type(), Some(TypeId(42)));
         assert_eq!(resolve_calls.get(), 1, "outer resolve runs once");
         assert_eq!(cycle_calls.get(), 1, "cycle fallback runs once on re-entry");
+        assert!(
+            !evaluator.property_result_cacheable(),
+            "same-key in-progress cycle fallback must taint outer property-cache publication"
+        );
 
-        // After the cycle resolves, a fresh access returns the memoized
-        // outermost result without re-running resolve or the cycle fallback.
+        // After the cycle resolves, the fallback-derived outer result is not
+        // memoized: a fresh access must recompute rather than reusing `42`.
+        let recompute_calls = Cell::new(0u32);
         let again = evaluator.memoize_deferred_property(
             obj,
             prop,
             || panic!("no cycle on cached access"),
-            || panic!("no resolve on cached access"),
+            || {
+                recompute_calls.set(recompute_calls.get() + 1);
+                marker(7)
+            },
         );
-        assert_eq!(again.success_type(), Some(TypeId(42)));
+        assert_eq!(again.success_type(), Some(TypeId(7)));
+        assert_eq!(
+            recompute_calls.get(),
+            1,
+            "fallback-derived outer result must not be cached"
+        );
     }
 
     /// Truncation-safety: when the recursion guard reports truncation during a
@@ -1678,5 +1799,150 @@ mod deferred_memo_tests {
         );
         assert_eq!(calls.get(), 1, "truncated result must not be cached");
         assert_eq!(recomputed.success_type(), Some(TypeId(2)));
+    }
+
+    #[test]
+    fn memo_skips_caching_guard_denied_results() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let obj = TypeId(100);
+        let prop = interner.intern_string("x");
+
+        let degraded = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || panic!("no cycle"),
+            || {
+                let _active = evaluator
+                    .enter_property_access_guard(obj)
+                    .expect("first entry should be accepted");
+                assert!(
+                    evaluator.enter_property_access_guard(obj).is_none(),
+                    "same-key recursive guard entry should be denied"
+                );
+                marker(1)
+            },
+        );
+        assert_eq!(degraded.success_type(), Some(TypeId(1)));
+        assert!(
+            !evaluator.property_result_cacheable(),
+            "guard-denied fallback must taint outer property-cache publication"
+        );
+
+        let calls = Cell::new(0u32);
+        let recomputed = evaluator.memoize_deferred_property(
+            obj,
+            prop,
+            || panic!("no cycle"),
+            || {
+                calls.set(calls.get() + 1);
+                marker(2)
+            },
+        );
+        assert_eq!(calls.get(), 1, "guard-denied result must not be cached");
+        assert_eq!(recomputed.success_type(), Some(TypeId(2)));
+    }
+
+    #[test]
+    fn deferred_conditional_property_access_populates_local_memo() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let common = interner.intern_string("common");
+        let t_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        let true_branch = interner.object(vec![PropertyInfo::new(common, TypeId::NUMBER)]);
+        let false_branch = interner.object(vec![PropertyInfo::new(common, TypeId::STRING)]);
+        let cond = interner.conditional(ConditionalType {
+            check_type: t_param,
+            extends_type: TypeId::STRING,
+            true_type: true_branch,
+            false_type: false_branch,
+            is_distributive: true,
+        });
+
+        let first = evaluator.resolve_property_access_atom(cond, common);
+        assert!(
+            matches!(first, PropertyAccessResult::Success { .. }),
+            "common property should resolve through deferred conditional apparent union"
+        );
+        assert_eq!(evaluator.deferred_property_memo_entries(), 1);
+
+        let second = evaluator.resolve_property_access_atom(cond, common);
+        assert!(
+            matches!(second, PropertyAccessResult::Success { .. }),
+            "memoized deferred conditional fallback must preserve top-level correction"
+        );
+        assert_eq!(
+            evaluator.deferred_property_memo_entries(),
+            1,
+            "second access should reuse the existing deferred conditional memo entry"
+        );
+    }
+
+    #[test]
+    fn deferred_index_access_property_access_populates_local_memo() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let name_atom = interner.intern_string("name");
+        let age_atom = interner.intern_string("age");
+        let obj = interner.object(vec![
+            PropertyInfo::new(name_atom, TypeId::STRING),
+            PropertyInfo::new(age_atom, TypeId::NUMBER),
+        ]);
+        let key_param = interner.type_param(TypeParamInfo {
+            name: interner.intern_string("K"),
+            constraint: Some(interner.keyof(obj)),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        let indexed = interner.index_access(obj, key_param);
+
+        let first = evaluator.resolve_property_access_atom(indexed, name_atom);
+        let first_type = first
+            .success_type()
+            .expect("deferred member should succeed");
+        assert!(
+            matches!(
+                interner.lookup(first_type),
+                Some(TypeData::IndexAccess(source, prop))
+                    if source == indexed && prop == interner.literal_string_atom(name_atom)
+            ),
+            "homomorphic deferred property access should stay indexed"
+        );
+        assert_eq!(evaluator.deferred_property_memo_entries(), 1);
+
+        let second = evaluator.resolve_property_access_atom(indexed, name_atom);
+        assert_eq!(second.success_type(), Some(first_type));
+        assert_eq!(
+            evaluator.deferred_property_memo_entries(),
+            1,
+            "second access should reuse the existing deferred index-access memo entry"
+        );
+    }
+
+    #[test]
+    fn type_query_property_access_populates_local_memo() {
+        let interner = TypeInterner::new();
+        let evaluator = PropertyAccessEvaluator::new(&interner);
+        let prop = interner.intern_string("value");
+        let query = interner.type_query(crate::SymbolRef(77));
+
+        let first = evaluator.resolve_property_access_atom(query, prop);
+        assert_eq!(first.success_type(), Some(TypeId::ANY));
+        assert_eq!(evaluator.deferred_property_memo_entries(), 1);
+
+        let second = evaluator.resolve_property_access_atom(query, prop);
+        assert_eq!(second.success_type(), Some(TypeId::ANY));
+        assert_eq!(
+            evaluator.deferred_property_memo_entries(),
+            1,
+            "second access should reuse the existing type-query memo entry"
+        );
     }
 }
