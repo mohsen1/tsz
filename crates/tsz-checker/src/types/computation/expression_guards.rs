@@ -1,5 +1,6 @@
 //! Expression-shape helpers shared by computation diagnostics.
 
+use crate::query_boundaries::type_computation::expression_results as result_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -78,7 +79,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if saw_promise_member && !non_promise_members.is_empty() {
-            self.ctx.types.factory().union(non_promise_members)
+            result_query::conditional_branch_union(self.ctx.types, non_promise_members)
         } else {
             contextual
         }

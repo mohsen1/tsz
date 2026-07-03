@@ -6,6 +6,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::type_computation::core::{
     WriteTargetLogicalOperator, WriteTargetLogicalResult,
 };
+use crate::query_boundaries::type_computation::expression_results as result_query;
 use crate::query_boundaries::type_computation::in_operator::{self, InOperatorRhsClassifier};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -192,7 +193,7 @@ impl CheckerState<'_> {
             .collect::<Vec<_>>();
 
         if changed {
-            self.ctx.types.factory().union_preserve_members(reduced)
+            result_query::literal_index_access_union(self.ctx.types, reduced)
         } else {
             type_id
         }
@@ -698,18 +699,7 @@ impl CheckerState<'_> {
         if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
             return None;
         }
-        let factory = self.ctx.types.factory();
-        let members = vec![
-            factory.literal_string("string"),
-            factory.literal_string("number"),
-            factory.literal_string("bigint"),
-            factory.literal_string("boolean"),
-            factory.literal_string("symbol"),
-            factory.literal_string("undefined"),
-            factory.literal_string("object"),
-            factory.literal_string("function"),
-        ];
-        Some(factory.union(members))
+        Some(result_query::typeof_result_union(self.ctx.types))
     }
 
     /// Check if an identifier node's declared type overlaps with the given comparison type.

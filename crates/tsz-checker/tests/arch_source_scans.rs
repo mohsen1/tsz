@@ -64,6 +64,9 @@
 //! - `call_inference_construction_boundary_scans`: call inference routes
 //!   partial object/function/tuple inference construction through
 //!   `query_boundaries::checkers::call`.
+//! - `expression_result_construction_boundary_scans`: expression computation
+//!   routes selected result-shape construction through
+//!   `query_boundaries::type_computation::expression_results`.
 
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
@@ -87,6 +90,8 @@ mod declaration_export_construction_boundary_scans;
 mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]
 mod excess_property_construction_boundary_scans;
+#[path = "arch_source_scans/expression_result_construction_boundary_scans.rs"]
+mod expression_result_construction_boundary_scans;
 #[path = "arch_source_scans/import_attribute_construction_boundary_scans.rs"]
 mod import_attribute_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
