@@ -28,6 +28,8 @@
 //! - `index_signature_boundary_scans`: production checker index-signature
 //!   queries go through `query_boundaries::index_signature` rather than
 //!   constructing the raw solver resolver at call sites.
+//! - `jsdoc_construction_boundary_scans`: JSDoc type-resolution callers route
+//!   solver shape construction through `query_boundaries::jsdoc_construction`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -39,6 +41,8 @@ mod construction_boundary_signature_scans;
 mod cross_arena_delegation_scope_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
+#[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]
+mod jsdoc_construction_boundary_scans;
 #[path = "arch_source_scans/lazy_resolution_session_scans.rs"]
 mod lazy_resolution_session_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]

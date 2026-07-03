@@ -13,6 +13,7 @@
 //! - Arrow function parsing (`parse_jsdoc_arrow_function_type`)
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
+use crate::query_boundaries::jsdoc_construction::{jsdoc_function_type, jsdoc_object_index_type};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
@@ -20,7 +21,7 @@ use tsz_common::numeric::parse_numeric_literal_value;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{IndexSignature, ObjectShape, TypeId, TypePredicate};
+use tsz_solver::{TypeId, TypePredicate};
 
 /// Strip a leading and matching trailing `"` or `'` from `s` if both are
 /// present. Returns the bare inner string when stripped, otherwise `None`.
@@ -552,25 +553,10 @@ impl<'a> CheckerState<'a> {
                     if let (Some(key_type), Some(value_type)) = (
                         self.jsdoc_type_from_expression(key_str),
                         self.jsdoc_type_from_expression(value_str),
-                    ) {
-                        let mut shape = ObjectShape::default();
-                        if key_type == TypeId::STRING {
-                            shape.string_index = Some(IndexSignature {
-                                key_type,
-                                value_type,
-                                readonly: false,
-                                param_name: None,
-                            });
-                            return Some(factory.object_with_index(shape));
-                        } else if key_type == TypeId::NUMBER {
-                            shape.number_index = Some(IndexSignature {
-                                key_type,
-                                value_type,
-                                readonly: false,
-                                param_name: None,
-                            });
-                            return Some(factory.object_with_index(shape));
-                        }
+                    ) && let Some(object_type) =
+                        jsdoc_object_index_type(self.ctx.types, key_type, value_type, false, None)
+                    {
+                        return Some(object_type);
                     }
                 }
                 if type_expr.starts_with("{[")
@@ -587,9 +573,7 @@ impl<'a> CheckerState<'a> {
                             let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
                             let k_atom = self.ctx.types.intern_string(k_name);
                             if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
-                                use crate::query_boundaries::common::{
-                                    FunctionShape, MappedType, ParamInfo,
-                                };
+                                use crate::query_boundaries::common::{MappedType, ParamInfo};
                                 use tsz_solver::TypeParamInfo;
                                 let keyof_t_id = factory.keyof(t_id);
                                 let k_param = TypeParamInfo {
@@ -601,21 +585,21 @@ impl<'a> CheckerState<'a> {
                                 };
                                 let k_id = factory.type_param(k_param);
                                 let t_k_id = factory.index_access(t_id, k_id);
-                                let func_shape = FunctionShape {
-                                    type_params: Vec::new(),
-                                    params: vec![ParamInfo {
+                                let template_id = jsdoc_function_type(
+                                    self.ctx.types,
+                                    Vec::new(),
+                                    vec![ParamInfo {
                                         name: Some(self.ctx.types.intern_string("value")),
                                         type_id: t_k_id,
                                         optional: false,
                                         rest: false,
                                     }],
-                                    this_type: None,
-                                    return_type: TypeId::VOID,
-                                    type_predicate: None,
-                                    is_constructor: false,
-                                    is_method: false,
-                                };
-                                let template_id = factory.function(func_shape);
+                                    None,
+                                    TypeId::VOID,
+                                    None,
+                                    false,
+                                    false,
+                                );
                                 return Some(factory.mapped(MappedType {
                                     type_param: k_param,
                                     constraint: keyof_t_id,
@@ -666,7 +650,7 @@ impl<'a> CheckerState<'a> {
                         let return_type = self
                             .resolve_jsdoc_reference(return_type_str)
                             .unwrap_or(TypeId::VOID);
-                        use tsz_solver::{FunctionShape, ParamInfo};
+                        use tsz_solver::ParamInfo;
                         let mut params = Vec::new();
                         let mut this_type = None;
                         let mut ok = true;
@@ -717,16 +701,16 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 return_type
                             };
-                            let shape = FunctionShape {
-                                type_params: Vec::new(),
+                            return Some(jsdoc_function_type(
+                                self.ctx.types,
+                                Vec::new(),
                                 params,
                                 this_type,
-                                return_type: final_return,
-                                type_predicate: None,
+                                final_return,
+                                None,
                                 is_constructor,
-                                is_method: false,
-                            };
-                            return Some(factory.function(shape));
+                                false,
+                            ));
                         }
                     }
                 }
@@ -795,7 +779,7 @@ impl<'a> CheckerState<'a> {
     /// - `(x: boolean) => asserts x` (assertion predicates)
     /// - `(x: unknown) => x is string` (type predicates)
     fn parse_jsdoc_arrow_function_type(&mut self, type_expr: &str) -> Option<TypeId> {
-        use tsz_solver::{FunctionShape, ParamInfo};
+        use tsz_solver::ParamInfo;
 
         // Extract generic type parameters if present: `<T, U>(params) => ReturnType`
         let (type_params_str, rest) = if type_expr.starts_with('<') {
@@ -913,17 +897,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let factory = self.ctx.types.factory();
-        let shape = FunctionShape {
-            type_params: jsdoc_type_params,
+        Some(jsdoc_function_type(
+            self.ctx.types,
+            jsdoc_type_params,
             params,
             this_type,
             return_type,
             type_predicate,
-            is_constructor: false,
-            is_method: false,
-        };
-        Some(factory.function(shape))
+            false,
+            false,
+        ))
     }
 
     /// Parse the return type of a JSDoc arrow function, handling type predicates.

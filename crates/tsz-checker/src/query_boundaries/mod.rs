@@ -41,6 +41,7 @@ pub(crate) mod index_signature;
 pub(crate) mod inference;
 pub(crate) mod intersection_display;
 pub(crate) mod js_exports;
+pub(crate) mod jsdoc_construction;
 pub(crate) mod key_constraints;
 pub(crate) mod lib_augmentations;
 pub(crate) mod name_resolution;
