@@ -1,6 +1,7 @@
 //! Accessor element handling for object literal type computation.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::object_literal_context as object_context_query;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -154,26 +155,21 @@ impl<'a> CheckerState<'a> {
                     // Getter-only accessors are readonly in the object type
                     let is_getter_only = elem_node.kind == syntax_kind_ext::GET_ACCESSOR
                         && !setter_names.contains(&name_atom);
-                    this_props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id: TypeId::ANY,
-                        write_type: TypeId::ANY,
-                        optional: false,
-                        readonly: is_getter_only,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    this_props.push(object_context_query::synthetic_this_property(
+                        name_atom,
+                        TypeId::ANY,
+                        TypeId::ANY,
+                        is_getter_only,
+                        false,
+                        0,
+                    ));
                 }
                 self.ctx
                     .this_type_stack
-                    .push(self.ctx.types.factory().object(this_props));
+                    .push(object_context_query::synthetic_this_object(
+                        self.ctx.types,
+                        this_props,
+                    ));
                 pushed_synthetic_this = true;
             }
 

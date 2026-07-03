@@ -1,3 +1,4 @@
+use crate::query_boundaries::object_literal_context as object_context_query;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -5,7 +6,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, TypeId, Visibility};
+use tsz_solver::{TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     /// Whether an object-literal member, when its body is checked, binds the
@@ -709,22 +710,11 @@ impl<'a> CheckerState<'a> {
                             })
                         })
                         .collect();
-                    let placeholder = self.ctx.types.factory().callable(CallableShape {
-                        call_signatures: vec![CallSignature {
-                            type_params: Vec::new(),
-                            params,
-                            this_type: None,
-                            return_type: TypeId::VOID,
-                            type_predicate: None,
-                            is_method: true,
-                        }],
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    });
+                    let placeholder = object_context_query::synthetic_this_method_callable(
+                        self.ctx.types,
+                        params,
+                        TypeId::VOID,
+                    );
                     self.pop_type_parameters(tp_updates);
                     placeholder
                 }
@@ -791,43 +781,23 @@ impl<'a> CheckerState<'a> {
                         )
                     });
 
-                self.ctx.types.factory().callable(CallableShape {
-                    call_signatures: vec![CallSignature {
-                        type_params: Vec::new(),
-                        params: other_params,
-                        this_type: None,
-                        return_type: other_return_type,
-                        type_predicate: None,
-                        is_method: true,
-                    }],
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                })
+                object_context_query::synthetic_this_method_callable(
+                    self.ctx.types,
+                    other_params,
+                    other_return_type,
+                )
             };
 
-            this_props.push(tsz_solver::PropertyInfo {
-                name: method_name_atom,
-                type_id: method_type,
-                write_type: method_type,
-                optional: false,
-                readonly: self.ctx.in_const_assertion,
-                is_method: true,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: decl_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            this_props.push(object_context_query::synthetic_this_method_property(
+                method_name_atom,
+                method_type,
+                method_type,
+                self.ctx.in_const_assertion,
+                decl_order,
+            ));
         }
 
-        self.ctx.types.factory().object(this_props)
+        object_context_query::synthetic_this_object(self.ctx.types, this_props)
     }
 
     /// Build a synthetic `this` type for a function expression that is a property
@@ -923,40 +893,21 @@ impl<'a> CheckerState<'a> {
                     )
                 });
 
-            this_props.push(tsz_solver::PropertyInfo {
-                name: method_name_atom,
-                type_id: self.ctx.types.factory().callable(CallableShape {
-                    call_signatures: vec![CallSignature {
-                        type_params: Vec::new(),
-                        params: other_params,
-                        this_type: None,
-                        return_type: other_return_type,
-                        type_predicate: None,
-                        is_method: true,
-                    }],
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                }),
-                write_type: TypeId::ANY,
-                optional: false,
-                readonly: self.ctx.in_const_assertion,
-                is_method: true,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: decl_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            let method_type = object_context_query::synthetic_this_method_callable(
+                self.ctx.types,
+                other_params,
+                other_return_type,
+            );
+            this_props.push(object_context_query::synthetic_this_method_property(
+                method_name_atom,
+                method_type,
+                TypeId::ANY,
+                self.ctx.in_const_assertion,
+                decl_order,
+            ));
         }
 
-        self.ctx.types.factory().object(this_props)
+        object_context_query::synthetic_this_object(self.ctx.types, this_props)
     }
 
     /// Name of the variable binding an object literal initializes, if it is the
