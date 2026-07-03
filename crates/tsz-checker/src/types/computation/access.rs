@@ -1,12 +1,11 @@
 use self::global_this_keyed::{
-    GlobalThisAccessKind, GlobalThisFlowMode, GlobalThisKeyStatus, GlobalThisReceiverStatus,
-    GlobalThisStringLikeElementAccess,
+    GlobalThisAccessKind, GlobalThisFlowMode, GlobalThisKeyStatus, GlobalThisLiteralKeyAccess,
+    GlobalThisReceiverStatus, GlobalThisStringLikeElementAccess, GlobalThisWindowKeyUnionAccess,
 };
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
-use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -274,142 +273,65 @@ impl<'a> CheckerState<'a> {
         let is_declared_window_global_this =
             self.is_window_and_global_this_declared_expression(access.expression);
         if let Some(name) = literal_string.as_deref()
-            && (self.is_global_this_like_expression(access.expression)
-                || is_this_global
-                || is_declared_window_global_this)
-        {
-            let targets_global_this =
-                self.is_global_this_expression(access.expression) || is_this_global;
-            let receiver = GlobalReceiver::from_targets_global_this(targets_global_this);
-            let allow_unknown_property_fallback =
-                targets_global_this && !is_declared_window_global_this;
-            if is_declared_window_global_this
-                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            {
-                if let Some(window_type) = self.resolve_lib_type_by_name("Window") {
-                    let prop_result =
-                        crate::query_boundaries::property_access::resolve_property_access(
-                            self.ctx.types,
-                            window_type,
-                            self.ctx.types.intern_string(name),
-                        );
-                    if let Some(type_id) = prop_result.success_type() {
-                        return if skip_flow_narrowing {
-                            type_id
-                        } else {
-                            self.apply_flow_narrowing(idx, type_id)
-                        };
-                    }
-                }
-                if self.ctx.no_implicit_any() && !self.is_js_file() {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        access.name_or_argument,
-                        "Element implicitly has an 'any' type because index expression is not of type 'number'.",
-                        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE,
-                    );
-                }
-                return TypeId::ANY;
-            }
-            // For element access (globalThis['y']), tsc reports TS2339 at the full
-            // expression span. For property access (globalThis.y), at the property name.
-            let error_node = if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-                idx
-            } else {
-                access.name_or_argument
-            };
-            let property_type = self.resolve_global_this_property_type(
-                name,
-                error_node,
-                allow_unknown_property_fallback,
-                receiver,
-            );
-            if property_type == TypeId::ERROR {
-                return TypeId::ERROR;
-            }
-            // TS7053: When noImplicitAny is enabled and the access target is
-            // `typeof globalThis` (via `this` resolving to global, or a direct
-            // `globalThis['x']`), and the property is not found, emit the
-            // can't-index diagnostic.
-            let access_targets_global_this =
-                is_this_global || self.is_global_this_expression(access.expression);
-            if access_targets_global_this
-                && property_type == TypeId::ANY
-                && self.ctx.no_implicit_any()
-                && !self.is_js_file()
-                && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let index_str = format!("\"{name}\"");
-                self.error_at_node(
+            && let Some(result) =
+                self.try_global_this_literal_key_access(GlobalThisLiteralKeyAccess {
                     idx,
-                    &format_message(
-                        diagnostic_messages::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
-                        &[&index_str, "typeof globalThis"],
-                    ),
-                    diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
-                );
-            }
-            return if skip_flow_narrowing {
-                property_type
-            } else {
-                self.apply_flow_narrowing(idx, property_type)
-            };
+                    access_kind: if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                        GlobalThisAccessKind::Element
+                    } else {
+                        GlobalThisAccessKind::Other
+                    },
+                    access_expression: access.expression,
+                    key_node: access.name_or_argument,
+                    name,
+                    is_global_this_like_receiver: self
+                        .is_global_this_like_expression(access.expression),
+                    receiver_status: if is_this_global {
+                        GlobalThisReceiverStatus::GlobalThisLike
+                    } else {
+                        GlobalThisReceiverStatus::Other
+                    },
+                    is_declared_window_global_this,
+                    flow_mode: if skip_flow_narrowing {
+                        GlobalThisFlowMode::SkipFlowNarrowing
+                    } else {
+                        GlobalThisFlowMode::ApplyFlowNarrowing
+                    },
+                })
+        {
+            return result;
         }
 
-        // Handle `window[k]` where `k` is a typed identifier whose type is a
-        // single string literal or a union of string literals, e.g.
-        // `const k: 'resizeTo' | 'resizeBy'`. The literal-string branch above
-        // only fires when the AST argument is a string literal node, so
-        // variable indices fall through to the general union-keys path. That
-        // path resolves the property on the full `Window & typeof globalThis`
-        // intersection, where the structural callable shape contributed by
-        // `Window`'s methods is lost during evaluation and the contextual
-        // arrow-function callback collapses to implicit-any. Resolving each
-        // key directly against the `Window` lib type — mirroring the literal
-        // branch above — yields a usable callable shape for the assignment
-        // target so callbacks like `(x, y) => {}` are contextually typed.
-        if literal_string.is_none()
-            && node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            && (self.is_global_this_like_expression(access.expression)
-                || is_this_global
-                || is_declared_window_global_this)
-            && let Some((string_keys, number_keys)) =
-                self.get_literal_key_union_from_type(index_type)
-            && !string_keys.is_empty()
-            && number_keys.is_empty()
-            && let Some(window_type) = self.resolve_lib_type_by_name("Window")
+        if let Some(result) =
+            self.try_global_this_window_key_union_access(GlobalThisWindowKeyUnionAccess {
+                idx,
+                access_kind: if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+                    GlobalThisAccessKind::Element
+                } else {
+                    GlobalThisAccessKind::Other
+                },
+                key_status: if literal_string.is_none() {
+                    GlobalThisKeyStatus::NoLiteralStringKey
+                } else {
+                    GlobalThisKeyStatus::HasLiteralStringKey
+                },
+                index_type,
+                is_global_this_like_receiver: self
+                    .is_global_this_like_expression(access.expression),
+                receiver_status: if is_this_global {
+                    GlobalThisReceiverStatus::GlobalThisLike
+                } else {
+                    GlobalThisReceiverStatus::Other
+                },
+                is_declared_window_global_this,
+                flow_mode: if skip_flow_narrowing {
+                    GlobalThisFlowMode::SkipFlowNarrowing
+                } else {
+                    GlobalThisFlowMode::ApplyFlowNarrowing
+                },
+            })
         {
-            let mut resolved_types: Vec<TypeId> = Vec::with_capacity(string_keys.len());
-            let mut all_resolved = true;
-            for key_atom in &string_keys {
-                let prop_result = crate::query_boundaries::property_access::resolve_property_access(
-                    self.ctx.types,
-                    window_type,
-                    *key_atom,
-                );
-                if let Some(type_id) = prop_result.success_type() {
-                    resolved_types.push(type_id);
-                } else {
-                    all_resolved = false;
-                    break;
-                }
-            }
-            if all_resolved && !resolved_types.is_empty() {
-                // Write context: value must satisfy every possible key →
-                // intersection. Read context: result is one of the keyed
-                // properties → union.
-                let combined = if skip_flow_narrowing {
-                    tsz_solver::utils::intersection_or_single(self.ctx.types, resolved_types)
-                } else {
-                    tsz_solver::utils::union_or_single(self.ctx.types, resolved_types)
-                };
-                return if skip_flow_narrowing {
-                    combined
-                } else {
-                    self.apply_flow_narrowing(idx, combined)
-                };
-            }
+            return result;
         }
 
         if let Some(result) =
