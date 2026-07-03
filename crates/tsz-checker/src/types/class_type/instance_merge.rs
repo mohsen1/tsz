@@ -86,6 +86,7 @@ impl CheckerState<'_> {
                                 &mut b.properties,
                                 &mut b.string_index,
                                 &mut b.number_index,
+                                &mut b.symbol_index,
                             );
                         } else {
                             tracing::debug!(
@@ -181,6 +182,7 @@ impl CheckerState<'_> {
                                     &mut b.properties,
                                     &mut b.string_index,
                                     &mut b.number_index,
+                                    &mut b.symbol_index,
                                 );
                             }
                         }
@@ -210,6 +212,7 @@ impl CheckerState<'_> {
                             &mut b.properties,
                             &mut b.string_index,
                             &mut b.number_index,
+                            &mut b.symbol_index,
                         );
                     }
                     break;
@@ -358,11 +361,14 @@ impl CheckerState<'_> {
                                 .entry(base_prop.name)
                                 .or_insert_with(|| base_prop.clone());
                         }
-                        if let Some(ref idx) = base_shape.string_index {
-                            Self::merge_index_signature(&mut b.string_index, *idx);
+                        if let Some(idx) = base_shape.string_index_signature().copied() {
+                            Self::merge_index_signature(&mut b.string_index, idx);
                         }
                         if let Some(ref idx) = base_shape.number_index {
                             Self::merge_index_signature(&mut b.number_index, *idx);
+                        }
+                        if let Some(idx) = base_shape.symbol_index_signature().copied() {
+                            Self::merge_index_signature(&mut b.symbol_index, idx);
                         }
                     }
                     break;
@@ -375,11 +381,14 @@ impl CheckerState<'_> {
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
                     }
-                    if let Some(ref idx) = base_shape.string_index {
-                        Self::merge_index_signature(&mut b.string_index, *idx);
+                    if let Some(idx) = base_shape.string_index_signature().copied() {
+                        Self::merge_index_signature(&mut b.string_index, idx);
                     }
                     if let Some(ref idx) = base_shape.number_index {
                         Self::merge_index_signature(&mut b.number_index, *idx);
+                    }
+                    if let Some(idx) = base_shape.symbol_index_signature().copied() {
+                        Self::merge_index_signature(&mut b.symbol_index, idx);
                     }
                 }
 
@@ -549,11 +558,14 @@ impl CheckerState<'_> {
                             .entry(prop.name)
                             .or_insert_with(|| prop.clone());
                     }
-                    if let Some(ref idx) = shape.string_index {
-                        Self::merge_index_signature(&mut b.string_index, *idx);
+                    if let Some(idx) = shape.string_index_signature().copied() {
+                        Self::merge_index_signature(&mut b.string_index, idx);
                     }
                     if let Some(ref idx) = shape.number_index {
                         Self::merge_index_signature(&mut b.number_index, *idx);
+                    }
+                    if let Some(idx) = shape.symbol_index_signature().copied() {
+                        Self::merge_index_signature(&mut b.symbol_index, idx);
                     }
                 } else if let Some(shape) = callable_shape_for_type(self.ctx.types, interface_type)
                 {
@@ -624,11 +636,14 @@ impl CheckerState<'_> {
                                 .entry(prop.name)
                                 .or_insert_with(|| prop.clone());
                         }
-                        if let Some(ref idx) = shape.string_index {
-                            Self::merge_index_signature(&mut b.string_index, *idx);
+                        if let Some(idx) = shape.string_index_signature().copied() {
+                            Self::merge_index_signature(&mut b.string_index, idx);
                         }
                         if let Some(ref idx) = shape.number_index {
                             Self::merge_index_signature(&mut b.number_index, *idx);
+                        }
+                        if let Some(idx) = shape.symbol_index_signature().copied() {
+                            Self::merge_index_signature(&mut b.symbol_index, idx);
                         }
                     } else if let Some(shape) =
                         callable_shape_for_type(self.ctx.types, interface_type)
@@ -679,6 +694,7 @@ impl CheckerState<'_> {
             properties: props,
             string_index: b.string_index,
             number_index: b.number_index,
+            symbol_index: b.symbol_index,
             symbol: current_sym,
             ..ObjectShape::default()
         };

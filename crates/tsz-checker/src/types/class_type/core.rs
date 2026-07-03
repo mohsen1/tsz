@@ -112,6 +112,7 @@ impl<'a> CheckerState<'a> {
             accessors: FxHashMap::with_capacity_and_hasher(4, Default::default()),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             merged_interface_type_for_class: None,
             prescan_this_type: None,
             deferred_methods: Vec::with_capacity(member_count / 2),

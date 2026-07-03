@@ -318,6 +318,7 @@ impl<'a> CheckerState<'a> {
         let mut construct_signatures = Vec::new();
         let mut string_index = None;
         let mut number_index = None;
+        let mut symbol_index = None;
         let mut symbol = None;
         let mut result_is_callable = false;
 
@@ -347,14 +348,18 @@ impl<'a> CheckerState<'a> {
             if let Some(shape) = object_shape_for_type(self.ctx.types, type_id) {
                 if is_derived_class {
                     symbol = shape.symbol;
-                    string_index = shape.string_index;
+                    string_index = shape.string_index_signature().copied();
                     number_index = shape.number_index;
+                    symbol_index = shape.symbol_index_signature().copied();
                 } else {
                     if string_index.is_none() {
-                        string_index = shape.string_index;
+                        string_index = shape.string_index_signature().copied();
                     }
                     if number_index.is_none() {
                         number_index = shape.number_index;
+                    }
+                    if symbol_index.is_none() {
+                        symbol_index = shape.symbol_index_signature().copied();
                     }
                 }
                 for prop in &shape.properties {
@@ -382,6 +387,7 @@ impl<'a> CheckerState<'a> {
             properties: properties.into_values().collect(),
             string_index,
             number_index,
+            symbol_index,
             symbol,
             ..ObjectShape::default()
         };
@@ -389,6 +395,7 @@ impl<'a> CheckerState<'a> {
         if is_plain_object_type(self.ctx.types, instance_type)
             && string_index.is_none()
             && number_index.is_none()
+            && symbol_index.is_none()
         {
             factory.object(shape.properties)
         } else {

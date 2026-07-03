@@ -11,6 +11,21 @@ fn codes(source: &str) -> Vec<u32> {
     get_diagnostics(source).iter().map(|(c, _)| *c).collect()
 }
 
+fn assert_index_key_spaces_are_clean(codes: &[u32], context: &str) {
+    assert!(
+        !codes.contains(&2322),
+        "{context}: string and symbol index values must stay split by key space; got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&2538),
+        "{context}: symbol key access must not report TS2538; got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&7053),
+        "{context}: indexed access must not report TS7053; got {codes:?}",
+    );
+}
+
 #[test]
 fn fbounded_implements_not_corrupted_by_recursive_alias_context() {
     // Regression for issue #6557: recursive interface and recursive alias
@@ -249,4 +264,85 @@ class NoName implements Named {
         cs.contains(&2420),
         "expected TS2420 when class is missing a required named property; got codes: {cs:?}"
     );
+}
+
+#[test]
+fn class_string_and_symbol_index_accesses_keep_key_spaces() {
+    let source = r#"
+declare const sym: symbol;
+
+class Registry {
+    [k: string]: number;
+    [k: symbol]: boolean;
+}
+
+declare const registry: Registry;
+const named: number = registry["name"];
+const keyed: boolean = registry[sym];
+"#;
+    let cs = codes(source);
+    assert_index_key_spaces_are_clean(&cs, "class own indexes");
+}
+
+#[test]
+fn derived_class_preserves_base_symbol_index_with_own_string_index() {
+    let source = r#"
+declare const sym: symbol;
+
+class Base {
+    [k: symbol]: boolean;
+}
+
+class Derived extends Base {
+    [k: string]: number;
+}
+
+declare const derived: Derived;
+const named: number = derived["name"];
+const keyed: boolean = derived[sym];
+"#;
+    let cs = codes(source);
+    assert_index_key_spaces_are_clean(&cs, "base symbol plus derived string index");
+}
+
+#[test]
+fn class_interface_merge_preserves_class_symbol_and_interface_string_indexes() {
+    let source = r#"
+declare const sym: symbol;
+
+class Registry {
+    [k: symbol]: boolean;
+}
+
+interface Registry {
+    [k: string]: number;
+}
+
+declare const registry: Registry;
+const named: number = registry["name"];
+const keyed: boolean = registry[sym];
+"#;
+    let cs = codes(source);
+    assert_index_key_spaces_are_clean(&cs, "class symbol plus interface string index");
+}
+
+#[test]
+fn class_interface_merge_preserves_interface_symbol_and_class_string_indexes() {
+    let source = r#"
+declare const sym: symbol;
+
+interface Bucket {
+    [k: symbol]: boolean;
+}
+
+class Bucket {
+    [k: string]: number;
+}
+
+declare const bucket: Bucket;
+const named: number = bucket["name"];
+const keyed: boolean = bucket[sym];
+"#;
+    let cs = codes(source);
+    assert_index_key_spaces_are_clean(&cs, "interface symbol plus class string index");
 }

@@ -103,6 +103,7 @@ pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) accessors: FxHashMap<Atom, AccessorAggregate>,
     pub(super) string_index: Option<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    pub(super) symbol_index: Option<IndexSignature>,
     pub(super) merged_interface_type_for_class: Option<TypeId>,
     pub(super) prescan_this_type: Option<TypeId>,
     pub(super) deferred_methods:
@@ -574,6 +575,7 @@ impl<'a> CheckerState<'a> {
                                 properties: partial_props,
                                 string_index: b.string_index,
                                 number_index: b.number_index,
+                                symbol_index: b.symbol_index,
                                 symbol: current_sym,
                                 ..ObjectShape::default()
                             });
@@ -909,6 +911,8 @@ impl<'a> CheckerState<'a> {
                     if is_valid_index_type {
                         if key_type == TypeId::NUMBER {
                             Self::merge_index_signature(&mut b.number_index, index);
+                        } else if key_type == TypeId::SYMBOL {
+                            Self::merge_index_signature(&mut b.symbol_index, index);
                         } else {
                             Self::merge_index_signature(&mut b.string_index, index);
                         }
@@ -985,6 +989,7 @@ impl<'a> CheckerState<'a> {
             let mut partial_method_props = b.properties.clone();
             let mut partial_method_string_index = b.string_index;
             let mut partial_method_number_index = b.number_index;
+            let mut partial_method_symbol_index = b.symbol_index;
 
             // Method body inference needs inherited `this` members up front.
             // Without the base instance surface here, overrides like
@@ -1026,6 +1031,7 @@ impl<'a> CheckerState<'a> {
                             &mut partial_method_props,
                             &mut partial_method_string_index,
                             &mut partial_method_number_index,
+                            &mut partial_method_symbol_index,
                         );
                     }
                     break;
@@ -1129,6 +1135,7 @@ impl<'a> CheckerState<'a> {
                 properties: partial_props,
                 string_index: partial_method_string_index,
                 number_index: partial_method_number_index,
+                symbol_index: partial_method_symbol_index,
                 symbol: current_sym,
                 ..ObjectShape::default()
             });
@@ -1376,6 +1383,7 @@ impl<'a> CheckerState<'a> {
                     properties: props,
                     string_index: b.string_index,
                     number_index: b.number_index,
+                    symbol_index: b.symbol_index,
                     symbol: current_sym,
                     ..ObjectShape::default()
                 });
