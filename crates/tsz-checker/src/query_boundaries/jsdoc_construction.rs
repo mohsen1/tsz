@@ -6,9 +6,11 @@
 
 use tsz_common::Atom;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::def::DefId;
 use tsz_solver::{
     ConditionalType, FunctionShape, IndexSignature, MappedModifier, MappedType, ObjectShape,
     ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypeParamOrigin, TypePredicate,
+    TypePredicateTarget,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,6 +108,26 @@ pub(crate) fn jsdoc_keyof_type(db: &dyn TypeDatabase, operand: TypeId) -> TypeId
     db.keyof(operand)
 }
 
+pub(crate) fn jsdoc_lazy_type(db: &dyn TypeDatabase, def_id: DefId) -> TypeId {
+    db.lazy(def_id)
+}
+
+pub(crate) fn jsdoc_readonly_type(db: &dyn TypeDatabase, inner: TypeId) -> TypeId {
+    db.readonly_type(inner)
+}
+
+pub(crate) fn jsdoc_literal_string_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
+    db.literal_string(value)
+}
+
+pub(crate) fn jsdoc_literal_boolean_type(db: &dyn TypeDatabase, value: bool) -> TypeId {
+    db.literal_boolean(value)
+}
+
+pub(crate) fn jsdoc_literal_number_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
+    db.literal_number(value)
+}
+
 pub(crate) const fn jsdoc_type_param_info(
     name: Atom,
     constraint: Option<TypeId>,
@@ -179,6 +201,20 @@ pub(crate) const fn jsdoc_property_info(
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+    }
+}
+
+pub(crate) const fn jsdoc_type_predicate(
+    asserts: bool,
+    target: TypePredicateTarget,
+    type_id: Option<TypeId>,
+    parameter_index: Option<usize>,
+) -> TypePredicate {
+    TypePredicate {
+        asserts,
+        target,
+        type_id,
+        parameter_index,
     }
 }
 

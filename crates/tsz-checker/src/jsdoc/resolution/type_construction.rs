@@ -15,14 +15,14 @@
 use super::super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::query_boundaries::jsdoc_construction::{
     self as jsdoc_construct, JsdocObjectIndexFact, JsdocObjectIndexKind, jsdoc_empty_object_type,
-    jsdoc_function_type, jsdoc_object_index_fact, jsdoc_object_type, jsdoc_param_info,
-    jsdoc_property_info,
+    jsdoc_function_type, jsdoc_lazy_type, jsdoc_object_index_fact, jsdoc_object_type,
+    jsdoc_param_info, jsdoc_property_info, jsdoc_type_predicate,
 };
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{PropertyInfo, TypeId, TypePredicate, TypePredicateTarget};
+use tsz_solver::{PropertyInfo, TypeId, TypePredicateTarget};
 impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
         &mut self,
@@ -349,9 +349,8 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ensure_jsdoc_assigned_value_def(display_name, ty);
         self.ctx.definition_store.register_type_to_def(ty, def_id);
-        self.ctx
-            .types
-            .store_display_alias(ty, self.ctx.types.factory().lazy(def_id));
+        let alias_lazy = jsdoc_lazy_type(self.ctx.types, def_id);
+        self.ctx.types.store_display_alias(ty, alias_lazy);
         ty
     }
 
@@ -590,7 +589,7 @@ impl<'a> CheckerState<'a> {
         // No-op when `body_type == lazy(def_id)` (e.g. recursive typedefs)
         // or when storing would alias an intrinsic — `store_display_alias`
         // applies its own safety guards.
-        let alias_lazy = self.ctx.types.factory().lazy(def_id);
+        let alias_lazy = jsdoc_lazy_type(self.ctx.types, def_id);
         self.ctx.types.store_display_alias(body_type, alias_lazy);
 
         def_id
@@ -627,7 +626,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(type_id, def_id);
-        let alias_lazy = self.ctx.types.factory().lazy(def_id);
+        let alias_lazy = jsdoc_lazy_type(self.ctx.types, def_id);
         self.ctx.types.store_display_alias(type_id, alias_lazy);
         def_id
     }
@@ -1717,12 +1716,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            type_predicate = Some(TypePredicate {
-                asserts: is_asserts,
+            type_predicate = Some(jsdoc_type_predicate(
+                is_asserts,
                 target,
-                type_id: pred_type,
+                pred_type,
                 parameter_index,
-            });
+            ));
             if is_asserts {
                 TypeId::VOID
             } else {
