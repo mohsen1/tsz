@@ -41,6 +41,7 @@ pub(crate) mod function_returns;
 pub(crate) mod generic_instantiation;
 pub(crate) mod import_attributes;
 pub(crate) mod index_signature;
+pub(crate) mod indexed_access_key_space;
 pub(crate) mod inference;
 pub(crate) mod intersection_display;
 pub(crate) mod js_exports;

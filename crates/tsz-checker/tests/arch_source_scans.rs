@@ -33,6 +33,9 @@
 //! - `index_signature_boundary_scans`: production checker index-signature
 //!   queries go through `query_boundaries::index_signature` rather than
 //!   constructing the raw solver resolver at call sites.
+//! - `indexed_access_key_space_construction_boundary_scans`: indexed-access
+//!   validation routes key-space/value-surface construction through
+//!   `query_boundaries::indexed_access_key_space`.
 //! - `jsdoc_construction_boundary_scans`: JSDoc type-resolution callers route
 //!   solver shape construction through `query_boundaries::jsdoc_construction`.
 //! - `jsx_construction_boundary_scans`: JSX checker callers route object and
@@ -115,6 +118,8 @@ mod expression_result_construction_boundary_scans;
 mod import_attribute_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
+#[path = "arch_source_scans/indexed_access_key_space_construction_boundary_scans.rs"]
+mod indexed_access_key_space_construction_boundary_scans;
 #[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]
 mod js_class_property_construction_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]

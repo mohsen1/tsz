@@ -1,3 +1,4 @@
+use crate::query_boundaries::indexed_access_key_space as key_space_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -193,7 +194,7 @@ impl<'a> CheckerState<'a> {
     /// `evaluate_type_with_env` keeps the solver-owned `keyof` semantics while
     /// giving the evaluator the checker resolver environment.
     pub(super) fn indexed_access_keyof_with_env(&mut self, operand: TypeId) -> TypeId {
-        let keyof = self.ctx.types.factory().keyof(operand);
+        let keyof = key_space_query::keyof_type(self.ctx.types, operand);
         self.evaluate_type_with_env(keyof)
     }
 
@@ -874,20 +875,16 @@ impl<'a> CheckerState<'a> {
                         lit.value
                             .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
                     })
-                    .map(|value| self.ctx.types.factory().literal_number(value))
+                    .map(|value| key_space_query::literal_number_key(self.ctx.types, value))
                     .unwrap_or_else(|| {
                         let atom = self.ctx.types.intern_string(&name);
-                        self.ctx.types.factory().literal_string_atom(atom)
+                        key_space_query::literal_string_key(self.ctx.types, atom)
                     });
                 key_types.push(key_type);
             }
         }
 
-        if key_types.is_empty() {
-            None
-        } else {
-            Some(self.ctx.types.factory().union(key_types))
-        }
+        key_space_query::literal_key_union(self.ctx.types, key_types)
     }
 
     pub(super) fn type_literal_ast_key_space_accepts_index(
@@ -1506,8 +1503,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let key_space = self.indexed_access_keyof_with_env(constraint);
-        let values = self
-            .evaluate_type_with_env(self.ctx.types.factory().index_access(constraint, key_space));
+        let values = self.evaluate_type_with_env(key_space_query::indexed_access_type(
+            self.ctx.types,
+            constraint,
+            key_space,
+        ));
         if matches!(values, TypeId::ERROR | TypeId::UNDEFINED) {
             return false;
         }
@@ -1652,7 +1652,7 @@ impl<'a> CheckerState<'a> {
                     // constraint directly against `keyof B`. This path is rare; the
                     // large-union issue doesn't apply here since the constraint is not
                     // itself a computed keyof union.
-                    let keyof_current = self.ctx.types.factory().keyof(current_object);
+                    let keyof_current = key_space_query::keyof_type(self.ctx.types, current_object);
                     if self
                         .indexed_access_foreign_keyof_constraint_relation_outcome(
                             index_constraint,
@@ -1936,7 +1936,7 @@ impl<'a> CheckerState<'a> {
         if !has_plain_string_index {
             return false;
         }
-        let string_or_number = self.ctx.types.union2(TypeId::STRING, TypeId::NUMBER);
+        let string_or_number = key_space_query::string_or_number_key_space(self.ctx.types);
         if self
             .string_index_candidate_is_string_or_number_key(index_type_for_check, string_or_number)
         {
