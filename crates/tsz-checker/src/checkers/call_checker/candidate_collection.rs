@@ -12,6 +12,7 @@ use crate::query_boundaries::checkers::call::{
     tuple_elements_for_type, tuple_slice_variable_rest_offset,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::construct_signatures::function_type_from_parts;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
@@ -360,9 +361,6 @@ impl<'a> CheckerState<'a> {
     where
         F: FnMut(usize, usize) -> Option<TypeId>,
     {
-        use tsz_solver::FunctionShape;
-        let factory = self.ctx.types.factory();
-
         // Pre-create a single placeholder for skipped sensitive arguments.
         // CRITICAL: The placeholder must have at least one parameter so that
         // `is_contextually_sensitive` returns `true`, which causes
@@ -372,21 +370,21 @@ impl<'a> CheckerState<'a> {
         // and incorrectly constraining type parameters (e.g., `T = () => any`).
         let sensitive_placeholder = skip_sensitive_indices.map(|_| {
             let placeholder_param_name = self.ctx.types.intern_string("__sensitive_arg__");
-            let shape = FunctionShape {
-                params: vec![tsz_solver::ParamInfo {
+            function_type_from_parts(
+                self.ctx.types,
+                Vec::new(),
+                vec![tsz_solver::ParamInfo {
                     name: Some(placeholder_param_name),
                     type_id: TypeId::ANY,
                     optional: true,
                     rest: false,
                 }],
-                return_type: TypeId::ANY,
-                this_type: None,
-                type_params: vec![],
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            };
-            factory.function(shape)
+                None,
+                TypeId::ANY,
+                None,
+                false,
+                false,
+            )
         });
 
         // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)

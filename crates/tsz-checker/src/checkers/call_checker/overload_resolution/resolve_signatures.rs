@@ -10,9 +10,14 @@ use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
 };
+use crate::query_boundaries::construct_signatures::{
+    function_shape_from_call_signature_preserving_method,
+    function_type_from_call_signature_preserving_method, function_type_from_parts,
+    function_type_from_shape,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_solver::{FunctionShape, TypeId};
 
 use super::super::{CallableContext, OverloadResolution, SelectedTypePredicate};
 use super::retry_state::{BestTypeMismatch, NoReturnContextFallback};
@@ -38,8 +43,6 @@ impl<'a> CheckerState<'a> {
         contextual_type: Option<TypeId>,
         actual_this_type: Option<TypeId>,
     ) -> Option<OverloadResolution> {
-        use crate::query_boundaries::common::FunctionShape;
-
         tracing::debug!(
             "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
             signatures,
@@ -73,22 +76,11 @@ impl<'a> CheckerState<'a> {
         // If that fails to find a match, we run a second pass that re-collects arguments
         // per candidate signature with signature-specific contextual types. This helps
         // avoid false TS2345/TS2322 when the union contextual type is too lossy.
-        let factory = self.ctx.types.factory();
-
         // Create a union of all overload signatures for contextual typing
         let signature_types: Vec<TypeId> = signatures
             .iter()
             .map(|sig| {
-                let func_shape = FunctionShape {
-                    params: sig.params.clone(),
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_params: sig.type_params.clone(),
-                    type_predicate: sig.type_predicate,
-                    is_constructor: false,
-                    is_method: sig.is_method,
-                };
-                factory.function(func_shape)
+                function_type_from_call_signature_preserving_method(self.ctx.types, sig, false)
             })
             .collect();
 
@@ -261,15 +253,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 contextual_type,
             );
-            let sig_shape = FunctionShape {
-                params: sig.params.clone(),
-                this_type: sig.this_type,
-                return_type: sig.return_type,
-                type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: sig.is_method,
-            };
+            let sig_shape = function_shape_from_call_signature_preserving_method(&sig, false);
             let sig_contextual_type = if contextual_type.is_some()
                 && (self.suppress_generic_return_context_for_direct_arg_overlap(
                     &sig_shape,
@@ -284,7 +268,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 contextual_type
             };
-            let func_type = factory.function(sig_shape.clone());
+            let func_type = function_type_from_shape(self.ctx.types, sig_shape.clone());
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_callee_relation_inputs_ready(func_type);
             let resolved_func_type =
@@ -582,16 +566,16 @@ impl<'a> CheckerState<'a> {
                         // unresolved Data/Props, causing false TS2339 on `this`
                         // property accesses in methods (e.g., Vue Options API).
                         let sig_callable_ctx = {
-                            let instantiated_func =
-                                self.ctx.types.factory().function(FunctionShape {
-                                    params: instantiated_params.clone(),
-                                    return_type,
-                                    this_type: sig.this_type,
-                                    type_params: vec![],
-                                    type_predicate: sig.type_predicate,
-                                    is_constructor: false,
-                                    is_method: sig.is_method,
-                                });
+                            let instantiated_func = function_type_from_parts(
+                                self.ctx.types,
+                                Vec::new(),
+                                instantiated_params.clone(),
+                                sig.this_type,
+                                return_type,
+                                sig.type_predicate,
+                                false,
+                                sig.is_method,
+                            );
                             CallableContext::new(instantiated_func)
                         };
                         // When contextual_type is available, also compute return-context
@@ -1006,15 +990,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 contextual_type,
             );
-            let sig_shape = FunctionShape {
-                params: sig.params.clone(),
-                this_type: sig.this_type,
-                return_type: sig.return_type,
-                type_params: sig.type_params.clone(),
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: sig.is_method,
-            };
+            let sig_shape = function_shape_from_call_signature_preserving_method(&sig, false);
             let sig_contextual_type = if contextual_type.is_some()
                 && (self.suppress_generic_return_context_for_direct_arg_overlap(
                     &sig_shape,
@@ -1029,7 +1005,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 contextual_type
             };
-            let func_type = factory.function(sig_shape.clone());
+            let func_type = function_type_from_shape(self.ctx.types, sig_shape.clone());
             // The candidate signature the reporter renders in tsc's per-overload
             // `TS2772` wrapper. Built from the *declared* signature (not the
             // inference-instantiated `sig`) so a generic overload elaborates with
@@ -1037,15 +1013,18 @@ impl<'a> CheckerState<'a> {
             // Built lazily: only failing candidates push a diagnostic, so a
             // candidate that matches or is skipped never interns this.
             let overload_signature = || {
-                factory.function(FunctionShape {
-                    params: original_sig.params.clone(),
-                    this_type: original_sig.this_type,
-                    return_type: original_sig.return_type,
-                    type_params: original_sig.type_params.clone(),
-                    type_predicate: original_sig.type_predicate,
-                    is_constructor: false,
-                    is_method: original_sig.is_method,
-                })
+                function_type_from_shape(
+                    self.ctx.types,
+                    FunctionShape {
+                        params: original_sig.params.clone(),
+                        this_type: original_sig.this_type,
+                        return_type: original_sig.return_type,
+                        type_params: original_sig.type_params.clone(),
+                        type_predicate: original_sig.type_predicate,
+                        is_constructor: false,
+                        is_method: original_sig.is_method,
+                    },
+                )
             };
             self.ctx.rollback_full(&overload_snap);
             let sig_helper = ContextualTypeContext::with_expected_and_options(

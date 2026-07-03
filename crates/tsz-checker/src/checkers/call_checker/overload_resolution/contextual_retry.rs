@@ -2,9 +2,12 @@ use crate::context::speculation::FullSnapshot;
 use crate::query_boundaries::common::{
     CallResult, TypeSubstitution, contains_infer_types, contains_type_parameters, instantiate_type,
 };
+use crate::query_boundaries::construct_signatures::{
+    function_shape_from_call_signature_preserving_method, function_type_from_parts,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{CallSignature, FunctionShape, ParamInfo, TypeId};
+use tsz_solver::{CallSignature, ParamInfo, TypeId};
 
 use super::{CallableContext, SelectedTypePredicate};
 
@@ -51,15 +54,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let sig_shape = FunctionShape {
-            params: sig.params.clone(),
-            return_type: sig.return_type,
-            this_type: sig.this_type,
-            type_params: sig.type_params.clone(),
-            type_predicate: sig.type_predicate,
-            is_constructor: false,
-            is_method: sig.is_method,
-        };
+        let sig_shape = function_shape_from_call_signature_preserving_method(sig, false);
         let return_sub_for_retry = if contextual_type.is_some() {
             self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type)
         } else {
@@ -113,15 +108,16 @@ impl<'a> CheckerState<'a> {
         }
 
         let sig_callable_ctx = {
-            let instantiated_func = self.ctx.types.factory().function(FunctionShape {
-                params: instantiated_params.clone(),
-                return_type: retry_return_type,
-                this_type: sig.this_type,
-                type_params: vec![],
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: sig.is_method,
-            });
+            let instantiated_func = function_type_from_parts(
+                self.ctx.types,
+                Vec::new(),
+                instantiated_params.clone(),
+                sig.this_type,
+                retry_return_type,
+                sig.type_predicate,
+                false,
+                sig.is_method,
+            );
             CallableContext::new(instantiated_func)
         };
         let used_return_context_sub = !return_sub_for_retry.is_empty();
