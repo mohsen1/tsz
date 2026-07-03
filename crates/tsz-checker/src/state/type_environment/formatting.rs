@@ -3,6 +3,7 @@
 //! Extracted from `core.rs` to keep module size manageable.
 
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -404,7 +405,8 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             {
                 let anonymous = self.evaluate_function_shape_for_instantiation_display(&shape);
-                let anonymous_type = self.ctx.types.factory().function(anonymous);
+                let anonymous_type =
+                    diagnostic_query::function_type_from_shape(self.ctx.types, anonymous);
                 let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
@@ -443,7 +445,8 @@ impl<'a> CheckerState<'a> {
                 && shape.construct_signatures.is_empty()
             {
                 let anonymous = self.evaluate_callable_shape_for_instantiation_display(&shape);
-                let anonymous_type = self.ctx.types.factory().callable(anonymous);
+                let anonymous_type =
+                    diagnostic_query::callable_type_from_shape(self.ctx.types, anonymous);
                 let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
@@ -455,19 +458,8 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|sig| self.evaluate_call_signature_for_instantiation_display(sig))
                     .collect();
-                let anonymous_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .callable(tsz_solver::CallableShape {
-                        call_signatures,
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    });
+                let anonymous_type =
+                    diagnostic_query::call_only_callable_type(self.ctx.types, call_signatures);
                 let mut structural_formatter = self.ctx.create_instantiation_display_formatter();
                 return structural_formatter.format(anonymous_type).into_owned();
             }
@@ -607,19 +599,8 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && !shape.type_params.is_empty()
         {
-            let display_type = self
-                .ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params: Vec::new(),
-                    params: shape.params.clone(),
-                    this_type: shape.this_type,
-                    return_type: shape.return_type,
-                    type_predicate: shape.type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: shape.is_method,
-                });
+            let display_type =
+                diagnostic_query::function_type_without_type_params(self.ctx.types, shape.as_ref());
             return self.format_type_diagnostic(display_type);
         }
 
@@ -633,19 +614,12 @@ impl<'a> CheckerState<'a> {
         {
             let sig = &shape.call_signatures[0];
             if !sig.type_params.is_empty() {
-                let display_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape {
-                        type_params: Vec::new(),
-                        params: sig.params.clone(),
-                        this_type: sig.this_type,
-                        return_type: sig.return_type,
-                        type_predicate: sig.type_predicate,
-                        is_constructor: false,
-                        is_method: sig.is_method,
-                    });
+                let display_type =
+                    diagnostic_query::function_type_from_call_signature_without_type_params(
+                        self.ctx.types,
+                        sig,
+                        false,
+                    );
                 return self.format_type_diagnostic(display_type);
             }
         }
@@ -780,6 +754,6 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         new_props.sort_by_key(|p| p.name);
-        self.ctx.types.factory().object(new_props)
+        diagnostic_query::object_type_from_properties(self.ctx.types, new_props)
     }
 }
