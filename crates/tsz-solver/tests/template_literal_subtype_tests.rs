@@ -255,6 +255,51 @@ fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
 }
 
 #[test]
+fn test_repeated_lazy_template_span_expansion_preserves_all_string_combinations() {
+    use crate::TypeEvaluator;
+    use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
+    use std::collections::BTreeSet;
+
+    let interner = TypeInterner::new();
+    let palette = interner.union(vec![
+        interner.literal_string("red"),
+        interner.literal_string("blue"),
+    ]);
+
+    let mut env = TypeEnvironment::new();
+    let palette_def = DefId(1);
+    env.insert_def(palette_def, palette);
+    let lazy_palette = interner.lazy(palette_def);
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(lazy_palette),
+        TemplateSpan::Text(interner.intern_string("-")),
+        TemplateSpan::Type(lazy_palette),
+    ]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(template);
+
+    let Some(TypeData::Union(members_id)) = interner.lookup(result) else {
+        panic!("expected repeated lazy string union to expand, got {result:?}");
+    };
+    let actual = interner
+        .type_list(members_id)
+        .iter()
+        .map(|member| match interner.lookup(*member) {
+            Some(TypeData::Literal(LiteralValue::String(atom))) => interner.resolve_atom(atom),
+            other => panic!("expected literal string member, got {other:?}"),
+        })
+        .collect::<BTreeSet<_>>();
+
+    let expected = ["blue-blue", "blue-red", "red-blue", "red-red"]
+        .into_iter()
+        .map(String::from)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() {
     use crate::TypeEvaluator;
     use crate::def::DefId;

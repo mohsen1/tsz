@@ -4,13 +4,17 @@
 
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TemplateLiteralId, TemplateSpan, TypeData, TypeId};
+use rustc_hash::FxHashMap;
 
 use super::super::evaluate::TypeEvaluator;
 
+#[derive(Clone)]
 struct TemplateSpanExpansion {
     cardinality: Option<usize>,
     strings: Vec<String>,
 }
+
+type TemplateSpanExpansionCache = FxHashMap<(TypeId, u32), TemplateSpanExpansion>;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a template literal type: `hello${T}world`
@@ -51,6 +55,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut evaluated_strings = Vec::with_capacity(span_list.len());
         let mut normalized_spans = Vec::with_capacity(span_list.len());
         let mut total_combinations: usize = 1;
+        let mut span_expansion_cache = TemplateSpanExpansionCache::default();
 
         let mut can_fully_expand = true;
         for span in span_list.iter() {
@@ -62,7 +67,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TemplateSpan::Type(type_id) => {
                     let evaluated = self.evaluate(*type_id);
                     normalized_spans.push(TemplateSpan::Type(evaluated));
-                    let expansion = self.template_span_expansion(evaluated);
+                    let expansion =
+                        self.template_span_expansion(evaluated, &mut span_expansion_cache);
 
                     if let Some(span_count) = expansion.cardinality {
                         total_combinations = total_combinations.saturating_mul(span_count);
@@ -153,11 +159,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum recursion depth for template literal evaluation to prevent stack overflow.
     const MAX_LITERAL_COUNT_DEPTH: u32 = 50;
 
-    fn template_span_expansion(&self, type_id: TypeId) -> TemplateSpanExpansion {
-        self.template_span_expansion_impl(type_id, 0)
+    fn template_span_expansion(
+        &self,
+        type_id: TypeId,
+        cache: &mut TemplateSpanExpansionCache,
+    ) -> TemplateSpanExpansion {
+        self.template_span_expansion_impl(type_id, 0, cache)
     }
 
-    fn template_span_expansion_impl(&self, type_id: TypeId, depth: u32) -> TemplateSpanExpansion {
+    fn template_span_expansion_impl(
+        &self,
+        type_id: TypeId,
+        depth: u32,
+        cache: &mut TemplateSpanExpansionCache,
+    ) -> TemplateSpanExpansion {
         if depth > Self::MAX_LITERAL_COUNT_DEPTH {
             return TemplateSpanExpansion {
                 cardinality: None,
@@ -165,109 +180,114 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
-        if type_id == TypeId::BOOLEAN {
-            return TemplateSpanExpansion {
+        let cache_key = (type_id, depth);
+        if let Some(expansion) = cache.get(&cache_key) {
+            return expansion.clone();
+        }
+
+        let expansion = if type_id == TypeId::BOOLEAN {
+            TemplateSpanExpansion {
                 cardinality: Some(2),
                 strings: Vec::new(),
-            };
-        }
-        if type_id == TypeId::BOOLEAN_TRUE {
-            return TemplateSpanExpansion {
+            }
+        } else if type_id == TypeId::BOOLEAN_TRUE {
+            TemplateSpanExpansion {
                 cardinality: Some(1),
                 strings: vec!["true".to_string()],
-            };
-        }
-        if type_id == TypeId::BOOLEAN_FALSE {
-            return TemplateSpanExpansion {
+            }
+        } else if type_id == TypeId::BOOLEAN_FALSE {
+            TemplateSpanExpansion {
                 cardinality: Some(1),
                 strings: vec!["false".to_string()],
-            };
-        }
-        if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED || type_id == TypeId::VOID {
-            return TemplateSpanExpansion {
+            }
+        } else if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED || type_id == TypeId::VOID
+        {
+            TemplateSpanExpansion {
                 cardinality: Some(1),
                 strings: Vec::new(),
-            };
-        }
-        if type_id.is_intrinsic() {
-            return TemplateSpanExpansion {
+            }
+        } else if type_id.is_intrinsic() {
+            TemplateSpanExpansion {
                 cardinality: None,
                 strings: Vec::new(),
-            };
-        }
-
-        match self.interner().lookup(type_id) {
-            Some(TypeData::Literal(lit)) => TemplateSpanExpansion {
-                cardinality: Some(1),
-                strings: Self::literal_template_string(self, lit)
-                    .into_iter()
-                    .collect(),
-            },
-            Some(TypeData::StringIntrinsic { .. }) => TemplateSpanExpansion {
-                cardinality: Some(1),
-                strings: Vec::new(),
-            },
-            Some(TypeData::Enum(_, structural_type)) => {
-                self.template_span_expansion_impl(structural_type, depth + 1)
             }
-            Some(TypeData::Union(members_id)) => {
-                let members = self.interner().type_list(members_id);
-                let mut count = 0usize;
-                let mut count_known = true;
-                let mut strings = Vec::with_capacity(members.len());
-                let mut all_stringifiable = true;
+        } else {
+            match self.interner().lookup(type_id) {
+                Some(TypeData::Literal(lit)) => TemplateSpanExpansion {
+                    cardinality: Some(1),
+                    strings: Self::literal_template_string(self, lit)
+                        .into_iter()
+                        .collect(),
+                },
+                Some(TypeData::StringIntrinsic { .. }) => TemplateSpanExpansion {
+                    cardinality: Some(1),
+                    strings: Vec::new(),
+                },
+                Some(TypeData::Enum(_, structural_type)) => {
+                    self.template_span_expansion_impl(structural_type, depth + 1, cache)
+                }
+                Some(TypeData::Union(members_id)) => {
+                    let members = self.interner().type_list(members_id);
+                    let mut count = 0usize;
+                    let mut count_known = true;
+                    let mut strings = Vec::with_capacity(members.len());
+                    let mut all_stringifiable = true;
 
-                for &member in members.iter() {
-                    let expansion = self.template_span_expansion_impl(member, depth + 1);
-                    if let Some(cardinality) = expansion.cardinality {
-                        if let Some(next_count) = count.checked_add(cardinality) {
-                            count = next_count;
+                    for &member in members.iter() {
+                        let expansion = self.template_span_expansion_impl(member, depth + 1, cache);
+                        if let Some(cardinality) = expansion.cardinality {
+                            if let Some(next_count) = count.checked_add(cardinality) {
+                                count = next_count;
+                            } else {
+                                count_known = false;
+                            }
                         } else {
                             count_known = false;
                         }
-                    } else {
-                        count_known = false;
+
+                        if expansion.strings.is_empty() {
+                            all_stringifiable = false;
+                        } else if all_stringifiable {
+                            strings.extend(expansion.strings);
+                        }
                     }
 
-                    if expansion.strings.is_empty() {
-                        all_stringifiable = false;
-                    } else if all_stringifiable {
-                        strings.extend(expansion.strings);
+                    TemplateSpanExpansion {
+                        cardinality: count_known.then_some(count),
+                        strings: if all_stringifiable {
+                            strings
+                        } else {
+                            Vec::new()
+                        },
                     }
                 }
-
-                TemplateSpanExpansion {
-                    cardinality: count_known.then_some(count),
-                    strings: if all_stringifiable {
-                        strings
-                    } else {
-                        Vec::new()
-                    },
+                Some(TypeData::TemplateLiteral(spans_id)) => {
+                    let spans = self.interner().template_list(spans_id);
+                    let mut total = 1usize;
+                    for span in spans.iter() {
+                        let span_count = match span {
+                            TemplateSpan::Text(_) => 1,
+                            TemplateSpan::Type(type_id) => self
+                                .template_span_expansion_impl(*type_id, depth + 1, cache)
+                                .cardinality
+                                .unwrap_or(1),
+                        };
+                        total = total.saturating_mul(span_count);
+                    }
+                    TemplateSpanExpansion {
+                        cardinality: Some(total),
+                        strings: Vec::new(),
+                    }
                 }
-            }
-            Some(TypeData::TemplateLiteral(spans_id)) => {
-                let spans = self.interner().template_list(spans_id);
-                let mut total = 1usize;
-                for span in spans.iter() {
-                    let span_count = match span {
-                        TemplateSpan::Text(_) => 1,
-                        TemplateSpan::Type(type_id) => self
-                            .template_span_expansion_impl(*type_id, depth + 1)
-                            .cardinality
-                            .unwrap_or(1),
-                    };
-                    total = total.saturating_mul(span_count);
-                }
-                TemplateSpanExpansion {
-                    cardinality: Some(total),
+                _ => TemplateSpanExpansion {
+                    cardinality: None,
                     strings: Vec::new(),
-                }
+                },
             }
-            _ => TemplateSpanExpansion {
-                cardinality: None,
-                strings: Vec::new(),
-            },
-        }
+        };
+
+        cache.insert(cache_key, expansion.clone());
+        expansion
     }
 
     fn literal_template_string(&self, lit: LiteralValue) -> Option<String> {

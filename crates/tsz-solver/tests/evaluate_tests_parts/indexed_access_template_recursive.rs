@@ -858,6 +858,53 @@ fn test_keyof_template_literal_union_interpolation() {
     assert_eq!(result, expected);
 }
 
+#[test]
+fn test_template_span_expansion_memo_reuses_repeated_evaluated_keyof_union() {
+    use crate::TypeEvaluator;
+    use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
+    use std::collections::BTreeSet;
+
+    let interner = TypeInterner::new();
+    let alpha = interner.intern_string("alpha");
+    let beta = interner.intern_string("beta");
+    let object = interner.object(vec![
+        PropertyInfo::new(alpha, TypeId::STRING),
+        PropertyInfo::new(beta, TypeId::NUMBER),
+    ]);
+    let keys = evaluate_keyof(&interner, object);
+
+    let mut env = TypeEnvironment::new();
+    let keys_def = DefId(1);
+    env.insert_def(keys_def, keys);
+    let lazy_keys = interner.lazy(keys_def);
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(lazy_keys),
+        TemplateSpan::Text(interner.intern_string(":")),
+        TemplateSpan::Type(lazy_keys),
+    ]);
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+    let result = evaluator.evaluate(template);
+
+    let Some(TypeData::Union(members_id)) = interner.lookup(result) else {
+        panic!("expected repeated lazy keyof union to expand, got {result:?}");
+    };
+    let actual = interner
+        .type_list(members_id)
+        .iter()
+        .map(|member| match interner.lookup(*member) {
+            Some(TypeData::Literal(LiteralValue::String(atom))) => interner.resolve_atom(atom),
+            other => panic!("expected literal string member, got {other:?}"),
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = ["alpha:alpha", "alpha:beta", "beta:alpha", "beta:beta"]
+        .into_iter()
+        .map(String::from)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(actual, expected);
+}
+
 /// Test keyof with union of template literals
 /// keyof (`foo${string}` | `bar${string}`) should return keyof string (apparent keys)
 #[test]
