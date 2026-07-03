@@ -433,6 +433,35 @@ class CacheVisibilityReportTests(unittest.TestCase):
                 self.assertIn(name, by_name)
                 self.assertFalse(by_name[name].needs_review, by_name[name])
 
+    def test_subtype_checker_local_relation_cache_is_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan([root / "crates/tsz-solver/src/relations/subtype"])
+        local_relation_cache = [
+            candidate
+            for candidate in candidates
+            if candidate.path == "crates/tsz-solver/src/relations/subtype/core.rs"
+            and candidate.owner == "SubtypeChecker"
+            and candidate.name == "local_relation_cache"
+        ]
+
+        self.assertEqual(len(local_relation_cache), 1)
+        self.assertFalse(local_relation_cache[0].needs_review, local_relation_cache[0])
+
+    def test_type_formatter_application_memos_are_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan([root / "crates/tsz-solver/src/diagnostics/format"])
+        by_name = {
+            candidate.name: candidate
+            for candidate in candidates
+            if candidate.path == "crates/tsz-solver/src/diagnostics/format/mod.rs"
+            and candidate.owner == "TypeFormatter"
+        }
+
+        for name in ("application_reduction_cache", "recursive_alias_base_cache"):
+            with self.subTest(name=name):
+                self.assertIn(name, by_name)
+                self.assertFalse(by_name[name].needs_review, by_name[name])
+
     def test_default_roots_include_binder_cache_surfaces(self):
         self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
 

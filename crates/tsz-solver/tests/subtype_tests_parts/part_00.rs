@@ -30,6 +30,7 @@ fn subtype_checker_cache_statistics_account_for_eval_entries() {
 
     let empty = checker.cache_statistics();
     assert_eq!(empty.eval_entries, 0);
+    assert_eq!(empty.local_relation_entries, 0);
     assert_eq!(empty.estimated_size_bytes(), 0);
 
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
@@ -51,6 +52,32 @@ fn subtype_checker_cache_statistics_account_for_eval_entries() {
 
     checker.reset();
     assert_eq!(checker.cache_statistics().eval_entries, 0);
+}
+
+#[test]
+fn subtype_checker_cache_statistics_account_for_local_relation_entries_and_reset() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    let key = checker.debug_cache_key_for(TypeId::STRING, TypeId::NUMBER);
+
+    let empty = checker.cache_statistics();
+    assert_eq!(empty.local_relation_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    checker.local_relation_cache.insert(key, false);
+
+    let populated = checker.cache_statistics();
+    assert_eq!(populated.eval_entries, 0);
+    assert_eq!(populated.local_relation_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated subtype local relation cache should report nonzero estimated residency",
+    );
+
+    checker.reset();
+    let reset = checker.cache_statistics();
+    assert_eq!(reset.local_relation_entries, 0);
+    assert_eq!(reset.estimated_size_bytes(), 0);
 }
 
 #[test]
