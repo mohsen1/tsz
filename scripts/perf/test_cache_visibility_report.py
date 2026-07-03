@@ -413,6 +413,26 @@ class CacheVisibilityReportTests(unittest.TestCase):
             predicate_memos,
         )
 
+    def test_type_interner_retained_pure_function_memos_are_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan([root / "crates/tsz-solver/src/intern/core"])
+        by_name = {
+            candidate.name: candidate
+            for candidate in candidates
+            if candidate.path == "crates/tsz-solver/src/intern/core/interner.rs"
+            and candidate.owner == "TypeInterner"
+        }
+
+        for name in (
+            "widen_type_cache",
+            "extract_type_params_cache",
+            "proto_instantiation_cache",
+            "contravariant_infer_names_cache",
+        ):
+            with self.subTest(name=name):
+                self.assertIn(name, by_name)
+                self.assertFalse(by_name[name].needs_review, by_name[name])
+
     def test_default_roots_include_binder_cache_surfaces(self):
         self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
 

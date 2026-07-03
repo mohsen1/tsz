@@ -1,5 +1,7 @@
 use super::*;
 use crate::caches::db::{TypeDatabase, TypePredicateCache};
+use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
+use crate::types::{TypeParamInfo, TypeParamOrigin};
 
 #[test]
 fn interned_type_limit_fallback_poison_returns_error() {
@@ -75,6 +77,58 @@ fn estimated_size_accounts_for_retained_predicate_caches() {
         interner.estimated_size_bytes() > before,
         "retained TypeInterner predicate cache entries must be visible to residency estimates",
     );
+}
+
+#[test]
+fn estimated_size_accounts_for_retained_pure_function_memos() {
+    let interner = TypeInterner::new();
+    let before = interner.estimated_size_bytes();
+    let t_atom = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        name: t_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let proto_key = InstantiationCacheKey::new(TypeId::STRING, CanonicalSubst::empty(), 0, None);
+
+    interner.set_widen_type_memo(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN);
+    interner.set_extract_type_params_memo(TypeId::STRING, vec![t_info].into());
+    interner.set_proto_instantiation_memo(proto_key, TypeId::NUMBER);
+    interner.set_contravariant_infer_names_memo(TypeId::OBJECT, vec![t_atom].into());
+    interner.set_contains_type_by_id_memo(TypeId::STRING, TypeId::NUMBER, false);
+    interner.set_prune_union_members_memo(TypeId::BOOLEAN, TypeId::BOOLEAN);
+
+    assert!(
+        interner.estimated_size_bytes() > before,
+        "retained TypeInterner pure-function memo entries must be visible to residency estimates",
+    );
+}
+
+#[test]
+fn type_predicate_cache_statistics_reports_pure_function_memos() {
+    let interner = TypeInterner::new();
+    let t_atom = interner.intern_string("T");
+    let t_info = TypeParamInfo {
+        name: t_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let proto_key = InstantiationCacheKey::new(TypeId::STRING, CanonicalSubst::empty(), 0, None);
+
+    interner.set_widen_type_memo(TypeId::BOOLEAN_TRUE, TypeId::BOOLEAN);
+    interner.set_extract_type_params_memo(TypeId::STRING, vec![t_info].into());
+    interner.set_proto_instantiation_memo(proto_key, TypeId::NUMBER);
+    interner.set_contravariant_infer_names_memo(TypeId::OBJECT, vec![t_atom].into());
+
+    let stats = interner.type_predicate_cache_statistics();
+    assert_eq!(stats.widen_type_cache_entries, 1);
+    assert_eq!(stats.extract_type_params_cache_entries, 1);
+    assert_eq!(stats.proto_instantiation_cache_entries, 1);
+    assert_eq!(stats.contravariant_infer_names_cache_entries, 1);
 }
 
 #[test]

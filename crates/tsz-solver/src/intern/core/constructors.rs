@@ -1869,6 +1869,36 @@ impl TypeInterner {
         // --- Auxiliary caches ---
         size += self.identity_comparable_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
+        size += self.widen_type_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() * 2);
+        size += self
+            .extract_type_params_cache
+            .iter()
+            .map(|entry| {
+                DASHMAP_ENTRY_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Arc<[TypeParamInfo]>>()
+                    + entry.value().len() * std::mem::size_of::<TypeParamInfo>()
+            })
+            .sum::<usize>();
+        size += self.proto_instantiation_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD
+                + std::mem::size_of::<crate::caches::instantiation_cache::InstantiationCacheKey>()
+                + std::mem::size_of::<TypeId>());
+        size += self
+            .contravariant_infer_names_cache
+            .iter()
+            .map(|entry| {
+                DASHMAP_ENTRY_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Arc<[Atom]>>()
+                    + entry.value().len() * std::mem::size_of::<Atom>()
+            })
+            .sum::<usize>();
+        size += self.contains_type_by_id_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<(TypeId, TypeId)>() + 1);
+        size += self.prune_union_members_cache.len()
+            * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() * 2);
         size += self.predicate_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<TypeId>()
