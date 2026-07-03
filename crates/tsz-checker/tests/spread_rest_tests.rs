@@ -134,6 +134,79 @@ const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: nu
 }
 
 #[test]
+fn object_spread_preserves_symbol_index_signature() {
+    let source = r#"
+declare const sym: symbol;
+declare const source: { [key: symbol]: boolean };
+
+const spread = { ...source };
+const keyed: boolean = spread[sym];
+const key: keyof typeof spread = sym;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> =
+        diagnostics_where(&diagnostics, |code| matches!(code, 2322 | 2538 | 7053));
+    assert!(
+        relevant.is_empty(),
+        "Expected object spread to preserve symbol index signature, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn object_spread_keeps_string_and_symbol_indexes_separate() {
+    let source = r#"
+declare const sym: symbol;
+declare const source: {
+  [key: string]: number;
+  [key: symbol]: boolean;
+};
+
+const spread = { ...source };
+const named: number = spread["name"];
+const keyed: boolean = spread[sym];
+const wrongString: boolean = spread["name"];
+const wrongSymbol: number = spread[sym];
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relevant: Vec<_> = diagnostics_where(&diagnostics, |code| matches!(code, 2538 | 7053));
+    assert!(
+        relevant.is_empty(),
+        "Expected object spread to preserve separate string and symbol index signatures, got {diagnostics:?}"
+    );
+    assert_eq!(
+        diagnostic_count(&diagnostics, 2322),
+        2,
+        "Expected exactly two TS2322s for the intentionally swapped string/symbol assignments, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn object_spread_with_explicit_property_drops_symbol_index_signature() {
+    let source = r#"
+declare const sym: symbol;
+declare const source: { [key: symbol]: boolean };
+
+const spread = { ...source, named: 1 };
+const keyed: boolean = spread[sym];
+const key: keyof typeof spread = sym;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let missing_index_diagnostics =
+        diagnostics_where(&diagnostics, |code| matches!(code, 2538 | 7053));
+    assert!(
+        !missing_index_diagnostics.is_empty(),
+        "Expected explicit property after spread to drop the symbol index signature, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostic_count(&diagnostics, 2322) >= 1,
+        "Expected keyof assignment to reject `symbol` after explicit property drops the symbol index signature, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn nested_object_spread_destructuring_ts2339_preserves_tsc_display_order() {
     let source = r"
 const { c, d, e, f, g } = {

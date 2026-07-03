@@ -494,6 +494,7 @@ impl<'a> CheckerState<'a> {
         // If there are any index signatures (direct, own, or inherited), check compatibility
         if index_info.string_index.is_some()
             || index_info.number_index.is_some()
+            || index_info.symbol_index.is_some()
             || has_own_index_sig
         {
             self.check_index_signature_compatibility(&iface.members.nodes, iface_type, stmt_idx);
@@ -509,7 +510,8 @@ impl<'a> CheckerState<'a> {
             if iface.heritage_clauses.is_some()
                 && (has_own_index_sig
                     || index_info.string_index.is_some()
-                    || index_info.number_index.is_some())
+                    || index_info.number_index.is_some()
+                    || index_info.symbol_index.is_some())
             {
                 self.check_inherited_properties_against_index_signatures(
                     iface_type,

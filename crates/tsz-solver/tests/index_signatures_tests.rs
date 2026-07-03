@@ -448,6 +448,38 @@ fn test_callable_index_info_collection() {
     assert!(!info.number_index.as_ref().unwrap().readonly);
 }
 
+#[test]
+fn test_object_index_info_collection_includes_symbol_index() {
+    let db = TypeInterner::new();
+    let obj = db.object_with_index(ObjectShape {
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: true,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+    });
+
+    let resolver = IndexSignatureResolver::new(&db);
+    let info = resolver.get_index_info(obj);
+    let string_index = info.string_index.expect("string index should be present");
+    let symbol_index = info.symbol_index.expect("symbol index should be present");
+    assert_eq!(string_index.value_type, TypeId::NUMBER);
+    assert_eq!(symbol_index.value_type, TypeId::BOOLEAN);
+    assert_eq!(symbol_index.key_type, TypeId::SYMBOL);
+    assert!(symbol_index.readonly);
+}
+
 /// ReadonlyType(Tuple) should have a readonly number index signature.
 /// This is the fix for `readonly [T, U, ...V[]]` types where computed
 /// index access (e.g., `v[0+1] = 1`) should emit TS2542.

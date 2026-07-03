@@ -909,14 +909,16 @@ pub struct IndexSignature {
     pub param_name: Option<Atom>,
 }
 
-/// Combined index signature information for a type
-/// Provides convenient access to both string and number index signatures
+/// Combined index signature information for a type.
+/// Provides convenient access to string, number, and symbol index signatures.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub struct IndexInfo {
     /// String index signature: { [key: string]: T }
     pub string_index: Option<IndexSignature>,
     /// Number index signature: { [key: number]: T }
     pub number_index: Option<IndexSignature>,
+    /// Symbol index signature: { [key: symbol]: T }
+    pub symbol_index: Option<IndexSignature>,
 }
 
 bitflags::bitflags! {

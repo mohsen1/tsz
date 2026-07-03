@@ -14,7 +14,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
-use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
+use super::computation_support::{SPREAD_DISPLAY_ORDER_OFFSET, merge_spread_index_signatures};
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
 
 struct ObjectLiteralRequestFacts {
@@ -250,6 +250,7 @@ impl<'a> CheckerState<'a> {
         // tsc drops spread index signatures when explicit properties exist).
         let mut spread_string_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
+        let mut spread_symbol_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut has_spread = false;
         let mut has_any_spread = false;
         let mut has_union_spread = false;
@@ -1918,6 +1919,7 @@ impl<'a> CheckerState<'a> {
                         union_spread_branches: &mut union_spread_branches,
                         spread_string_index_signatures: &mut spread_string_index_signatures,
                         spread_number_index_signatures: &mut spread_number_index_signatures,
+                        spread_symbol_index_signatures: &mut spread_symbol_index_signatures,
                         generic_spread_types: &mut generic_spread_types,
                         has_spread: &mut has_spread,
                         has_any_spread: &mut has_any_spread,
@@ -1932,37 +1934,15 @@ impl<'a> CheckerState<'a> {
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
-        // Merge spread-contributed index signatures only when the object literal
-        // has no explicit (non-spread) properties. In tsc, `{ ...indexedObj, b: 1 }`
-        // drops the index signature, but `{ ...indexedObj }` preserves it.
-        let mut string_index_param_name = None;
-        let mut number_index_param_name = None;
-        if explicit_property_names.is_empty() {
-            string_index_param_name = spread_string_index_signatures
-                .iter()
-                .filter(|idx| idx.key_type != TypeId::SYMBOL)
-                .find_map(|idx| idx.param_name);
-            number_index_param_name = spread_number_index_signatures
-                .iter()
-                .find_map(|idx| idx.param_name);
-            // `ObjectShape.string_index` is shared between string- and
-            // symbol-keyed signatures (discriminated by `key_type`). Route each
-            // spread-contributed index into the matching bucket so a spread
-            // source with `{ [k: symbol]: V }` does not leak `V` into a
-            // string index signature.
-            for idx in spread_string_index_signatures {
-                if idx.key_type == TypeId::SYMBOL {
-                    symbol_index_types.push(idx.value_type);
-                } else {
-                    string_index_types.push(idx.value_type);
-                }
-            }
-            number_index_types.extend(
-                spread_number_index_signatures
-                    .into_iter()
-                    .map(|idx| idx.value_type),
-            );
-        }
+        let (string_index_param_name, number_index_param_name) = merge_spread_index_signatures(
+            !explicit_property_names.is_empty(),
+            &mut string_index_types,
+            &mut number_index_types,
+            &mut symbol_index_types,
+            spread_string_index_signatures,
+            spread_number_index_signatures,
+            spread_symbol_index_signatures,
+        );
 
         let object_type = self.finalize_object_literal_type(
             super::super::object_literal_support::ObjectLiteralFinalizeCtx {

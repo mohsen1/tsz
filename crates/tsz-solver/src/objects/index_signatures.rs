@@ -418,6 +418,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -425,22 +426,29 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         IndexInfo {
-            string_index: shape.string_index,
+            string_index: shape.string_index_signature().copied(),
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index_signature().copied(),
         }
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
         IndexInfo {
-            string_index: shape.string_index,
+            string_index: shape
+                .string_index
+                .filter(|idx| idx.key_type != TypeId::SYMBOL),
             number_index: shape.number_index,
+            symbol_index: shape
+                .string_index
+                .filter(|idx| idx.key_type == TypeId::SYMBOL),
         }
     }
 
@@ -453,6 +461,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
         }
     }
 
@@ -465,6 +474,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
         }
     }
 
@@ -477,6 +487,9 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         if let Some(idx) = &mut info.number_index {
             idx.readonly = true;
         }
+        if let Some(idx) = &mut info.symbol_index {
+            idx.readonly = true;
+        }
         info
     }
 
@@ -485,6 +498,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -492,6 +506,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 
@@ -523,6 +538,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         IndexInfo {
             string_index: None,
             number_index: None,
+            symbol_index: None,
         }
     }
 }
