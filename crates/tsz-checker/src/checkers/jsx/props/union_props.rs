@@ -1,6 +1,7 @@
 //! JSX union prop compatibility and display helpers.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -33,22 +34,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *type_id
                 };
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: display_type,
-                    write_type: display_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                }
+                jsx_query::property_info_with_write_type(name_atom, display_type, display_type)
             })
             .collect();
         let source_type = self.format_type(
@@ -252,22 +238,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *type_id
                 };
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: display_type,
-                    write_type: display_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                }
+                jsx_query::property_info_with_write_type(name_atom, display_type, display_type)
             })
             .collect();
         let attrs_type = crate::query_boundaries::checkers::jsx::object_type_from_properties(

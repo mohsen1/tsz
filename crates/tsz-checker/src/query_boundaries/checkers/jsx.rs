@@ -5,7 +5,8 @@ use tsz_common::Atom;
 use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
-    CallSignature, DefinitionStore, FunctionShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+    CallSignature, DefinitionStore, FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
+    TypeParamInfo,
 };
 
 pub(crate) struct SingleArgTypeApplication {
@@ -199,6 +200,33 @@ pub(crate) fn object_type_from_properties(
     db.object(properties)
 }
 
+pub(crate) const fn property_info(name: Atom, type_id: TypeId) -> PropertyInfo {
+    PropertyInfo::new(name, type_id)
+}
+
+pub(crate) const fn property_info_with_write_type(
+    name: Atom,
+    type_id: TypeId,
+    write_type: TypeId,
+) -> PropertyInfo {
+    PropertyInfo {
+        name,
+        type_id,
+        write_type,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: tsz_solver::Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
 pub(crate) fn empty_props_object_type(db: &dyn TypeDatabase) -> TypeId {
     object_type_from_properties(db, Vec::new())
 }
@@ -208,6 +236,72 @@ pub(crate) fn props_param_type_or_empty(db: &dyn TypeDatabase, params: &[ParamIn
         .first()
         .map(|param| param.type_id)
         .unwrap_or_else(|| empty_props_object_type(db))
+}
+
+pub(crate) fn union_type_from_members(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn union_type_from_pair(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> TypeId {
+    db.union2(left, right)
+}
+
+pub(crate) fn intersection_type_from_members(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    db.intersection(members)
+}
+
+pub(crate) fn intersection_type_from_pair(
+    db: &dyn TypeDatabase,
+    left: TypeId,
+    right: TypeId,
+) -> TypeId {
+    db.intersection2(left, right)
+}
+
+pub(crate) fn array_type_from_element(db: &dyn TypeDatabase, element: TypeId) -> TypeId {
+    db.array(element)
+}
+
+pub(crate) fn tuple_type_from_elements(
+    db: &dyn TypeDatabase,
+    elements: Vec<TupleElement>,
+) -> TypeId {
+    db.tuple(elements)
+}
+
+pub(crate) fn tuple_type_from_required_element_types(
+    db: &dyn TypeDatabase,
+    element_types: Vec<TypeId>,
+) -> TypeId {
+    let elements = element_types
+        .into_iter()
+        .map(|type_id| TupleElement {
+            type_id,
+            name: None,
+            optional: false,
+            rest: false,
+        })
+        .collect();
+    tuple_type_from_elements(db, elements)
+}
+
+pub(crate) fn type_application_from_args(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    db.application(base, args)
+}
+
+pub(crate) fn index_access_type(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+) -> TypeId {
+    db.index_access(object_type, index_type)
 }
 
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {

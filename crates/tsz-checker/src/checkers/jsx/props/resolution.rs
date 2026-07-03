@@ -3,6 +3,7 @@
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -207,7 +208,7 @@ impl<'a> CheckerState<'a> {
                     match compatible_members.len() {
                         0 => props_type,
                         1 => compatible_members[0],
-                        _ => self.ctx.types.factory().union(compatible_members),
+                        _ => jsx_query::union_type_from_members(self.ctx.types, compatible_members),
                     }
                 }
             }
@@ -225,7 +226,7 @@ impl<'a> CheckerState<'a> {
                 match normalized_members.len() {
                     0 => props_type,
                     1 => normalized_members[0],
-                    _ => self.ctx.types.factory().union(normalized_members),
+                    _ => jsx_query::union_type_from_members(self.ctx.types, normalized_members),
                 }
             }
         }

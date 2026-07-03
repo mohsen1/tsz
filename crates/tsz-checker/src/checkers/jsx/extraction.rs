@@ -48,11 +48,11 @@ impl<'a> CheckerState<'a> {
             && jsx_boundary::is_type_parameter_like(self.ctx.types, component_type)
         {
             let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
-            return self
-                .ctx
-                .types
-                .factory()
-                .application(lma_ref, vec![component_type, props_type]);
+            return jsx_boundary::type_application_from_args(
+                self.ctx.types,
+                lma_ref,
+                vec![component_type, props_type],
+            );
         }
         if jsx_boundary::contains_type_parameters(self.ctx.types, props_type) {
             return props_type;
@@ -230,7 +230,8 @@ impl<'a> CheckerState<'a> {
                 0 => return None,
                 1 => return candidates.pop(),
                 _ => {
-                    let props_union = self.ctx.types.factory().union(
+                    let props_union = jsx_boundary::union_type_from_members(
+                        self.ctx.types,
                         candidates
                             .into_iter()
                             .map(|(props_type, _)| props_type)

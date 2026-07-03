@@ -2,6 +2,7 @@
 //! function-valued attributes, intrinsic props lookup, and component props
 //! recovery.
 
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -64,7 +65,7 @@ impl<'a> CheckerState<'a> {
             return match callable_members.len() {
                 0 => type_id,
                 1 => callable_members[0],
-                _ => self.ctx.types.factory().union(callable_members),
+                _ => jsx_query::union_type_from_members(self.ctx.types, callable_members),
             };
         }
 
@@ -96,7 +97,7 @@ impl<'a> CheckerState<'a> {
         match callable_members.len() {
             0 => type_id,
             1 => callable_members[0],
-            _ => self.ctx.types.factory().union(callable_members),
+            _ => jsx_query::union_type_from_members(self.ctx.types, callable_members),
         }
     }
 
@@ -122,7 +123,7 @@ impl<'a> CheckerState<'a> {
             return match single_members.as_slice() {
                 [] => type_id,
                 [single_member] => *single_member,
-                _ => self.ctx.types.factory().union(single_members),
+                _ => jsx_query::union_type_from_members(self.ctx.types, single_members),
             };
         }
 
@@ -142,7 +143,7 @@ impl<'a> CheckerState<'a> {
         match single_members.as_slice() {
             [] => resolved,
             [single_member] => *single_member,
-            _ => self.ctx.types.factory().union(single_members),
+            _ => jsx_query::union_type_from_members(self.ctx.types, single_members),
         }
     }
 
@@ -166,7 +167,7 @@ impl<'a> CheckerState<'a> {
         match multiple_members.as_slice() {
             [] => resolved,
             [multiple_member] => *multiple_member,
-            _ => self.ctx.types.factory().union(multiple_members),
+            _ => jsx_query::union_type_from_members(self.ctx.types, multiple_members),
         }
     }
 
@@ -194,7 +195,10 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => None,
                 [element_type] => Some(*element_type),
-                _ => Some(self.ctx.types.factory().union(element_types)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    element_types,
+                )),
             };
         }
 
@@ -216,7 +220,10 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => None,
                 [element_type] => Some(*element_type),
-                _ => Some(self.ctx.types.factory().union(element_types)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    element_types,
+                )),
             };
         }
 
@@ -285,7 +292,7 @@ impl<'a> CheckerState<'a> {
                     let atom = self.ctx.types.intern_string(prop_name);
                     let type_id =
                         self.declared_expando_property_type_for_root(sym_id, &name, prop_name);
-                    metadata_props.push(tsz_solver::PropertyInfo::new(atom, type_id));
+                    metadata_props.push(jsx_query::property_info(atom, type_id));
                 }
             }
             if !metadata_props.is_empty() {
@@ -388,12 +395,11 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let lma_sym_id = self.get_jsx_namespace_export_symbol_id("LibraryManagedAttributes")?;
         let lma_ref = self.resolve_symbol_as_lazy_type(lma_sym_id);
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .application(lma_ref, vec![component_type, props_type]),
-        )
+        Some(jsx_query::type_application_from_args(
+            self.ctx.types,
+            lma_ref,
+            vec![component_type, props_type],
+        ))
     }
 
     pub(in crate::checkers_domain::jsx) fn get_jsx_dynamic_intrinsic_display_props_type(
@@ -536,11 +542,8 @@ impl<'a> CheckerState<'a> {
         component_type: TypeId,
     ) -> Option<(TypeId, bool, String)> {
         let intrinsic_elements_type = self.get_intrinsic_elements_type()?;
-        let raw_props_type = self
-            .ctx
-            .types
-            .factory()
-            .index_access(intrinsic_elements_type, component_type);
+        let raw_props_type =
+            jsx_query::index_access_type(self.ctx.types, intrinsic_elements_type, component_type);
         let normalized_props = self.normalize_jsx_required_props_target(raw_props_type);
         if matches!(normalized_props, TypeId::ANY | TypeId::ERROR) {
             return None;
@@ -778,14 +781,13 @@ impl<'a> CheckerState<'a> {
         match best_matches.len() {
             0 => None,
             1 => best_matches.first().map(|(_, value_type)| *value_type),
-            _ => Some(
-                self.ctx.types.factory().union(
-                    best_matches
-                        .into_iter()
-                        .map(|(_, value_type)| value_type)
-                        .collect(),
-                ),
-            ),
+            _ => Some(jsx_query::union_type_from_members(
+                self.ctx.types,
+                best_matches
+                    .into_iter()
+                    .map(|(_, value_type)| value_type)
+                    .collect(),
+            )),
         }
     }
 
@@ -1702,8 +1704,8 @@ impl<'a> CheckerState<'a> {
         let synthesized_type = if child_types.len() == 1 && !has_spread_child {
             child_types[0]
         } else {
-            let element_type = self.ctx.types.factory().union(child_types);
-            self.ctx.types.factory().array(element_type)
+            let element_type = jsx_query::union_type_from_members(self.ctx.types, child_types);
+            jsx_query::array_type_from_element(self.ctx.types, element_type)
         };
         out.push((children_prop_name.to_string(), synthesized_type));
     }

@@ -1,3 +1,4 @@
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -140,7 +141,7 @@ impl<'a> CheckerState<'a> {
         match filtered.len() {
             0 => props_type,
             1 => filtered[0],
-            _ => self.ctx.types.factory().intersection(filtered),
+            _ => jsx_query::intersection_type_from_members(self.ctx.types, filtered),
         }
     }
 

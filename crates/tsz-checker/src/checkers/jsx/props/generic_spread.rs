@@ -1,5 +1,6 @@
 //! JSX generic spread whole-object assignability diagnostics.
 
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -50,7 +51,7 @@ impl<'a> CheckerState<'a> {
         let explicit_attrs_type = self.build_jsx_provided_attrs_object_type(provided_attrs);
         let mut members = generic_spread_types;
         members.push(explicit_attrs_type);
-        let attrs_type = self.ctx.types.factory().intersection(members);
+        let attrs_type = jsx_query::intersection_type_from_members(self.ctx.types, members);
 
         let props_for_access = self.normalize_jsx_required_props_target(props_type);
 

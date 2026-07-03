@@ -1,6 +1,7 @@
 //! JSX namespace resolution, intrinsic elements, closing checks, and attributes.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -1974,8 +1975,6 @@ impl<'a> CheckerState<'a> {
 
         // Fallback: create Application for class components, type aliases,
         // and overloaded SFCs (Callable types)
-        self.ctx
-            .types
-            .application(component_type, type_args.to_vec())
+        jsx_query::type_application_from_args(self.ctx.types, component_type, type_args.to_vec())
     }
 }

@@ -1,13 +1,15 @@
 //! JSX construction boundary scans.
 //!
 //! JSX checker modules gather JSX syntax, prop, and callback facts. Interning
-//! object/function/callable solver types and rebuilding `FunctionShape`
-//! literals belongs in `query_boundaries::checkers::jsx`.
+//! object/function/callable and compound solver types, rebuilding
+//! `FunctionShape` literals, and creating synthetic solver properties belongs
+//! in `query_boundaries::checkers::jsx`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const JSX_CHECKER_ROOT: &str = "src/checkers/jsx";
+const JSX_ADDITIONAL_CONSTRUCTION_MODULES: &[&str] = &["src/dispatch/jsx.rs"];
 const JSX_CONSTRUCTION_BOUNDARY: &str = "src/query_boundaries/checkers/jsx.rs";
 
 fn checker_path(relative: &str) -> PathBuf {
@@ -56,25 +58,58 @@ fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<Str
 #[test]
 fn jsx_checkers_route_solver_shape_construction_through_boundary() {
     const FORBIDDEN_PATTERNS: &[&str] = &[
+        ".factory()",
         ".factory().object(",
         ".factory().function(",
         ".factory().callable(",
+        ".factory().union(",
+        ".factory().union2(",
+        ".factory().intersection(",
+        ".factory().intersection2(",
+        ".factory().application(",
+        ".factory().index_access(",
+        ".factory().array(",
+        ".factory().tuple(",
         "factory().object(",
         "factory().function(",
         "factory().callable(",
+        "factory().union(",
+        "factory().union2(",
+        "factory().intersection(",
+        "factory().intersection2(",
+        "factory().application(",
+        "factory().index_access(",
+        "factory().array(",
+        "factory().tuple(",
         ".factory.object(",
         ".factory.function(",
         ".factory.callable(",
+        ".types.union(",
+        ".types.union2(",
+        ".types.intersection(",
+        ".types.intersection2(",
+        ".types.application(",
+        ".types.index_access(",
+        ".types.array(",
+        ".types.tuple(",
         "FunctionShape {",
         "FunctionShape::new(",
         "CallableShape {",
         "ObjectShape {",
         "ParamInfo::required(",
+        "PropertyInfo::new(",
+        "PropertyInfo {",
+        "TupleElement {",
     ];
 
     let root = checker_path(JSX_CHECKER_ROOT);
     let mut files = Vec::new();
     collect_rust_files(&root, &mut files);
+    files.extend(
+        JSX_ADDITIONAL_CONSTRUCTION_MODULES
+            .iter()
+            .map(|relative| checker_path(relative)),
+    );
     files.sort();
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -110,6 +145,17 @@ fn jsx_boundary_owns_construction_helpers() {
         "object_type_from_properties",
         "empty_props_object_type",
         "props_param_type_or_empty",
+        "property_info",
+        "property_info_with_write_type",
+        "union_type_from_members",
+        "union_type_from_pair",
+        "intersection_type_from_members",
+        "intersection_type_from_pair",
+        "array_type_from_element",
+        "tuple_type_from_elements",
+        "tuple_type_from_required_element_types",
+        "type_application_from_args",
+        "index_access_type",
         "function_type_from_shape",
         "function_type_from_parts",
         "single_required_param_function_type",

@@ -3,6 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -619,7 +620,7 @@ impl<'a> CheckerState<'a> {
                 return match kept.len() {
                     0 => props_type, // pathological — keep original
                     1 => kept[0],
-                    _ => self.ctx.types.factory().intersection(kept),
+                    _ => jsx_query::intersection_type_from_members(self.ctx.types, kept),
                 };
             }
         }
