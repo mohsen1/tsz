@@ -46,6 +46,9 @@
 //! - `declaration_export_construction_boundary_scans`: namespace/module
 //!   declaration checkers route export-surface construction through
 //!   `query_boundaries::declaration_exports`.
+//! - `import_attribute_construction_boundary_scans`: static and dynamic import
+//!   callers route import-attribute object construction through
+//!   `query_boundaries::import_attributes`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -61,6 +64,8 @@ mod declaration_export_construction_boundary_scans;
 mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]
 mod excess_property_construction_boundary_scans;
+#[path = "arch_source_scans/import_attribute_construction_boundary_scans.rs"]
+mod import_attribute_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]

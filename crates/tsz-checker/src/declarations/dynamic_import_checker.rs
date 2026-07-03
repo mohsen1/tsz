@@ -1,5 +1,6 @@
 //! Dynamic import validation: specifier type, options type, attributes, module resolution.
 
+use crate::query_boundaries::import_attributes as import_attribute_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -110,10 +111,12 @@ impl<'a> CheckerState<'a> {
         // property references the base ImportAttributes (without user augmentations).
         let with_atom = self.ctx.types.intern_string("with");
         let assert_atom = self.ctx.types.intern_string("assert");
-        let import_call_options_type = self.ctx.types.factory().object(vec![
-            tsz_solver::PropertyInfo::opt(with_atom, import_attributes_type),
-            tsz_solver::PropertyInfo::opt(assert_atom, import_attributes_type),
-        ]);
+        let import_call_options_type = import_attribute_query::import_call_options_type(
+            self.ctx.types,
+            with_atom,
+            assert_atom,
+            import_attributes_type,
+        );
 
         // Build the options type manually from the AST with string literal types.
         let Some(options_node) = self.ctx.arena.get(options_idx) else {
@@ -258,7 +261,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let name_atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push(import_attribute_query::import_attribute_property(
+                    name_atom, value_type,
+                ));
             }
         }
 
@@ -266,7 +271,7 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(obj_idx);
         }
 
-        self.ctx.types.factory().object(properties)
+        import_attribute_query::import_attribute_object_type(self.ctx.types, properties)
     }
 
     /// Build an object type from an object literal using string literal types for
@@ -294,13 +299,18 @@ impl<'a> CheckerState<'a> {
                 let value_type = if let Some(val_node) = self.ctx.arena.get(prop.initializer)
                     && let Some(lit) = self.ctx.arena.get_literal(val_node)
                 {
-                    self.ctx.types.factory().literal_string(&lit.text)
+                    import_attribute_query::import_attribute_literal_string_type(
+                        self.ctx.types,
+                        &lit.text,
+                    )
                 } else {
                     self.get_type_of_node(prop.initializer)
                 };
 
                 let name_atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push(import_attribute_query::import_attribute_property(
+                    name_atom, value_type,
+                ));
             }
         }
 
@@ -308,7 +318,7 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_node(obj_idx);
         }
 
-        self.ctx.types.factory().object(properties)
+        import_attribute_query::import_attribute_object_type(self.ctx.types, properties)
     }
 
     /// TS2880: Check for deprecated `assert` property in an import options object literal.
