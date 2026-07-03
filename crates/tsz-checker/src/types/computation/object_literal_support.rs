@@ -4,7 +4,87 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{PropertyInfo, TypeId};
+use tsz_solver::{IndexSignature, PropertyInfo, TypeId};
+
+#[derive(Clone, Default)]
+pub(crate) struct UnionSpreadBranch {
+    pub(crate) properties: FxHashMap<Atom, PropertyInfo>,
+    pub(crate) string_index_signatures: Vec<IndexSignature>,
+    pub(crate) number_index_signatures: Vec<IndexSignature>,
+    pub(crate) symbol_index_signatures: Vec<IndexSignature>,
+}
+
+impl UnionSpreadBranch {
+    pub(crate) fn new(
+        properties: FxHashMap<Atom, PropertyInfo>,
+        string_index_signatures: &[IndexSignature],
+        number_index_signatures: &[IndexSignature],
+        symbol_index_signatures: &[IndexSignature],
+    ) -> Self {
+        Self {
+            properties,
+            string_index_signatures: string_index_signatures.to_vec(),
+            number_index_signatures: number_index_signatures.to_vec(),
+            symbol_index_signatures: symbol_index_signatures.to_vec(),
+        }
+    }
+
+    pub(crate) fn add_index_signature(&mut self, index: IndexSignature) {
+        match index.key_type {
+            TypeId::NUMBER => self.number_index_signatures.push(index),
+            TypeId::SYMBOL => self.symbol_index_signatures.push(index),
+            _ => self.string_index_signatures.push(index),
+        }
+    }
+
+    const fn has_index_signatures(&self) -> bool {
+        !self.string_index_signatures.is_empty()
+            || !self.number_index_signatures.is_empty()
+            || !self.symbol_index_signatures.is_empty()
+    }
+}
+
+pub(crate) fn merge_spread_index_signatures(
+    drop_spread_index_signatures: bool,
+    string_index_types: &mut Vec<TypeId>,
+    number_index_types: &mut Vec<TypeId>,
+    symbol_index_types: &mut Vec<TypeId>,
+    spread_string_index_signatures: Vec<IndexSignature>,
+    spread_number_index_signatures: Vec<IndexSignature>,
+    spread_symbol_index_signatures: Vec<IndexSignature>,
+) -> (Option<Atom>, Option<Atom>) {
+    if drop_spread_index_signatures {
+        return (None, None);
+    }
+
+    let string_index_param_name = spread_string_index_signatures
+        .iter()
+        .filter(|idx| idx.key_type != TypeId::SYMBOL)
+        .find_map(|idx| idx.param_name);
+    let number_index_param_name = spread_number_index_signatures
+        .iter()
+        .find_map(|idx| idx.param_name);
+
+    for idx in spread_string_index_signatures {
+        if idx.key_type == TypeId::SYMBOL {
+            symbol_index_types.push(idx.value_type);
+        } else {
+            string_index_types.push(idx.value_type);
+        }
+    }
+    number_index_types.extend(
+        spread_number_index_signatures
+            .into_iter()
+            .map(|idx| idx.value_type),
+    );
+    symbol_index_types.extend(
+        spread_symbol_index_signatures
+            .into_iter()
+            .map(|idx| idx.value_type),
+    );
+
+    (string_index_param_name, number_index_param_name)
+}
 
 /// Parameters for finalizing an object literal type after all properties have been processed.
 pub(crate) struct ObjectLiteralFinalizeCtx {
@@ -33,7 +113,9 @@ pub(crate) struct ObjectLiteralFinalizeCtx {
     /// Whether any spread element resolved to a union type.
     pub(crate) has_union_spread: bool,
     /// Per-branch property maps for union-spread expansion.
-    pub(crate) union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>>,
+    pub(crate) union_spread_branches: Vec<UnionSpreadBranch>,
+    /// Whether spread-contributed index signatures should be dropped.
+    pub(crate) drop_spread_index_signatures: bool,
     /// Generic (unevaluated) spread types that could not be unioned.
     pub(crate) generic_spread_types: Vec<TypeId>,
     /// Whether all properties are context-sensitive (deferred freshness).
@@ -355,6 +437,7 @@ impl<'a> CheckerState<'a> {
             has_any_spread,
             has_union_spread,
             union_spread_branches,
+            drop_spread_index_signatures,
             generic_spread_types,
             all_properties_context_sensitive,
         } = ctx;
@@ -369,19 +452,102 @@ impl<'a> CheckerState<'a> {
             let mut union_members: Vec<TypeId> = Vec::new();
             for mut branch in union_spread_branches {
                 for prop in &post_spread_props {
-                    branch.insert(prop.name, prop.clone());
+                    branch.properties.insert(prop.name, prop.clone());
                 }
-                let mut branch_props: Vec<PropertyInfo> = branch.into_values().collect();
+                let has_branch_index_signatures = branch.has_index_signatures();
+                let mut branch_props: Vec<PropertyInfo> = branch.properties.into_values().collect();
                 branch_props.sort_by_key(|p| p.declaration_order);
                 let mut display_props = branch_props.clone();
                 crate::query_boundaries::diagnostics::normalize_display_property_order(
                     &mut display_props,
                 );
-                let obj = self
-                    .ctx
-                    .types
-                    .factory()
-                    .object_preserve_declaration_order(branch_props);
+                let obj = if !drop_spread_index_signatures && has_branch_index_signatures {
+                    use tsz_solver::ObjectShape;
+
+                    let mut string_index_types = Vec::new();
+                    let mut number_index_types = Vec::new();
+                    let mut symbol_index_types = Vec::new();
+                    let (string_index_param_name, number_index_param_name) =
+                        merge_spread_index_signatures(
+                            false,
+                            &mut string_index_types,
+                            &mut number_index_types,
+                            &mut symbol_index_types,
+                            branch.string_index_signatures,
+                            branch.number_index_signatures,
+                            branch.symbol_index_signatures,
+                        );
+
+                    if !string_index_types.is_empty() {
+                        let prop_types = branch_props.iter().map(|prop| prop.type_id);
+                        if self.ctx.in_const_assertion {
+                            string_index_types = prop_types.chain(string_index_types).collect();
+                        } else {
+                            string_index_types.extend(prop_types);
+                        }
+                    }
+
+                    let string_index = if !string_index_types.is_empty() {
+                        let value_type = if self.ctx.in_const_assertion {
+                            order_preserving_union(self.ctx.types.factory(), string_index_types)
+                        } else {
+                            self.ctx.types.factory().union(string_index_types)
+                        };
+                        Some(IndexSignature {
+                            key_type: TypeId::STRING,
+                            value_type,
+                            readonly: false,
+                            param_name: string_index_param_name,
+                        })
+                    } else {
+                        None
+                    };
+                    let number_index = if !number_index_types.is_empty() {
+                        let value_type = if self.ctx.in_const_assertion {
+                            order_preserving_union(self.ctx.types.factory(), number_index_types)
+                        } else {
+                            self.ctx.types.factory().union(number_index_types)
+                        };
+                        Some(IndexSignature {
+                            key_type: TypeId::NUMBER,
+                            value_type,
+                            readonly: false,
+                            param_name: number_index_param_name,
+                        })
+                    } else {
+                        None
+                    };
+                    let symbol_index = if !symbol_index_types.is_empty() {
+                        let value_type = if self.ctx.in_const_assertion {
+                            order_preserving_union(self.ctx.types.factory(), symbol_index_types)
+                        } else {
+                            self.ctx.types.factory().union(symbol_index_types)
+                        };
+                        Some(IndexSignature {
+                            key_type: TypeId::SYMBOL,
+                            value_type,
+                            readonly: false,
+                            param_name: None,
+                        })
+                    } else {
+                        None
+                    };
+
+                    let mut shape = ObjectShape {
+                        properties: branch_props,
+                        string_index,
+                        number_index,
+                        symbol_index,
+                        ..ObjectShape::default()
+                    };
+                    shape.mark_preserve_declaration_order();
+                    self.ctx.types.factory().object_with_index(shape)
+                } else {
+                    self.ctx
+                        .types
+                        .factory()
+                        .object_preserve_declaration_order(branch_props)
+                };
                 self.ctx.types.store_display_properties(obj, display_props);
                 union_members.push(obj);
             }

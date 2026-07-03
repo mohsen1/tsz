@@ -1308,11 +1308,49 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        let member =
-            self.ctx
-                .types
-                .resolve_element_access_type(object_type, index_type_for_access, None);
-        member == TypeId::UNDEFINED || member == TypeId::ERROR
+        !self.symbol_keyed_property_exists(object_type, index_type_for_access)
+    }
+
+    fn symbol_keyed_property_exists(
+        &self,
+        object_type: TypeId,
+        index_type_for_access: TypeId,
+    ) -> bool {
+        let Some(sym_ref) = crate::query_boundaries::common::unique_symbol_ref(
+            self.ctx.types,
+            index_type_for_access,
+        ) else {
+            return false;
+        };
+
+        let unique_name = format!("__unique_{}", sym_ref.0);
+        if crate::query_boundaries::common::find_property_by_str(
+            self.ctx.types,
+            object_type,
+            &unique_name,
+        )
+        .is_some()
+        {
+            return true;
+        }
+
+        let sym_id = crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id(sym_ref);
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(parent_sym) = self.ctx.binder.get_symbol(symbol.parent) else {
+            return false;
+        };
+        if parent_sym.escaped_name != "Symbol" {
+            return false;
+        }
+        let well_known_name = format!("[Symbol.{}]", symbol.escaped_name);
+        crate::query_boundaries::common::find_property_by_str(
+            self.ctx.types,
+            object_type,
+            &well_known_name,
+        )
+        .is_some()
     }
 
     /// Whether an `ESSymbolLike` element-access key resolves *only* through a
@@ -1381,13 +1419,9 @@ impl<'a> CheckerState<'a> {
 
         // A `unique symbol` key is legal when the object declares that exact
         // symbol-keyed property; only an unmatched key falls through to the
-        // string index. The binding-identity key resolves through a real
-        // property or `symbol` index but NOT through the `string` signature, so
-        // an UNDEFINED/ERROR probe means "unmatched".
-        let member =
-            self.ctx
-                .types
-                .resolve_element_access_type(object_type, index_type_for_access, None);
-        member == TypeId::UNDEFINED || member == TypeId::ERROR
+        // string index. Probe declared symbol properties directly instead of
+        // asking generic element access, which may intentionally return the
+        // string-index value type for diagnostic parity.
+        !self.symbol_keyed_property_exists(object_type, index_type_for_access)
     }
 }
