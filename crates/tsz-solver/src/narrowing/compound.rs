@@ -19,7 +19,6 @@ pub enum NullishFilter {
     /// Exclude the nullish part, keeping everything else.
     ExcludeNullish,
 }
-use crate::relations::subtype::{SubtypeChecker, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::{
@@ -644,15 +643,15 @@ impl<'a> NarrowingContext<'a> {
             tracing::debug_span!("narrow", ty = type_id.0, narrower = narrower.0,).entered();
 
         // Fast path: already a subtype
-        if is_subtype_of(self.db, type_id, narrower) {
+        if self.is_subtype_for_narrowing(type_id, narrower) {
             return type_id;
         }
 
         // Use visitor to perform narrowing
         let mut visitor = NarrowingVisitor {
+            ctx: self,
             db: self.db,
             narrower,
-            checker: SubtypeChecker::new(self.db.as_type_database()),
         };
         visitor.visit_type(self.db, type_id)
     }
@@ -718,7 +717,7 @@ impl<'a> NarrowingContext<'a> {
                     let resolved_member = self.resolve_type(member);
                     if !self.is_array_like(resolved_member)
                         && (self.is_any_array_compat(resolved_member)
-                            || is_subtype_of(self.db, any_array, resolved_member))
+                            || self.is_subtype_for_narrowing(any_array, resolved_member))
                     {
                         has_any_compat = true;
                         return Some(any_array);
@@ -799,7 +798,9 @@ impl<'a> NarrowingContext<'a> {
         // interface — i.e. `any[] <: source`. Without the supertype case these
         // object-like guards narrowed to `never`, producing false TS2339 on every
         // member access in the true branch.
-        if self.is_any_array_compat(source_type) || is_subtype_of(self.db, any_array, source_type) {
+        if self.is_any_array_compat(source_type)
+            || self.is_subtype_for_narrowing(any_array, source_type)
+        {
             return any_array;
         }
 

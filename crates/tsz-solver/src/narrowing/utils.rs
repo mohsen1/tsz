@@ -5,20 +5,18 @@
 
 use super::{DiscriminantInfo, NarrowingContext};
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
 use crate::visitor::{TypeVisitor, is_object_like_type_through_type_constraints};
 use tsz_common::interner::Atom;
 
 /// Visitor that narrows a type by filtering/intersecting with a narrower type.
-pub(crate) struct NarrowingVisitor<'a> {
-    pub(crate) db: &'a dyn QueryDatabase,
+pub(crate) struct NarrowingVisitor<'ctx, 'db> {
+    pub(crate) ctx: &'ctx NarrowingContext<'db>,
+    pub(crate) db: &'db dyn QueryDatabase,
     pub(crate) narrower: TypeId,
-    /// PERF: Reusable `SubtypeChecker` to avoid per-call hash allocations
-    pub(crate) checker: SubtypeChecker<'a>,
 }
 
-impl<'a> TypeVisitor for NarrowingVisitor<'a> {
+impl<'ctx, 'db> TypeVisitor for NarrowingVisitor<'ctx, 'db> {
     type Output = TypeId;
 
     /// Override `visit_type` to handle types that need special handling.
@@ -49,14 +47,12 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 TypeData::Object(_) => {
                     // Case 1: type_id is subtype of narrower (e.g., { a: "foo" } narrowed by { a: string })
                     // Result: type_id (keep the more specific type)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.ctx.is_subtype_for_narrowing(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (e.g., { a: string } narrowed by { a: "foo" })
                     // Result: narrower (narrow down to the more specific type)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(self.narrower, type_id) {
+                    if self.ctx.is_subtype_for_narrowing(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Both are object types but not directly related
@@ -71,13 +67,11 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 // Function types: check subtype relationships
                 TypeData::Function(_) => {
                     // Case 1: type_id is subtype of narrower (keep specific)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.ctx.is_subtype_for_narrowing(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (narrow down)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(self.narrower, type_id) {
+                    if self.ctx.is_subtype_for_narrowing(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Disjoint function types
@@ -113,15 +107,13 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
 
                 // Case 1: narrower is subtype of type_id (e.g., narrow(string, "foo"))
                 // Result: narrower
-                self.checker.reset();
-                if self.checker.is_subtype_of(self.narrower, type_id) {
+                if self.ctx.is_subtype_for_narrowing(self.narrower, type_id) {
                     self.narrower
                 }
                 // Case 2: type_id is subtype of narrower (e.g., narrow("foo", string))
                 // Result: type_id (the original)
                 else {
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.ctx.is_subtype_for_narrowing(type_id, self.narrower) {
                         type_id
                     }
                     // Case 3: Disjoint types (e.g., narrow(string, number))

@@ -1131,11 +1131,7 @@ impl<'a> NarrowingContext<'a> {
                 sp.name == t_prop.name
                     // Optional source can't satisfy required target
                     && (!sp.optional || t_prop.optional)
-                    && crate::relations::subtype::is_subtype_of_with_db(
-                        self.db,
-                        sp.type_id,
-                        t_prop.type_id,
-                    )
+                    && self.is_subtype_for_narrowing(sp.type_id, t_prop.type_id)
             });
             if !found {
                 return false;

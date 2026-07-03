@@ -698,16 +698,11 @@ impl<'a> NarrowingContext<'a> {
                     // Reverse subtype check: target <: member.
                     // Handles narrowing \`string | number\` by \`"hello"\` where
                     // \`"hello" <: string\` so the member should be kept.
-                    // Guard: only use the bare is_subtype_of_with_db (which lacks a
-                    // TypeResolver) for primitive/literal types. For interface/class
-                    // Lazy(DefId) types, the global subtype cache can contain stale
-                    // results that cause false positives.
+                    // Keep this path to primitive/literal reverse narrowing, but
+                    // route the actual relation through the shared query boundary
+                    // so repeated guards reuse the same subtype answer.
                     if (self.is_js_primitive(target_type) || self.is_js_primitive(member))
-                        && crate::relations::subtype::is_subtype_of_with_db(
-                            self.db,
-                            target_type,
-                            member,
-                        )
+                        && self.is_subtype_for_narrowing(target_type, member)
                     {
                         // Keep a wide `symbol` member over a `unique symbol`
                         // value; resolved target also catches aliases.
