@@ -5,6 +5,7 @@
 //! (`property`) for LOC hygiene.
 
 use crate::query_boundaries::common::TypeResolver;
+use crate::query_boundaries::property_access as property_access_query;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -141,14 +142,11 @@ impl<'a> CheckerState<'a> {
                 &subst,
             );
             let property_type = self.evaluate_type_with_env(property_type);
-            let property_type = match mapped.optional_modifier {
-                Some(tsz_solver::MappedModifier::Add) => self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(property_type, TypeId::UNDEFINED),
-                Some(tsz_solver::MappedModifier::Remove) | None => property_type,
-            };
+            let property_type = property_access_query::mapped_property_read_type(
+                self.ctx.types,
+                property_type,
+                mapped.optional_modifier,
+            );
             matched_property_types.push(property_type);
         }
 
@@ -161,17 +159,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let type_id = match matched_property_types.len() {
-            1 => matched_property_types[0],
-            _ => self.ctx.types.factory().union(matched_property_types),
-        };
-        Some(
-            tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id,
-                write_type: None,
-                from_index_signature: false,
-            },
-        )
+        property_access_query::union_property_access_success(self.ctx.types, matched_property_types)
     }
 
     pub(crate) fn computed_property_display_name(&self, name_idx: NodeIndex) -> Option<String> {
@@ -675,18 +663,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !member_results.is_empty() {
-                let type_id = match member_results.len() {
-                    1 => member_results[0],
-                    _ => self.ctx.types.factory().intersection(member_results),
-                };
-                return self.resolve_unbound_property_result_defaults(
-                    tsz_solver::operations::property::PropertyAccessResult::Success {
-                        type_id,
-                        write_type: None,
-                        from_index_signature: any_from_index,
-                    },
-                );
+            if let Some(result) = property_access_query::intersection_property_access_success(
+                self.ctx.types,
+                member_results,
+                any_from_index,
+            ) {
+                return self.resolve_unbound_property_result_defaults(result);
             }
 
             if saw_deferred_any_fallback {
@@ -1087,22 +1069,17 @@ impl<'a> CheckerState<'a> {
         for source_key_atom in matching_source_keys {
             let property_type =
                 self.instantiate_mapped_property_template_with_env(&mapped, source_key_atom);
-            let property_type = match mapped.optional_modifier {
-                Some(tsz_solver::MappedModifier::Add) => self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(property_type, TypeId::UNDEFINED),
-                Some(tsz_solver::MappedModifier::Remove) | None => property_type,
-            };
+            let property_type = property_access_query::mapped_property_read_type(
+                self.ctx.types,
+                property_type,
+                mapped.optional_modifier,
+            );
             property_types.push(property_type);
         }
 
-        let property_type = match property_types.len() {
-            0 => return None,
-            1 => property_types[0],
-            _ => self.ctx.types.factory().union(property_types),
-        };
+        let result =
+            property_access_query::union_property_access_success(self.ctx.types, property_types)?;
+        let property_type = result.success_type().expect("union helper returns success");
 
         self.ctx
             .flow_shared
@@ -1117,13 +1094,7 @@ impl<'a> CheckerState<'a> {
                 )),
             );
 
-        Some(
-            tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: property_type,
-                write_type: None,
-                from_index_signature: false,
-            },
-        )
+        Some(result)
     }
 }
 

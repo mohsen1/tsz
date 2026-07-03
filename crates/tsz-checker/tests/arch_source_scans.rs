@@ -43,6 +43,9 @@
 //! - `strict_bind_call_apply_construction_boundary_scans`: property-access
 //!   helpers route strict bind/call/apply signature construction through
 //!   `query_boundaries::property_access`.
+//! - `property_access_result_construction_boundary_scans`: property-access
+//!   environment resolution routes optional/union/intersection result
+//!   construction through `query_boundaries::property_access`.
 //! - `declaration_export_construction_boundary_scans`: namespace/module
 //!   declaration checkers route export-surface construction through
 //!   `query_boundaries::declaration_exports`.
@@ -126,6 +129,8 @@ mod object_flags_boundary_scans;
 mod object_literal_annotation_walker_scans;
 #[path = "arch_source_scans/object_literal_context_construction_boundary_scans.rs"]
 mod object_literal_context_construction_boundary_scans;
+#[path = "arch_source_scans/property_access_result_construction_boundary_scans.rs"]
+mod property_access_result_construction_boundary_scans;
 #[path = "arch_source_scans/relation_boundary_session_scans.rs"]
 mod relation_boundary_session_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
