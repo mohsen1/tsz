@@ -72,6 +72,7 @@ OPERATION_LOCAL_OWNERS = {
     "FreeTypeParamCollector",
     "InferenceContext",
     "PropertyAccessEvaluator",
+    "NumericIndexSurfaceWalk",
     "SubtypeChecker",
     "TypeEvaluator",
     "TypeFormatter",

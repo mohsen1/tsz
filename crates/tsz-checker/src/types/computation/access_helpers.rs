@@ -5,10 +5,134 @@ use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::mem;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TypeId};
+
+const MAX_NUMERIC_INDEX_SURFACE_DEPTH: u32 = 1000;
+const HASH_MAP_ENTRY_OVERHEAD_ESTIMATE: usize = 8;
+
+type NumericIndexSurface = Option<(bool, bool)>;
+
+struct NumericIndexSurfaceWalk<'state, 'ctx> {
+    checker: &'state CheckerState<'ctx>,
+    visiting: FxHashSet<TypeId>,
+    memo: FxHashMap<TypeId, NumericIndexSurface>,
+    cut_seen: bool,
+}
+
+impl<'state, 'ctx> NumericIndexSurfaceWalk<'state, 'ctx> {
+    fn new(checker: &'state CheckerState<'ctx>) -> Self {
+        Self {
+            checker,
+            visiting: FxHashSet::default(),
+            memo: FxHashMap::default(),
+            cut_seen: false,
+        }
+    }
+
+    fn surface(&mut self, object_type: TypeId) -> NumericIndexSurface {
+        self.surface_inner(object_type, 0)
+    }
+
+    fn surface_inner(&mut self, object_type: TypeId, depth: u32) -> NumericIndexSurface {
+        if let Some(&cached) = self.memo.get(&object_type) {
+            return cached;
+        }
+        if depth >= MAX_NUMERIC_INDEX_SURFACE_DEPTH || !self.visiting.insert(object_type) {
+            self.cut_seen = true;
+            return None;
+        }
+
+        // Use the resolver-aware classifier so wrapped `Record`/application
+        // surfaces participate without name or source-text shortcuts.
+        let result = match query::classify_element_indexable_with_resolver(
+            self.checker.ctx.types,
+            &self.checker.ctx,
+            object_type,
+        ) {
+            query::ElementIndexableKind::ObjectWithIndex {
+                has_string,
+                has_number,
+            } => Some((has_string, has_number)),
+            query::ElementIndexableKind::Intersection(members) => {
+                let mut has_string = false;
+                let mut has_number = false;
+                for member in members {
+                    if let Some((member_string, member_number)) =
+                        self.surface_inner(member, depth + 1)
+                    {
+                        has_string |= member_string;
+                        has_number |= member_number;
+                    }
+                    if self.cut_seen {
+                        break;
+                    }
+                }
+                (!self.cut_seen && (has_string || has_number)).then_some((has_string, has_number))
+            }
+            query::ElementIndexableKind::Union(members) => {
+                let mut all_have_string_surface = true;
+                let mut all_have_number_surface = true;
+                let mut saw_indexed_member = false;
+
+                for member in members {
+                    let Some((has_string, has_number)) = self.surface_inner(member, depth + 1)
+                    else {
+                        self.visiting.remove(&object_type);
+                        if !self.cut_seen {
+                            self.memo.insert(object_type, None);
+                        }
+                        return None;
+                    };
+                    saw_indexed_member = true;
+                    all_have_string_surface &= has_string;
+                    all_have_number_surface &= has_number;
+                }
+
+                saw_indexed_member.then_some((all_have_string_surface, all_have_number_surface))
+            }
+            query::ElementIndexableKind::Array
+            | query::ElementIndexableKind::Tuple
+            | query::ElementIndexableKind::StringLike
+            | query::ElementIndexableKind::Other => None,
+        };
+
+        self.visiting.remove(&object_type);
+        if !self.cut_seen {
+            self.memo.insert(object_type, result);
+        }
+        result
+    }
+
+    fn entry_count(&self) -> usize {
+        self.memo.len()
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        self.memo.capacity().saturating_mul(
+            mem::size_of::<TypeId>()
+                .saturating_add(mem::size_of::<NumericIndexSurface>())
+                .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
+        )
+    }
+
+    fn trace_union_result(&self, object_type: TypeId, result: Option<bool>) {
+        if tracing::enabled!(tracing::Level::TRACE) {
+            tracing::trace!(
+                object_type = object_type.0,
+                result = ?result,
+                cut_seen = self.cut_seen,
+                memo_entries = self.entry_count(),
+                memo_estimated_size_bytes = self.estimated_size_bytes(),
+                "numeric_index_surface_walk"
+            );
+        }
+    }
+}
 
 impl<'a> CheckerState<'a> {
     /// Whether the element-access receiver resolves (through aliases /
@@ -615,12 +739,14 @@ impl<'a> CheckerState<'a> {
         let mut all_have_string_surface = true;
         let mut all_have_number_surface = true;
         let mut saw_indexed_member = false;
+        let mut surfaces = NumericIndexSurfaceWalk::new(self);
 
         for &member in &members {
             if !self.is_index_signature_only_member(member) {
                 return false;
             }
-            let Some((has_string, has_number)) = self.numeric_index_surfaces(member) else {
+            let Some((has_string, has_number)) = surfaces.surface(member) else {
+                surfaces.trace_union_result(object_type, None);
                 return false;
             };
             saw_indexed_member = true;
@@ -628,54 +754,9 @@ impl<'a> CheckerState<'a> {
             all_have_number_surface &= has_number;
         }
 
-        saw_indexed_member && !all_have_string_surface && !all_have_number_surface
-    }
-
-    fn numeric_index_surfaces(&self, object_type: TypeId) -> Option<(bool, bool)> {
-        // Resolver-aware so that intersection/union members containing
-        // `Application(Lazy(DefId), args)` wrappers (e.g. `Record<string, V>`)
-        // resolve to their structural index surface instead of `Other`.
-        match query::classify_element_indexable_with_resolver(
-            self.ctx.types,
-            &self.ctx,
-            object_type,
-        ) {
-            query::ElementIndexableKind::ObjectWithIndex {
-                has_string,
-                has_number,
-            } => Some((has_string, has_number)),
-            query::ElementIndexableKind::Intersection(members) => {
-                let mut has_string = false;
-                let mut has_number = false;
-                for member in members {
-                    if let Some((member_string, member_number)) =
-                        self.numeric_index_surfaces(member)
-                    {
-                        has_string |= member_string;
-                        has_number |= member_number;
-                    }
-                }
-                (has_string || has_number).then_some((has_string, has_number))
-            }
-            query::ElementIndexableKind::Union(members) => {
-                let mut all_have_string_surface = true;
-                let mut all_have_number_surface = true;
-                let mut saw_indexed_member = false;
-
-                for member in members {
-                    let (has_string, has_number) = self.numeric_index_surfaces(member)?;
-                    saw_indexed_member = true;
-                    all_have_string_surface &= has_string;
-                    all_have_number_surface &= has_number;
-                }
-
-                saw_indexed_member.then_some((all_have_string_surface, all_have_number_surface))
-            }
-            query::ElementIndexableKind::Array
-            | query::ElementIndexableKind::Tuple
-            | query::ElementIndexableKind::StringLike
-            | query::ElementIndexableKind::Other => None,
-        }
+        let result = saw_indexed_member && !all_have_string_surface && !all_have_number_surface;
+        surfaces.trace_union_result(object_type, Some(result));
+        result
     }
 
     fn is_index_signature_only_member(&self, object_type: TypeId) -> bool {
