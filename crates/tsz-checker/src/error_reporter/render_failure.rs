@@ -3,6 +3,7 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -94,7 +95,10 @@ impl<'a> CheckerState<'a> {
             let mut shape = (*shape).clone();
             shape.params[param_index].type_id =
                 self.strict_callback_param_display_type(shape.params[param_index].type_id);
-            return Some(self.ctx.types.factory().function(shape));
+            return Some(diagnostic_query::function_type_from_shape(
+                self.ctx.types,
+                shape,
+            ));
         }
 
         let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
@@ -107,20 +111,11 @@ impl<'a> CheckerState<'a> {
         let mut sig = shape.call_signatures[0].clone();
         sig.params[param_index].type_id =
             self.strict_callback_param_display_type(sig.params[param_index].type_id);
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params: sig.type_params,
-                    params: sig.params,
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate,
-                    is_constructor: false,
-                    is_method: sig.is_method,
-                }),
-        )
+        Some(diagnostic_query::function_type_from_call_signature(
+            self.ctx.types,
+            &sig,
+            false,
+        ))
     }
 
     fn strict_callback_assignment_display_pair(

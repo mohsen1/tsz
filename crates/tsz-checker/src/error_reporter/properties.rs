@@ -4,6 +4,7 @@ use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::{DiagnosticAnchorKind, DiagnosticRenderRequest};
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::common as query;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_common::file_extensions::strip_known_extension;
@@ -1126,7 +1127,10 @@ impl<'a> CheckerState<'a> {
                 prop.write_type = TypeId::ANY;
             }
         }
-        Some(self.ctx.types.factory().callable(rewritten))
+        Some(diagnostic_query::callable_type_from_shape(
+            self.ctx.types,
+            rewritten,
+        ))
     }
 
     // =========================================================================

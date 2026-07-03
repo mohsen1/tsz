@@ -33,6 +33,7 @@ const SIGNATURE_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
 
 /// The designated checker-side `CallSignature` data assembler.
 const SIGNATURE_DATA_BUILDER: &str = "src/checkers/signature_builder.rs";
+const CALL_DISPLAY_MODULE: &str = "src/types/computation/call_display.rs";
 
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -106,6 +107,29 @@ fn issue_13022_modules_do_not_build_type_shape_literals() {
     );
 }
 
+/// `call_display.rs` also builds temporary function surfaces for relation and
+/// contextual-return checks. Those function types are signature-bearing
+/// construction and must stay behind the same boundary, but the module still
+/// assembles read-only `CallSignature` data for display skeletons.
+#[test]
+fn call_display_routes_function_type_construction_through_boundary() {
+    const PATTERNS: &[&str] = &[
+        ".factory().function(",
+        ".factory.function(",
+        ".types.function(",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    scan_for_patterns(CALL_DISPLAY_MODULE, PATTERNS, &mut violations);
+    assert!(
+        violations.is_empty(),
+        "call_display.rs must intern temporary function types through \
+         query_boundaries::construct_signatures:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// `CallSignature` literals are signature *data* assembly and belong to the
 /// designated builder module (`checkers/signature_builder.rs`) or the
 /// boundary itself; the other issue #13022 modules round-trip through
@@ -138,6 +162,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "function_shape_from_call_signature",
         "call_signature_from_function_shape",
         "function_type_from_shape",
+        "function_type_from_parts",
         "function_type_from_call_signature",
         "call_only_callable_type",
         "construct_only_callable_type",
