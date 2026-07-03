@@ -37,6 +37,9 @@
 //!   solver shape construction through `query_boundaries::jsdoc_construction`.
 //! - `jsx_construction_boundary_scans`: JSX checker callers route object and
 //!   function shape construction through `query_boundaries::checkers::jsx`.
+//! - `js_class_property_construction_boundary_scans`: JS class-property
+//!   scanning routes type-parameter, array/union, property, callable, and object
+//!   construction through `query_boundaries::checkers::class_properties`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -52,6 +55,8 @@ mod diagnostic_construction_boundary_scans;
 mod excess_property_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
+#[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]
+mod js_class_property_construction_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]
 mod jsdoc_construction_boundary_scans;
 #[path = "arch_source_scans/jsx_construction_boundary_scans.rs"]
