@@ -27,6 +27,7 @@ pub(crate) mod conditional;
 pub(crate) mod conditional_constraints;
 pub(crate) mod conditional_infer_alias;
 pub(crate) mod construct_signatures;
+pub(crate) mod declaration_exports;
 pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
 pub(crate) mod diagnostics;

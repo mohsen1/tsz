@@ -1,6 +1,7 @@
 //! Namespace type merging and re-export resolution for declaration merging.
 
 use crate::query_boundaries::class_type as query;
+use crate::query_boundaries::declaration_exports;
 use crate::query_boundaries::type_construction;
 use crate::state::{CheckerState, EnumKind};
 use std::sync::Arc;
@@ -9,7 +10,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::TypeId;
 
 /// Maximum recursion depth for namespace export merging.
 ///
@@ -142,7 +143,6 @@ impl<'a> CheckerState<'a> {
         check_prototype: bool,
     ) {
         use tsz_common::diagnostics::diagnostic_codes;
-        use tsz_solver::PropertyInfo;
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
@@ -227,22 +227,7 @@ impl<'a> CheckerState<'a> {
 
             props.insert(
                 name_atom,
-                PropertyInfo {
-                    name: name_atom,
-                    type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                declaration_exports::declaration_export_property(name_atom, type_id, 0),
             );
         }
     }
@@ -256,11 +241,10 @@ impl<'a> CheckerState<'a> {
                 == 0;
 
         if is_pure_namespace || self.ctx.is_declaration_file() {
-            return self
-                .ctx
-                .types
-                .factory()
-                .lazy(self.ctx.get_or_create_def_id(member_id));
+            return declaration_exports::declaration_lazy_export_type(
+                self.ctx.types,
+                self.ctx.get_or_create_def_id(member_id),
+            );
         }
 
         // For merged INTERFACE+VARIABLE symbols (e.g., `export interface Point { ... }`
@@ -288,8 +272,6 @@ impl<'a> CheckerState<'a> {
     /// By constructing a real `Object { prop: type, ... }` type we give the solver
     /// concrete structural types it can compare property-by-property.
     pub(crate) fn build_namespace_object_type(&mut self, sym_id: SymbolId) -> TypeId {
-        use tsz_solver::PropertyInfo;
-
         // For namespace+interface merged symbols, skip the symbol_instance_types
         // cache. It may contain the INTERFACE type (from type-position resolution
         // like `x: Point`) which is the wrong type for the namespace VALUE side.
@@ -319,13 +301,13 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_symbol(sym_id);
         };
         let Some(exports) = symbol.exports.as_ref().cloned() else {
-            return self.ctx.types.factory().object(vec![]);
+            return declaration_exports::empty_namespace_object_type(self.ctx.types);
         };
 
-        let placeholder = self.ctx.types.factory().object(vec![]);
+        let placeholder = declaration_exports::namespace_object_placeholder_type(self.ctx.types);
         self.ctx.symbol_instance_types.insert(sym_id, placeholder);
         self.ctx.symbol_resolution_depth.set(depth + 1);
-        let mut props: Vec<PropertyInfo> = Vec::new();
+        let mut props: Vec<tsz_solver::PropertyInfo> = Vec::new();
         for (name, member_id) in self.ordered_namespace_export_entries(&exports) {
             if self.ctx.symbol_resolution_set.contains(&member_id) {
                 continue;
@@ -383,32 +365,18 @@ impl<'a> CheckerState<'a> {
                 props.len() as u32 + 2
             };
             let name_atom = self.ctx.types.intern_string(name);
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: member_type,
-                write_type: member_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
+            props.push(declaration_exports::declaration_export_property(
+                name_atom,
+                member_type,
                 declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            ));
         }
         self.ctx.symbol_resolution_depth.set(depth);
         Self::normalize_namespace_export_declaration_order(&mut props);
         // Preserve the namespace's SymbolId so the type formatter displays the
         // value surface as `typeof M` instead of expanding its object shape.
-        let namespace_type = self
-            .ctx
-            .types
-            .factory()
-            .object_with_symbol(props, Some(sym_id));
+        let namespace_type =
+            declaration_exports::namespace_object_type(self.ctx.types, props, sym_id);
         self.ctx
             .symbol_instance_types
             .insert(sym_id, namespace_type);
@@ -510,7 +478,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
     ) -> TypeId {
         use rustc_hash::FxHashMap;
-        use tsz_solver::CallableShape;
 
         // Check recursion depth to prevent stack overflow
         let depth = self.ctx.symbol_resolution_depth.get();
@@ -535,15 +502,12 @@ impl<'a> CheckerState<'a> {
         // `typeof C` (the value+namespace identity) instead of expanding the
         // structural shape. tsc displays a class merged with a namespace as
         // `typeof C`.
-        self.ctx.types.factory().callable(CallableShape {
-            call_signatures: shape.call_signatures.clone(),
-            construct_signatures: shape.construct_signatures.clone(),
+        declaration_exports::namespace_merged_constructor_callable_type(
+            self.ctx.types,
+            &shape,
             properties,
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol: Some(sym_id),
-            is_abstract: false,
-        })
+            sym_id,
+        )
     }
 
     /// Merge namespace exports into a function type for function+namespace merging.
@@ -565,7 +529,6 @@ impl<'a> CheckerState<'a> {
         function_type: TypeId,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
         use rustc_hash::FxHashMap;
-        use tsz_solver::CallableShape;
 
         // Get a unified CallableShape for the function type.
         // Solver query handles both Callable (overloaded) and Function (single-signature)
@@ -586,16 +549,11 @@ impl<'a> CheckerState<'a> {
         self.merge_exports_into_props(sym_id, &mut props, false);
 
         let properties = props.into_values().collect();
-        let factory = self.ctx.types.factory();
-        let merged_type = factory.callable(CallableShape {
-            call_signatures: shape.call_signatures.clone(),
-            construct_signatures: shape.construct_signatures.clone(),
+        let merged_type = declaration_exports::namespace_merged_function_callable_type(
+            self.ctx.types,
+            &shape,
             properties,
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol: None,
-            is_abstract: false,
-        });
+        );
 
         (merged_type, Vec::new())
     }
@@ -839,10 +797,10 @@ impl<'a> CheckerState<'a> {
                 && !member_symbol.has_any_flags(symbol_flags::CLASS | symbol_flags::FUNCTION);
 
             let mut type_id = if is_pure_namespace {
-                self.ctx
-                    .types
-                    .factory()
-                    .lazy(self.ctx.get_or_create_def_id(*member_id))
+                declaration_exports::declaration_lazy_export_type(
+                    self.ctx.types,
+                    self.ctx.get_or_create_def_id(*member_id),
+                )
             } else {
                 self.get_type_of_symbol(*member_id)
             };
@@ -876,22 +834,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let name_atom = self.ctx.types.intern_string(name);
-            props.entry(name_atom).or_insert(PropertyInfo {
-                name: name_atom,
-                type_id,
-                write_type: type_id,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            props
+                .entry(name_atom)
+                .or_insert(declaration_exports::declaration_export_property(
+                    name_atom, type_id, 0,
+                ));
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
