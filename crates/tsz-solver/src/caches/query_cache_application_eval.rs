@@ -180,4 +180,41 @@ impl TypeApplicationEvalCache for QueryCache<'_> {
             verdict,
         );
     }
+
+    fn lookup_permissive_false_branch_verdict(
+        &self,
+        check: TypeId,
+        extends: TypeId,
+        no_unchecked_indexed_access: bool,
+        exact_optional_property_types: bool,
+    ) -> Option<bool> {
+        self.permissive_false_branch_cache
+            .borrow()
+            .get(&(
+                check,
+                extends,
+                no_unchecked_indexed_access,
+                exact_optional_property_types,
+            ))
+            .copied()
+    }
+
+    fn insert_permissive_false_branch_verdict(
+        &self,
+        check: TypeId,
+        extends: TypeId,
+        no_unchecked_indexed_access: bool,
+        exact_optional_property_types: bool,
+        verdict: bool,
+    ) {
+        self.permissive_false_branch_cache.borrow_mut().insert(
+            (
+                check,
+                extends,
+                no_unchecked_indexed_access,
+                exact_optional_property_types,
+            ),
+            verdict,
+        );
+    }
 }

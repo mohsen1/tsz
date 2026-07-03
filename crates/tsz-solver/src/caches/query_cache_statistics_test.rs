@@ -451,6 +451,82 @@ fn conditional_branch_verdict_cache_defaults_off_for_raw_interner() {
 }
 
 #[test]
+fn permissive_false_branch_cache_round_trips_and_is_key_partitioned() {
+    // Structural rule (#14351): the permissive-instantiation false-branch
+    // wrapper cache is keyed by the original `(check, extends)` operands plus
+    // both compiler option bits. It is cleared with the `QueryCache` and is
+    // distinct from the instantiated conditional-branch verdict cache that
+    // certifies publication safety.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let before = db.statistics();
+    assert_eq!(before.permissive_false_branch_cache_entries, 0);
+
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
+        None
+    );
+
+    db.insert_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false, true);
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
+        Some(true)
+    );
+
+    let after = db.statistics();
+    assert_eq!(after.permissive_false_branch_cache_entries, 1);
+    assert!(after.estimated_size_bytes() > before.estimated_size_bytes());
+    assert!(after.to_string().contains("permissive_false_branch"));
+
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, true, false),
+        None
+    );
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true),
+        None
+    );
+
+    db.insert_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true, false);
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, true),
+        Some(false)
+    );
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::NUMBER, TypeId::STRING, false, false),
+        None
+    );
+
+    db.clear();
+    assert_eq!(db.statistics().permissive_false_branch_cache_entries, 0);
+    assert_eq!(
+        db.lookup_permissive_false_branch_verdict(TypeId::STRING, TypeId::NUMBER, false, false),
+        None
+    );
+}
+
+#[test]
+fn permissive_false_branch_cache_defaults_off_for_raw_interner() {
+    let interner = TypeInterner::new();
+    interner.insert_permissive_false_branch_verdict(
+        TypeId::STRING,
+        TypeId::NUMBER,
+        false,
+        false,
+        true,
+    );
+    assert_eq!(
+        interner.lookup_permissive_false_branch_verdict(
+            TypeId::STRING,
+            TypeId::NUMBER,
+            false,
+            false,
+        ),
+        None
+    );
+}
+
+#[test]
 fn application_eval_cache_is_per_file_isolated() {
     // Structural rule: `application_eval_cache` is intentionally NOT shared
     // cross-file. Parallel file checking can observe incomplete lib-merge state
@@ -1054,14 +1130,17 @@ fn query_cache_statistics_merge_includes_intersection_merge_cache() {
 fn query_cache_statistics_merge_includes_closed_eval_cache() {
     let mut left = QueryCacheStatistics {
         closed_eval_cache_entries: 2,
+        permissive_false_branch_cache_entries: 3,
         ..Default::default()
     };
     let right = QueryCacheStatistics {
         closed_eval_cache_entries: 7,
+        permissive_false_branch_cache_entries: 11,
         ..Default::default()
     };
 
     left.merge(&right);
 
     assert_eq!(left.closed_eval_cache_entries, 9);
+    assert_eq!(left.permissive_false_branch_cache_entries, 14);
 }

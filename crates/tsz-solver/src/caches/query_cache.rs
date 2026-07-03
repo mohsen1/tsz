@@ -53,6 +53,7 @@ mod resolver;
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 type ConditionalBranchVerdictCacheKey = (TypeId, TypeId, bool, bool);
+type PermissiveFalseBranchCacheKey = (TypeId, TypeId, bool, bool);
 
 const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
 const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
@@ -241,6 +242,10 @@ pub struct QueryCache<'a> {
     /// that is dropped on every evaluator construction. Shares this cache's
     /// `clear()`/file lifecycle envelope.
     conditional_branch_verdict_cache: RefCell<FxHashMap<ConditionalBranchVerdictCacheKey, bool>>,
+    /// Persistent results for tsc's permissive-instantiation false-branch gate.
+    /// Writes are guarded by the conditional-branch verdict cache for the
+    /// instantiated permissive pair.
+    permissive_false_branch_cache: RefCell<FxHashMap<PermissiveFalseBranchCacheKey, bool>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
@@ -345,6 +350,7 @@ impl<'a> QueryCache<'a> {
             closed_eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
             conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
+            permissive_false_branch_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_dependency_index: RefCell::new(
                 ApplicationEvalDependencyIndexState::default(),
@@ -408,6 +414,7 @@ impl<'a> QueryCache<'a> {
         self.closed_eval_cache.borrow_mut().clear();
         self.closed_eval_dependency_index.borrow_mut().clear();
         self.conditional_branch_verdict_cache.borrow_mut().clear();
+        self.permissive_false_branch_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
@@ -447,6 +454,10 @@ impl<'a> QueryCache<'a> {
             closed_eval_cache_entries: self.closed_eval_cache.borrow().len(),
             conditional_branch_verdict_cache_entries: self
                 .conditional_branch_verdict_cache
+                .borrow()
+                .len(),
+            permissive_false_branch_cache_entries: self
+                .permissive_false_branch_cache
                 .borrow()
                 .len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
