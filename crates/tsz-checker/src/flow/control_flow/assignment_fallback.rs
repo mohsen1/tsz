@@ -17,7 +17,7 @@ use crate::types_domain::queries::lib_resolution::{
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, SymbolRef, TypeId};
+use tsz_solver::{CallSignature, ParamInfo, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(super) fn assigned_type_for_await_rhs(
@@ -263,7 +263,12 @@ impl<'a> FlowAnalyzer<'a> {
                         PropertyInfo::new(name_atom, member_type)
                     });
                 }
-                Some(self.interner.factory().object(properties))
+                Some(
+                    crate::query_boundaries::flow_analysis::object_type_from_properties(
+                        self.interner,
+                        properties,
+                    ),
+                )
             }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 let type_ref = self.arena.get_type_ref(node)?;
@@ -413,7 +418,12 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
 
-        Some(self.interner.factory().object(properties))
+        Some(
+            crate::query_boundaries::flow_analysis::object_type_from_properties(
+                self.interner,
+                properties,
+            ),
+        )
     }
 
     fn fallback_object_property_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
@@ -802,30 +812,29 @@ impl<'a> FlowAnalyzer<'a> {
             });
         }
 
-        Some(self.interner.factory().callable(CallableShape {
-            call_signatures: vec![CallSignature {
-                type_params: Vec::new(),
-                params,
-                this_type,
-                return_type: self
-                    .arena
-                    .get(decl)
-                    .and_then(|node| self.arena.get_function(node))
-                    .and_then(|func| {
-                        func.type_annotation.is_some().then_some(func.type_annotation)
-                    })
-                    .and_then(|type_ann| self.fallback_type_from_type_node_syntax(type_ann))
-                    .unwrap_or(TypeId::ANY),
-                type_predicate: None,
-                is_method: false,
-            }],
-            construct_signatures: Vec::new(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-            is_abstract: false,
-        }))
+        Some(
+            crate::query_boundaries::flow_analysis::call_only_callable_type(
+                self.interner,
+                vec![CallSignature {
+                    type_params: Vec::new(),
+                    params,
+                    this_type,
+                    return_type: self
+                        .arena
+                        .get(decl)
+                        .and_then(|node| self.arena.get_function(node))
+                        .and_then(|func| {
+                            func.type_annotation
+                                .is_some()
+                                .then_some(func.type_annotation)
+                        })
+                        .and_then(|type_ann| self.fallback_type_from_type_node_syntax(type_ann))
+                        .unwrap_or(TypeId::ANY),
+                    type_predicate: None,
+                    is_method: false,
+                }],
+            ),
+        )
     }
 
     fn declared_return_type_from_declaration(&self, decl: NodeIndex) -> Option<TypeId> {

@@ -126,3 +126,38 @@ fn assignment_reduction_uses_flow_query_boundary() {
         "assignment member filtering belongs in query_boundaries::flow_analysis"
     );
 }
+
+#[test]
+fn assignment_fallback_shape_construction_uses_flow_query_boundary() {
+    let src = fs::read_to_string("src/flow/control_flow/assignment_fallback.rs")
+        .expect("failed to read src/flow/control_flow/assignment_fallback.rs");
+
+    for forbidden in [
+        ".factory().object(",
+        ".factory().callable(",
+        ".factory.object(",
+        ".factory.callable(",
+        "CallableShape {",
+        "CallableShape::default()",
+    ] {
+        assert!(
+            !src.contains(forbidden),
+            "assignment fallback must route solver shape construction through \
+             query_boundaries::flow_analysis, found `{forbidden}`"
+        );
+    }
+
+    assert!(
+        src.contains("flow_analysis::object_type_from_properties(")
+            && src.contains("flow_analysis::call_only_callable_type("),
+        "assignment fallback object/callable construction should route through flow_analysis"
+    );
+
+    let boundary = fs::read_to_string("src/query_boundaries/flow_analysis.rs")
+        .expect("failed to read src/query_boundaries/flow_analysis.rs");
+    assert!(
+        boundary.contains("fn object_type_from_properties(")
+            && boundary.contains("fn call_only_callable_type("),
+        "flow_analysis must own assignment-fallback object/callable construction helpers"
+    );
+}
