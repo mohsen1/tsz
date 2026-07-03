@@ -1214,114 +1214,74 @@ impl TypeEnvironment {
         }
     }
 
-    /// Vacancy-fill every local registration map from `source` into `self`.
+    /// Return the first local registration present in `source` but absent here.
     ///
-    /// This is the comprehensive reconciliation used to make the flow-analyzer
-    /// environment (`type_environment`) a complete mirror of the evaluator
-    /// environment (`type_env`) after a file's type environment is built. Unlike
-    /// a full `clone()` it never reallocates maps that are already populated and
-    /// never discards entries that only exist in `self` (e.g. mappings written
-    /// directly into the flow-analyzer env), so it is a strict superset merge:
-    /// `self := self ∪ source`, keeping `self`'s value on key collisions.
-    ///
-    /// Entries are copied only where `self` lacks the key, so the common case
-    /// (where `source` and `self` were kept in lock-step by the dual-write
-    /// registration helpers) touches nothing. The shared `DefinitionStore`,
-    /// `this_type`, and array-base scalars are filled only when `self` has no
-    /// value, mirroring the previous full-snapshot behavior at the file
-    /// preparation boundary where those scalars are otherwise unset.
-    ///
-    /// Maintenance contract: this overlay must list **every** local field so it
-    /// can reconcile registrations that the checker writes into the evaluator
-    /// env only (for example symbol-keyed `types`, `enum_parents`,
-    /// `numeric_enums`, and `unresolved_name_resolutions`), which are never
-    /// dual-written and therefore never reach the deferred-replay queue. When a
-    /// new field is added to `TypeEnvironment`, add it here too or the
-    /// flow-analyzer env will silently diverge from the evaluator env.
-    pub fn overlay_missing_from(&mut self, source: &Self) -> bool {
-        use std::collections::hash_map::Entry;
-        let mut changed = false;
-
-        // `copy` for `Copy` values, `clone` for owned (`Vec`/`Arc`) values.
-        macro_rules! fill_map {
-            ($field:ident, copy) => {
-                for (key, value) in &source.$field {
-                    if let Entry::Vacant(entry) = self.$field.entry(key.clone()) {
-                        entry.insert(*value);
-                        changed = true;
-                    }
-                }
-            };
-            ($field:ident, clone) => {
-                for (key, value) in &source.$field {
-                    if let Entry::Vacant(entry) = self.$field.entry(key.clone()) {
-                        entry.insert(value.clone());
-                        changed = true;
+    /// The checker keeps evaluator and flow-analysis environments in sync by
+    /// writing every registration through its dual-env authority and replaying
+    /// deferred mirrors before flow reads. This read-only probe replaces the old
+    /// vacancy-fill repair: a missing entry means a writer bypassed that
+    /// authority and should be fixed at the writer, not copied over here.
+    #[must_use]
+    pub fn first_missing_entry_from(&self, source: &Self) -> Option<(&'static str, String)> {
+        macro_rules! first_missing_map_key {
+            ($field:ident) => {
+                for key in source.$field.keys() {
+                    if !self.$field.contains_key(key) {
+                        return Some((stringify!($field), format!("{key:?}")));
                     }
                 }
             };
         }
 
-        fill_map!(types, copy);
-        fill_map!(type_params, clone);
-        fill_map!(boxed_types, copy);
-        fill_map!(def_types, copy);
-        fill_map!(def_type_params, clone);
-        fill_map!(declared_variances, clone);
-        fill_map!(def_to_symbol, copy);
-        fill_map!(symbol_to_def, copy);
-        fill_map!(def_kinds, copy);
-        fill_map!(enum_namespace_types, copy);
-        fill_map!(enum_parents, copy);
-        fill_map!(enum_members, clone);
-        fill_map!(class_instance_types, copy);
-        fill_map!(boxed_def_ids, clone);
-        fill_map!(class_extends, copy);
-        fill_map!(instance_type_to_class, copy);
-        fill_map!(unresolved_name_resolutions, copy);
-        fill_map!(well_known_symbol_name_to_ref, copy);
-        fill_map!(typeof_value_types, copy);
+        first_missing_map_key!(types);
+        first_missing_map_key!(type_params);
+        first_missing_map_key!(boxed_types);
+        first_missing_map_key!(def_types);
+        first_missing_map_key!(def_type_params);
+        first_missing_map_key!(declared_variances);
+        first_missing_map_key!(def_to_symbol);
+        first_missing_map_key!(symbol_to_def);
+        first_missing_map_key!(def_kinds);
+        first_missing_map_key!(enum_namespace_types);
+        first_missing_map_key!(enum_parents);
+        first_missing_map_key!(enum_members);
+        first_missing_map_key!(class_instance_types);
+        first_missing_map_key!(boxed_def_ids);
+        first_missing_map_key!(class_extends);
+        first_missing_map_key!(instance_type_to_class);
+        first_missing_map_key!(unresolved_name_resolutions);
+        first_missing_map_key!(well_known_symbol_name_to_ref);
+        first_missing_map_key!(typeof_value_types);
 
         for value in &source.numeric_enums {
-            if self.numeric_enums.insert(*value) {
-                changed = true;
+            if !self.numeric_enums.contains(value) {
+                return Some(("numeric_enums", value.to_string()));
             }
         }
-
         if self.array_base_type.is_none() && source.array_base_type.is_some() {
-            self.array_base_type = source.array_base_type;
-            self.array_base_type_params = source.array_base_type_params.clone();
-            changed = true;
+            return Some(("array_base_type", "scalar".to_string()));
+        }
+        if self.array_base_type_params.is_empty() && !source.array_base_type_params.is_empty() {
+            return Some(("array_base_type_params", "scalar".to_string()));
         }
         if self.readonly_array_base_type.is_none() && source.readonly_array_base_type.is_some() {
-            self.readonly_array_base_type = source.readonly_array_base_type;
-            changed = true;
+            return Some(("readonly_array_base_type", "scalar".to_string()));
         }
         if self.this_type.is_none() && source.this_type.is_some() {
-            self.this_type = source.this_type;
-            changed = true;
+            return Some(("this_type", "scalar".to_string()));
         }
-        if self.definition_store.is_none()
-            && let Some(store) = source.definition_store.as_ref()
-        {
-            self.definition_store = Some(Arc::clone(store));
-            changed = true;
+        if self.definition_store.is_none() && source.definition_store.is_some() {
+            return Some(("definition_store", "shared".to_string()));
         }
-
-        if changed {
-            self.bump_generation();
-        }
-        changed
+        None
     }
 
     /// Return the first `DefId`-keyed entry on which `self` and `other` disagree.
     ///
     /// The checker owns two `TypeEnvironment` instances with distinct
     /// lifecycles: the evaluator env (`type_env`, authoritative) and the
-    /// flow-analyzer env (`type_environment`, reconciled from the evaluator env
-    /// via [`Self::overlay_missing_from`] at the file-preparation boundary).
-    /// Because `overlay_missing_from` is a vacancy-only superset merge that
-    /// keeps `self`'s value on key collisions, after reconciliation the two
+    /// flow-analyzer env (`type_environment`, checked against the evaluator env
+    /// at the file-preparation boundary). After deferred mirrors replay, the two
     /// envs must *agree* on every shared `DefId -> TypeId` (and the related
     /// `DefId`-keyed structural) entry. A disagreement means a mirror-write was
     /// applied to one env but not the other with a different value — exactly the
@@ -1334,8 +1294,8 @@ impl TypeEnvironment {
     /// assertion; it never mutates either env and is not on any hot path.
     #[must_use]
     pub fn first_def_divergence_from(&self, other: &Self) -> Option<(&'static str, u32, u32, u32)> {
-        // Only keys present in *both* maps can disagree; vacancy-fill cannot
-        // create a conflicting value, so missing-on-one-side is not divergence.
+        // Only keys present in *both* maps can disagree; missing-on-one-side
+        // entries are handled by `first_missing_entry_from`.
         for (&key, &value) in &self.def_types {
             if let Some(&other_value) = other.def_types.get(&key)
                 && other_value != value
@@ -1367,9 +1327,9 @@ impl TypeEnvironment {
     /// returns only the first disagreement for a debug assertion, this returns
     /// the full set so the checker can converge the benign (structurally
     /// identical) subset at the file-preparation reconciliation boundary before
-    /// re-probing the residual. `overlay_missing_from` is a vacancy-only merge
-    /// and therefore cannot touch a `DefId` that is present-but-different in
-    /// both envs; that residual class is dominated by recursive
+    /// re-probing the residual. Missing-entry reconciliation is read-only, so
+    /// this helper still owns the present-but-different residual class dominated
+    /// by recursive
     /// self-referential interfaces whose self-reference is materialized at
     /// different resolution points and so interns to distinct — but
     /// coinductively equal — `TypeId`s per env (#13944).

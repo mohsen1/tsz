@@ -293,9 +293,10 @@ The same `DefId` body is then *mirrored* into the second environment
 The mirror **defers** on a borrow race (it is replayed at
 `flush_deferred_flow_env_writes`) rather than dropping — a dropped mirror left
 the two envs holding two *distinctly interned* materializations of a recursive
-self-referential interface, a divergence the vacancy-only `overlay_missing_from`
-cannot reconcile (#13944). The two-environment split is described in
-[checker-context-and-state](checker-context-and-state.md) and
+self-referential interface. File preparation now canonicalizes benign
+present-but-different `def_types` entries and asserts that no evaluator-only
+entry remains after deferred replay (#13944/#14348). The two-environment split
+is described in [checker-context-and-state](checker-context-and-state.md) and
 [checker-flow-and-narrowing](checker-flow-and-narrowing.md); this kernel is the
 single writer that keeps them coherent.
 

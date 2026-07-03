@@ -4,29 +4,11 @@ use crate::state::CheckerState;
 
 impl CheckerState<'_> {
     pub(crate) fn reconcile_flow_and_evaluator_envs(&mut self) {
-        let (overlay_filled, divergences): (
-            bool,
-            Vec<(u32, tsz_solver::TypeId, tsz_solver::TypeId)>,
-        ) = {
+        let divergences: Vec<(u32, tsz_solver::TypeId, tsz_solver::TypeId)> = {
             let type_env_snapshot = self.ctx.type_env.borrow();
-            let mut flow_env = self.ctx.type_environment.borrow_mut();
-            let overlay_filled = flow_env.overlay_missing_from(&type_env_snapshot);
-            (
-                overlay_filled,
-                flow_env.collect_def_type_divergences_from(&type_env_snapshot),
-            )
+            let flow_env = self.ctx.type_environment.borrow();
+            flow_env.collect_def_type_divergences_from(&type_env_snapshot)
         };
-        if overlay_filled {
-            // Every env write should reach both environments through the
-            // authority helpers; the overlay is the legacy repair for writes
-            // that bypassed it. Surface survivors so the repair can eventually
-            // be deleted (#14348) — this firing means some write path still
-            // touches only the evaluator env.
-            tracing::warn!(
-                target: "tsz::env_authority",
-                "reconcile overlay filled flow-env entries the authority missed (#14348)"
-            );
-        }
 
         if !divergences.is_empty() {
             self.ctx.eval_session.reset_lazy_resolution_fuel();
@@ -55,6 +37,13 @@ impl CheckerState<'_> {
         if cfg!(debug_assertions) {
             let type_env_snapshot = self.ctx.type_env.borrow();
             let flow_env = self.ctx.type_environment.borrow();
+            if let Some((map, key)) = flow_env.first_missing_entry_from(&type_env_snapshot) {
+                debug_assert!(
+                    false,
+                    "flow-analyzer env is missing evaluator env entry after deferred replay \
+                     (#14348): {map}[{key}]"
+                );
+            }
             if let Some((map, key, lhs, rhs)) =
                 flow_env.first_def_divergence_from(&type_env_snapshot)
             {

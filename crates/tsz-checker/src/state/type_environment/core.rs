@@ -1339,8 +1339,7 @@ impl CheckerState<'_> {
                 // body the shared store published). The helper rewrites both
                 // envs with the same body (deferring flow-env writes on a borrow
                 // race), avoiding a present-but-different `DefId -> TypeId`
-                // divergence that the vacancy-only `overlay_missing_from`
-                // cannot reconcile.
+                // divergence that missing-entry reconciliation cannot repair.
                 let type_params = self
                     .ctx
                     .definition_store

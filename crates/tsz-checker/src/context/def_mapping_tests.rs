@@ -26,12 +26,8 @@ fn minimal_checker_ctx() -> (
 }
 
 /// Pins the dual-env store-wiring invariant as updated for #14348: the shared
-/// `DefinitionStore` reaches the authoritative evaluator env (`type_env`)
-/// EAGERLY, and the flow-analyzer env (`type_environment`) receives the same
-/// `Arc` through the reconcile-boundary `overlay_missing_from` (not an eager
-/// mirror). `get_def_kind` must work in both — `type_env` immediately, and
-/// `type_environment` after reconcile — without relying on the clone-over in
-/// `source_file.rs`.
+/// `DefinitionStore` reaches both envs through the deferred-write authority,
+/// including when the flow-analyzer env is borrowed and must receive replay.
 #[test]
 fn ensure_both_envs_wires_store_into_type_environment() {
     use tsz_common::interner::Atom;
@@ -64,38 +60,32 @@ fn ensure_both_envs_wires_store_into_type_environment() {
         "type_environment must not find a store-only DefKind before wiring"
     );
 
-    // Wire the store into the authoritative evaluator env.
-    ctx.ensure_both_envs_have_definition_store();
-
-    // The evaluator env reaches the kind via the store fallback immediately.
-    assert_eq!(
-        ctx.type_env.borrow().get_def_kind(def_id),
-        Some(DefKind::TypeAlias),
-        "type_env (authoritative) must find store-only DefKind eagerly"
-    );
-
-    // The flow-analyzer env is no longer eagerly mirrored (#14348): it still
-    // lacks the store until the reconcile-boundary overlay runs.
-    assert_eq!(
-        ctx.type_environment.borrow().get_def_kind(def_id),
-        None,
-        "type_environment is no longer eagerly mirrored; the store arrives via reconcile overlay"
-    );
-
-    // Drive the reconcile overlay exactly as `reconcile_flow_and_evaluator_envs`
-    // does (overlay the evaluator env into the flow env).
     {
-        let eval_snapshot = ctx.type_env.borrow();
-        ctx.type_environment
-            .borrow_mut()
-            .overlay_missing_from(&eval_snapshot);
+        let held_flow = ctx.type_environment.borrow();
+        ctx.ensure_both_envs_have_definition_store();
+        assert_eq!(
+            ctx.type_env.borrow().get_def_kind(def_id),
+            Some(DefKind::TypeAlias),
+            "type_env (authoritative) must find store-only DefKind eagerly"
+        );
+        assert_eq!(
+            held_flow.get_def_kind(def_id),
+            None,
+            "held flow env must not see the store before deferred replay"
+        );
+        assert_eq!(
+            ctx.deferred_flow_env_write_count(),
+            1,
+            "flow-env store wiring must queue when the flow env is borrowed"
+        );
     }
 
-    // Now type_environment reaches the kind via the same shared-Arc fallback.
+    ctx.flush_deferred_flow_env_writes();
+
     assert_eq!(
         ctx.type_environment.borrow().get_def_kind(def_id),
         Some(DefKind::TypeAlias),
-        "type_environment must find store-only DefKind via reconcile overlay after ensure_both_envs_have_definition_store"
+        "type_environment must find store-only DefKind after deferred replay"
     );
 }
 
@@ -1008,12 +998,6 @@ fn augmented_def_registration_uses_store_only_params_on_replay() {
     // Attach the shared store to both envs, but leave their local param maps
     // empty. `get_def_params_owned` can see the params; `get_def_params` cannot.
     ctx.ensure_both_envs_have_definition_store();
-    {
-        let eval_snapshot = ctx.type_env.borrow();
-        ctx.type_environment
-            .borrow_mut()
-            .overlay_missing_from(&eval_snapshot);
-    }
     assert_eq!(ctx.type_env.borrow().get_def_params(def_id), None);
     assert_eq!(ctx.type_environment.borrow().get_def_params(def_id), None);
     assert_eq!(
@@ -1207,29 +1191,26 @@ fn unresolved_resolution_write_reaches_both_envs_and_defers_under_borrow() {
     );
 }
 
-/// #14348: `overlay_missing_from` reports whether it had to repair anything —
-/// the deletion-readiness signal. A fully-authority-routed pair of envs must
-/// report `false`; a bypassing eval-env-only write must report `true`.
+/// #14348: file-prep reconciliation must assert missing flow-env entries
+/// instead of repairing them by copying from the evaluator env.
 #[test]
-fn overlay_missing_from_reports_repairs() {
-    let mut source = tsz_solver::computation::TypeEnvironment::new();
-    let mut target = tsz_solver::computation::TypeEnvironment::new();
-    assert!(
-        !target.overlay_missing_from(&source),
-        "identical empty envs need no repair"
-    );
+fn reconcile_uses_missing_entry_probe_not_overlay_repair() {
+    let source_file =
+        std::fs::read_to_string("src/state/state_checking/source_file_env_reconcile.rs")
+            .expect("failed to read source_file_env_reconcile.rs");
+    let state_file = std::fs::read_to_string("src/state/state_checking/source_file.rs")
+        .expect("failed to read source_file.rs");
 
-    source.insert_unresolved_resolution("OnlyInEval".to_string(), tsz_solver::def::DefId(7));
     assert!(
-        target.overlay_missing_from(&source),
-        "an eval-only entry must be reported as a repair"
-    );
-    assert_eq!(
-        target.unresolved_resolution("OnlyInEval"),
-        Some(tsz_solver::def::DefId(7))
+        !source_file.contains(".overlay_missing_from("),
+        "flow/evaluator reconcile must not repair missing entries with overlay_missing_from"
     );
     assert!(
-        !target.overlay_missing_from(&source),
-        "second overlay finds nothing left to repair"
+        source_file.contains("first_missing_entry_from("),
+        "flow/evaluator reconcile should assert missing entries through a read-only probe"
+    );
+    assert!(
+        state_file.contains("flush_deferred_flow_env_writes();"),
+        "file preparation must replay deferred flow-env writes before reconcile assertions"
     );
 }
