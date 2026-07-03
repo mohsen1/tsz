@@ -63,6 +63,12 @@ impl CheckerContext<'_> {
         self.register_in_envs(DeferredFlowEnvWrite::InsertTypeofValueType { symbol, value_type });
     }
 
+    /// Cache an unresolved type-name resolution in **both** type environments
+    /// through the race-safe deferral discipline.
+    pub(crate) fn register_unresolved_resolution_in_envs(&self, name: String, def_id: DefId) {
+        self.register_in_envs(DeferredFlowEnvWrite::InsertUnresolvedResolution { name, def_id });
+    }
+
     /// Register the boxed interface type for a primitive in **both** type
     /// environments through the race-safe deferral discipline.
     pub(crate) fn register_boxed_type_in_envs(
