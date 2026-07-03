@@ -7,7 +7,7 @@
 use crate::options::IndexAccessOptions;
 use crate::types::TypeId;
 
-/// Cache key for option-sensitive type evaluation.
+/// Cache key for resolver- and option-sensitive type evaluation.
 ///
 /// Both `no_unchecked_indexed_access` and `exact_optional_property_types` are
 /// part of the key because both compiler options change evaluation results
@@ -17,13 +17,19 @@ use crate::types::TypeId;
 /// between writes and reads (the explicit cache reset boundary described in
 /// issue #10970).
 ///
-/// The two flags are carried by the shared [`IndexAccessOptions`] newtype. Its
-/// derived `Hash`/`Eq` hashes both `bool` fields in the same order as the
-/// formerly inlined pair, so this key's hashing is byte-identical.
+/// Resolver-backed fresh evaluators also stamp the type-database identity,
+/// resolver identity, and resolver generation because the same numeric
+/// `TypeId` can name different arena-local shapes, and resolving the same
+/// `Lazy(DefId)` may produce different bodies as checker environments
+/// materialize. Plain resolver-free evaluators keep those dimensions `0`,
+/// preserving the existing persistent eval-cache key space.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct EvaluationCacheKey {
     type_id: TypeId,
     index_access: IndexAccessOptions,
+    type_database_identity: usize,
+    resolver_identity: usize,
+    resolver_generation: u64,
 }
 
 impl EvaluationCacheKey {
@@ -37,11 +43,41 @@ impl EvaluationCacheKey {
             index_access: IndexAccessOptions::new()
                 .with_no_unchecked_indexed_access(no_unchecked_indexed_access)
                 .with_exact_optional_property_types(exact_optional_property_types),
+            type_database_identity: 0,
+            resolver_identity: 0,
+            resolver_generation: 0,
         }
+    }
+
+    pub const fn with_type_database_identity(mut self, type_database_identity: usize) -> Self {
+        self.type_database_identity = type_database_identity;
+        self
+    }
+
+    pub const fn with_resolver_identity(mut self, resolver_identity: usize) -> Self {
+        self.resolver_identity = resolver_identity;
+        self
+    }
+
+    pub const fn with_resolver_generation(mut self, resolver_generation: u64) -> Self {
+        self.resolver_generation = resolver_generation;
+        self
     }
 
     pub const fn type_id(self) -> TypeId {
         self.type_id
+    }
+
+    pub const fn resolver_generation(self) -> u64 {
+        self.resolver_generation
+    }
+
+    pub const fn type_database_identity(self) -> usize {
+        self.type_database_identity
+    }
+
+    pub const fn resolver_identity(self) -> usize {
+        self.resolver_identity
     }
 
     pub const fn no_unchecked_indexed_access(self) -> bool {
@@ -92,11 +128,15 @@ impl EvaluationOptions {
     }
 }
 
-/// A normalized request to evaluate one type under explicit options.
+/// A normalized request to evaluate one type under explicit options and
+/// resolver-visible state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EvaluationRequest {
     type_id: TypeId,
     options: EvaluationOptions,
+    type_database_identity: usize,
+    resolver_identity: usize,
+    resolver_generation: u64,
 }
 
 impl EvaluationRequest {
@@ -104,15 +144,39 @@ impl EvaluationRequest {
         Self {
             type_id,
             options: EvaluationOptions::new(),
+            type_database_identity: 0,
+            resolver_identity: 0,
+            resolver_generation: 0,
         }
     }
 
     pub const fn with_options(type_id: TypeId, options: EvaluationOptions) -> Self {
-        Self { type_id, options }
+        Self {
+            type_id,
+            options,
+            type_database_identity: 0,
+            resolver_identity: 0,
+            resolver_generation: 0,
+        }
     }
 
     pub const fn with_type_id(mut self, type_id: TypeId) -> Self {
         self.type_id = type_id;
+        self
+    }
+
+    pub const fn with_type_database_identity(mut self, type_database_identity: usize) -> Self {
+        self.type_database_identity = type_database_identity;
+        self
+    }
+
+    pub const fn with_resolver_identity(mut self, resolver_identity: usize) -> Self {
+        self.resolver_identity = resolver_identity;
+        self
+    }
+
+    pub const fn with_resolver_generation(mut self, resolver_generation: u64) -> Self {
+        self.resolver_generation = resolver_generation;
         self
     }
 
@@ -134,6 +198,18 @@ impl EvaluationRequest {
         self.options
     }
 
+    pub const fn resolver_generation(self) -> u64 {
+        self.resolver_generation
+    }
+
+    pub const fn type_database_identity(self) -> usize {
+        self.type_database_identity
+    }
+
+    pub const fn resolver_identity(self) -> usize {
+        self.resolver_identity
+    }
+
     pub const fn no_unchecked_indexed_access(self) -> bool {
         self.options.no_unchecked_indexed_access()
     }
@@ -148,6 +224,9 @@ impl EvaluationRequest {
             self.options.no_unchecked_indexed_access(),
             self.options.exact_optional_property_types(),
         )
+        .with_type_database_identity(self.type_database_identity)
+        .with_resolver_identity(self.resolver_identity)
+        .with_resolver_generation(self.resolver_generation)
     }
 }
 
@@ -165,12 +244,18 @@ mod tests {
         let request = EvaluationRequest::new(TypeId::STRING);
 
         assert_eq!(request.type_id(), TypeId::STRING);
+        assert_eq!(request.resolver_generation(), 0);
+        assert_eq!(request.type_database_identity(), 0);
+        assert_eq!(request.resolver_identity(), 0);
         assert!(!request.no_unchecked_indexed_access());
         assert_eq!(
             request.cache_key(),
             EvaluationCacheKey::new(TypeId::STRING, false, false)
         );
         assert_eq!(request.cache_key().type_id(), TypeId::STRING);
+        assert_eq!(request.cache_key().resolver_generation(), 0);
+        assert_eq!(request.cache_key().type_database_identity(), 0);
+        assert_eq!(request.cache_key().resolver_identity(), 0);
         assert!(!request.cache_key().no_unchecked_indexed_access());
     }
 
@@ -212,6 +297,59 @@ mod tests {
         assert_ne!(
             EvaluationCacheKey::new(TypeId::NUMBER, true, false),
             EvaluationCacheKey::new(TypeId::NUMBER, false, true)
+        );
+    }
+
+    #[test]
+    fn request_cache_key_tracks_resolver_generation() {
+        let request = EvaluationRequest::new(TypeId::STRING).with_resolver_generation(7);
+
+        assert_eq!(request.resolver_generation(), 7);
+        assert_eq!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false, false).with_resolver_generation(7)
+        );
+        assert_ne!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false, false)
+        );
+        assert_eq!(
+            request.with_type_id(TypeId::NUMBER).cache_key(),
+            EvaluationCacheKey::new(TypeId::NUMBER, false, false).with_resolver_generation(7)
+        );
+    }
+
+    #[test]
+    fn request_cache_key_tracks_arena_and_resolver_identity() {
+        let request = EvaluationRequest::new(TypeId::STRING)
+            .with_type_database_identity(11)
+            .with_resolver_identity(22)
+            .with_resolver_generation(7);
+
+        assert_eq!(request.type_database_identity(), 11);
+        assert_eq!(request.resolver_identity(), 22);
+        assert_eq!(request.cache_key().type_database_identity(), 11);
+        assert_eq!(request.cache_key().resolver_identity(), 22);
+        assert_eq!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false, false)
+                .with_type_database_identity(11)
+                .with_resolver_identity(22)
+                .with_resolver_generation(7)
+        );
+        assert_ne!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false, false)
+                .with_type_database_identity(12)
+                .with_resolver_identity(22)
+                .with_resolver_generation(7)
+        );
+        assert_ne!(
+            request.cache_key(),
+            EvaluationCacheKey::new(TypeId::STRING, false, false)
+                .with_type_database_identity(11)
+                .with_resolver_identity(23)
+                .with_resolver_generation(7)
         );
     }
 

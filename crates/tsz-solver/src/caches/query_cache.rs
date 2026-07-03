@@ -1002,6 +1002,10 @@ impl TypePruneUnionCache for QueryCache<'_> {
 }
 
 impl TypeDatabase for QueryCache<'_> {
+    fn type_database_identity(&self) -> usize {
+        self.interner.type_database_identity()
+    }
+
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
     }
@@ -1472,9 +1476,10 @@ impl QueryDatabase for QueryCache<'_> {
         // (identity mappings are free to recompute) and skip intrinsics.
         //
         // CORRECTNESS GATE: a limit-truncated result must NOT be persisted
-        // here. The `eval_cache` key is `(TypeId, options)` — it does not
-        // capture the ambient stack depth at which a bail occurred — so a
-        // depth-bailed intermediate (e.g. a recursive array alias
+        // here. The persistent `eval_cache` key is the zero-identity
+        // `(TypeId, options)` form of `EvaluationCacheKey`; it does not capture
+        // the ambient stack depth at which a bail occurred, so a depth-bailed
+        // intermediate (e.g. a recursive array alias
         // `RecArray<T> = Array<T | RecArray<T>>` evaluated while the
         // def-depth was already high, collapsing to `error`) would otherwise
         // be cached and then read back at top level where it should have

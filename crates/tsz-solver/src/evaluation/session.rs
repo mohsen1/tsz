@@ -163,9 +163,11 @@ pub struct EvaluationSession {
     infer_match_expansion_depth: Cell<u32>,
     /// Checker type-reference alias-forwarding depth.
     type_reference_resolution_depth: Cell<u32>,
-    /// `TypeId`s currently expanded by fresh evaluators in this session.
-    cross_eval_active: RefCell<FxHashSet<TypeId>>,
-    /// Per-top-level-query memo for stable fresh-evaluator results.
+    /// Evaluation requests currently expanded by fresh evaluators in this session.
+    cross_eval_active: RefCell<FxHashSet<EvaluationCacheKey>>,
+    /// Per-top-level-query memo for stable fresh-evaluator results, keyed by
+    /// type, arena identity, resolver identity, evaluator options, and resolver
+    /// generation.
     query_memo: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
 }
 
@@ -552,18 +554,18 @@ impl EvaluationSession {
         self.type_reference_resolution_depth.set(0);
     }
 
-    /// Enter cross-evaluator expansion of `type_id`.
+    /// Enter cross-evaluator expansion of `key`.
     ///
-    /// Returns `false` when this session is already expanding the same type.
+    /// Returns `false` when this session is already expanding the same request.
     #[inline]
-    pub(crate) fn enter_cross_eval_type(&self, type_id: TypeId) -> bool {
-        self.cross_eval_active.borrow_mut().insert(type_id)
+    pub(crate) fn enter_cross_eval_request(&self, key: EvaluationCacheKey) -> bool {
+        self.cross_eval_active.borrow_mut().insert(key)
     }
 
-    /// Leave cross-evaluator expansion of `type_id`.
+    /// Leave cross-evaluator expansion of `key`.
     #[inline]
-    pub(crate) fn leave_cross_eval_type(&self, type_id: TypeId) {
-        self.cross_eval_active.borrow_mut().remove(&type_id);
+    pub(crate) fn leave_cross_eval_request(&self, key: EvaluationCacheKey) {
+        self.cross_eval_active.borrow_mut().remove(&key);
     }
 
     /// Look up a stable fresh-evaluator result for the current top-level query.
@@ -776,14 +778,21 @@ mod tests {
     fn test_cross_eval_active_set_is_session_owned() {
         let session = EvaluationSession::new();
         let type_id = TypeId(101);
+        let key = EvaluationCacheKey::new(type_id, false, false);
+        let distinct_generation = key.with_resolver_generation(1);
 
-        assert!(session.enter_cross_eval_type(type_id));
+        assert!(session.enter_cross_eval_request(key));
         assert!(
-            !session.enter_cross_eval_type(type_id),
-            "re-entering the same type in one session should be rejected"
+            !session.enter_cross_eval_request(key),
+            "re-entering the same request in one session should be rejected"
         );
-        session.leave_cross_eval_type(type_id);
-        assert!(session.enter_cross_eval_type(type_id));
+        assert!(
+            session.enter_cross_eval_request(distinct_generation),
+            "same TypeId under a different request key should enter independently"
+        );
+        session.leave_cross_eval_request(key);
+        session.leave_cross_eval_request(distinct_generation);
+        assert!(session.enter_cross_eval_request(key));
     }
 
     #[test]
@@ -794,10 +803,12 @@ mod tests {
         let no_unchecked_key = EvaluationCacheKey::new(type_id, true, false);
         let exact_optional_key = EvaluationCacheKey::new(type_id, false, true);
         let both_key = EvaluationCacheKey::new(type_id, true, true);
+        let resolver_key = default_key.with_resolver_generation(7);
 
         session.query_memo_put(default_key, TypeId(210));
         session.query_memo_put(no_unchecked_key, TypeId(211));
         session.query_memo_put(exact_optional_key, TypeId(212));
+        session.query_memo_put(resolver_key, TypeId(213));
 
         assert_eq!(session.query_memo_get(default_key), Some(TypeId(210)));
         assert_eq!(session.query_memo_get(no_unchecked_key), Some(TypeId(211)));
@@ -805,12 +816,18 @@ mod tests {
             session.query_memo_get(exact_optional_key),
             Some(TypeId(212))
         );
+        assert_eq!(session.query_memo_get(resolver_key), Some(TypeId(213)));
         assert_eq!(session.query_memo_get(both_key), None);
+        assert_eq!(
+            session.query_memo_get(default_key.with_resolver_generation(8)),
+            None
+        );
 
         session.reset_query_memo();
         assert_eq!(session.query_memo_get(default_key), None);
         assert_eq!(session.query_memo_get(no_unchecked_key), None);
         assert_eq!(session.query_memo_get(exact_optional_key), None);
+        assert_eq!(session.query_memo_get(resolver_key), None);
     }
 
     #[test]
