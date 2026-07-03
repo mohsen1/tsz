@@ -279,13 +279,8 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or_default();
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                let factory = self.ctx.types.factory();
-                let lazy = factory.lazy(def_id);
-                let recursive_return_type = if type_args.is_empty() {
-                    lazy
-                } else {
-                    factory.application(lazy, type_args)
-                };
+                let recursive_return_type =
+                    call_checker::recursive_call_result_type(self.ctx.types, def_id, type_args);
 
                 if let Some(validation_callee_type) =
                     self.fresh_function_like_variable_call_type(sym_id)
@@ -376,13 +371,8 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or_default();
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                let factory = self.ctx.types.factory();
-                let lazy = factory.lazy(def_id);
-                let recursive_return_type = if type_args.is_empty() {
-                    lazy
-                } else {
-                    factory.application(lazy, type_args)
-                };
+                let recursive_return_type =
+                    call_checker::recursive_call_result_type(self.ctx.types, def_id, type_args);
 
                 if let Some(validation_callee_type) =
                     self.fresh_function_like_variable_call_type(sym_id)

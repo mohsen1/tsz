@@ -486,3 +486,27 @@ pub(crate) fn call_inference_tuple_type(db: &dyn TypeDatabase, elements: Vec<Typ
             .collect(),
     )
 }
+
+pub(crate) fn call_result_correlated_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn call_result_optional_chain_return(
+    db: &dyn TypeDatabase,
+    return_type: TypeId,
+) -> TypeId {
+    db.union2(return_type, TypeId::UNDEFINED)
+}
+
+pub(crate) fn recursive_call_result_type(
+    db: &dyn TypeDatabase,
+    def_id: tsz_solver::DefId,
+    type_args: Vec<TypeId>,
+) -> TypeId {
+    let lazy = db.lazy(def_id);
+    if type_args.is_empty() {
+        lazy
+    } else {
+        db.application(lazy, type_args)
+    }
+}

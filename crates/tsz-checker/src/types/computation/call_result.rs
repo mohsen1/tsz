@@ -1,6 +1,7 @@
 //! Call-result handling helpers shared by call expression computation.
 
 use crate::query_boundaries::assignability as assign_query;
+use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::TypeResolver;
@@ -61,7 +62,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let param_union = self.ctx.types.factory().union(param_types);
+        let param_union = call_checker::call_result_correlated_union(self.ctx.types, param_types);
         if !self.call_arg_relation_outcome(actual, param_union).related {
             return None;
         }
@@ -70,7 +71,10 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|signature| signature.return_type)
             .collect();
-        Some(self.ctx.types.factory().union(return_types))
+        Some(call_checker::call_result_correlated_union(
+            self.ctx.types,
+            return_types,
+        ))
     }
 
     fn finalize_call_return_like_success(
@@ -118,10 +122,7 @@ impl<'a> CheckerState<'a> {
             return_type
         };
         if is_optional_chain {
-            self.ctx
-                .types
-                .factory()
-                .union2(return_type, TypeId::UNDEFINED)
+            call_checker::call_result_optional_chain_return(self.ctx.types, return_type)
         } else {
             return_type
         }
