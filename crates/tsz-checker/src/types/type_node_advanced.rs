@@ -17,6 +17,7 @@ use super::type_node_helpers::{
     is_typeof_global_this_type_node,
 };
 use super::unique_symbol_construction::unique_symbol_type_for_operator;
+use crate::query_boundaries::type_query_construction;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -969,27 +970,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .iter()
             .enumerate()
             .map(|(index, name)| {
-                let literal_type = self.ctx.types.literal_string(name);
-                tsz_solver::PropertyInfo {
-                    name: self.ctx.types.intern_string(name),
-                    type_id: literal_type,
-                    write_type: literal_type,
-                    optional: false,
-                    readonly: true,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_common::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: index as u32,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                }
+                let literal_type =
+                    type_query_construction::const_query_literal_string_type(self.ctx.types, name);
+                let name = self.ctx.types.intern_string(name);
+                type_query_construction::const_query_readonly_property(
+                    name,
+                    literal_type,
+                    index as u32,
+                )
             })
             .collect();
 
-        Some(self.ctx.types.factory().object(props))
+        Some(type_query_construction::const_query_array_to_enum_object_type(self.ctx.types, props))
     }
 
     fn array_to_enum_member_literal_type(
@@ -1000,7 +992,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.array_to_enum_literal_names(initializer)?
             .into_iter()
             .find(|name| name == property_name)
-            .map(|name| self.ctx.types.literal_string(&name))
+            .map(|name| {
+                type_query_construction::const_query_literal_string_type(self.ctx.types, &name)
+            })
     }
 
     fn array_to_enum_literal_names(&self, initializer: NodeIndex) -> Option<Vec<String>> {

@@ -1,9 +1,10 @@
 //! Merged value/type-alias helpers for `typeof` type queries.
 
 use super::type_node::TypeNodeChecker;
+use crate::query_boundaries::type_query_construction;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TupleElement, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(crate) fn property_name_text(&self, name: tsz_parser::parser::NodeIndex) -> Option<String> {
@@ -30,15 +31,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .arena
             .skip_parenthesized_and_assertions(initializer);
         let node = self.ctx.arena.get(initializer)?;
-        let factory = self.ctx.types.factory();
         match node.kind {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
-                self.ctx
-                    .arena
-                    .get_literal(node)
-                    .map(|lit| factory.literal_string(&lit.text))
+                self.ctx.arena.get_literal(node).map(|lit| {
+                    type_query_construction::const_query_literal_string_type(
+                        self.ctx.types,
+                        &lit.text,
+                    )
+                })
             }
             k if k == SyntaxKind::NumericLiteral as u16 => self
                 .ctx
@@ -48,9 +50,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     lit.value
                         .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
                 })
-                .map(|value| factory.literal_number(value)),
-            k if k == SyntaxKind::TrueKeyword as u16 => Some(factory.literal_boolean(true)),
-            k if k == SyntaxKind::FalseKeyword as u16 => Some(factory.literal_boolean(false)),
+                .map(|value| {
+                    type_query_construction::const_query_literal_number_type(self.ctx.types, value)
+                }),
+            k if k == SyntaxKind::TrueKeyword as u16 => Some(
+                type_query_construction::const_query_literal_boolean_type(self.ctx.types, true),
+            ),
+            k if k == SyntaxKind::FalseKeyword as u16 => Some(
+                type_query_construction::const_query_literal_boolean_type(self.ctx.types, false),
+            ),
             k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
             k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
             _ => None,
@@ -97,17 +105,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let prop = self.ctx.arena.get_property_assignment(element_node)?;
             let name = self.property_name_text(prop.name)?;
             let type_id = self.literal_type_from_const_member_initializer(prop.initializer)?;
-            let mut info = PropertyInfo::new(self.ctx.types.intern_string(&name), type_id);
-            info.write_type = type_id;
-            info.readonly = true;
-            info.declaration_order = props.len() as u32;
-            props.push(info);
+            let name = self.ctx.types.intern_string(&name);
+            props.push(type_query_construction::const_query_readonly_property(
+                name,
+                type_id,
+                props.len() as u32,
+            ));
         }
 
-        Some(self.ctx.types.factory().object_with_index(ObjectShape {
-            properties: props,
-            ..ObjectShape::default()
-        }))
+        Some(type_query_construction::const_query_object_literal_type(
+            self.ctx.types,
+            props,
+        ))
     }
 
     pub(crate) fn const_asserted_array_tuple_type_query(
@@ -174,14 +183,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return None;
             }
             let element_type = self.literal_type_from_const_member_initializer(element)?;
-            elements.push(TupleElement {
-                type_id: element_type,
-                name: None,
-                optional: false,
-                rest: false,
-            });
+            elements.push(type_query_construction::const_query_tuple_element(
+                element_type,
+            ));
         }
 
-        Some(self.ctx.types.factory().tuple(elements))
+        Some(type_query_construction::const_query_tuple_type(
+            self.ctx.types,
+            elements,
+        ))
     }
 }

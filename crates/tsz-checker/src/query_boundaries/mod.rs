@@ -65,6 +65,7 @@ pub(crate) mod type_defaults;
 pub(crate) mod type_origin;
 pub(crate) mod type_parameter_identity;
 pub(crate) mod type_predicates;
+pub(crate) mod type_query_construction;
 pub(crate) mod type_rewrite;
 pub(crate) mod variance;
 pub(crate) mod widening;
