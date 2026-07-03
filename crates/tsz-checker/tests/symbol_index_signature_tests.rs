@@ -203,6 +203,112 @@ const _symi: boolean = symi[sym];
     );
 }
 
+fn assert_interface_symbol_index_merge_is_clean(codes: &[u32], context: &str) {
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "{context}: interface merge should not produce TS2322, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE),
+        "{context}: symbol index access should not produce TS2536, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE),
+        "{context}: symbol index access should not produce TS2538, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "{context}: symbol index access should not produce TS7053, got {codes:?}",
+    );
+}
+
+#[test]
+fn interface_extends_plain_base_preserves_derived_symbol_index_signature() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const key: symbol;
+
+interface Base {
+    base: number;
+}
+
+interface Derived extends Base {
+    [k: symbol]: boolean;
+    own: string;
+}
+
+declare const d: Derived;
+const indexed: boolean = d[key];
+const inherited: number = d.base;
+const own: string = d.own;
+const keyofIncludesSymbol: keyof Derived = key;
+"#,
+    );
+
+    assert_interface_symbol_index_merge_is_clean(&codes, "derived symbol index plus plain base");
+}
+
+#[test]
+fn interface_extends_base_symbol_index_preserves_base_symbol_index_signature() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const key: symbol;
+
+interface Base {
+    [k: symbol]: boolean;
+    base: number;
+}
+
+interface Derived extends Base {
+    own: string;
+}
+
+declare const d: Derived;
+const indexed: boolean = d[key];
+const inherited: number = d.base;
+const own: string = d.own;
+const keyofIncludesSymbol: keyof Derived = key;
+"#,
+    );
+
+    assert_interface_symbol_index_merge_is_clean(&codes, "plain derived plus base symbol index");
+}
+
+#[test]
+fn interface_extends_base_symbol_index_and_derived_string_index_merges_both_key_spaces() {
+    let diagnostics = check_source_code_messages(
+        r#"
+declare const key: symbol;
+
+interface Base {
+    [k: symbol]: boolean;
+    base: number;
+}
+
+interface Derived extends Base {
+    [k: string]: number;
+    own: number;
+}
+
+declare const d: Derived;
+const symbolValue: boolean = d[key];
+const stringValue: number = d["anything"];
+const inherited: number = d.base;
+const symbolKey: keyof Derived = key;
+"#,
+    );
+    let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "base symbol index plus derived string index: interface merge should not produce TS2322, got {diagnostics:?}",
+    );
+    assert_interface_symbol_index_merge_is_clean(
+        &codes,
+        "base symbol index plus derived string index",
+    );
+}
+
 #[test]
 fn symbol_typed_computed_interface_member_access_uses_declared_type() {
     let codes = diagnostic_codes_for_ts(

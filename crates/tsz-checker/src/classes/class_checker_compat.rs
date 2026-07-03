@@ -282,6 +282,7 @@ impl<'a> CheckerState<'a> {
         // and is labeled by the pattern rather than `string`.
         let mut derived_string_index_type: Option<(TypeId, TypeId, NodeIndex)> = None;
         let mut derived_number_index_type: Option<(TypeId, NodeIndex)> = None;
+        let mut derived_symbol_index_type: Option<(TypeId, NodeIndex)> = None;
         for &decl_idx in &all_iface_decls {
             let Some(sym_id) = iface_sym_id else {
                 continue;
@@ -322,6 +323,8 @@ impl<'a> CheckerState<'a> {
                         };
                         if key_type == TypeId::NUMBER {
                             derived_number_index_type = Some((value_type, member_idx));
+                        } else if key_type == TypeId::SYMBOL {
+                            derived_symbol_index_type = Some((value_type, member_idx));
                         } else {
                             derived_string_index_type = Some((value_type, key_type, member_idx));
                         }
@@ -346,6 +349,7 @@ impl<'a> CheckerState<'a> {
         // index signature, the interface "incorrectly extends" that base.
         let mut inherited_string_index: Option<(NodeIndex, String, TypeId)> = None;
         let mut inherited_number_index: Option<(NodeIndex, String, TypeId)> = None;
+        let mut inherited_symbol_index: Option<(NodeIndex, String, TypeId)> = None;
 
         // Collect ALL heritage clauses across ALL declarations of this interface.
         // When an interface is declaration-merged with a class, the class's `extends`
@@ -919,10 +923,12 @@ impl<'a> CheckerState<'a> {
                         let value_type =
                             instantiate_type(self.ctx.types, value_type, &substitution);
 
-                        let inherited_slot = if key_type == TypeId::NUMBER {
-                            &mut inherited_number_index
+                        let (inherited_slot, index_kind) = if key_type == TypeId::NUMBER {
+                            (&mut inherited_number_index, "number")
+                        } else if key_type == TypeId::SYMBOL {
+                            (&mut inherited_symbol_index, "symbol")
                         } else {
-                            &mut inherited_string_index
+                            (&mut inherited_string_index, "string")
                         };
 
                         if let Some((prev_heritage_idx, ref _prev_base_name, prev_val)) =
@@ -941,11 +947,6 @@ impl<'a> CheckerState<'a> {
                                         )
                                         .related
                                 {
-                                    let index_kind = if key_type == TypeId::NUMBER {
-                                        "number"
-                                    } else {
-                                        "string"
-                                    };
                                     let prev_type_str = self.format_type(prev_val);
                                     let value_type_str = self.format_type(value_type);
                                     self.error_at_node(
@@ -1805,18 +1806,24 @@ impl<'a> CheckerState<'a> {
             // an index signature, the base interface's index signature (if any) must be
             // compatible. E.g., `interface F extends E` where F has `[s: string]: number`
             // and E has `[s: string]: string` → TS2430.
-            if derived_string_index_type.is_some() || derived_number_index_type.is_some() {
+            if derived_string_index_type.is_some()
+                || derived_number_index_type.is_some()
+                || derived_symbol_index_type.is_some()
+            {
                 let mut base_string_index_value: Option<TypeId> = None;
                 let mut base_number_index_value: Option<TypeId> = None;
+                let mut base_symbol_index_value: Option<TypeId> = None;
 
                 if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     base_type_for_relation,
                 ) {
                     base_string_index_value =
-                        shape.string_index.as_ref().map(|index| index.value_type);
+                        shape.string_index_signature().map(|index| index.value_type);
                     base_number_index_value =
                         shape.number_index.as_ref().map(|index| index.value_type);
+                    base_symbol_index_value =
+                        shape.symbol_index_signature().map(|index| index.value_type);
                 }
 
                 for &base_iface_idx in &base_iface_indices {
@@ -1860,6 +1867,8 @@ impl<'a> CheckerState<'a> {
                                 instantiate_type(self.ctx.types, value_type, &substitution);
                             if key_type == TypeId::NUMBER {
                                 base_number_index_value = Some(value_type);
+                            } else if key_type == TypeId::SYMBOL {
+                                base_symbol_index_value = Some(value_type);
                             } else {
                                 base_string_index_value = Some(value_type);
                             }
@@ -1892,6 +1901,21 @@ impl<'a> CheckerState<'a> {
                         iface_data.name,
                         &format!(
                             "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  'number' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
+                        ),
+                        diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
+                    );
+                }
+
+                if let (Some((derived_val, _)), Some(base_val)) =
+                    (derived_symbol_index_type, base_symbol_index_value)
+                    && !self.index_value_assignable_for_interface_extends(derived_val, base_val)
+                {
+                    let derived_type_str = self.format_type(derived_val);
+                    let base_type_str = self.format_type(base_val);
+                    self.error_at_node(
+                        iface_data.name,
+                        &format!(
+                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'.\n  'symbol' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
                         ),
                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                     );
