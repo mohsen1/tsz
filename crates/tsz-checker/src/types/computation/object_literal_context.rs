@@ -16,6 +16,7 @@
 
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::{self, ContextualTypeContext, TypeSubstitution};
+use crate::query_boundaries::object_literal_context as object_context_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -51,7 +52,7 @@ impl<'a> CheckerState<'a> {
                 [] => TypeId::UNKNOWN,
                 [single] => *single,
                 _ if filtered.len() == members.len() => type_id,
-                _ => self.ctx.types.factory().intersection(filtered),
+                _ => object_context_query::contextual_intersection(self.ctx.types, filtered),
             };
         }
         if let Some(members) = common::union_members(self.ctx.types, type_id) {
@@ -72,7 +73,10 @@ impl<'a> CheckerState<'a> {
                 {
                     type_id
                 }
-                _ => self.ctx.types.factory().union_preserve_members(remapped),
+                _ => object_context_query::contextual_union_preserve_members(
+                    self.ctx.types,
+                    remapped,
+                ),
             };
         }
 
@@ -185,7 +189,10 @@ impl<'a> CheckerState<'a> {
         match candidates.as_slice() {
             [] => None,
             [single] => Some(*single),
-            _ => Some(self.ctx.types.factory().union_preserve_members(candidates)),
+            _ => Some(object_context_query::contextual_union_preserve_members(
+                self.ctx.types,
+                candidates,
+            )),
         }
     }
 
@@ -251,7 +258,10 @@ impl<'a> CheckerState<'a> {
         } else if candidates.len() == 1 {
             Some(candidates[0])
         } else {
-            Some(self.ctx.types.factory().union_preserve_members(candidates))
+            Some(object_context_query::contextual_union_preserve_members(
+                self.ctx.types,
+                candidates,
+            ))
         }
     }
 
@@ -445,12 +455,10 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .all(|&member| common::is_callable_type(self.ctx.types, member))
             {
-                return Some(
-                    self.ctx
-                        .types
-                        .factory()
-                        .union_preserve_members(callable_members),
-                );
+                return Some(object_context_query::contextual_union_preserve_members(
+                    self.ctx.types,
+                    callable_members,
+                ));
             }
             return None;
         }
@@ -463,7 +471,10 @@ impl<'a> CheckerState<'a> {
             return match callable_members.as_slice() {
                 [] => None,
                 [single] => Some(*single),
-                _ => Some(self.ctx.types.factory().intersection(callable_members)),
+                _ => Some(object_context_query::contextual_intersection(
+                    self.ctx.types,
+                    callable_members,
+                )),
             };
         }
 
@@ -506,12 +517,10 @@ impl<'a> CheckerState<'a> {
         match callable_members.len() {
             0 => None,
             1 => Some(callable_members[0]),
-            _ => Some(
-                self.ctx
-                    .types
-                    .factory()
-                    .union_preserve_members(callable_members),
-            ),
+            _ => Some(object_context_query::contextual_union_preserve_members(
+                self.ctx.types,
+                callable_members,
+            )),
         }
     }
 
@@ -879,12 +888,10 @@ impl<'a> CheckerState<'a> {
             if property_types.is_empty() {
                 has_unresolved_member.then_some(TypeId::ANY)
             } else {
-                Some(
-                    this.ctx
-                        .types
-                        .factory()
-                        .union_preserve_members(property_types),
-                )
+                Some(object_context_query::contextual_union_preserve_members(
+                    this.ctx.types,
+                    property_types,
+                ))
             }
         };
         let intersection_member_property_type = |this: &mut Self,
@@ -952,12 +959,10 @@ impl<'a> CheckerState<'a> {
             if property_types.is_empty() {
                 None
             } else {
-                Some(
-                    this.ctx
-                        .types
-                        .factory()
-                        .union_preserve_members(property_types),
-                )
+                Some(object_context_query::contextual_union_preserve_members(
+                    this.ctx.types,
+                    property_types,
+                ))
             }
         };
         let original_contextual_type = contextual_type;
@@ -1278,9 +1283,12 @@ impl<'a> CheckerState<'a> {
             .ok()
             .filter(|value| value.is_finite());
         let key_type = if let Some(value) = numeric_key {
-            self.ctx.types.literal_number(value)
+            object_context_query::mapped_contextual_property_number_key_type(self.ctx.types, value)
         } else {
-            common::create_string_literal_type(self.ctx.types, property_name)
+            object_context_query::mapped_contextual_property_string_key_type(
+                self.ctx.types,
+                property_name,
+            )
         };
 
         let constraint_resolved = self.resolve_lazy_type(constraint);
@@ -1836,10 +1844,10 @@ impl<'a> CheckerState<'a> {
         if matching_members.len() == 1 {
             matching_members[0]
         } else {
-            self.ctx
-                .types
-                .factory()
-                .union_preserve_members(matching_members)
+            object_context_query::contextual_union_preserve_members(
+                self.ctx.types,
+                matching_members,
+            )
         }
     }
 

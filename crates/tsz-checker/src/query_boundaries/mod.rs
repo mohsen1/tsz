@@ -48,6 +48,7 @@ pub(crate) mod jsdoc_construction;
 pub(crate) mod key_constraints;
 pub(crate) mod lib_augmentations;
 pub(crate) mod name_resolution;
+pub(crate) mod object_literal_context;
 pub(crate) mod operator_wrappers;
 pub(crate) mod optional_chain;
 pub(crate) mod property_access;
