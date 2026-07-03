@@ -5,8 +5,8 @@
 
 use crate::caches::db::TypeDatabase;
 use crate::types::{
-    CallableShape, ConditionalType, FunctionShape, MappedType, ObjectFlags, ObjectShape,
-    PropertyInfo, TemplateSpan, TupleElement, TypeId, TypeParamInfo,
+    CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedType, ObjectFlags,
+    ObjectShape, PropertyInfo, TemplateSpan, TupleElement, TypeId, TypeParamInfo,
 };
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
@@ -174,6 +174,47 @@ impl<'db> TypeFactory<'db> {
         self.object_with_shape_metadata_and_symbol(properties, shape, shape.symbol)
     }
 
+    /// Rebuild an object with replacement properties while preserving the
+    /// source shape's flags and index signatures, and applying an explicit
+    /// nominal symbol policy.
+    #[inline]
+    pub fn object_with_shape_metadata_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        shape: &ObjectShape,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.object_with_shape_parts(
+            properties,
+            shape,
+            shape.string_index,
+            shape.number_index,
+            shape.symbol_index,
+            symbol,
+        )
+    }
+
+    /// Rebuild an object with replacement properties and index signatures while
+    /// preserving the source shape's object flags and nominal symbol identity.
+    #[inline]
+    pub fn object_with_shape_metadata_and_index_signatures(
+        &self,
+        properties: Vec<PropertyInfo>,
+        shape: &ObjectShape,
+        string_index: Option<IndexSignature>,
+        number_index: Option<IndexSignature>,
+        symbol_index: Option<IndexSignature>,
+    ) -> TypeId {
+        self.object_with_shape_parts(
+            properties,
+            shape,
+            string_index,
+            number_index,
+            symbol_index,
+            shape.symbol,
+        )
+    }
+
     /// Rebuild a structural object with replacement properties while preserving
     /// the source shape's flags and index signatures, but dropping nominal
     /// symbol identity.
@@ -187,22 +228,22 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
-    fn object_with_shape_metadata_and_symbol(
+    fn object_with_shape_parts(
         &self,
         properties: Vec<PropertyInfo>,
         shape: &ObjectShape,
+        string_index: Option<IndexSignature>,
+        number_index: Option<IndexSignature>,
+        symbol_index: Option<IndexSignature>,
         symbol: Option<SymbolId>,
     ) -> TypeId {
-        if shape.string_index.is_some()
-            || shape.number_index.is_some()
-            || shape.symbol_index.is_some()
-        {
+        if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             self.object_with_index(ObjectShape {
                 flags: shape.flags,
                 properties,
-                string_index: shape.string_index,
-                number_index: shape.number_index,
-                symbol_index: shape.symbol_index,
+                string_index,
+                number_index,
+                symbol_index,
                 symbol,
             })
         } else {

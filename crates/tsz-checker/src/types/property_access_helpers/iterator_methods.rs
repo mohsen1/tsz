@@ -5,7 +5,7 @@ use crate::query_boundaries::common::{
     object_shape_for_type,
 };
 use crate::state::CheckerState;
-use tsz_solver::{FunctionShape, ObjectShape, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(in crate::types_domain) fn synthesized_array_iterator_method_type(
@@ -77,14 +77,16 @@ impl<'a> CheckerState<'a> {
                 && let Some(array_iterator_sym) = self.ctx.binder.file_locals.get("ArrayIterator")
                 && let Some(shape) = object_shape_for_type(self.ctx.types, instantiated)
             {
-                Some(self.ctx.types.factory().object_with_index(ObjectShape {
-                    flags: shape.flags,
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol_index: shape.symbol_index,
-                    symbol: Some(array_iterator_sym),
-                }))
+                Some(
+                    self.ctx
+                        .types
+                        .factory()
+                        .object_with_shape_metadata_and_symbol(
+                            shape.properties.clone(),
+                            &shape,
+                            Some(array_iterator_sym),
+                        ),
+                )
             } else {
                 Some(instantiated)
             }

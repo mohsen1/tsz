@@ -768,7 +768,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         base_type: TypeId,
     ) -> TypeId {
-        use tsz_solver::{ObjectShape, PropertyInfo};
+        use tsz_solver::PropertyInfo;
 
         if !self.is_js_file() || !self.ctx.compiler_options.check_js {
             return base_type;
@@ -821,14 +821,14 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        self.ctx.types.factory().object_with_index(ObjectShape {
-            flags: shape.flags,
-            properties,
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol_index: shape.symbol_index,
-            symbol: shape.symbol.or(Some(sym_id)),
-        })
+        self.ctx
+            .types
+            .factory()
+            .object_with_shape_metadata_and_symbol(
+                properties,
+                &shape,
+                shape.symbol.or(Some(sym_id)),
+            )
     }
 
     pub(crate) fn get_global_this_type(&mut self, error_node: NodeIndex) -> TypeId {

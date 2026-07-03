@@ -146,7 +146,7 @@ fn type_factory_rebuilds_object_shape_metadata_with_symbol_policy() {
 
     let structural = interner
         .factory()
-        .structural_object_with_shape_metadata(vec![replacement_prop], &shape);
+        .structural_object_with_shape_metadata(vec![replacement_prop.clone()], &shape);
     let Some(TypeData::ObjectWithIndex(structural_shape_id)) = interner.lookup(structural) else {
         panic!("structural metadata rebuild with index signatures must produce ObjectWithIndex");
     };
@@ -156,6 +156,49 @@ fn type_factory_rebuilds_object_shape_metadata_with_symbol_policy() {
     assert_eq!(structural_shape.number_index, shape.number_index);
     assert_eq!(structural_shape.symbol_index, shape.symbol_index);
     assert_eq!(structural_shape.symbol, None);
+
+    let override_symbol = Some(SymbolId(88));
+    let stamped = interner.factory().object_with_shape_metadata_and_symbol(
+        vec![replacement_prop.clone()],
+        &shape,
+        override_symbol,
+    );
+    let Some(TypeData::ObjectWithIndex(stamped_shape_id)) = interner.lookup(stamped) else {
+        panic!("explicit-symbol metadata rebuild must produce ObjectWithIndex");
+    };
+    let stamped_shape = interner.object_shape(stamped_shape_id);
+    assert_eq!(stamped_shape.flags, shape.flags);
+    assert_eq!(stamped_shape.string_index, shape.string_index);
+    assert_eq!(stamped_shape.number_index, shape.number_index);
+    assert_eq!(stamped_shape.symbol_index, shape.symbol_index);
+    assert_eq!(stamped_shape.symbol, override_symbol);
+
+    let replacement_number_index = Some(IndexSignature {
+        key_type: TypeId::NUMBER,
+        value_type: TypeId::BOOLEAN,
+        readonly: true,
+        param_name: Some(number_name),
+    });
+    let reindexed = interner
+        .factory()
+        .object_with_shape_metadata_and_index_signatures(
+            vec![replacement_prop],
+            &shape,
+            None,
+            replacement_number_index,
+            shape.symbol_index,
+        );
+    let Some(TypeData::ObjectWithIndex(reindexed_shape_id)) = interner.lookup(reindexed) else {
+        panic!("replacement-index metadata rebuild must produce ObjectWithIndex");
+    };
+    let reindexed_shape = interner.object_shape(reindexed_shape_id);
+    assert_eq!(reindexed_shape.flags, shape.flags);
+    // With no string index, interning canonicalizes a symbol-only index into
+    // the historical string-index slot where `key_type == symbol`.
+    assert_eq!(reindexed_shape.string_index, shape.symbol_index);
+    assert_eq!(reindexed_shape.number_index, replacement_number_index);
+    assert_eq!(reindexed_shape.symbol_index, None);
+    assert_eq!(reindexed_shape.symbol, shape_symbol);
 }
 
 #[test]
