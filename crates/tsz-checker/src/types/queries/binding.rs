@@ -1,4 +1,5 @@
 use crate::context::TypingRequest;
+use crate::query_boundaries::binding_patterns;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -26,8 +27,6 @@ impl<'a> CheckerState<'a> {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return TypeId::ANY;
         };
-
-        let factory = self.ctx.types.factory();
 
         if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
@@ -108,7 +107,11 @@ impl<'a> CheckerState<'a> {
                             .destructuring_relation_outcome(init_type, element_type)
                             .related
                         {
-                            element_type = self.ctx.types.factory().union2(element_type, init_type);
+                            element_type = binding_patterns::binding_pattern_initializer_union_type(
+                                self.ctx.types,
+                                element_type,
+                                init_type,
+                            );
                         }
                     } else if element_type == TypeId::ANY
                         && let Some(name_node) = self.ctx.arena.get(element_data.name)
@@ -125,9 +128,11 @@ impl<'a> CheckerState<'a> {
                     let is_optional =
                         element_data.initializer.is_some() || element_data.dot_dot_dot_token;
 
-                    let mut prop_info = tsz_solver::PropertyInfo::new(atom, element_type);
-                    prop_info.optional = is_optional;
-                    properties.push(prop_info);
+                    properties.push(binding_patterns::binding_pattern_property(
+                        atom,
+                        element_type,
+                        is_optional,
+                    ));
                 }
             }
             // An empty object binding pattern `{}` provides no structural constraints.
@@ -136,7 +141,7 @@ impl<'a> CheckerState<'a> {
             if properties.is_empty() {
                 return TypeId::ANY;
             }
-            return factory.object(properties);
+            return binding_patterns::binding_pattern_object_type(self.ctx.types, properties);
         } else if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
                 return TypeId::ANY;
@@ -150,12 +155,11 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                    elements.push(tsz_solver::TupleElement {
-                        type_id: TypeId::ANY,
-                        optional: true,
-                        rest: false,
-                        name: None,
-                    });
+                    elements.push(binding_patterns::binding_pattern_tuple_element(
+                        TypeId::ANY,
+                        true,
+                        false,
+                    ));
                     continue;
                 }
 
@@ -192,7 +196,11 @@ impl<'a> CheckerState<'a> {
                             .destructuring_relation_outcome(init_type, element_type)
                             .related
                         {
-                            element_type = self.ctx.types.factory().union2(element_type, init_type);
+                            element_type = binding_patterns::binding_pattern_initializer_union_type(
+                                self.ctx.types,
+                                element_type,
+                                init_type,
+                            );
                         }
                     } else if element_type == TypeId::ANY
                         && let Some(name_node) = self.ctx.arena.get(element_data.name)
@@ -212,12 +220,11 @@ impl<'a> CheckerState<'a> {
                     // Only non-rest elements with a default initializer are optional.
                     let is_optional = element_data.initializer.is_some() && !is_rest;
 
-                    elements.push(tsz_solver::TupleElement {
-                        type_id: element_type,
-                        optional: is_optional,
-                        rest: is_rest,
-                        name: None,
-                    });
+                    elements.push(binding_patterns::binding_pattern_tuple_element(
+                        element_type,
+                        is_optional,
+                        is_rest,
+                    ));
                 }
             }
 
@@ -226,7 +233,7 @@ impl<'a> CheckerState<'a> {
             if elements.is_empty() {
                 return TypeId::ANY;
             }
-            return factory.tuple(elements);
+            return binding_patterns::binding_pattern_tuple_type(self.ctx.types, elements);
         }
         TypeId::ANY
     }

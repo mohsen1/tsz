@@ -1,6 +1,7 @@
 //! Destructuring pattern type resolution and validation.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::binding_patterns;
 use crate::query_boundaries::common as common_query;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
@@ -578,7 +579,11 @@ impl<'a> CheckerState<'a> {
                     .destructuring_relation_outcome(init_type, element_type)
                     .related
                 {
-                    element_type = self.ctx.types.factory().union2(element_type, init_type);
+                    element_type = binding_patterns::binding_pattern_initializer_union_type(
+                        self.ctx.types,
+                        element_type,
+                        init_type,
+                    );
                 }
             }
 
@@ -693,7 +698,6 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut elem_types = Vec::new();
                 let mut saw_non_array_like = false;
-                let factory = self.ctx.types.factory();
                 for &member in &members {
                     let member = query::unwrap_readonly_deep(self.ctx.types, member);
                     if let Some(elem) = query::array_element_type(self.ctx.types, member) {
@@ -765,7 +769,7 @@ impl<'a> CheckerState<'a> {
                 return if elem_types.len() == 1 {
                     elem_types[0]
                 } else {
-                    factory.union(elem_types)
+                    binding_patterns::binding_pattern_member_union_type(self.ctx.types, elem_types)
                 };
             }
 
@@ -1331,8 +1335,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         if any_found && !non_empty_missing {
-                            let factory = self.ctx.types.factory();
-                            return factory.union(member_types);
+                            return binding_patterns::binding_pattern_member_union_type(
+                                self.ctx.types,
+                                member_types,
+                            );
                         }
                     }
 

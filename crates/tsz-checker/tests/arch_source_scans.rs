@@ -49,7 +49,12 @@
 //! - `import_attribute_construction_boundary_scans`: static and dynamic import
 //!   callers route import-attribute object construction through
 //!   `query_boundaries::import_attributes`.
+//! - `binding_pattern_construction_boundary_scans`: binding/destructuring
+//!   pattern callers route contextual tuple/object/property/union construction
+//!   through `query_boundaries::binding_patterns`.
 
+#[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
+mod binding_pattern_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]

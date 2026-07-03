@@ -3,6 +3,7 @@
 //! Split out of the parent module to satisfy the source-file line cap.
 
 use super::*;
+use crate::query_boundaries::binding_patterns;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn preserve_actual_lib_namespace_binding_parent_type(
@@ -96,7 +97,10 @@ impl<'a> CheckerState<'a> {
             } else if member_types.len() == 1 {
                 Some(member_types[0])
             } else {
-                Some(self.ctx.types.factory().union(member_types))
+                Some(binding_patterns::binding_pattern_member_union_type(
+                    self.ctx.types,
+                    member_types,
+                ))
             };
         }
 
@@ -163,7 +167,10 @@ impl<'a> CheckerState<'a> {
         } else if key_types.len() == 1 {
             Some(key_types[0])
         } else {
-            Some(self.ctx.types.factory().union(key_types))
+            Some(binding_patterns::binding_pattern_member_union_type(
+                self.ctx.types,
+                key_types,
+            ))
         }
     }
 
@@ -224,7 +231,8 @@ impl<'a> CheckerState<'a> {
                 request,
             );
             if key_types.len() > 1 {
-                key_type = self.ctx.types.factory().union(key_types);
+                key_type =
+                    binding_patterns::binding_pattern_member_union_type(self.ctx.types, key_types);
             } else {
                 key_type = effective_key;
             }
@@ -478,8 +486,6 @@ impl<'a> CheckerState<'a> {
         let pattern_data = self.ctx.arena.get_binding_pattern(pattern_node)?;
         let elem_indices: Vec<NodeIndex> = pattern_data.elements.nodes.clone();
         let pattern_kind = pattern_node.kind;
-        let factory = self.ctx.types.factory();
-
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let mut tuple_elements = Vec::new();
             for &elem_idx in &elem_indices {
@@ -533,14 +539,14 @@ impl<'a> CheckerState<'a> {
                     }
                     _ => TypeId::ANY,
                 };
-                tuple_elements.push(tsz_solver::TupleElement {
-                    type_id: elem_type,
-                    optional: false,
-                    rest: false,
-                    name: None,
-                });
+                tuple_elements.push(binding_patterns::binding_pattern_tuple_element(
+                    elem_type, false, false,
+                ));
             }
-            Some(factory.tuple(tuple_elements))
+            Some(binding_patterns::binding_pattern_tuple_type(
+                self.ctx.types,
+                tuple_elements,
+            ))
         } else if pattern_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
             // Collect all binding element names for intra-binding-pattern reference detection.
             // When a binding element's default references another binding in the same pattern
@@ -652,9 +658,14 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let atom = self.ctx.types.intern_string(&name_str);
-                properties.push(tsz_solver::PropertyInfo::new(atom, prop_type));
+                properties.push(binding_patterns::binding_pattern_property(
+                    atom, prop_type, false,
+                ));
             }
-            Some(factory.object(properties))
+            Some(binding_patterns::binding_pattern_object_type(
+                self.ctx.types,
+                properties,
+            ))
         } else {
             None
         }
