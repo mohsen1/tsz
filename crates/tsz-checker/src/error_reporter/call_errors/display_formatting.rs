@@ -494,29 +494,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn widen_object_property_literals_for_call_parameter_display(&mut self, ty: TypeId) -> TypeId {
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, ty)
-        else {
-            return ty;
-        };
-        let mut widened_shape = shape.as_ref().clone();
-        let mut changed = false;
-        for prop in &mut widened_shape.properties {
-            let widened_read =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop.type_id);
-            let widened_write = crate::query_boundaries::common::widen_literal_type(
-                self.ctx.types,
-                prop.write_type,
-            );
-            changed |= widened_read != prop.type_id || widened_write != prop.write_type;
-            prop.type_id = widened_read;
-            prop.write_type = widened_write;
-        }
-        if changed {
-            self.ctx.types.factory().object_with_index(widened_shape)
-        } else {
-            ty
-        }
+        crate::query_boundaries::diagnostics::shallow_object_property_literals_widened_for_call_parameter_display(
+            self.ctx.types,
+            ty,
+        )
     }
 
     pub(in crate::error_reporter::call_errors) fn property_access_call_parameter_annotation_display(

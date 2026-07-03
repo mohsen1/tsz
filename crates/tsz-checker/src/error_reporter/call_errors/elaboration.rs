@@ -4,6 +4,7 @@ use crate::context::TypingRequest;
 use crate::context::speculation::FullSpeculationSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -195,42 +196,8 @@ impl<'a> CheckerState<'a> {
         let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
         let arg_shape =
             crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated_arg)?;
-        if arg_shape.properties.is_empty()
-            && arg_shape.string_index.is_none()
-            && arg_shape.number_index.is_none()
-        {
-            return None;
-        }
-
-        let mut unknown_properties = Vec::with_capacity(arg_shape.properties.len());
-        for prop in &arg_shape.properties {
-            let mut unknown_prop = tsz_solver::PropertyInfo::new(prop.name, TypeId::UNKNOWN);
-            unknown_prop.optional = prop.optional;
-            unknown_prop.readonly = prop.readonly;
-            unknown_properties.push(unknown_prop);
-        }
-        let unknown_object = if arg_shape.string_index.is_some() || arg_shape.number_index.is_some()
-        {
-            let unknown_shape = tsz_solver::ObjectShape {
-                properties: unknown_properties,
-                string_index: arg_shape.string_index.as_ref().map(|sig| {
-                    tsz_solver::IndexSignature {
-                        value_type: TypeId::UNKNOWN,
-                        ..*sig
-                    }
-                }),
-                number_index: arg_shape.number_index.as_ref().map(|sig| {
-                    tsz_solver::IndexSignature {
-                        value_type: TypeId::UNKNOWN,
-                        ..*sig
-                    }
-                }),
-                ..Default::default()
-            };
-            self.ctx.types.factory().object_with_index(unknown_shape)
-        } else {
-            self.ctx.types.factory().object(unknown_properties)
-        };
+        let unknown_object =
+            diagnostic_query::object_type_with_unknown_display_members(self.ctx.types, &arg_shape)?;
 
         let evaluated_param = self.evaluate_type_for_assignability(param_type);
         let mut current = arg_idx;
