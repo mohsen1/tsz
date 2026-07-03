@@ -142,6 +142,46 @@ pub(crate) const fn jsdoc_tuple_element(
     }
 }
 
+pub(crate) const fn jsdoc_param_info(
+    name: Option<Atom>,
+    type_id: TypeId,
+    optional: bool,
+    rest: bool,
+) -> ParamInfo {
+    ParamInfo {
+        name,
+        type_id,
+        optional,
+        rest,
+    }
+}
+
+pub(crate) const fn jsdoc_property_info(
+    name: Atom,
+    type_id: TypeId,
+    optional: bool,
+    readonly: bool,
+    is_method: bool,
+    declaration_order: u32,
+) -> PropertyInfo {
+    PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        optional,
+        readonly,
+        is_method,
+        is_class_prototype: false,
+        visibility: tsz_solver::Visibility::Public,
+        parent_id: None,
+        declaration_order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
 pub(crate) fn jsdoc_mapped_type(
     db: &dyn TypeDatabase,
     type_param: TypeParamInfo,

@@ -68,6 +68,13 @@ fn jsdoc_callers_route_solver_shape_construction_through_boundary() {
         "ConditionalType {",
         "TypeParamInfo {",
         "TypeParamOrigin::User",
+        "ParamInfo {",
+        "ParamInfo::required(",
+        "ParamInfo::optional(",
+        "ParamInfo::rest(",
+        "ParamInfo::unnamed(",
+        "PropertyInfo::new(",
+        "PropertyInfo {",
     ];
 
     let mut violations = Vec::new();
@@ -107,6 +114,8 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         "jsdoc_type_param_type",
         "jsdoc_tuple_type",
         "jsdoc_tuple_element",
+        "jsdoc_param_info",
+        "jsdoc_property_info",
         "jsdoc_mapped_type",
         "jsdoc_conditional_type",
     ] {
@@ -129,6 +138,8 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         "ConditionalType {",
         "TypeParamInfo {",
         "TypeParamOrigin::User",
+        "ParamInfo {",
+        "PropertyInfo {",
     ] {
         assert!(
             source.contains(shape_pattern),

@@ -14,7 +14,7 @@
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::query_boundaries::jsdoc_construction::{
-    self as jsdoc_construct, jsdoc_function_type, jsdoc_object_index_type,
+    self as jsdoc_construct, jsdoc_function_type, jsdoc_object_index_type, jsdoc_param_info,
 };
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -592,7 +592,6 @@ impl<'a> CheckerState<'a> {
                             let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
                             let k_atom = self.ctx.types.intern_string(k_name);
                             if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
-                                use tsz_solver::ParamInfo;
                                 let keyof_t_id =
                                     jsdoc_construct::jsdoc_keyof_type(self.ctx.types, t_id);
                                 let k_param = jsdoc_construct::jsdoc_type_param_info(
@@ -610,12 +609,12 @@ impl<'a> CheckerState<'a> {
                                 let template_id = jsdoc_function_type(
                                     self.ctx.types,
                                     Vec::new(),
-                                    vec![ParamInfo {
-                                        name: Some(self.ctx.types.intern_string("value")),
-                                        type_id: t_k_id,
-                                        optional: false,
-                                        rest: false,
-                                    }],
+                                    vec![jsdoc_param_info(
+                                        Some(self.ctx.types.intern_string("value")),
+                                        t_k_id,
+                                        false,
+                                        false,
+                                    )],
                                     None,
                                     TypeId::VOID,
                                     None,
@@ -671,7 +670,6 @@ impl<'a> CheckerState<'a> {
                         let return_type = self
                             .resolve_jsdoc_reference(return_type_str)
                             .unwrap_or(TypeId::VOID);
-                        use tsz_solver::ParamInfo;
                         let mut params = Vec::new();
                         let mut this_type = None;
                         let mut ok = true;
@@ -703,12 +701,12 @@ impl<'a> CheckerState<'a> {
                                     let name =
                                         self.ctx.types.intern_string(&format!("arg{arg_index}"));
                                     arg_index += 1;
-                                    params.push(ParamInfo {
-                                        name: Some(name),
+                                    params.push(jsdoc_param_info(
+                                        Some(name),
                                         type_id,
-                                        optional: false,
-                                        rest: is_rest,
-                                    });
+                                        false,
+                                        is_rest,
+                                    ));
                                 } else {
                                     ok = false;
                                     break;
@@ -800,8 +798,6 @@ impl<'a> CheckerState<'a> {
     /// - `(x: boolean) => asserts x` (assertion predicates)
     /// - `(x: unknown) => x is string` (type predicates)
     fn parse_jsdoc_arrow_function_type(&mut self, type_expr: &str) -> Option<TypeId> {
-        use tsz_solver::ParamInfo;
-
         // Extract generic type parameters if present: `<T, U>(params) => ReturnType`
         let (type_params_str, rest) = if type_expr.starts_with('<') {
             // Find the matching `>` (respecting nesting)
@@ -884,12 +880,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let atom = name.map(|n| self.ctx.types.intern_string(n));
-                    params.push(ParamInfo {
-                        name: atom,
-                        type_id: p_type,
-                        optional: false,
-                        rest: is_rest,
-                    });
+                    params.push(jsdoc_param_info(atom, p_type, false, is_rest));
                 } else {
                     params_ok = false;
                     break;

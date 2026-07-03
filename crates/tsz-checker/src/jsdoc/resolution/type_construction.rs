@@ -15,13 +15,14 @@
 use super::super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
 use crate::query_boundaries::jsdoc_construction::{
     self as jsdoc_construct, JsdocObjectIndexFact, JsdocObjectIndexKind, jsdoc_empty_object_type,
-    jsdoc_function_type, jsdoc_object_index_fact, jsdoc_object_type,
+    jsdoc_function_type, jsdoc_object_index_fact, jsdoc_object_type, jsdoc_param_info,
+    jsdoc_property_info,
 };
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{ParamInfo, PropertyInfo, TypeId, TypePredicate, TypePredicateTarget, Visibility};
+use tsz_solver::{PropertyInfo, TypeId, TypePredicate, TypePredicateTarget};
 impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
         &mut self,
@@ -959,22 +960,14 @@ impl<'a> CheckerState<'a> {
                 if !name.is_empty() {
                     let prop_type = self.resolve_jsdoc_type_str(type_str).unwrap_or(TypeId::ANY);
                     let name_atom = self.ctx.types.intern_string(name);
-                    properties.push(PropertyInfo {
-                        name: name_atom,
-                        type_id: prop_type,
-                        write_type: prop_type,
+                    properties.push(jsdoc_property_info(
+                        name_atom,
+                        prop_type,
                         optional,
                         readonly,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: (properties.len() + 1) as u32,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                        false,
+                        (properties.len() + 1) as u32,
+                    ));
                 }
             }
         }
@@ -1279,12 +1272,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let p_type = self.resolve_jsdoc_reference(t_str).unwrap_or(TypeId::ANY);
                 let atom = name.map(|n| self.ctx.types.intern_string(n));
-                params.push(ParamInfo {
-                    name: atom,
-                    type_id: p_type,
-                    optional: false,
-                    rest: false,
-                });
+                params.push(jsdoc_param_info(atom, p_type, false, false));
             }
         }
         Some(jsdoc_function_type(
@@ -1357,12 +1345,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let p_type = self.resolve_jsdoc_reference(t_str).unwrap_or(TypeId::ANY);
                 let atom = name.map(|n| self.ctx.types.intern_string(n));
-                params.push(ParamInfo {
-                    name: atom,
-                    type_id: p_type,
-                    optional: false,
-                    rest: false,
-                });
+                params.push(jsdoc_param_info(atom, p_type, false, false));
             }
         }
         let method_type = jsdoc_function_type(
@@ -1376,22 +1359,14 @@ impl<'a> CheckerState<'a> {
             true,
         );
         let name_atom = self.ctx.types.intern_string(method_name);
-        Some(PropertyInfo {
-            name: name_atom,
-            type_id: method_type,
-            write_type: method_type,
+        Some(jsdoc_property_info(
+            name_atom,
+            method_type,
             optional,
-            readonly: false,
-            is_method: true,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: (existing_props.len() + 1) as u32,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        })
+            false,
+            true,
+            (existing_props.len() + 1) as u32,
+        ))
     }
     /// Resolve a `@typedef` referenced by name from JSDoc comments.
     ///
@@ -1714,12 +1689,12 @@ impl<'a> CheckerState<'a> {
             }
 
             let name_atom = self.ctx.types.intern_string(&param.name);
-            params.push(ParamInfo {
-                name: Some(name_atom),
+            params.push(jsdoc_param_info(
+                Some(name_atom),
                 type_id,
-                optional: param.optional,
-                rest: param.rest,
-            });
+                param.optional,
+                param.rest,
+            ));
         }
 
         let mut type_predicate = None;
@@ -1837,22 +1812,14 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let name_atom = self.ctx.types.intern_string(&prop.name);
-            prop_infos.push(PropertyInfo {
-                name: name_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: prop.optional,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            prop_infos.push(jsdoc_property_info(
+                name_atom,
+                prop_type,
+                prop.optional,
+                false,
+                false,
+                0,
+            ));
         }
         let object_type = jsdoc_object_type(self.ctx.types, prop_infos, None, None);
         match (object_type, base_type) {
