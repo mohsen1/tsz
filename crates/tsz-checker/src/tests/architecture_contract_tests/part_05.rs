@@ -323,6 +323,43 @@ fn test_enum_truthiness_and_ts2559_use_enum_analysis_boundary() {
     }
 }
 
+/// Declaration-order enum values need checker AST/binder access, so `enum_eval`
+/// owns that fallback while callable truthiness owns only condition gating.
+#[test]
+fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
+    let enum_eval_source = fs::read_to_string("src/types/utilities/enum_eval.rs")
+        .expect("failed to read enum_eval.rs");
+    assert!(
+        enum_eval_source.contains("enum EnumMemberConstValue"),
+        "enum_eval should own the declared enum-member value representation"
+    );
+    assert!(
+        enum_eval_source.contains("fn enum_member_declared_const_value("),
+        "enum_eval should own declaration-order enum member value recovery"
+    );
+    assert!(
+        enum_eval_source.contains("fn enum_member_initializer_const_value("),
+        "enum_eval should own enum member initializer value recovery"
+    );
+
+    let truthiness_source = fs::read_to_string("src/types/queries/callable_truthiness.rs")
+        .expect("failed to read callable_truthiness.rs");
+    assert!(
+        truthiness_source.contains("enum_member_declared_const_value("),
+        "callable truthiness should ask enum_eval for declaration fallback values"
+    );
+    for forbidden_helper in [
+        "fn truthiness_for_enum_member_initializer(",
+        "fn next_enum_auto_value(",
+        "evaluate_constant_expression(initializer)",
+    ] {
+        assert!(
+            !truthiness_source.contains(forbidden_helper),
+            "callable truthiness should not own enum declaration fallback helper `{forbidden_helper}`"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]

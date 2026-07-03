@@ -11,6 +11,7 @@
 
 use crate::query_boundaries::enum_analysis as enum_query;
 use crate::state::CheckerState;
+use crate::types_domain::utilities::enum_eval::EnumMemberConstValue;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -37,6 +38,25 @@ impl SyntacticTruthiness {
     /// Combine two branches (e.g., both arms of a conditional expression).
     fn combine(self, other: Self) -> Self {
         if self == other { self } else { Self::Sometimes }
+    }
+}
+
+fn enum_member_const_value_truthiness(value: EnumMemberConstValue) -> &'static str {
+    match value {
+        EnumMemberConstValue::Number(value) => {
+            if value == 0.0 {
+                "false"
+            } else {
+                "true"
+            }
+        }
+        EnumMemberConstValue::String(value) => {
+            if value.is_empty() {
+                "false"
+            } else {
+                "true"
+            }
+        }
     }
 }
 
@@ -349,68 +369,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let member_decl = symbol.primary_declaration()?;
-
-        let parent_symbol = self.get_cross_file_symbol(symbol.parent)?;
-        for &decl_idx in &parent_symbol.declarations {
-            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
-                continue;
-            };
-            let mut auto_value = 0.0;
-            for &member_idx in &enum_decl.members.nodes {
-                let member_node = self.ctx.arena.get(member_idx)?;
-                let member_data = self.ctx.arena.get_enum_member(member_node)?;
-
-                if member_idx == member_decl {
-                    return if member_data.initializer.is_some() {
-                        self.truthiness_for_enum_member_initializer(member_data.initializer)
-                    } else {
-                        Some(if auto_value == 0.0 { "false" } else { "true" })
-                    };
-                }
-
-                if member_data.initializer.is_some() {
-                    auto_value = self.next_enum_auto_value(member_data.initializer)?;
-                } else {
-                    auto_value += 1.0;
-                }
-            }
-        }
-        None
-    }
-
-    fn truthiness_for_enum_member_initializer(
-        &self,
-        initializer: NodeIndex,
-    ) -> Option<&'static str> {
-        let init_node = self.ctx.arena.get(initializer)?;
-        match init_node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.ctx.arena.get_literal(init_node)?;
-                Some(if lit.text.is_empty() { "false" } else { "true" })
-            }
-            k if k == SyntaxKind::TrueKeyword as u16 => Some("true"),
-            k if k == SyntaxKind::FalseKeyword as u16 => Some("false"),
-            _ => {
-                let value = self.evaluate_constant_expression(initializer)?;
-                Some(if value == 0.0 { "false" } else { "true" })
-            }
-        }
-    }
-
-    fn next_enum_auto_value(&self, initializer: NodeIndex) -> Option<f64> {
-        let init_node = self.ctx.arena.get(initializer)?;
-        match init_node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                None
-            }
-            _ => self
-                .evaluate_constant_expression(initializer)
-                .map(|value| value + 1.0),
-        }
+        self.enum_member_declared_const_value(symbol.parent, member_decl)
+            .map(enum_member_const_value_truthiness)
     }
 
     /// Matches tsc's `getSyntacticTruthySemantics`.

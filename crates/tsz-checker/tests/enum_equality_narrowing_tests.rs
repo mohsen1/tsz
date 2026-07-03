@@ -295,3 +295,58 @@ if (Renamed.Enabled) {}
         "numeric non-zero member should be always true independent of names, got: {messages:#?}"
     );
 }
+
+#[test]
+fn enum_member_truthiness_uses_declared_auto_values() {
+    let messages = ts2845_messages(
+        r#"
+enum Auto { Zero, One, Five = 5, Six }
+if (Auto.Zero) {}
+if (Auto.One) {}
+if (Auto.Six) {}
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        3,
+        "expected TS2845 for auto-increment enum member conditions, got: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'false'"))
+            .count(),
+        1,
+        "zero member should be always false through declaration value recovery, got: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'true'"))
+            .count(),
+        2,
+        "non-zero auto members should be always true through declaration value recovery, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn enum_member_truthiness_does_not_fabricate_value_after_string_initializer() {
+    let messages = ts2845_messages(
+        r#"
+enum Mixed { Empty = "", Missing }
+if (Mixed.Empty) {}
+if (Mixed.Missing) {}
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the declared string member should get TS2845; do not fabricate a numeric value after a string initializer: {messages:#?}"
+    );
+    assert!(
+        messages[0].contains("'false'"),
+        "empty string member should be always false, got: {messages:#?}"
+    );
+}
