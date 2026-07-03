@@ -987,12 +987,34 @@ impl<'a> NarrowingContext<'a> {
         {
             return cached;
         }
+        let policy = RelationPolicy::from_relation_flags(
+            RelationFlags::STRICT_NULL_CHECKS | RelationFlags::STRICT_FUNCTION_TYPES,
+        );
+        let context = RelationContext {
+            query_db: Some(self.db),
+            ..Default::default()
+        };
         let result = if let Some(resolver) = self.resolver {
-            let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
-                .with_query_db(self.db);
-            checker.is_subtype_of(source, target)
+            query_relation_with_resolver(
+                self.db.as_type_database(),
+                &resolver,
+                source,
+                target,
+                RelationKind::Subtype,
+                policy,
+                context,
+            )
+            .is_related()
         } else {
-            crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
+            query_relation(
+                self.db.as_type_database(),
+                source,
+                target,
+                RelationKind::Subtype,
+                policy,
+                context,
+            )
+            .is_related()
         };
         self.cache
             .narrow_subtype_cache

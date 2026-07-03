@@ -627,6 +627,12 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
     policy: RelationPolicy,
     context: RelationContext<'a>,
 ) -> RelationResult {
+    if matches!(kind, RelationKind::Subtype)
+        && let Some(result) =
+            query_cached_subtype_with_resolver(interner, resolver, source, target, policy, context)
+    {
+        return result;
+    }
     if matches!(kind, RelationKind::Assignable)
         && let Some(result) = query_cached_assignability_with_resolver(
             interner, resolver, source, target, policy, context,
@@ -646,6 +652,73 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
         context,
         overrides: &overrides,
     })
+}
+
+fn query_cached_subtype_with_resolver<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> Option<RelationResult> {
+    let query_db = context.query_db?;
+    let cache_key =
+        subtype_relation_cache_key(interner, resolver, source, target, policy, context)?;
+    if let Some(cached) = query_db.lookup_subtype_cache(cache_key) {
+        return Some(RelationResult::complete(RelationKind::Subtype, cached));
+    }
+
+    let mut checker = configured_subtype_checker(interner, resolver, policy, context);
+    let lazy_events_at_entry = checker.unresolved_lazy_relation_event_count();
+    let weak_sensitivity_at_entry = crate::limits::weak_type_sensitivity_count();
+    let related = checker.is_subtype_of(source, target);
+    let result = relation_result_from_subtype_checker(RelationKind::Subtype, related, &checker);
+
+    if matches!(result.termination(), RelationTermination::Complete)
+        && !checker.bypass_evaluation
+        && checker.type_param_equivalences.is_empty()
+        && checker.unresolved_lazy_relation_event_count() == lazy_events_at_entry
+        && crate::limits::weak_type_sensitivity_count() == weak_sensitivity_at_entry
+    {
+        query_db.insert_subtype_cache(cache_key, result.related);
+    }
+
+    Some(result)
+}
+
+fn subtype_relation_cache_key<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'_>,
+) -> Option<RelationCacheKey> {
+    // `SubtypeChecker` can cache class-context results by setting the
+    // `CLASS_CHECK_CONTEXT` bit. Keep this helper to the plain query shape
+    // until a caller needs top-level class-context subtype caching here.
+    if context.class_check.is_some() {
+        return None;
+    }
+
+    let has_this_type =
+        crate::contains_this_type(interner, source) || crate::contains_this_type(interner, target);
+    let this_context = if has_this_type {
+        resolver.resolve_this_type(interner)?
+    } else {
+        TypeId::NONE
+    };
+    let (inheritance_graph_id, inheritance_graph_generation) = context
+        .inheritance_graph
+        .map_or((0, 0), |graph| (graph.identity(), graph.generation()));
+
+    Some(
+        RelationCacheKey::for_subtype(source, target, policy.cache_config())
+            .with_this_context(this_context)
+            .with_resolver_generation(resolver.resolver_generation())
+            .with_inheritance_graph_context(inheritance_graph_id, inheritance_graph_generation),
+    )
 }
 
 fn query_cached_assignability_with_resolver<'a, R: TypeResolver>(

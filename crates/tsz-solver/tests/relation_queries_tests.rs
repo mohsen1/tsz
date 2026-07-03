@@ -1,6 +1,6 @@
 use super::*;
 use crate::construction::{QueryCache, QueryDatabase, TypeDatabase, TypeInterner};
-use crate::types::RelationCacheKey;
+use crate::types::{RelationCacheKey, RelationFlags};
 use crate::{FunctionShape, ParamInfo, PropertyInfo, SymbolRef};
 
 struct GenerationResolver(u64);
@@ -115,6 +115,48 @@ fn query_relation_assignability_uses_query_cache_for_no_override_path() {
 }
 
 #[test]
+fn query_relation_subtype_uses_query_cache_for_no_override_path() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::STRICT_FUNCTION_TYPES,
+    );
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..Default::default()
+    };
+    let (animal, dog) = make_animal_dog(&interner);
+
+    let first = query_relation(
+        db.as_type_database(),
+        dog,
+        animal,
+        RelationKind::Subtype,
+        policy,
+        context,
+    );
+    assert!(first.is_related());
+    let after_first = db.statistics();
+    assert_eq!(after_first.relation.subtype_entries, 1);
+
+    let second = query_relation(
+        db.as_type_database(),
+        dog,
+        animal,
+        RelationKind::Subtype,
+        policy,
+        context,
+    );
+    assert!(second.is_related());
+    let after_second = db.statistics();
+    assert_eq!(after_second.relation.subtype_entries, 1);
+    assert!(
+        after_second.relation.subtype_hits > after_first.relation.subtype_hits,
+        "second top-level subtype query should read the shared relation cache",
+    );
+}
+
+#[test]
 fn query_relation_assignability_cache_partitions_by_resolver_generation() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
@@ -156,6 +198,52 @@ fn query_relation_assignability_cache_partitions_by_resolver_generation() {
     );
     assert!(!second.is_related());
     assert_eq!(db.lookup_assignability_cache(key_two), Some(false));
+}
+
+#[test]
+fn query_relation_subtype_cache_partitions_by_resolver_generation() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::STRICT_FUNCTION_TYPES,
+    );
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..Default::default()
+    };
+    let generation_one = GenerationResolver(1);
+    let generation_two = GenerationResolver(2);
+    let key_one =
+        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, policy.cache_config())
+            .with_resolver_generation(1);
+    let key_two =
+        RelationCacheKey::for_subtype(TypeId::STRING, TypeId::NUMBER, policy.cache_config())
+            .with_resolver_generation(2);
+
+    let first = query_relation_with_resolver(
+        db.as_type_database(),
+        &generation_one,
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Subtype,
+        policy,
+        context,
+    );
+    assert!(!first.is_related());
+    assert_eq!(db.lookup_subtype_cache(key_one), Some(false));
+    assert_eq!(db.lookup_subtype_cache(key_two), None);
+
+    let second = query_relation_with_resolver(
+        db.as_type_database(),
+        &generation_two,
+        TypeId::STRING,
+        TypeId::NUMBER,
+        RelationKind::Subtype,
+        policy,
+        context,
+    );
+    assert!(!second.is_related());
+    assert_eq!(db.lookup_subtype_cache(key_two), Some(false));
 }
 
 #[test]

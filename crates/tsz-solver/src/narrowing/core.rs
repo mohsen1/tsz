@@ -4,9 +4,12 @@ use crate::def::DefId;
 use crate::narrowing::cache::{NarrowExcludingKey, NarrowExcludingStableKey, NarrowingCache};
 use crate::narrowing::guard::{GuardSense, TypeGuard};
 use crate::narrowing::request::{NarrowingOptions, NarrowingRequest};
-use crate::relations::subtype::{SubtypeChecker, TypeResolver};
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation, query_relation_with_resolver,
+};
+use crate::relations::subtype::TypeResolver;
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
-use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
+use crate::types::{FunctionShape, LiteralValue, ParamInfo, RelationFlags, TypeData, TypeId};
 use crate::utils::{TypeIdExt, union_or_single};
 use crate::visitor::{
     application_id, index_access_parts, intersection_list_id,

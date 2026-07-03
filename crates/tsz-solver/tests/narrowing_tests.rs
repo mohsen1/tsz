@@ -1,4 +1,5 @@
 use super::*;
+use crate::construction::QueryCache;
 use crate::construction::TypeDatabase;
 use crate::construction::TypeInterner;
 use crate::def::resolver::TypeResolver;
@@ -10,3 +11,4 @@ use crate::types::SymbolRef;
 
 include!("narrowing_tests_parts/part_00.rs");
 include!("narrowing_tests_parts/part_01.rs");
+include!("narrowing_tests_parts/part_02.rs");
