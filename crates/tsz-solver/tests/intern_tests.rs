@@ -1,4 +1,5 @@
 use super::*;
+use crate::caches::db::QueryDatabase;
 use crate::intern::PROPERTY_MAP_THRESHOLD;
 use crate::relations::freshness::{is_fresh_object_type, widen_freshness};
 use tsz_binder::SymbolId;
@@ -93,6 +94,68 @@ fn test_interner_preserves_index_signature_parameter_names_for_display() {
         shape.string_index.and_then(|idx| idx.param_name),
         Some(x_name)
     );
+}
+
+#[test]
+fn type_factory_rebuilds_object_shape_metadata_with_symbol_policy() {
+    let interner = TypeInterner::new();
+    let base_prop = PropertyInfo::new(interner.intern_string("base"), TypeId::STRING);
+    let replacement_prop = PropertyInfo::new(interner.intern_string("replacement"), TypeId::NUMBER);
+    let string_name = interner.intern_string("textKey");
+    let number_name = interner.intern_string("indexKey");
+    let symbol_name = interner.intern_string("symbolKey");
+    let shape_symbol = Some(SymbolId(77));
+
+    let shape = ObjectShape {
+        flags: ObjectFlags::FRESH_LITERAL | ObjectFlags::PRESERVE_DECLARATION_ORDER,
+        properties: vec![base_prop],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: true,
+            param_name: Some(string_name),
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: Some(number_name),
+        }),
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: true,
+            param_name: Some(symbol_name),
+        }),
+        symbol: shape_symbol,
+    };
+
+    let rebuilt = interner
+        .factory()
+        .object_with_shape_metadata(vec![replacement_prop.clone()], &shape);
+    let Some(TypeData::ObjectWithIndex(rebuilt_shape_id)) = interner.lookup(rebuilt) else {
+        panic!("metadata rebuild with index signatures must produce ObjectWithIndex");
+    };
+    let rebuilt_shape = interner.object_shape(rebuilt_shape_id);
+    assert_eq!(rebuilt_shape.flags, shape.flags);
+    assert_eq!(rebuilt_shape.properties, vec![replacement_prop.clone()]);
+    assert_eq!(rebuilt_shape.string_index, shape.string_index);
+    assert_eq!(rebuilt_shape.number_index, shape.number_index);
+    assert_eq!(rebuilt_shape.symbol_index, shape.symbol_index);
+    assert_eq!(rebuilt_shape.symbol, shape_symbol);
+
+    let structural = interner
+        .factory()
+        .structural_object_with_shape_metadata(vec![replacement_prop], &shape);
+    let Some(TypeData::ObjectWithIndex(structural_shape_id)) = interner.lookup(structural) else {
+        panic!("structural metadata rebuild with index signatures must produce ObjectWithIndex");
+    };
+    let structural_shape = interner.object_shape(structural_shape_id);
+    assert_eq!(structural_shape.flags, shape.flags);
+    assert_eq!(structural_shape.string_index, shape.string_index);
+    assert_eq!(structural_shape.number_index, shape.number_index);
+    assert_eq!(structural_shape.symbol_index, shape.symbol_index);
+    assert_eq!(structural_shape.symbol, None);
 }
 
 #[test]

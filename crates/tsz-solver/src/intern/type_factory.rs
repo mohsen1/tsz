@@ -159,6 +159,57 @@ impl<'db> TypeFactory<'db> {
         self.db.object_with_index(shape)
     }
 
+    /// Rebuild an object with replacement properties while preserving the
+    /// object-level metadata of an existing shape: flags, index signatures, and
+    /// nominal symbol identity.
+    ///
+    /// Callers in checker-facing code should use this instead of passing raw
+    /// shape flags back into the factory.
+    #[inline]
+    pub fn object_with_shape_metadata(
+        &self,
+        properties: Vec<PropertyInfo>,
+        shape: &ObjectShape,
+    ) -> TypeId {
+        self.object_with_shape_metadata_and_symbol(properties, shape, shape.symbol)
+    }
+
+    /// Rebuild a structural object with replacement properties while preserving
+    /// the source shape's flags and index signatures, but dropping nominal
+    /// symbol identity.
+    #[inline]
+    pub fn structural_object_with_shape_metadata(
+        &self,
+        properties: Vec<PropertyInfo>,
+        shape: &ObjectShape,
+    ) -> TypeId {
+        self.object_with_shape_metadata_and_symbol(properties, shape, None)
+    }
+
+    #[inline]
+    fn object_with_shape_metadata_and_symbol(
+        &self,
+        properties: Vec<PropertyInfo>,
+        shape: &ObjectShape,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        if shape.string_index.is_some()
+            || shape.number_index.is_some()
+            || shape.symbol_index.is_some()
+        {
+            self.object_with_index(ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index: shape.string_index,
+                number_index: shape.number_index,
+                symbol_index: shape.symbol_index,
+                symbol,
+            })
+        } else {
+            self.object_with_flags_and_symbol(properties, shape.flags, symbol)
+        }
+    }
+
     /// Create the synthetic `typeof globalThis` surface object. It carries the
     /// `GLOBAL_THIS_SURFACE` flag so diagnostics render it as `typeof
     /// globalThis` rather than its full member body. Builder method so checker
@@ -184,7 +235,7 @@ impl<'db> TypeFactory<'db> {
     }
 
     #[inline]
-    pub fn object_with_flags_and_symbol(
+    pub(crate) fn object_with_flags_and_symbol(
         &self,
         properties: Vec<PropertyInfo>,
         flags: ObjectFlags,

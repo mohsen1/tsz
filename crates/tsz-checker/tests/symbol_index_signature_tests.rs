@@ -1522,6 +1522,27 @@ const ok: number = so[s];
     );
 }
 
+#[test]
+fn symbol_only_index_object_rest_preserves_symbol_key_access() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const sym: symbol;
+declare const source: { [entry: symbol]: boolean; drop: string };
+
+const { drop, ...rest } = source;
+const value: boolean = rest[sym];
+"#,
+    );
+    assert!(
+        !codes.contains(&TS7053),
+        "object rest from a symbol-indexed source must preserve the symbol index, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "rest[sym] must type as the symbol-index value, got {codes:?}",
+    );
+}
+
 // Control: when BOTH a string and a symbol index are present, a string-literal
 // key must resolve through the string index (not be rejected).
 #[test]

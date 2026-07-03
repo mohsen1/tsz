@@ -1192,7 +1192,7 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::TypeId {
         use crate::query_boundaries::common::{AugmentationTargetKind, classify_for_augmentation};
         use crate::query_boundaries::state::type_resolution as query;
-        use tsz_solver::{CallableShape, ObjectShape};
+        use tsz_solver::CallableShape;
 
         // Fast-path: avoids string allocations and hashset bookkeeping when
         // no augmentations are registered anywhere in the program.
@@ -1286,11 +1286,7 @@ impl<'a> CheckerState<'a> {
                 // object-level flags so the augmented type keeps its canonical
                 // declaration name (e.g. `Tool` rather than an expanded
                 // `{ ... }` literal) and stays a single interned identity.
-                let augmented = factory.object_with_flags_and_symbol(
-                    merged_properties,
-                    base_shape.flags,
-                    base_shape.symbol,
-                );
+                let augmented = factory.object_with_shape_metadata(merged_properties, &base_shape);
                 if let Some(def_id) = base_def_id
                     && base_shape.symbol.is_some()
                     && self
@@ -1320,14 +1316,7 @@ impl<'a> CheckerState<'a> {
                         .definition_store
                         .register_module_augmentation_symbol_def_if_enabled(symbol.0, def_id);
                 }
-                factory.object_with_index(ObjectShape {
-                    flags: base_shape.flags,
-                    properties: merged_properties,
-                    string_index: base_shape.string_index,
-                    number_index: base_shape.number_index,
-                    symbol_index: base_shape.symbol_index,
-                    symbol: base_shape.symbol,
-                })
+                factory.object_with_shape_metadata(merged_properties, &base_shape)
             }
             AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
