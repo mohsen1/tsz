@@ -51,6 +51,63 @@ apply.ok;
     );
 }
 
+#[test]
+fn test_commonjs_export_target_spellings_share_cross_file_surface() {
+    let diagnostics = check_commonjs_two_files(
+        "lib.js",
+        r#"
+exports.dot = { ok: 1 };
+module.exports.modDot = { ok: 2 };
+exports["bracket"] = { ok: 3 };
+module.exports["modBracket"] = { ok: 4 };
+var e = exports;
+e.alias = { ok: 5 };
+var me = module.exports;
+me.modAlias = { ok: 6 };
+var local = {};
+local.notExport = { ok: 7 };
+var other = {};
+other["notExportBracket"] = { ok: 8 };
+"#,
+        "consumer.js",
+        r#"
+var lib = require("./lib.js");
+lib.dot.ok;
+lib.modDot.ok;
+lib.bracket.ok;
+lib.modBracket.ok;
+lib.alias.ok;
+lib.modAlias.ok;
+lib.notExport;
+lib.notExportBracket;
+"#,
+        "./lib.js",
+    );
+
+    let ts2339_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    assert!(
+        ts2339_messages
+            .iter()
+            .any(|message| message.contains("notExport")),
+        "Expected TS2339 for non-export local write `notExport`, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339_messages
+            .iter()
+            .any(|message| message.contains("notExportBracket")),
+        "Expected TS2339 for non-export local bracket write `notExportBracket`, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2339_messages.len(),
+        2,
+        "Expected only the two non-export local writes to fail, got: {diagnostics:#?}"
+    );
+}
+
 // --- Current-file namespace type via surface ---
 
 #[test]
