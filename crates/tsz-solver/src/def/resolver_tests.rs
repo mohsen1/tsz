@@ -497,64 +497,48 @@ fn get_def_kind_falls_back_to_definition_store() {
     );
 }
 
-/// `overlay_missing_from` must fill flow-analyzer-env-local maps that only
-/// the evaluator env carries (e.g. `enum_parents`, `class_extends`, and the
-/// symbol-keyed `types` map) while preserving entries unique to the target
-/// and not overwriting existing keys.
+/// `first_missing_entry_from` reports evaluator-only registrations without
+/// repairing the flow-analyzer env. Missing entries must be fixed by routing
+/// the writer through the checker's dual-env authority.
 #[test]
-fn overlay_missing_from_fills_evaluator_only_maps_without_clobbering() {
-    let source_def = DefId(10);
-    let parent_def = DefId(11);
-    let child_def = DefId(12);
-    let shared_def = DefId(13);
+fn first_missing_entry_from_reports_evaluator_only_maps_without_repairing() {
+    let mut evaluator = TypeEnvironment::new();
+    evaluator.insert(SymbolRef(7), TypeId(200));
 
-    let mut source = TypeEnvironment::new();
-    source.insert_def(source_def, TypeId(100));
-    source.register_enum_parent(child_def, parent_def);
-    source.register_class_extends(child_def, parent_def);
-    source.insert(SymbolRef(7), TypeId(200));
-    // A key both envs already agree on, but with the target's own value kept.
-    source.insert_def(shared_def, TypeId(300));
+    let flow = TypeEnvironment::new();
+    assert_eq!(
+        flow.first_missing_entry_from(&evaluator),
+        Some(("types", "7".to_string())),
+        "evaluator-only symbol-keyed type must be reported"
+    );
+    assert_eq!(
+        flow.get(SymbolRef(7)),
+        None,
+        "missing-entry probe must not mutate the flow env"
+    );
 
-    let mut target = TypeEnvironment::new();
-    // Target keeps a flow-analyzer-only mapping the evaluator never wrote.
-    target.register_class_extends(DefId(99), DefId(98));
-    // Target already has `shared_def` with a different value; overlay must
-    // not clobber it.
-    target.insert_def(shared_def, TypeId(301));
+    let mut mirrored = TypeEnvironment::new();
+    mirrored.insert(SymbolRef(7), TypeId(200));
+    assert_eq!(mirrored.first_missing_entry_from(&evaluator), None);
+}
 
-    target.overlay_missing_from(&source);
+#[test]
+fn first_missing_entry_from_reports_missing_definition_store_without_repairing() {
+    let store = Arc::new(DefinitionStore::new());
 
+    let mut evaluator = TypeEnvironment::new();
+    evaluator.set_definition_store(Arc::clone(&store));
+
+    let flow = TypeEnvironment::new();
     assert_eq!(
-        target.get_def(source_def),
-        Some(TypeId(100)),
-        "evaluator-only def body must be filled"
+        flow.first_missing_entry_from(&evaluator),
+        Some(("definition_store", "shared".to_string())),
+        "missing shared DefinitionStore must be reported as an evaluator-only scalar"
     );
-    assert_eq!(
-        target.get_enum_parent(child_def),
-        Some(parent_def),
-        "evaluator-only enum-parent must be filled"
-    );
-    assert_eq!(
-        target.get_class_extends_def(child_def),
-        Some(parent_def),
-        "evaluator-only class-extends must be filled"
-    );
-    assert_eq!(
-        target.get(SymbolRef(7)),
-        Some(TypeId(200)),
-        "evaluator-only symbol-keyed type must be filled"
-    );
-    assert_eq!(
-        target.get_class_extends_def(DefId(99)),
-        Some(DefId(98)),
-        "flow-analyzer-only entry must be preserved"
-    );
-    assert_eq!(
-        target.get_def(shared_def),
-        Some(TypeId(301)),
-        "existing target value must not be overwritten on key collision"
-    );
+
+    let mut mirrored = TypeEnvironment::new();
+    mirrored.set_definition_store(Arc::clone(&store));
+    assert_eq!(mirrored.first_missing_entry_from(&evaluator), None);
 }
 
 #[test]
@@ -579,27 +563,27 @@ fn first_def_divergence_from_detects_conflicting_shared_def_body() {
 }
 
 #[test]
-fn first_def_divergence_from_clean_after_overlay() {
+fn first_def_divergence_from_clean_after_mirrored_entries() {
     let shared_def = DefId(42);
-    let eval_only_def = DefId(7);
     let flow_only_class = DefId(99);
 
     let mut evaluator = TypeEnvironment::new();
     evaluator.insert_def(shared_def, TypeId(100));
-    evaluator.insert_def(eval_only_def, TypeId(101));
 
     let mut flow = TypeEnvironment::new();
+    flow.insert_def(shared_def, TypeId(100));
     // Flow-analyzer-only mapping the evaluator never wrote.
     flow.register_class_extends(flow_only_class, DefId(98));
-    // After the production reconciliation step, the flow env is overlaid
-    // from the evaluator env. With no conflicting writes this must leave the
-    // two envs consistent on every shared key.
-    flow.overlay_missing_from(&evaluator);
 
     assert_eq!(
         flow.first_def_divergence_from(&evaluator),
         None,
-        "post-overlay envs must agree on every shared DefId entry"
+        "mirrored envs must agree on every shared DefId entry"
+    );
+    assert_eq!(
+        flow.first_missing_entry_from(&evaluator),
+        None,
+        "mirrored envs must not need evaluator-to-flow repair"
     );
 }
 

@@ -892,10 +892,9 @@ pub struct CheckerContext<'a> {
     /// one cell would make that mutable borrow fail and silently drop writes.
     /// The dual-write registration helpers (`register_*_in_envs`) mirror every
     /// `DefId`-keyed registration into both envs (deferring the mirror when this
-    /// cell is borrowed, never dropping it), and `overlay_missing_from` performs
-    /// a vacancy-fill reconciliation at the file-preparation boundary. After
-    /// that boundary the two envs must agree on every shared `DefId` entry; the
-    /// debug assertion in `prepare_source_file_for_checking` enforces it.
+    /// cell is borrowed, never dropping it). After file preparation the two envs
+    /// must agree on shared entries and the flow env must not be missing entries
+    /// from the evaluator env; debug assertions enforce that boundary.
     pub type_environment: RefCell<TypeEnvironment>,
 
     /// Dual-env registrations whose mirror-write into `type_environment` lost

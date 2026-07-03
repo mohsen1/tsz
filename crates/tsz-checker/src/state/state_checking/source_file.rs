@@ -93,21 +93,24 @@ impl CheckerState<'_> {
         // by the recursive heritage resolution that triggered it). These were
         // previously dropped, collapsing the instance/def body to `never` for
         // every later consumer. Replay them before the flow-analyzer env is
-        // reconciled below so `overlay_missing_from` copies a complete env.
+        // checked against it below.
         self.ctx.flush_deferred_eval_env_writes();
+        debug_assert_eq!(
+            self.ctx.deferred_eval_env_write_count(),
+            0,
+            "evaluator env writes must be fully reconciled at file preparation"
+        );
 
-        // Reconcile the flow-analyzer environment (`type_environment`) with the
+        // Verify the flow-analyzer environment (`type_environment`) against the
         // evaluator environment (`type_env`) before flow analysis reads it.
         //
         // Dual-env registration helpers (`register_*_in_envs`) write the
         // evaluator env directly and mirror into the flow-analyzer env; a mirror
         // that loses the `RefCell` borrow race during recursive resolution is
         // deferred rather than dropped (issue #8269), so first replay the
-        // deferred queue. A few local fields can still arrive via evaluator-env
-        // setup or shared-store/scalar wiring; fill those into the flow-analyzer
-        // env with a vacancy-only overlay. Unlike
-        // the previous unconditional full `clone()`, this neither reallocates
-        // already-mirrored maps nor discards flow-analyzer-env-only entries.
+        // deferred queue. Reconciliation now canonicalizes only benign
+        // present-but-different `def_types` entries and debug-asserts that no
+        // writer still relies on evaluator-only vacancy repair (#14348).
         self.ctx.flush_deferred_flow_env_writes();
         self.reconcile_flow_and_evaluator_envs();
         debug_assert_eq!(
