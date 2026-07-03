@@ -1,6 +1,7 @@
 use super::computed_helpers_namespace_display::trim_namespace_display_path;
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::object_shape_for_type;
+use crate::query_boundaries::construct_signatures::callable_with_call_signatures_and_erased_metadata;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -718,16 +719,7 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         };
 
-        let factory = self.ctx.types.factory();
-        factory.callable(tsz_solver::CallableShape {
-            call_signatures,
-            construct_signatures: shape.construct_signatures.clone(),
-            properties: shape.properties.clone(),
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol: None,
-            is_abstract: false,
-        })
+        callable_with_call_signatures_and_erased_metadata(self.ctx.types, &shape, call_signatures)
     }
 
     /// Compute the type of an enum member symbol.

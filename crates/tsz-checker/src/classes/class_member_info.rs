@@ -10,6 +10,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch_bivariant, should_report_own_member_type_mismatch,
 };
+use crate::query_boundaries::construct_signatures::method_function_type_from_call_signature;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -843,18 +844,9 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&method.modifiers);
-                let factory = self.ctx.types.factory();
-                use tsz_solver::FunctionShape;
                 let signature = self.call_signature_from_method(method, member_idx);
-                let method_type = factory.function(FunctionShape {
-                    type_params: signature.type_params,
-                    params: signature.params,
-                    this_type: signature.this_type,
-                    return_type: signature.return_type,
-                    type_predicate: signature.type_predicate,
-                    is_constructor: false,
-                    is_method: true,
-                });
+                let method_type =
+                    method_function_type_from_call_signature(self.ctx.types, &signature);
                 let is_abstract = self.has_abstract_modifier(&method.modifiers);
                 Some(ClassMemberInfo {
                     name,

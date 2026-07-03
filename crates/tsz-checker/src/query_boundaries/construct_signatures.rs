@@ -20,7 +20,7 @@
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, IndexSignature, ParamInfo,
-    PropertyInfo, TypeId, TypePredicate,
+    PropertyInfo, TypeId, TypeParamInfo, TypePredicate,
 };
 
 pub(crate) fn construct_signatures_for_type(
@@ -106,6 +106,28 @@ pub(crate) fn call_signature_from_function_shape(
 /// Intern a function type from an explicit, helper-built shape.
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
     db.function(shape)
+}
+
+/// Intern a function type from declaration-lowered signature parts.
+pub(crate) fn function_type_from_parts(
+    db: &dyn TypeDatabase,
+    type_params: Vec<TypeParamInfo>,
+    params: Vec<ParamInfo>,
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+    type_predicate: Option<TypePredicate>,
+    is_constructor: bool,
+    is_method: bool,
+) -> TypeId {
+    db.function(FunctionShape {
+        type_params,
+        params,
+        this_type,
+        return_type,
+        type_predicate,
+        is_constructor,
+        is_method,
+    })
 }
 
 /// Intern the standalone function type for one signature (a constructor
@@ -198,6 +220,16 @@ pub(crate) fn callable_with_signatures_replaced(
         symbol: base.symbol,
         is_abstract: base.is_abstract,
     })
+}
+
+/// Re-intern `base` with replacement call signatures and detached nominal
+/// callable metadata.
+pub(crate) fn callable_with_call_signatures_and_erased_metadata(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    call_signatures: Vec<CallSignature>,
+) -> TypeId {
+    instantiated_callable_from_base(db, base, call_signatures, base.construct_signatures.clone())
 }
 
 /// Re-intern `base` with instantiated signature lists for type-argument

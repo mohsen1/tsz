@@ -1,5 +1,6 @@
 //! Direct source-file function declaration fast paths.
 
+use crate::query_boundaries::construct_signatures::function_type_from_parts;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
@@ -7,7 +8,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::base::NodeList;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
+use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::cross_file_direct::is_direct_lowering_source_file_arena;
 
@@ -238,15 +239,16 @@ impl<'a> CheckerState<'a> {
             function.type_annotation,
             &params,
         )?;
-        let ty = self.ctx.types.factory().function(FunctionShape {
-            type_params: Vec::new(),
+        let ty = function_type_from_parts(
+            self.ctx.types,
+            Vec::new(),
             params,
-            this_type: None,
+            None,
             return_type,
             type_predicate,
-            is_constructor: false,
-            is_method: false,
-        });
+            false,
+            false,
+        );
         Some(ty)
     }
 
