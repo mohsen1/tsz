@@ -40,6 +40,9 @@
 //! - `js_class_property_construction_boundary_scans`: JS class-property
 //!   scanning routes type-parameter, array/union, property, callable, and object
 //!   construction through `query_boundaries::checkers::class_properties`.
+//! - `strict_bind_call_apply_construction_boundary_scans`: property-access
+//!   helpers route strict bind/call/apply signature construction through
+//!   `query_boundaries::property_access`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -73,6 +76,8 @@ mod relation_boundary_session_scans;
 mod relation_routing_residual_arch_tests;
 #[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]
 mod spelling_suggestion_gateway_scans;
+#[path = "arch_source_scans/strict_bind_call_apply_construction_boundary_scans.rs"]
+mod strict_bind_call_apply_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
 #[path = "arch_source_scans/type_reference_depth_session_scans.rs"]

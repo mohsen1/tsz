@@ -4,6 +4,7 @@
 //! checks, and const expando key resolution.
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::property_access as property_access_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
@@ -1020,9 +1021,11 @@ impl<'a> CheckerState<'a> {
         let params = sig
             .params
             .iter()
-            .map(|param| tsz_solver::ParamInfo {
-                type_id: instantiate_type(self.ctx.types, param.type_id, &collapse_subst),
-                ..*param
+            .map(|param| {
+                property_access_query::strict_bind_call_apply_param_with_type(
+                    *param,
+                    instantiate_type(self.ctx.types, param.type_id, &collapse_subst),
+                )
             })
             .collect();
         let return_type = instantiate_type(self.ctx.types, sig.return_type, &collapse_subst);
@@ -1031,22 +1034,25 @@ impl<'a> CheckerState<'a> {
             .type_params
             .iter()
             .filter(|tp| !collapsed_names.contains(&tp.name))
-            .map(|tp| tsz_solver::TypeParamInfo {
-                constraint: tp
-                    .constraint
-                    .map(|c| instantiate_type(self.ctx.types, c, &collapse_subst)),
-                ..*tp
+            .map(|tp| {
+                property_access_query::strict_bind_call_apply_type_param_with_constraint(
+                    *tp,
+                    tp.constraint
+                        .map(|c| instantiate_type(self.ctx.types, c, &collapse_subst)),
+                )
             })
             .collect();
 
-        Some(tsz_solver::CallSignature {
-            type_params,
-            params,
-            this_type,
-            return_type,
-            type_predicate: sig.type_predicate,
-            is_method: sig.is_method,
-        })
+        Some(
+            property_access_query::strict_bind_call_apply_call_signature(
+                type_params,
+                params,
+                this_type,
+                return_type,
+                sig.type_predicate,
+                sig.is_method,
+            ),
+        )
     }
 
     pub(in crate::types_domain) fn strict_bind_call_apply_method_type(
@@ -1087,71 +1093,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        fn signature_to_call_signature(
-            shape: &tsz_solver::FunctionShape,
-        ) -> tsz_solver::CallSignature {
-            tsz_solver::CallSignature {
-                type_params: shape.type_params.clone(),
-                params: shape.params.clone(),
-                this_type: shape.this_type,
-                return_type: shape.return_type,
-                type_predicate: shape.type_predicate,
-                is_method: shape.is_method,
-            }
-        }
-
-        fn signature_params_as_tuple(
-            factory: tsz_solver::construction::TypeFactory<'_>,
-            params: &[tsz_solver::ParamInfo],
-        ) -> TypeId {
-            let tuple_elements: Vec<tsz_solver::TupleElement> = params
-                .iter()
-                .map(|param| tsz_solver::TupleElement {
-                    type_id: param.type_id,
-                    name: param.name,
-                    optional: param.optional && !param.rest,
-                    rest: param.rest,
-                })
-                .collect();
-            factory.tuple(tuple_elements)
-        }
-
-        fn bound_callable_return_type(
-            factory: tsz_solver::construction::TypeFactory<'_>,
-            sig: &tsz_solver::CallSignature,
-            remaining_params: Vec<tsz_solver::ParamInfo>,
-            is_constructor: bool,
-        ) -> TypeId {
-            if is_constructor {
-                return factory.callable(tsz_solver::CallableShape {
-                    call_signatures: Vec::new(),
-                    construct_signatures: vec![tsz_solver::CallSignature {
-                        type_params: sig.type_params.clone(),
-                        params: remaining_params,
-                        this_type: None,
-                        return_type: sig.return_type,
-                        type_predicate: None,
-                        is_method: false,
-                    }],
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                });
-            }
-
-            factory.function(tsz_solver::FunctionShape {
-                type_params: sig.type_params.clone(),
-                params: remaining_params,
-                this_type: None,
-                return_type: sig.return_type,
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: false,
-            })
-        }
-
         let mut candidates = vec![object_type];
         if let Some(sym_id) = self.resolve_identifier_symbol(object_expr_idx) {
             let sym_type = self.get_type_of_symbol(sym_id);
@@ -1174,7 +1115,10 @@ impl<'a> CheckerState<'a> {
             if let Some(shape) =
                 crate::query_boundaries::property_access::function_shape(self.ctx.types, candidate)
             {
-                let sig = signature_to_call_signature(&shape);
+                let sig =
+                    property_access_query::strict_bind_call_apply_signature_from_function_shape(
+                        &shape,
+                    );
                 if !call_targets.contains(&sig) {
                     call_targets.push(sig);
                 }
@@ -1209,7 +1153,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let factory = self.ctx.types.factory();
         let mut method_signatures = Vec::new();
 
         // `tsc` parity: `.bind(thisArg)` on an overloaded function whose call
@@ -1230,28 +1173,26 @@ impl<'a> CheckerState<'a> {
             && construct_targets.is_empty()
             && call_targets.iter().all(|sig| sig.this_type.is_none())
         {
-            let full_receiver = factory.callable(tsz_solver::CallableShape {
-                call_signatures: call_targets.clone(),
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            });
-            method_signatures.push(tsz_solver::CallSignature {
-                type_params: Vec::new(),
-                params: vec![tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string("thisArg")),
-                    type_id: TypeId::ANY,
-                    optional: false,
-                    rest: false,
-                }],
-                this_type: None,
-                return_type: full_receiver,
-                type_predicate: None,
-                is_method: false,
-            });
+            let full_receiver =
+                property_access_query::strict_bind_call_apply_call_only_callable_type(
+                    self.ctx.types,
+                    call_targets.clone(),
+                );
+            method_signatures.push(
+                property_access_query::strict_bind_call_apply_call_signature(
+                    Vec::new(),
+                    vec![
+                        property_access_query::strict_bind_call_apply_this_arg_param(
+                            self.ctx.types,
+                            TypeId::ANY,
+                        ),
+                    ],
+                    None,
+                    full_receiver,
+                    None,
+                    false,
+                ),
+            );
         }
 
         for (sig, is_constructor) in call_targets
@@ -1261,61 +1202,56 @@ impl<'a> CheckerState<'a> {
         {
             match property_name {
                 "apply" => {
-                    let method_sig = tsz_solver::CallSignature {
-                        type_params: sig.type_params.clone(),
-                        params: vec![
-                            tsz_solver::ParamInfo {
-                                name: Some(self.ctx.types.intern_string("thisArg")),
-                                type_id: method_this_arg_type(
-                                    sig,
-                                    is_constructor,
-                                    receiver_this_type,
+                    let method_sig = property_access_query::strict_bind_call_apply_call_signature(
+                        sig.type_params.clone(),
+                        vec![
+                            property_access_query::strict_bind_call_apply_this_arg_param(
+                                self.ctx.types,
+                                method_this_arg_type(sig, is_constructor, receiver_this_type),
+                            ),
+                            property_access_query::strict_bind_call_apply_args_param(
+                                self.ctx.types,
+                                property_access_query::strict_bind_call_apply_params_tuple_type(
+                                    self.ctx.types,
+                                    &sig.params,
                                 ),
-                                optional: false,
-                                rest: false,
-                            },
-                            tsz_solver::ParamInfo {
-                                name: Some(self.ctx.types.intern_string("args")),
-                                type_id: signature_params_as_tuple(factory, &sig.params),
-                                optional: true,
-                                rest: false,
-                            },
+                            ),
                         ],
-                        this_type: None,
-                        return_type: if is_constructor {
+                        None,
+                        if is_constructor {
                             TypeId::VOID
                         } else {
                             sig.return_type
                         },
-                        type_predicate: None,
-                        is_method: false,
-                    };
+                        None,
+                        false,
+                    );
                     if !method_signatures.contains(&method_sig) {
                         method_signatures.push(method_sig);
                     }
                 }
                 "call" => {
                     let mut params = Vec::with_capacity(1 + sig.params.len());
-                    params.push(tsz_solver::ParamInfo {
-                        name: Some(self.ctx.types.intern_string("thisArg")),
-                        type_id: method_this_arg_type(sig, is_constructor, receiver_this_type),
-                        optional: false,
-                        rest: false,
-                    });
+                    params.push(
+                        property_access_query::strict_bind_call_apply_this_arg_param(
+                            self.ctx.types,
+                            method_this_arg_type(sig, is_constructor, receiver_this_type),
+                        ),
+                    );
                     params.extend(sig.params.clone());
 
-                    let method_sig = tsz_solver::CallSignature {
-                        type_params: sig.type_params.clone(),
+                    let method_sig = property_access_query::strict_bind_call_apply_call_signature(
+                        sig.type_params.clone(),
                         params,
-                        this_type: None,
-                        return_type: if is_constructor {
+                        None,
+                        if is_constructor {
                             TypeId::VOID
                         } else {
                             sig.return_type
                         },
-                        type_predicate: None,
-                        is_method: false,
-                    };
+                        None,
+                        false,
+                    );
                     if !method_signatures.contains(&method_sig) {
                         method_signatures.push(method_sig);
                     }
@@ -1327,62 +1263,61 @@ impl<'a> CheckerState<'a> {
                         let this_arg_type =
                             bind_this_arg_type(sig, is_constructor, receiver_this_type);
                         let mut params = Vec::with_capacity(1 + prefix_len);
-                        params.push(tsz_solver::ParamInfo {
-                            name: Some(self.ctx.types.intern_string("thisArg")),
-                            type_id: this_arg_type,
-                            optional: false,
-                            rest: false,
-                        });
+                        params.push(
+                            property_access_query::strict_bind_call_apply_this_arg_param(
+                                self.ctx.types,
+                                this_arg_type,
+                            ),
+                        );
                         params.extend(sig.params.iter().take(prefix_len).cloned());
 
                         let remaining_params =
                             sig.params.iter().skip(prefix_len).cloned().collect();
-                        let method_sig = tsz_solver::CallSignature {
-                            type_params: sig.type_params.clone(),
-                            params,
-                            this_type: None,
-                            return_type: bound_callable_return_type(
-                                factory,
-                                sig,
-                                remaining_params,
-                                is_constructor,
-                            ),
-                            type_predicate: None,
-                            is_method: false,
-                        };
+                        let method_sig =
+                            property_access_query::strict_bind_call_apply_call_signature(
+                                sig.type_params.clone(),
+                                params,
+                                None,
+                                property_access_query::strict_bind_call_apply_bound_return_type(
+                                    self.ctx.types,
+                                    sig,
+                                    remaining_params,
+                                    is_constructor,
+                                ),
+                                None,
+                                false,
+                            );
                         if !method_signatures.contains(&method_sig) {
                             method_signatures.push(method_sig);
                         }
 
                         if prefix_len == 0 && sig.this_type.is_some() && !is_constructor {
-                            let generic_this_param = tsz_solver::TypeParamInfo {
-                                name: self.ctx.types.intern_string("TThis"),
-                                constraint: Some(this_arg_type),
-                                default: None,
-                                is_const: false,
-                                origin: tsz_solver::TypeParamOrigin::User,
-                            };
-                            let generic_this_type = factory.type_param(generic_this_param);
-                            let generic_bind_sig = tsz_solver::CallSignature {
-                                type_params: std::iter::once(generic_this_param)
+                            let (generic_this_param, generic_this_type) =
+                                property_access_query::strict_bind_call_apply_generic_this_param(
+                                    self.ctx.types,
+                                    this_arg_type,
+                                );
+                            let generic_bind_sig =
+                                property_access_query::strict_bind_call_apply_call_signature(
+                                    std::iter::once(generic_this_param)
                                     .chain(sig.type_params.clone())
                                     .collect(),
-                                params: vec![tsz_solver::ParamInfo {
-                                    name: Some(self.ctx.types.intern_string("thisArg")),
-                                    type_id: generic_this_type,
-                                    optional: false,
-                                    rest: false,
-                                }],
-                                this_type: None,
-                                return_type: bound_callable_return_type(
-                                    factory,
+                                    vec![
+                                        property_access_query::strict_bind_call_apply_this_arg_param(
+                                            self.ctx.types,
+                                            generic_this_type,
+                                        ),
+                                    ],
+                                    None,
+                                    property_access_query::strict_bind_call_apply_bound_return_type(
+                                        self.ctx.types,
                                     sig,
                                     sig.params.clone(),
                                     is_constructor,
-                                ),
-                                type_predicate: None,
-                                is_method: false,
-                            };
+                                    ),
+                                    None,
+                                    false,
+                                );
                             if !method_signatures.contains(&generic_bind_sig) {
                                 method_signatures.push(generic_bind_sig);
                             }
@@ -1393,27 +1328,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        match method_signatures.len() {
-            0 => None,
-            1 => Some(factory.function(tsz_solver::FunctionShape {
-                type_params: method_signatures[0].type_params.clone(),
-                params: method_signatures[0].params.clone(),
-                this_type: None,
-                return_type: method_signatures[0].return_type,
-                type_predicate: method_signatures[0].type_predicate,
-                is_constructor: false,
-                is_method: false,
-            })),
-            _ => Some(factory.callable(tsz_solver::CallableShape {
-                call_signatures: method_signatures,
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            })),
-        }
+        property_access_query::strict_bind_call_apply_method_type(self.ctx.types, method_signatures)
     }
 
     /// Report the module-compatibility error for `import.meta` when the
