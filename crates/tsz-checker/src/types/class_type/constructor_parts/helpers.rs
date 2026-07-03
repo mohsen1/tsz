@@ -1,5 +1,7 @@
 use crate::context::TypingRequest;
-use crate::query_boundaries::class_type::construct_signatures_for_type;
+use crate::query_boundaries::class_type::{
+    self as class_type_boundary, construct_signatures_for_type,
+};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -7,10 +9,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
-    TypePredicate, Visibility,
-};
+use tsz_solver::{CallSignature, IndexSignature, PropertyInfo, TypeId, TypeParamInfo};
 
 use super::build_data::StaticMemberBuildData;
 
@@ -52,7 +51,7 @@ impl<'a> CheckerState<'a> {
                 created
             }
         };
-        self.ctx.types.factory().lazy(ctor_def)
+        class_type_boundary::class_constructor_companion_lazy_type(self.ctx.types, ctor_def)
     }
 
     /// Get the constructor type of a class declaration (static members,
@@ -99,11 +98,12 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(existing) = target.as_mut() {
             if existing.value_type != incoming.value_type {
-                existing.value_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(existing.value_type, incoming.value_type);
+                existing.value_type =
+                    class_type_boundary::merged_static_late_bound_index_value_type(
+                        self.ctx.types,
+                        existing.value_type,
+                        incoming.value_type,
+                    );
             }
             existing.readonly &= incoming.readonly;
         } else {
@@ -142,23 +142,13 @@ impl<'a> CheckerState<'a> {
         if wants_string {
             self.merge_static_late_bound_index_value(
                 static_string_index,
-                IndexSignature {
-                    key_type: TypeId::STRING,
-                    value_type,
-                    readonly: false,
-                    param_name: None,
-                },
+                class_type_boundary::static_late_bound_index_signature(TypeId::STRING, value_type),
             );
         }
         if wants_number {
             self.merge_static_late_bound_index_value(
                 static_number_index,
-                IndexSignature {
-                    key_type: TypeId::NUMBER,
-                    value_type,
-                    readonly: false,
-                    param_name: None,
-                },
+                class_type_boundary::static_late_bound_index_signature(TypeId::NUMBER, value_type),
             );
         }
     }
@@ -229,7 +219,6 @@ impl<'a> CheckerState<'a> {
             all_static_member_names,
             construct_signatures,
         } = data;
-        let factory = self.ctx.types.factory();
         let estimated_cap = properties.len()
             + methods.len()
             + accessors.len()
@@ -249,31 +238,15 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let type_id = factory.callable(CallableShape {
-                call_signatures: signatures.clone(),
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            });
-            partial_ctor_props.push(PropertyInfo {
+            let type_id =
+                class_type_boundary::partial_static_method_type(self.ctx.types, signatures);
+            partial_ctor_props.push(class_type_boundary::partial_static_method_property(
                 name,
                 type_id,
-                write_type: type_id,
                 optional,
-                readonly: false,
-                is_method: true,
-                is_class_prototype: false,
-                visibility: method.visibility,
-                parent_id: current_sym,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+                method.visibility,
+                current_sym,
+            ));
         }
 
         for (&name, accessor) in accessors {
@@ -283,22 +256,14 @@ impl<'a> CheckerState<'a> {
             let read_type = accessor.getter.or(setter_type).unwrap_or(TypeId::UNKNOWN);
             let write_type = setter_type.or(accessor.getter).unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
-            partial_ctor_props.push(PropertyInfo {
+            partial_ctor_props.push(class_type_boundary::partial_static_accessor_property(
                 name,
-                type_id: read_type,
+                read_type,
                 write_type,
-                optional: false,
                 readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: accessor.visibility,
-                parent_id: current_sym,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+                accessor.visibility,
+                current_sym,
+            ));
         }
 
         if let Some(extra_property) = extra_property {
@@ -320,34 +285,21 @@ impl<'a> CheckerState<'a> {
         let final_names: FxHashSet<_> = partial_ctor_props.iter().map(|p| p.name).collect();
         for &name in all_static_member_names {
             if !final_names.contains(&name) {
-                partial_ctor_props.push(PropertyInfo {
+                partial_ctor_props.push(class_type_boundary::partial_static_placeholder_property(
                     name,
-                    type_id: TypeId::ANY,
-                    write_type: TypeId::ANY,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                    current_sym,
+                ));
             }
         }
 
-        factory.callable(CallableShape {
-            call_signatures: Vec::new(),
-            construct_signatures: construct_signatures.to_vec(),
-            properties: partial_ctor_props,
-            string_index: *static_string_index,
-            number_index: *static_number_index,
-            symbol: current_sym,
-            is_abstract: false,
-        })
+        class_type_boundary::partial_static_constructor_callable_type(
+            self.ctx.types,
+            current_sym,
+            partial_ctor_props,
+            construct_signatures,
+            *static_string_index,
+            *static_number_index,
+        )
     }
 
     pub(super) fn remap_inherited_construct_signatures(
@@ -410,14 +362,14 @@ impl<'a> CheckerState<'a> {
                             instantiate_type(self.ctx.types, sig.return_type, subst)
                         })
                     };
-                    CallSignature {
+                    class_type_boundary::class_construct_signature(
                         type_params,
                         params,
                         this_type,
                         return_type,
-                        type_predicate: sig.type_predicate,
-                        is_method: sig.is_method,
-                    }
+                        sig.type_predicate,
+                        sig.is_method,
+                    )
                 })
                 .collect(),
         )
@@ -438,33 +390,41 @@ impl<'a> CheckerState<'a> {
         Some(
             signatures
                 .iter()
-                .map(|sig| CallSignature {
+                .map(|sig| {
                     // In inherited constructors, class type params live on the deriving class.
                     // Reusing base signature type_params can incorrectly shadow substitutions.
-                    type_params: class_type_params.to_vec(),
-                    params: sig
+                    let params = sig
                         .params
                         .iter()
-                        .map(|p| ParamInfo {
-                            name: p.name,
-                            type_id: instantiate_type(self.ctx.types, p.type_id, substitution),
-                            optional: p.optional,
-                            rest: p.rest,
+                        .map(|p| {
+                            class_type_boundary::class_construct_param(
+                                p.name,
+                                instantiate_type(self.ctx.types, p.type_id, substitution),
+                                p.optional,
+                                p.rest,
+                            )
                         })
-                        .collect(),
-                    this_type: sig
+                        .collect();
+                    let this_type = sig
                         .this_type
-                        .map(|t| instantiate_type(self.ctx.types, t, substitution)),
-                    return_type: instance_type,
-                    type_predicate: sig.type_predicate.as_ref().map(|pred| TypePredicate {
-                        asserts: pred.asserts,
-                        target: pred.target,
-                        type_id: pred
-                            .type_id
-                            .map(|t| instantiate_type(self.ctx.types, t, substitution)),
-                        parameter_index: pred.parameter_index,
-                    }),
-                    is_method: sig.is_method,
+                        .map(|t| instantiate_type(self.ctx.types, t, substitution));
+                    let type_predicate = sig.type_predicate.as_ref().map(|pred| {
+                        class_type_boundary::class_type_predicate(
+                            pred.asserts,
+                            pred.target,
+                            pred.type_id
+                                .map(|t| instantiate_type(self.ctx.types, t, substitution)),
+                            pred.parameter_index,
+                        )
+                    });
+                    class_type_boundary::class_construct_signature(
+                        class_type_params.to_vec(),
+                        params,
+                        this_type,
+                        instance_type,
+                        type_predicate,
+                        sig.is_method,
+                    )
                 })
                 .collect(),
         )
@@ -518,8 +478,6 @@ impl<'a> CheckerState<'a> {
             return Vec::new();
         };
         let mut updates = Vec::new();
-        let factory = self.ctx.types.factory();
-
         for &param_idx in &type_parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -535,13 +493,10 @@ impl<'a> CheckerState<'a> {
             };
 
             let name = name_ident.escaped_text.clone();
-            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                name: self.ctx.types.intern_string(&name),
-                constraint: None,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            });
+            let type_id = class_type_boundary::enclosing_function_type_param_type(
+                self.ctx.types,
+                self.ctx.types.intern_string(&name),
+            );
             if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&param.name.0)
                 && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
             {

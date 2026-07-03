@@ -7,7 +7,9 @@
 //! window) observe the correct construct-signature arity instead of the
 //! default zero-parameter fallback.
 
-use crate::query_boundaries::class_type::construct_signatures_for_type;
+use crate::query_boundaries::class_type::{
+    self as class_type_boundary, construct_signatures_for_type,
+};
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::syntax_kind_ext;
@@ -30,9 +32,8 @@ impl<'a> CheckerState<'a> {
         class_type_params: &[TypeParamInfo],
     ) -> Option<TypeId> {
         let sym_id = current_sym?;
-        let factory = self.ctx.types.factory();
         let def_id = self.ctx.get_or_create_def_id(sym_id);
-        let lazy_ref = factory.lazy(def_id);
+        let lazy_ref = class_type_boundary::rough_self_instance_lazy_type(self.ctx.types, def_id);
         if class_type_params.is_empty() {
             Some(lazy_ref)
         } else {
@@ -47,7 +48,11 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::ANY)
                 })
                 .collect();
-            Some(factory.application(lazy_ref, args))
+            Some(class_type_boundary::rough_self_instance_application_type(
+                self.ctx.types,
+                lazy_ref,
+                args,
+            ))
         }
     }
 
@@ -141,13 +146,15 @@ impl<'a> CheckerState<'a> {
                     return Some(
                         base_sigs
                             .iter()
-                            .map(|sig| CallSignature {
-                                type_params: class_type_params.to_vec(),
-                                params: sig.params.clone(),
-                                this_type: sig.this_type,
-                                return_type: rough_sig_return_type,
-                                type_predicate: sig.type_predicate,
-                                is_method: false,
+                            .map(|sig| {
+                                class_type_boundary::class_construct_signature(
+                                    class_type_params.to_vec(),
+                                    sig.params.clone(),
+                                    sig.this_type,
+                                    rough_sig_return_type,
+                                    sig.type_predicate,
+                                    false,
+                                )
                             })
                             .collect(),
                     );
@@ -158,14 +165,14 @@ impl<'a> CheckerState<'a> {
                 sigs = inherited;
             } else {
                 // Default construct signature (like the default constructor).
-                sigs.push(CallSignature {
-                    type_params: class_type_params.to_vec(),
-                    params: Vec::new(),
-                    this_type: None,
-                    return_type: rough_sig_return_type,
-                    type_predicate: None,
-                    is_method: false,
-                });
+                sigs.push(class_type_boundary::class_construct_signature(
+                    class_type_params.to_vec(),
+                    Vec::new(),
+                    None,
+                    rough_sig_return_type,
+                    None,
+                    false,
+                ));
             }
         }
         sigs

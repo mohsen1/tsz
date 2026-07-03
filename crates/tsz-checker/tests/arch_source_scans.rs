@@ -55,11 +55,16 @@
 //! - `type_query_construction_boundary_scans`: const value/type-query callers
 //!   route literal/property/object/tuple construction through
 //!   `query_boundaries::type_query_construction`.
+//! - `class_partial_constructor_construction_boundary_scans`: class
+//!   constructor-part helpers route partial static-constructor solver
+//!   construction through `query_boundaries::class_type`.
 
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
+#[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]
+mod class_partial_constructor_construction_boundary_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
