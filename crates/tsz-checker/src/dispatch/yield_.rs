@@ -3,6 +3,7 @@
 use super::ExpressionDispatcher;
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::dispatch as dispatch_query;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -247,74 +248,77 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .current_yield_type()
                 .or_else(|| self.get_expected_yield_type(idx))
             {
-                let ctx_type =
-                    if yield_expr.asterisk_token {
-                        self.checker
-                            .ctx
-                            .arena
-                            .get(yield_expr.expression)
-                            .map(|n| n.kind)
-                            .and_then(|kind| {
-                                // Only direct call expressions (e.g. `yield* gen()`) should
-                                // receive a generator contextual type. Await expressions
-                                // (e.g. `yield* await promise.then(fn)`) must receive no
-                                // contextual type at all here: `await` propagates its
-                                // contextual type into the operand, and that would
-                                // over-constrain `.then()` callback inference, producing
-                                // spurious generic mismatches like TS2345/TS2504.
-                                if kind == syntax_kind_ext::AWAIT_EXPRESSION {
-                                    return Some(TypeId::UNKNOWN);
-                                }
-                                if kind != syntax_kind_ext::CALL_EXPRESSION {
-                                    return None;
-                                }
-                                if crate::query_boundaries::common::contains_type_parameters(
-                                    self.checker.ctx.types,
-                                    yield_ctx,
-                                ) || crate::query_boundaries::common::contains_infer_types(
-                                    self.checker.ctx.types,
-                                    yield_ctx,
-                                ) {
-                                    return Some(TypeId::UNKNOWN);
-                                }
-                                let expected_generator = self.get_expected_generator_type(idx)?;
-                                let result_ctx = outer_contextual.unwrap_or(TypeId::UNKNOWN);
-                                contextual_yield_star_return = Some(result_ctx);
-                                let generator_ctx = ContextualTypeContext::with_expected(
-                                    self.checker.ctx.types,
-                                    expected_generator,
-                                );
-                                let next_ctx = generator_ctx
-                                    .get_generator_next_type()
-                                    .unwrap_or(TypeId::UNKNOWN);
-                                let generator_name = if is_async_generator {
-                                    "AsyncGenerator"
-                                } else {
-                                    "Generator"
-                                };
-                                let lib_binders = self.checker.get_lib_binders();
-                                let generator_sym = self
-                                    .checker
-                                    .ctx
-                                    .binder
-                                    .get_global_type_with_libs(generator_name, &lib_binders)?;
-                                let generator_def =
-                                    self.checker.ctx.get_or_create_def_id(generator_sym);
-                                let generator_base =
-                                    self.checker.ctx.types.factory().lazy(generator_def);
-                                Some(self.checker.ctx.types.factory().application(
-                                    generator_base,
-                                    vec![yield_ctx, result_ctx, next_ctx],
-                                ))
-                            })
-                            .unwrap_or_else(|| {
-                                // yield *[x => ...] needs Array<TYield> as contextual type
-                                // so each array element gets TYield as its contextual type
-                                self.checker.ctx.types.factory().array(yield_ctx)
-                            })
-                    } else {
-                        yield_ctx
-                    };
+                let ctx_type = if yield_expr.asterisk_token {
+                    self.checker
+                        .ctx
+                        .arena
+                        .get(yield_expr.expression)
+                        .map(|n| n.kind)
+                        .and_then(|kind| {
+                            // Only direct call expressions (e.g. `yield* gen()`) should
+                            // receive a generator contextual type. Await expressions
+                            // (e.g. `yield* await promise.then(fn)`) must receive no
+                            // contextual type at all here: `await` propagates its
+                            // contextual type into the operand, and that would
+                            // over-constrain `.then()` callback inference, producing
+                            // spurious generic mismatches like TS2345/TS2504.
+                            if kind == syntax_kind_ext::AWAIT_EXPRESSION {
+                                return Some(TypeId::UNKNOWN);
+                            }
+                            if kind != syntax_kind_ext::CALL_EXPRESSION {
+                                return None;
+                            }
+                            if crate::query_boundaries::common::contains_type_parameters(
+                                self.checker.ctx.types,
+                                yield_ctx,
+                            ) || crate::query_boundaries::common::contains_infer_types(
+                                self.checker.ctx.types,
+                                yield_ctx,
+                            ) {
+                                return Some(TypeId::UNKNOWN);
+                            }
+                            let expected_generator = self.get_expected_generator_type(idx)?;
+                            let result_ctx = outer_contextual.unwrap_or(TypeId::UNKNOWN);
+                            contextual_yield_star_return = Some(result_ctx);
+                            let generator_ctx = ContextualTypeContext::with_expected(
+                                self.checker.ctx.types,
+                                expected_generator,
+                            );
+                            let next_ctx = generator_ctx
+                                .get_generator_next_type()
+                                .unwrap_or(TypeId::UNKNOWN);
+                            let generator_name = if is_async_generator {
+                                "AsyncGenerator"
+                            } else {
+                                "Generator"
+                            };
+                            let lib_binders = self.checker.get_lib_binders();
+                            let generator_sym = self
+                                .checker
+                                .ctx
+                                .binder
+                                .get_global_type_with_libs(generator_name, &lib_binders)?;
+                            let generator_def =
+                                self.checker.ctx.get_or_create_def_id(generator_sym);
+                            Some(dispatch_query::generator_context_application(
+                                self.checker.ctx.types,
+                                generator_def,
+                                yield_ctx,
+                                result_ctx,
+                                next_ctx,
+                            ))
+                        })
+                        .unwrap_or_else(|| {
+                            // yield *[x => ...] needs Array<TYield> as contextual type
+                            // so each array element gets TYield as its contextual type
+                            dispatch_query::yield_star_array_context(
+                                self.checker.ctx.types,
+                                yield_ctx,
+                            )
+                        })
+                } else {
+                    yield_ctx
+                };
                 self.checker
                     .clear_type_cache_recursive(yield_expr.expression);
                 request.read().normal_origin().contextual(ctx_type)
