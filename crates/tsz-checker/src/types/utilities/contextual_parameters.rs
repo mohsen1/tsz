@@ -1024,6 +1024,10 @@ impl<'a> CheckerState<'a> {
         if expected.is_intrinsic() {
             return expected;
         }
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
+        if !self.contextual_signature_normalization_session_clean(lazy_failures_at_entry) {
+            return self.normalize_contextual_signature_with_env_uncached(expected);
+        }
         let Some(eval_stamp) = self.assignability_eval_memo_stamp() else {
             return self.normalize_contextual_signature_with_env_uncached(expected);
         };
@@ -1040,7 +1044,6 @@ impl<'a> CheckerState<'a> {
         {
             return cached;
         }
-        let depth_exceeded_before = self.ctx.depth_exceeded.get();
         let normalized = self.normalize_contextual_signature_with_env_uncached(expected);
         let stamp_after = self.assignability_eval_memo_stamp().map(|eval_stamp| {
             (
@@ -1051,8 +1054,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.compiler_options.no_implicit_any,
             )
         });
-        if !depth_exceeded_before
-            && !self.ctx.depth_exceeded.get()
+        if self.contextual_signature_normalization_session_clean(lazy_failures_at_entry)
             && stamp_after == Some(stamp)
             && self.contextual_signature_normalization_cacheable(expected, normalized)
         {
@@ -1060,6 +1062,17 @@ impl<'a> CheckerState<'a> {
                 .cache_contextual_signature_normalization_result(expected, stamp, normalized);
         }
         normalized
+    }
+
+    fn contextual_signature_normalization_session_clean(
+        &self,
+        lazy_failures_at_entry: u64,
+    ) -> bool {
+        !self.ctx.eval_session.refs_resolution_fuel_exhausted()
+            && !self.ctx.eval_session.lazy_resolution_fuel_exhausted()
+            && !self.ctx.depth_exceeded.get()
+            && crate::query_boundaries::common::lazy_resolve_failure_count()
+                == lazy_failures_at_entry
     }
 
     fn contextual_signature_normalization_cacheable(
@@ -1071,6 +1084,10 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::contains_infer_types(self.ctx.types, ty)
                 || crate::query_boundaries::common::contains_this_type(self.ctx.types, ty)
                 || crate::query_boundaries::state::type_environment::contains_type_query_db(
+                    self.ctx.types,
+                    ty,
+                )
+                || crate::query_boundaries::common::contains_file_relative_content(
                     self.ctx.types,
                     ty,
                 )

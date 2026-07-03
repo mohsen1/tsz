@@ -322,6 +322,7 @@ impl<'a> CheckerContext<'a> {
                         .saturating_add(mem::size_of::<
                             env_eval_cache::ContextualSignatureNormalizationStamp,
                         >())
+                        .saturating_add(mem::size_of::<TypeId>())
                         .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
                 ),
             class_symbol_to_decl_cache_entries: class_symbol_to_decl_cache.len(),
