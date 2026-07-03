@@ -394,7 +394,10 @@ impl<'a> CheckerState<'a> {
         if get_conditional_type_id(self.ctx.types, props_type).is_some()
             && let Some(shape) = object_shape_for_type(self.ctx.types, props_type)
         {
-            let object = self.ctx.types.factory().object(shape.properties.clone());
+            let object = crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                self.ctx.types,
+                shape.properties.clone(),
+            );
             return Some(self.format_type_skip_object_display_alias(object));
         }
 
@@ -462,7 +465,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+        Some(self.format_type(
+            crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                self.ctx.types,
+                filtered_props,
+            ),
+        ))
     }
 
     fn jsx_conditional_display_has_lma_infer_metadata(display: &str) -> bool {
@@ -544,7 +552,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.format_type(self.ctx.types.factory().object(filtered_props)))
+        Some(self.format_type(
+            crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                self.ctx.types,
+                filtered_props,
+            ),
+        ))
     }
 
     fn jsx_final_conditional_else_display(display: &str) -> Option<String> {

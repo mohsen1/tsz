@@ -51,7 +51,12 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
-        let source_type = self.format_type(self.ctx.types.factory().object(properties));
+        let source_type = self.format_type(
+            crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                self.ctx.types,
+                properties,
+            ),
+        );
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_type, display_target],
@@ -265,7 +270,10 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
-        let attrs_type = self.ctx.types.factory().object(properties);
+        let attrs_type = crate::query_boundaries::checkers::jsx::object_type_from_properties(
+            self.ctx.types,
+            properties,
+        );
         if crate::query_boundaries::checkers::jsx::props_are_assignable(
             self, attrs_type, props_type,
         ) {

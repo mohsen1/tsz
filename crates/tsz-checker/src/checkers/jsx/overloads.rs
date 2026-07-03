@@ -729,6 +729,9 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
-        self.ctx.types.factory().object(properties)
+        crate::query_boundaries::checkers::jsx::object_type_from_properties(
+            self.ctx.types,
+            properties,
+        )
     }
 }

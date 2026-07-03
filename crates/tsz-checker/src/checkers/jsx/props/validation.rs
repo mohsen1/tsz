@@ -135,7 +135,10 @@ impl<'a> CheckerState<'a> {
                 }
             })
             .collect();
-        self.ctx.types.factory().object(properties)
+        crate::query_boundaries::checkers::jsx::object_type_from_properties(
+            self.ctx.types,
+            properties,
+        )
     }
 
     pub(in crate::checkers_domain::jsx) fn check_jsx_generic_spread_attrs_assignability(
@@ -881,7 +884,12 @@ impl<'a> CheckerState<'a> {
                 .cloned()
                 .collect();
             if filtered_props.len() != shape.properties.len() {
-                return self.format_type(self.ctx.types.factory().object(filtered_props));
+                return self.format_type(
+                    crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                        self.ctx.types,
+                        filtered_props,
+                    ),
+                );
             }
         }
 
@@ -1148,14 +1156,12 @@ impl<'a> CheckerState<'a> {
 
         let instance_type = self.get_class_instance_type_for_component(component_type)?;
         let param_name = self.ctx.types.intern_string("instance");
-        let callback = self
-            .ctx
-            .types
-            .factory()
-            .function(tsz_solver::FunctionShape::new(
-                vec![tsz_solver::ParamInfo::required(param_name, instance_type)],
-                TypeId::ANY,
-            ));
+        let callback = crate::query_boundaries::checkers::jsx::single_required_param_function_type(
+            self.ctx.types,
+            param_name,
+            instance_type,
+            TypeId::ANY,
+        );
         Some(self.ctx.types.factory().union2(TypeId::STRING, callback))
     }
 
@@ -1630,19 +1636,10 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
             && shape.is_method
         {
-            return self
-                .ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params: shape.type_params.clone(),
-                    params: shape.params.clone(),
-                    this_type: None,
-                    return_type: shape.return_type,
-                    type_predicate: shape.type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: false,
-                });
+            return crate::query_boundaries::checkers::jsx::function_type_without_this(
+                self.ctx.types,
+                shape.as_ref(),
+            );
         }
 
         type_id
