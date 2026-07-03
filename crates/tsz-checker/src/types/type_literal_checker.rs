@@ -1106,12 +1106,18 @@ impl<'a> CheckerState<'a> {
     /// - **`ObjectWithIndex`**: If has index signatures
     /// - **Object**: Plain object type otherwise
     pub(crate) fn get_type_from_type_literal(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::query_boundaries::construct_signatures::{
+            call_only_callable_type, method_function_type_from_call_signature,
+            type_literal_callable_type,
+        };
+        use crate::query_boundaries::type_construction::{
+            type_literal_extra_number_index_object, type_literal_object,
+            type_literal_object_with_index,
+        };
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
-        };
+        use tsz_solver::{CallSignature, IndexSignature, PropertyInfo};
         let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1649,27 +1655,11 @@ impl<'a> CheckerState<'a> {
                         .next()
                         .expect("sigs.len() == 1 guard ensures at least one element")
                         .signature;
-                    factory.function(FunctionShape {
-                        type_params: sig.type_params,
-                        params: sig.params,
-                        this_type: sig.this_type,
-                        return_type: sig.return_type,
-                        type_predicate: sig.type_predicate,
-                        is_constructor: false,
-                        is_method: true,
-                    })
+                    method_function_type_from_call_signature(self.ctx.types, &sig)
                 } else {
                     let merged_sigs: Vec<CallSignature> =
                         sigs.into_iter().map(|entry| entry.signature).collect();
-                    factory.callable(CallableShape {
-                        call_signatures: merged_sigs,
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    })
+                    call_only_callable_type(self.ctx.types, merged_sigs)
                 };
                 properties.push(PropertyInfo {
                     name: key.name,
@@ -1691,58 +1681,44 @@ impl<'a> CheckerState<'a> {
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            // `CallableShape` keeps the single-slot index convention: a `symbol`
-            // index rides in `string_index` (its `key_type` discriminates it).
-            let mut result = factory.callable(CallableShape {
+            let mut result = type_literal_callable_type(
+                self.ctx.types,
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index: string_index.or(symbol_index),
+                string_index,
                 number_index,
-                symbol: None,
-                is_abstract: has_abstract_construct_sig,
-            });
+                symbol_index,
+                has_abstract_construct_sig,
+            );
             for idx in extra_number_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    number_index: Some(idx),
-                    ..ObjectShape::default()
-                });
+                let member = type_literal_extra_number_index_object(self.ctx.types, idx);
                 result = self.ctx.types.intersect_types_raw2(result, member);
             }
             return result;
         }
 
         if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
-            let mut shape = ObjectShape {
+            let mut result = type_literal_object_with_index(
+                self.ctx.types,
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
-                ..ObjectShape::default()
-            };
-            if has_late_bound_members {
-                shape.mark_has_late_bound_members();
-            }
-            let mut result = factory.object_with_index(shape);
+                has_late_bound_members,
+            );
             // Record the hand-written `{ ... }` annotation so the printer never
             // repaints it with a utility-application display alias that shares
             // this content-interned id.
             self.ctx.types.mark_literal_object_annotation(result);
             for idx in extra_number_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    number_index: Some(idx),
-                    ..ObjectShape::default()
-                });
+                let member = type_literal_extra_number_index_object(self.ctx.types, idx);
                 result = self.ctx.types.intersect_types_raw2(result, member);
             }
             return result;
         }
 
-        let result = if has_late_bound_members {
-            factory.object_with_late_bound_members(properties, None)
-        } else {
-            factory.object_with_symbol(properties, None)
-        };
+        let result = type_literal_object(self.ctx.types, properties, has_late_bound_members);
         self.ctx.types.mark_literal_object_annotation(result);
         result
     }

@@ -34,6 +34,10 @@ const SIGNATURE_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
 /// The designated checker-side `CallSignature` data assembler.
 const SIGNATURE_DATA_BUILDER: &str = "src/checkers/signature_builder.rs";
 
+/// Type literals assemble AST-derived signature/index/property facts, but the
+/// solver shape construction belongs to query boundaries.
+const TYPE_LITERAL_CHECKER: &str = "src/types/type_literal_checker.rs";
+
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
@@ -46,13 +50,11 @@ fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<Str
         if trimmed.starts_with("//") {
             continue;
         }
-        // A `Shape {` token in return-type position (`fn f(..) -> Shape {`)
-        // is a function header, not a shape-literal construction.
-        if trimmed.contains("->") {
-            continue;
-        }
         for pattern in patterns {
             if line.contains(pattern) {
+                if pattern_is_return_type_header(line, pattern) {
+                    continue;
+                }
                 violations.push(format!(
                     "{relative}:{} contains `{pattern}`",
                     line_index + 1
@@ -60,6 +62,16 @@ fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<Str
             }
         }
     }
+}
+
+fn pattern_is_return_type_header(line: &str, pattern: &str) -> bool {
+    let Some(arrow_pos) = line.find("->") else {
+        return false;
+    };
+    let Some(pattern_pos) = line.find(pattern) else {
+        return false;
+    };
+    pattern_pos > arrow_pos && line[pattern_pos + pattern.len()..].trim().is_empty()
 }
 
 /// The issue #13022 modules must not intern signature-bearing (or
@@ -127,6 +139,35 @@ fn call_signature_literals_stay_in_signature_builder() {
     );
 }
 
+/// Type-literal lowering may collect `CallSignature`, `IndexSignature`, and
+/// `PropertyInfo` facts from AST members, but it must not directly intern
+/// solver `FunctionShape`/`CallableShape`/`ObjectShape` instances.
+#[test]
+fn type_literal_checker_routes_shape_construction_through_boundaries() {
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        ".function(",
+        ".callable(",
+        ".object_with_index(",
+        ".object_with_flags_and_symbol(",
+        ".object_with_late_bound_members(",
+        ".object_with_symbol(",
+        "CallableShape {",
+        "CallableShape::default()",
+        "FunctionShape {",
+        "ObjectShape {",
+        "ObjectShape::default()",
+    ];
+
+    let mut violations = Vec::new();
+    scan_for_patterns(TYPE_LITERAL_CHECKER, FORBIDDEN_PATTERNS, &mut violations);
+    assert!(
+        violations.is_empty(),
+        "type literal checker must route solver shape construction through \
+         query_boundaries helpers while keeping AST fact assembly local:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The boundary helpers this campaign introduced must keep their definitions
 /// in `query_boundaries/construct_signatures.rs` (not drift back into
 /// `common.rs` or call sites).
@@ -139,8 +180,10 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "call_signature_from_function_shape",
         "function_type_from_shape",
         "function_type_from_call_signature",
+        "method_function_type_from_call_signature",
         "call_only_callable_type",
         "construct_only_callable_type",
+        "type_literal_callable_type",
         "callable_with_signatures_replaced",
         "instantiated_callable_from_base",
         "map_function_shape_types",
@@ -156,6 +199,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
     for helper in [
         "call_only_callable_type",
         "construct_only_callable_type",
+        "type_literal_callable_type",
         "callable_with_signatures_replaced",
         "instantiated_callable_from_base",
         "map_function_shape_types",
@@ -163,6 +207,24 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         assert!(
             !common.contains(&format!("fn {helper}(")),
             "construction helper `{helper}` must not migrate into common.rs"
+        );
+    }
+}
+
+/// Object-shape helpers for inline type literals live in the construction
+/// boundary, not in checker call sites.
+#[test]
+fn type_construction_boundary_owns_type_literal_object_helpers() {
+    let source = fs::read_to_string(checker_path("src/query_boundaries/type_construction.rs"))
+        .expect("failed to read query_boundaries/type_construction.rs");
+    for helper in [
+        "type_literal_object_with_index",
+        "type_literal_extra_number_index_object",
+        "type_literal_object",
+    ] {
+        assert!(
+            source.contains(&format!("fn {helper}(")),
+            "query_boundaries::type_construction must own the `{helper}` helper"
         );
     }
 }
