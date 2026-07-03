@@ -710,11 +710,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let awaited_type = match callback_value_types.as_slice() {
-            [] => None,
-            [only] => Some(*only),
-            types => Some(self.ctx.types.factory().union(types.to_vec())),
-        };
+        let awaited_type =
+            query::thenable_callback_value_union(self.ctx.types, callback_value_types);
 
         ThenableAwaitInfo {
             awaited_type,
@@ -1830,7 +1827,7 @@ impl<'a> CheckerState<'a> {
                     new_members.push(*member);
                 }
             }
-            return self.ctx.types.factory().union(new_members);
+            return query::async_return_body_union(self.ctx.types, new_members);
         }
         return_type
     }

@@ -1,7 +1,7 @@
 //! Await expression type computation and Promise helper types.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::common as query;
+use crate::query_boundaries::checkers::promise as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -95,11 +95,12 @@ impl<'a> CheckerState<'a> {
             {
                 let promise_like_t = self.get_promise_like_type(contextual);
                 let promise_t = self.get_promise_type(contextual);
-                let mut members = vec![contextual, promise_like_t];
-                if let Some(pt) = promise_t {
-                    members.push(pt);
-                }
-                let union_context = self.ctx.types.factory().union(members);
+                let union_context = query::await_contextual_operand_type(
+                    self.ctx.types,
+                    contextual,
+                    promise_like_t,
+                    promise_t,
+                );
                 request.read().contextual(union_context)
             } else {
                 request.read().contextual_opt(None)
@@ -211,7 +212,10 @@ impl<'a> CheckerState<'a> {
                     awaited
                 })
                 .collect();
-            return (self.ctx.types.factory().union(unwrapped), changed);
+            return (
+                query::awaited_union_type(self.ctx.types, unwrapped),
+                changed,
+            );
         }
         // Unwrap a single thenable layer. The fast path matches the
         // Application form (`Promise<T>` / `PromiseLike<T>`) without
@@ -282,7 +286,7 @@ impl<'a> CheckerState<'a> {
             // The factory dedups (`T | T` to `T`) and may collapse single-member
             // unions back to the bare type: exactly the semantics we want for
             // `Awaited<T | Promise<T>> = T`.
-            return self.ctx.types.factory().union(unwrapped);
+            return query::awaited_union_type(self.ctx.types, unwrapped);
         }
 
         // Distribute over top-level intersections: tsc reduces `Awaited<A & B>`
@@ -295,7 +299,7 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .map(|m| self.compute_awaited_type(m, depth + 1))
                 .collect();
-            return self.ctx.types.factory().intersection(unwrapped);
+            return query::awaited_intersection_type(self.ctx.types, unwrapped);
         }
 
         // Non-union: recursively unwrap nested Promise<...> applications.
@@ -396,10 +400,11 @@ impl<'a> CheckerState<'a> {
                 && promise_like_base != TypeId::UNKNOWN
             {
                 // Create PromiseLike<T> application
-                return self
-                    .ctx
-                    .types
-                    .application(promise_like_base, vec![type_arg]);
+                return query::promise_application_type(
+                    self.ctx.types,
+                    promise_like_base,
+                    type_arg,
+                );
             }
         }
 
@@ -422,7 +427,11 @@ impl<'a> CheckerState<'a> {
             && promise_base != TypeId::ERROR
             && promise_base != TypeId::UNKNOWN
         {
-            return Some(self.ctx.types.application(promise_base, vec![type_arg]));
+            return Some(query::promise_application_type(
+                self.ctx.types,
+                promise_base,
+                type_arg,
+            ));
         }
         None
     }
