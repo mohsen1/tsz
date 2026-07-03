@@ -236,6 +236,38 @@ pub trait TypeApplicationEvalCache {
         _verdict: bool,
     ) {
     }
+
+    /// Look up a cached result for tsc's permissive-instantiation
+    /// false-branch gate (`getConditionalType`).
+    ///
+    /// The key is the original `(check, extends)` pair plus both compiler
+    /// option bits. The caller must publish only when the helper's instantiated
+    /// permissive relation was certified by the conditional-branch verdict cache
+    /// and the surrounding evaluation request stayed stable. Default returns
+    /// `None` so raw-interner backends opt out.
+    fn lookup_permissive_false_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Store a cached result for tsc's permissive-instantiation false-branch
+    /// gate. Default is a no-op. See
+    /// [`Self::lookup_permissive_false_branch_verdict`] for the required
+    /// publication gates.
+    fn insert_permissive_false_branch_verdict(
+        &self,
+        _check: TypeId,
+        _extends: TypeId,
+        _no_unchecked_indexed_access: bool,
+        _exact_optional_property_types: bool,
+        _verdict: bool,
+    ) {
+    }
 }
 
 /// Cache for the canonical `widen_type` result keyed by `TypeId`.

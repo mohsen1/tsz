@@ -85,6 +85,15 @@ impl QueryCache<'_> {
                     + std::mem::size_of::<bool>());
         }
 
+        // permissive_false_branch_cache: (TypeId, TypeId, bool, bool) -> bool
+        {
+            let map = self.permissive_false_branch_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<PermissiveFalseBranchCacheKey>()
+                    + std::mem::size_of::<bool>());
+        }
+
         // application_eval_cache: (DefId, SmallVec<[TypeId; 4]>, bool) -> TypeId
         {
             let map = self.application_eval_cache.borrow();

@@ -22,6 +22,8 @@ pub struct QueryCacheStatistics {
     pub closed_eval_cache_entries: usize,
     /// Number of memoized conditional-branch subtype verdicts (#8356 / #13097).
     pub conditional_branch_verdict_cache_entries: usize,
+    /// Number of memoized permissive-instantiation false-branch gate results.
+    pub permissive_false_branch_cache_entries: usize,
     /// Number of memoized application evaluation results.
     pub application_eval_cache_entries: usize,
     /// Number of times the application eval cache returned a hit.
@@ -79,6 +81,7 @@ impl QueryCacheStatistics {
         self.closed_eval_cache_entries += other.closed_eval_cache_entries;
         self.conditional_branch_verdict_cache_entries +=
             other.conditional_branch_verdict_cache_entries;
+        self.permissive_false_branch_cache_entries += other.permissive_false_branch_cache_entries;
         self.application_eval_cache_entries += other.application_eval_cache_entries;
         self.application_eval_cache_hits += other.application_eval_cache_hits;
         self.application_eval_cache_misses += other.application_eval_cache_misses;
@@ -123,6 +126,7 @@ impl QueryCacheStatistics {
         // (TypeId, TypeId, bool, bool) key + bool value ≈ 12 bytes.
         let conditional_verdict =
             self.conditional_branch_verdict_cache_entries * (BUCKET_OVERHEAD + 12);
+        let permissive_false = self.permissive_false_branch_cache_entries * (BUCKET_OVERHEAD + 12);
         let app_eval = self.application_eval_cache_entries * (BUCKET_OVERHEAD + 37);
         let elem = self.element_access_cache_entries * (BUCKET_OVERHEAD + 21);
         let spread = self.object_spread_cache_entries * (BUCKET_OVERHEAD + 4 + 24 + 256);
@@ -137,6 +141,7 @@ impl QueryCacheStatistics {
 
         eval + closed_eval
             + conditional_verdict
+            + permissive_false
             + app_eval
             + elem
             + spread
@@ -164,6 +169,11 @@ impl std::fmt::Display for QueryCacheStatistics {
             f,
             "  cond_branch_verdict:    {}",
             self.conditional_branch_verdict_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  permissive_false_branch:{}",
+            self.permissive_false_branch_cache_entries
         )?;
         writeln!(
             f,

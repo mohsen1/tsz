@@ -332,3 +332,150 @@ fn conditional_subtype_relation_tracks_exact_optional_property_types() {
         BranchRelation::Holds
     );
 }
+
+fn test_type_parameter(interner: &TypeInterner, name: &str) -> TypeId {
+    interner.type_param(crate::types::TypeParamInfo::simple(
+        interner.intern_string(name),
+    ))
+}
+
+#[test]
+fn permissive_false_branch_cache_publishes_after_stable_relation_probe() {
+    // Structural rule (#14351): for a generic conditional whose ordinary
+    // relation failed, the false branch is definitive only when the permissive
+    // instantiation also fails. Cache the original `(check, extends)` wrapper
+    // only after the instantiated permissive relation has a stable verdict.
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let check = test_type_parameter(&interner, "Value");
+
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    assert!(evaluator.permissive_false_branch_is_definitive(check, TypeId::NEVER));
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        1
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(TypeId::ANY, TypeId::NEVER, false, false),
+        Some(false)
+    );
+    assert_eq!(cache.statistics().permissive_false_branch_cache_entries, 1);
+
+    let mut shared_hit = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    assert!(shared_hit.permissive_false_branch_is_definitive(check, TypeId::NEVER));
+    let stats = shared_hit.cache_statistics();
+    assert_eq!(
+        stats.permissive_false_branch_entries, 1,
+        "shared hit should seed the evaluator-local mirror"
+    );
+    assert_eq!(
+        stats.conditional_subtype_entries, 0,
+        "shared wrapper hit should avoid rebuilding the permissive relation"
+    );
+}
+
+#[test]
+fn permissive_false_branch_cache_is_name_independent() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let renamed_check = test_type_parameter(&interner, "Renamed");
+
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    assert!(evaluator.permissive_false_branch_is_definitive(renamed_check, TypeId::NEVER));
+    assert_eq!(cache.statistics().permissive_false_branch_cache_entries, 1);
+}
+
+#[test]
+fn permissive_false_branch_shared_cache_skips_limited_resolver_mode() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let polluted_check = test_type_parameter(&interner, "Polluted");
+
+    cache.insert_permissive_false_branch_verdict(
+        polluted_check,
+        TypeId::NEVER,
+        false,
+        false,
+        false,
+    );
+
+    let mut limited_hit = TypeEvaluator::with_resolver(&cache, &cache)
+        .with_query_db(&cache)
+        .with_limited_resolver();
+    assert!(
+        limited_hit.permissive_false_branch_is_definitive(polluted_check, TypeId::NEVER),
+        "limited resolver mode must recompute instead of consuming the shared wrapper cache"
+    );
+    assert_eq!(
+        cache.lookup_permissive_false_branch_verdict(polluted_check, TypeId::NEVER, false, false),
+        Some(false),
+        "limited resolver mode must not overwrite shared wrapper cache entries"
+    );
+
+    let fresh_check = test_type_parameter(&interner, "FreshLimited");
+    let mut limited_publish = TypeEvaluator::with_resolver(&cache, &cache)
+        .with_query_db(&cache)
+        .with_limited_resolver();
+    assert!(limited_publish.permissive_false_branch_is_definitive(fresh_check, TypeId::NEVER));
+    assert_eq!(
+        cache.lookup_permissive_false_branch_verdict(fresh_check, TypeId::NEVER, false, false),
+        None,
+        "limited resolver mode must not publish shared wrapper cache entries"
+    );
+}
+
+#[test]
+fn permissive_false_branch_cache_skips_unstable_request_state() {
+    let interner = TypeInterner::new();
+    let cache = QueryCache::new(&interner);
+    let check = test_type_parameter(&interner, "Input");
+
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&cache);
+    evaluator.simulate_incomplete_request_verdict_for_test(TerminationKind::QueryOpBudget);
+    assert!(evaluator.permissive_false_branch_is_definitive(check, TypeId::NEVER));
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        0,
+        "incomplete request state must not seed the evaluator-local mirror"
+    );
+    assert_eq!(
+        cache.statistics().permissive_false_branch_cache_entries,
+        0,
+        "incomplete request state must not publish a shared wrapper verdict"
+    );
+    assert_eq!(
+        cache.lookup_conditional_branch_verdict(TypeId::ANY, TypeId::NEVER, false, false),
+        None,
+        "the existing branch-verdict cache remains the stability certificate"
+    );
+}
+
+#[test]
+fn permissive_false_branch_cache_clears_on_reset_and_option_flip() {
+    let interner = TypeInterner::new();
+    let check = test_type_parameter(&interner, "State");
+
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+    assert!(evaluator.permissive_false_branch_is_definitive(check, TypeId::NEVER));
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        1
+    );
+
+    evaluator.reset();
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        0
+    );
+
+    assert!(evaluator.permissive_false_branch_is_definitive(check, TypeId::NEVER));
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        1
+    );
+    evaluator.set_no_unchecked_indexed_access(true);
+    assert_eq!(
+        evaluator.cache_statistics().permissive_false_branch_entries,
+        0
+    );
+}
