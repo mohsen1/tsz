@@ -222,6 +222,38 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(candidates[0].owner, "<module>")
         self.assertEqual(candidates[0].name, "Cache")
 
+    def test_unit_structs_do_not_capture_later_local_maps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "pub struct DisplayBudget {",
+                        "    eval_memo: FxHashMap<TypeId, TypeId>,",
+                        "}",
+                        "pub struct DisplayBudgetScope;",
+                        "impl DisplayBudgetScope {",
+                        "    pub fn enter() {",
+                        "        let _budget = DisplayBudget {",
+                        "            eval_memo: FxHashMap::default(),",
+                        "        };",
+                        "    }",
+                        "}",
+                        "fn helper(memo: &mut FxHashMap<TypeId, bool>) {",
+                        "    memo.insert(TypeId::STRING, true);",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual([(candidate.owner, candidate.name) for candidate in candidates], [
+            ("DisplayBudget", "eval_memo")
+        ])
+
     def test_multiline_cache_field_type_is_reported(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -390,6 +422,131 @@ class CacheVisibilityReportTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertFalse(candidates[0].needs_review)
+
+    def test_checker_retained_cache_surfaces_are_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan(
+            [
+                root / "crates/tsz-checker/src/context",
+                root / "crates/tsz-checker/src/flow/control_flow",
+            ]
+        )
+        by_key = {
+            (candidate.path, candidate.owner, candidate.name): candidate
+            for candidate in candidates
+        }
+
+        expected = {
+            (
+                "crates/tsz-checker/src/context/aliases.rs",
+                "<module>",
+                "AccessorLevelsCache",
+            ),
+            (
+                "crates/tsz-checker/src/context/aliases.rs",
+                "<module>",
+                "MemberAccessInfoCache",
+            ),
+            (
+                "crates/tsz-checker/src/context/aliases.rs",
+                "<module>",
+                "CallbackMismatchMemo",
+            ),
+            (
+                "crates/tsz-checker/src/context/aliases.rs",
+                "<module>",
+                "FlowAnalysisCacheMap",
+            ),
+            (
+                "crates/tsz-checker/src/context/aliases.rs",
+                "<module>",
+                "ReexportResolutionCache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "enclosing_class_declares_member_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "NameResolutionDiagnostics",
+                "suggestion_scan_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "FlowSharedCaches",
+                "flow_switch_case_literal_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "FlowSharedCaches",
+                "flow_switch_all_distinct_literals_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "lazy_def_ids_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "type_queries_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "type_position_resolution_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "package_json_cache",
+            ),
+            (
+                "crates/tsz-checker/src/context/mod.rs",
+                "CheckerContext",
+                "inferred_return_type_memo",
+            ),
+            (
+                "crates/tsz-checker/src/flow/control_flow/core.rs",
+                "<module>",
+                "AliasBaseAssignmentCache",
+            ),
+            (
+                "crates/tsz-checker/src/flow/control_flow/core.rs",
+                "<module>",
+                "AliasPathAssignmentCache",
+            ),
+        }
+
+        for key in expected:
+            with self.subTest(key=key):
+                self.assertIn(key, by_key)
+                self.assertFalse(by_key[key].needs_review, by_key[key])
+
+    def test_display_budget_eval_memo_is_visible(self):
+        root = Path(__file__).resolve().parents[2]
+        candidates = self.module.scan([root / "crates/tsz-checker/src/error_reporter"])
+        by_key = {
+            (candidate.path, candidate.owner, candidate.name): candidate
+            for candidate in candidates
+        }
+
+        key = (
+            "crates/tsz-checker/src/error_reporter/display_budget.rs",
+            "DisplayBudget",
+            "eval_memo",
+        )
+        self.assertIn(key, by_key)
+        self.assertFalse(by_key[key].needs_review, by_key[key])
+        self.assertNotIn(
+            (
+                "crates/tsz-checker/src/error_reporter/display_budget.rs",
+                "DisplayBudgetScope",
+                "eval_memo",
+            ),
+            by_key,
+        )
 
     def test_solver_visitor_predicate_memos_are_visible(self):
         root = Path(__file__).resolve().parents[2]

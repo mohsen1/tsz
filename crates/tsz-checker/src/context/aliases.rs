@@ -31,12 +31,42 @@ pub(crate) type AccessorLevelsCacheValue = Option<(
 pub(crate) type AccessorLevelsCache =
     RefCell<FxHashMap<(NodeIndex, Atom, bool), AccessorLevelsCacheValue>>;
 
+#[must_use]
+pub(crate) fn accessor_levels_cache_entries(cache: &AccessorLevelsCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn accessor_levels_cache_estimated_size_bytes(cache: &AccessorLevelsCache) -> usize {
+    let cache = cache.borrow();
+    cache.capacity()
+        * (std::mem::size_of::<(NodeIndex, Atom, bool)>()
+            + std::mem::size_of::<AccessorLevelsCacheValue>()
+            + 8)
+}
+
 /// Per-file memo mapping `(class node, member-name Atom, is_static)` to the
 /// access-restriction classification produced by `find_member_access_info`,
 /// or `None` when the member is public/absent. Backs
 /// [`crate::context::CheckerContext::member_access_info_cache`].
 pub(crate) type MemberAccessInfoCache =
     RefCell<FxHashMap<(NodeIndex, Atom, bool), Option<crate::state::MemberAccessInfo>>>;
+
+#[must_use]
+pub(crate) fn member_access_info_cache_entries(cache: &MemberAccessInfoCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn member_access_info_cache_estimated_size_bytes(
+    cache: &MemberAccessInfoCache,
+) -> usize {
+    let cache = cache.borrow();
+    cache.capacity()
+        * (std::mem::size_of::<(NodeIndex, Atom, bool)>()
+            + std::mem::size_of::<Option<crate::state::MemberAccessInfo>>()
+            + 8)
+}
 
 /// Per-file memo for the contextual-callback return-type mismatch derivation
 /// (`raw_block_body_callback_mismatch`). Maps the inline callback argument node
@@ -45,9 +75,35 @@ pub(crate) type MemberAccessInfoCache =
 /// forced. Backs [`crate::context::CheckerContext::callback_mismatch_memo`].
 pub type CallbackMismatchMemo = FxHashMap<(NodeIndex, TypeId), Option<(usize, TypeId, TypeId)>>;
 
+#[must_use]
+pub(crate) fn callback_mismatch_memo_entries(cache: &CallbackMismatchMemo) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn callback_mismatch_memo_estimated_size_bytes(cache: &CallbackMismatchMemo) -> usize {
+    cache.capacity()
+        * (std::mem::size_of::<(NodeIndex, TypeId)>()
+            + std::mem::size_of::<Option<(usize, TypeId, TypeId)>>()
+            + 8)
+}
+
 /// Flow-analysis result memo: `(FlowNodeId, SymbolId, InitialTypeId) ->
 /// NarrowedTypeId`.
 pub type FlowAnalysisCacheMap = FxHashMap<(tsz_binder::FlowNodeId, SymbolId, TypeId), TypeId>;
+
+#[must_use]
+pub(crate) fn flow_analysis_cache_map_entries(cache: &FlowAnalysisCacheMap) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn flow_analysis_cache_map_estimated_size_bytes(cache: &FlowAnalysisCacheMap) -> usize {
+    cache.capacity()
+        * (std::mem::size_of::<(tsz_binder::FlowNodeId, SymbolId, TypeId)>()
+            + std::mem::size_of::<TypeId>()
+            + 8)
+}
 
 /// Stable-flow confirmation memo: `(SymbolId, DeclaredTypeId)` to the last
 /// `FlowNodeId` where flow analysis confirmed no narrowing.
@@ -116,6 +172,25 @@ pub type NamespaceExportsCache = FxHashMap<(usize, String), Option<SymbolTable>>
 /// programs (e.g. `ts-morph`) otherwise re-walk the entire `export *` graph
 /// from scratch for every distinct name, costing `O(names × export-edges)`.
 pub type ReexportResolutionCache = FxHashMap<(usize, String), Option<(SymbolId, usize)>>;
+
+#[must_use]
+pub(crate) fn reexport_resolution_cache_entries(cache: &ReexportResolutionCache) -> usize {
+    cache.len()
+}
+
+#[must_use]
+pub(crate) fn reexport_resolution_cache_estimated_size_bytes(
+    cache: &ReexportResolutionCache,
+) -> usize {
+    let mut size = cache.capacity()
+        * (std::mem::size_of::<(usize, String)>()
+            + std::mem::size_of::<Option<(SymbolId, usize)>>()
+            + 8);
+    for (_, export_name) in cache.keys() {
+        size += export_name.capacity();
+    }
+    size
+}
 
 #[must_use]
 pub(crate) fn namespace_exports_cache_entries(cache: &NamespaceExportsCache) -> usize {
@@ -279,6 +354,69 @@ mod tests {
                 >= 2 * (std::mem::size_of::<(usize, String)>()
                     + std::mem::size_of::<Option<SymbolTable>>())
         );
+    }
+
+    #[test]
+    fn file_session_alias_caches_report_entries_and_size() {
+        let accessor_cache = AccessorLevelsCache::default();
+        assert_eq!(accessor_levels_cache_entries(&accessor_cache), 0);
+        assert_eq!(
+            accessor_levels_cache_estimated_size_bytes(&accessor_cache),
+            0
+        );
+        accessor_cache
+            .borrow_mut()
+            .insert((NodeIndex(1), Atom(2), false), None);
+        assert_eq!(accessor_levels_cache_entries(&accessor_cache), 1);
+        assert!(accessor_levels_cache_estimated_size_bytes(&accessor_cache) > 0);
+
+        let member_cache = MemberAccessInfoCache::default();
+        assert_eq!(member_access_info_cache_entries(&member_cache), 0);
+        assert_eq!(
+            member_access_info_cache_estimated_size_bytes(&member_cache),
+            0
+        );
+        member_cache
+            .borrow_mut()
+            .insert((NodeIndex(3), Atom(4), true), None);
+        assert_eq!(member_access_info_cache_entries(&member_cache), 1);
+        assert!(member_access_info_cache_estimated_size_bytes(&member_cache) > 0);
+
+        let mut callback_cache = CallbackMismatchMemo::default();
+        assert_eq!(callback_mismatch_memo_entries(&callback_cache), 0);
+        assert_eq!(
+            callback_mismatch_memo_estimated_size_bytes(&callback_cache),
+            0
+        );
+        callback_cache.insert(
+            (NodeIndex(5), TypeId::STRING),
+            Some((1, TypeId::NUMBER, TypeId::BOOLEAN)),
+        );
+        assert_eq!(callback_mismatch_memo_entries(&callback_cache), 1);
+        assert!(callback_mismatch_memo_estimated_size_bytes(&callback_cache) > 0);
+    }
+
+    #[test]
+    fn retained_alias_caches_report_entries_and_size() {
+        let mut flow_cache = FlowAnalysisCacheMap::default();
+        assert_eq!(flow_analysis_cache_map_entries(&flow_cache), 0);
+        assert_eq!(flow_analysis_cache_map_estimated_size_bytes(&flow_cache), 0);
+        flow_cache.insert(
+            (tsz_binder::FlowNodeId(1), SymbolId(2), TypeId::STRING),
+            TypeId::NUMBER,
+        );
+        assert_eq!(flow_analysis_cache_map_entries(&flow_cache), 1);
+        assert!(flow_analysis_cache_map_estimated_size_bytes(&flow_cache) > 0);
+
+        let mut reexport_cache = ReexportResolutionCache::default();
+        assert_eq!(reexport_resolution_cache_entries(&reexport_cache), 0);
+        assert_eq!(
+            reexport_resolution_cache_estimated_size_bytes(&reexport_cache),
+            0
+        );
+        reexport_cache.insert((3, "value".to_string()), Some((SymbolId(4), 5)));
+        assert_eq!(reexport_resolution_cache_entries(&reexport_cache), 1);
+        assert!(reexport_resolution_cache_estimated_size_bytes(&reexport_cache) > 0);
     }
 
     #[test]
