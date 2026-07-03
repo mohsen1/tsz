@@ -326,10 +326,8 @@ impl<'a> CheckerState<'a> {
         let mut properties = Vec::with_capacity(shape.properties.len());
         for prop in &shape.properties {
             let prop_type = self.typebox_schema_static_type(prop.type_id, depth + 1)?;
-            let mut static_prop = tsz_solver::PropertyInfo::new(prop.name, prop_type);
-            static_prop.optional = prop.optional;
-            static_prop.readonly = prop.readonly;
-            static_prop.declaration_order = prop.declaration_order;
+            let static_prop =
+                diagnostic_query::static_schema_display_property_from_source(prop, prop_type);
             properties.push(static_prop);
         }
         Some(diagnostic_query::object_type_from_properties(
@@ -485,7 +483,7 @@ impl<'a> CheckerState<'a> {
         let element_type = self.evaluate_type_for_assignability(element_type);
         let element_type = self.widen_type_for_display(element_type);
         let element_type = self.normalize_assignability_display_type(element_type);
-        self.ctx.types.array(element_type)
+        diagnostic_query::display_array_type(self.ctx.types, element_type)
     }
 
     fn format_static_schema_array_structural_type(

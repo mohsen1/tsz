@@ -1,5 +1,6 @@
 //! Array-literal mismatch elaboration helpers for call errors.
 
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -24,7 +25,10 @@ impl<'a> CheckerState<'a> {
             // elaboration would emit TS2322 on `let x: [string, number?] =
             // ["foo", undefined]` even though tsc accepts it.
             if element.optional {
-                return Some(self.ctx.types.union2(element.type_id, TypeId::UNDEFINED));
+                return Some(diagnostic_query::display_union_with_undefined(
+                    self.ctx.types,
+                    element.type_id,
+                ));
             }
             return Some(element.type_id);
         }

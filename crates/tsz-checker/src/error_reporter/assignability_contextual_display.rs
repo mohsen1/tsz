@@ -96,7 +96,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let display_app = self.ctx.types.factory().application(app.base, display_args);
+        let display_app =
+            query_diagnostics::display_application_type(self.ctx.types, app.base, display_args);
         Some(self.format_type_for_assignability_message(display_app))
     }
 }

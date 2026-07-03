@@ -1,3 +1,4 @@
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -180,7 +181,12 @@ impl<'a> CheckerState<'a> {
         }
         let constraint = match param_info.constraint {
             Some(c) => c,
-            None => return Some(self.ctx.types.union2(cond.true_type, cond.false_type)),
+            None => {
+                return Some(diagnostic_query::display_union_type(
+                    self.ctx.types,
+                    vec![cond.true_type, cond.false_type],
+                ));
+            }
         };
         if crate::query_boundaries::assignability::is_fresh_subtype_of(
             db,
@@ -196,7 +202,10 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::assignability::is_fresh_subtype_of(db, m, constraint)
         });
         if has_overlap {
-            Some(self.ctx.types.union2(cond.true_type, cond.false_type))
+            Some(diagnostic_query::display_union_type(
+                self.ctx.types,
+                vec![cond.true_type, cond.false_type],
+            ))
         } else {
             None
         }

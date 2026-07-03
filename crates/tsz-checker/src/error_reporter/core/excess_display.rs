@@ -77,7 +77,7 @@ impl<'a> CheckerState<'a> {
                 if object_like.len() == 1 {
                     return object_like[0];
                 }
-                return tsz_solver::utils::union_or_single(self.ctx.types, object_like);
+                return query::display_union_or_single_type(self.ctx.types, object_like);
             }
         }
         ty
@@ -564,7 +564,7 @@ impl<'a> CheckerState<'a> {
         // overflow the stack while narrowing an excess-property function
         // parameter for display (issue #12455).
         let _display_guard = super::type_display::DisplayRecursionGuard::enter()?;
-        let key_type = self.ctx.types.literal_string_atom(prop_name);
+        let key_type = query::display_string_literal_atom_type(self.ctx.types, prop_name);
         if let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, ty) {
             let mut changed = false;
             let args = app
@@ -581,7 +581,8 @@ impl<'a> CheckerState<'a> {
                     }
                 })
                 .collect::<Vec<_>>();
-            return changed.then(|| self.ctx.types.factory().application(app.base, args));
+            return changed
+                .then(|| query::display_application_type(self.ctx.types, app.base, args));
         }
 
         let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
@@ -603,7 +604,7 @@ impl<'a> CheckerState<'a> {
             })
             .collect::<Vec<_>>();
         (!narrowed.is_empty() && narrowed.len() < members.len())
-            .then(|| tsz_solver::utils::union_or_single(self.ctx.types, narrowed))
+            .then(|| query::display_union_or_single_type(self.ctx.types, narrowed))
     }
 
     pub(in crate::error_reporter) fn normalize_assignability_union_display_order(

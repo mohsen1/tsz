@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
                 if kept.is_empty() {
                     return false;
                 }
-                self.ctx.types.factory().union_preserve_members(kept)
+                query_diagnostics::display_union_preserve_members_type(self.ctx.types, kept)
             }
             None => return false,
         };
@@ -309,15 +309,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let factory = self.ctx.types.factory();
-        let display_type = if is_rest {
-            let elem = factory.index_access(last_param.type_id, TypeId::NUMBER);
-            factory.array(elem)
-        } else {
-            let offset = index - rest_start;
-            let index_type = factory.literal_number(offset as f64);
-            factory.index_access(last_param.type_id, index_type)
-        };
+        let display_type = query_diagnostics::display_rest_parameter_type(
+            self.ctx.types,
+            last_param.type_id,
+            rest_start,
+            index,
+            is_rest,
+        );
         Some(self.format_type_for_assignability_message(display_type))
     }
 
@@ -557,7 +555,7 @@ impl<'a> CheckerState<'a> {
                 }) {
                 param_type
             } else {
-                self.ctx.types.union2(param_type, TypeId::UNDEFINED)
+                query_diagnostics::display_union_with_undefined(self.ctx.types, param_type)
             };
             let display = self.format_assignability_type_for_message(widened_param_type, arg_type);
             return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
@@ -657,9 +655,12 @@ impl<'a> CheckerState<'a> {
                     mapped_id,
                     &property_name,
                 )?;
-            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
-            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
-            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+            let property = query_diagnostics::mapped_display_property(
+                name,
+                type_id,
+                mapped.optional_modifier,
+                mapped.readonly_modifier,
+            );
             properties.push(property);
         }
 
@@ -774,7 +775,7 @@ impl<'a> CheckerState<'a> {
             }) {
             param_type
         } else {
-            self.ctx.types.union2(param_type, TypeId::UNDEFINED)
+            query_diagnostics::display_union_with_undefined(self.ctx.types, param_type)
         };
 
         Some(self.format_type_for_assignability_message(widened))

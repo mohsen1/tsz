@@ -172,13 +172,13 @@ impl<'a> CheckerState<'a> {
 
     fn param_matches_property_key_literal(&self, prop_name: Atom, ty: TypeId) -> bool {
         let prop_name = self.ctx.types.resolve_atom_ref(prop_name);
-        if self.ctx.types.literal_string(prop_name.as_ref()) == ty {
+        if query::display_string_literal_type(self.ctx.types, prop_name.as_ref()) == ty {
             return true;
         }
         prop_name
             .parse::<f64>()
             .ok()
-            .is_some_and(|num| self.ctx.types.literal_number(num) == ty)
+            .is_some_and(|num| query::display_number_literal_type(self.ctx.types, num) == ty)
     }
 
     fn normalize_excess_display_type_for_property(
@@ -419,7 +419,7 @@ impl<'a> CheckerState<'a> {
         if args == app.args {
             ty
         } else {
-            self.ctx.types.factory().application(app.base, args)
+            query::display_application_type(self.ctx.types, app.base, args)
         }
     }
 
@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
             return if args == app.args {
                 ty
             } else {
-                self.ctx.types.factory().application(app.base, args)
+                query::display_application_type(self.ctx.types, app.base, args)
             };
         }
 
@@ -461,7 +461,7 @@ impl<'a> CheckerState<'a> {
             return if normalized == members {
                 ty
             } else {
-                self.ctx.types.factory().union_preserve_members(normalized)
+                query::display_union_preserve_members_type(self.ctx.types, normalized)
             };
         }
 
@@ -473,7 +473,7 @@ impl<'a> CheckerState<'a> {
             return if normalized == members {
                 ty
             } else {
-                self.ctx.types.factory().intersection(normalized)
+                query::display_intersection_type(self.ctx.types, normalized)
             };
         }
 
@@ -575,7 +575,7 @@ impl<'a> CheckerState<'a> {
             if args == app.args {
                 ty
             } else {
-                self.ctx.types.factory().application(app.base, args)
+                query::display_application_type(self.ctx.types, app.base, args)
             }
         } else if let Some(shape) = query::function_shape(self.ctx.types, ty) {
             let params: Vec<_> = shape
@@ -600,14 +600,16 @@ impl<'a> CheckerState<'a> {
                 )
             }
         } else if let Some(members) = query::union_members(self.ctx.types, ty) {
-            self.ctx.types.factory().union_preserve_members(
+            query::display_union_preserve_members_type(
+                self.ctx.types,
                 members
                     .iter()
                     .map(|&member| self.normalize_excess_display_type(member))
                     .collect(),
             )
         } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
-            self.ctx.types.factory().intersection(
+            query::display_intersection_type(
+                self.ctx.types,
                 members
                     .iter()
                     .map(|&member| self.normalize_excess_display_type(member))
@@ -788,7 +790,7 @@ impl<'a> CheckerState<'a> {
                 if normalized == members {
                     ty
                 } else {
-                    self.ctx.types.factory().union_preserve_members(normalized)
+                    query::display_union_preserve_members_type(self.ctx.types, normalized)
                 }
             } else if query::function_shape(self.ctx.types, ty).is_some_and(|shape| {
                 crate::query_boundaries::common::is_conditional_type(
@@ -836,7 +838,7 @@ impl<'a> CheckerState<'a> {
                     if args == app.args {
                         evaluated
                     } else {
-                        self.ctx.types.factory().application(app.base, args)
+                        query::display_application_type(self.ctx.types, app.base, args)
                     }
                 } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
                     let mut params = Vec::with_capacity(shape.params.len());
@@ -990,7 +992,7 @@ impl<'a> CheckerState<'a> {
                             return evaluated;
                         }
                     }
-                    self.ctx.types.factory().union_preserve_members(normalized)
+                    query::display_union_preserve_members_type(self.ctx.types, normalized)
                 } else if let Some(members) = query::intersection_members(self.ctx.types, evaluated)
                 {
                     let mut normalized = Vec::with_capacity(members.len());
@@ -1005,7 +1007,7 @@ impl<'a> CheckerState<'a> {
                             return evaluated;
                         }
                     }
-                    self.ctx.types.factory().intersection(normalized)
+                    query::display_intersection_type(self.ctx.types, normalized)
                 } else {
                     evaluated
                 }
@@ -1026,7 +1028,7 @@ impl<'a> CheckerState<'a> {
             if normalized == members {
                 ty
             } else {
-                self.ctx.types.factory().union_preserve_members(normalized)
+                query::display_union_preserve_members_type(self.ctx.types, normalized)
             }
         } else if let Some(app) = query::type_application(self.ctx.types, ty) {
             if query::preserves_named_application_base(self.ctx.types, app.base) {
@@ -1045,7 +1047,7 @@ impl<'a> CheckerState<'a> {
                 if args == app.args {
                     ty
                 } else {
-                    self.ctx.types.factory().application(app.base, args)
+                    query::display_application_type(self.ctx.types, app.base, args)
                 }
             } else {
                 let evaluated =
@@ -1121,7 +1123,7 @@ impl<'a> CheckerState<'a> {
                 if args == app.args {
                     evaluated
                 } else {
-                    self.ctx.types.factory().application(app.base, args)
+                    query::display_application_type(self.ctx.types, app.base, args)
                 }
             } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
                 let mut params = Vec::with_capacity(shape.params.len());
@@ -1260,7 +1262,7 @@ impl<'a> CheckerState<'a> {
                         return evaluated;
                     }
                 }
-                self.ctx.types.factory().intersection(normalized)
+                query::display_intersection_type(self.ctx.types, normalized)
             } else {
                 evaluated
             }
@@ -1360,11 +1362,12 @@ impl<'a> CheckerState<'a> {
                         &property_name,
                     )?;
                 let type_id = self.normalize_excess_display_type_for_property(Some(name), type_id);
-                let mut property = tsz_solver::PropertyInfo::new(name, type_id);
-                property.optional =
-                    mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
-                property.readonly =
-                    mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+                let property = query::mapped_display_property(
+                    name,
+                    type_id,
+                    mapped.optional_modifier,
+                    mapped.readonly_modifier,
+                );
                 properties.push(property);
             }
 
@@ -1390,7 +1393,7 @@ impl<'a> CheckerState<'a> {
                     }
                 })
                 .collect();
-            changed.then(|| self.ctx.types.factory().intersection(remapped))
+            changed.then(|| query::display_intersection_type(self.ctx.types, remapped))
         } else if let Some(members) = query::union_members(self.ctx.types, ty) {
             let mut changed = false;
             let remapped: Vec<_> = members
@@ -1409,7 +1412,7 @@ impl<'a> CheckerState<'a> {
                     }
                 })
                 .collect();
-            changed.then(|| self.ctx.types.factory().union(remapped))
+            changed.then(|| query::display_union_type(self.ctx.types, remapped))
         } else {
             None
         }

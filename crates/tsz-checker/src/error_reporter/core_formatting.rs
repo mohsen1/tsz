@@ -1,4 +1,5 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1283,7 +1284,7 @@ impl<'a> CheckerState<'a> {
         // the source's base constraint is nullable.  Example:
         //   source `T & U` where constraints are `string | ... | undefined`
         //   target `string | null` must stay `string | null` (not `string`).
-        let other_base = crate::query_boundaries::diagnostics::get_base_constraint_for_display(
+        let other_base = diagnostic_query::get_base_constraint_for_display(
             self.ctx.types.as_type_database(),
             other,
         );
