@@ -752,21 +752,11 @@ impl<'a> CheckerState<'a> {
         // Only fall back for intersections; other shapes are handled by the
         // direct `query::object_shape` path on the call site.
         query::intersection_members(self.ctx.types, type_id)?;
-        match tsz_solver::objects::collect_properties(type_id, self.ctx.types, &self.ctx) {
-            tsz_solver::objects::PropertyCollectionResult::Properties {
-                properties,
-                string_index,
-                number_index,
-                symbol_index,
-            } => Some(std::sync::Arc::new(tsz_solver::ObjectShape {
-                properties,
-                string_index,
-                number_index,
-                symbol_index,
-                ..tsz_solver::ObjectShape::default()
-            })),
-            _ => None,
-        }
+        crate::query_boundaries::intersection_display::collected_properties_object_shape(
+            self.ctx.types,
+            &self.ctx,
+            type_id,
+        )
     }
 
     pub(super) fn try_emit_nested_discriminated_union_assignability_error(
@@ -1566,36 +1556,6 @@ impl<'a> CheckerState<'a> {
             prop_names.extend(property_names);
         }
 
-        if prop_names.is_empty() {
-            return None;
-        }
-
-        let mut props = Vec::with_capacity(prop_names.len());
-        for name in prop_names {
-            if props
-                .iter()
-                .any(|prop: &tsz_solver::PropertyInfo| prop.name == name)
-            {
-                continue;
-            }
-            props.push(tsz_solver::PropertyInfo {
-                name,
-                type_id: TypeId::ANY,
-                write_type: TypeId::ANY,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: tsz_common::Visibility::Public,
-                parent_id: None,
-                declaration_order: props.len() as u32,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
-        }
-
-        Some(self.ctx.types.factory().object(props))
+        query::excess_property_any_object_type_from_names(self.ctx.types, prop_names)
     }
 }
