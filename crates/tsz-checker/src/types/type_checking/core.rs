@@ -6,6 +6,7 @@
 //! `type_alias_checking.rs`.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_checking as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -1419,7 +1420,7 @@ impl<'a> CheckerState<'a> {
                         }
                         let lit = self.ctx.arena.get_literal(node)?;
                         tsz_common::numeric::parse_numeric_literal_value(&lit.text)
-                            .map(|value| self.ctx.types.literal_number(value))
+                            .map(|value| query::type_checking_literal_number(self.ctx.types, value))
                     });
                 let source_type = literal_source.unwrap_or(default_value_type);
                 let source_for_display = literal_source

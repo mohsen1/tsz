@@ -5,7 +5,7 @@ use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, Property
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, TypeParamInfo, TypeParamOrigin};
+use tsz_solver::TypeId;
 
 /// Per-position record for a declaration's type parameter list.
 ///
@@ -174,13 +174,9 @@ impl<'a> CheckerState<'a> {
 
         let mut updates = Vec::with_capacity(param_syntax.len());
         for &(name_node, _, _, ref name, name_atom, is_const) in &param_syntax {
-            let info = TypeParamInfo {
-                name: name_atom,
-                constraint: None,
-                default: None,
-                is_const,
-                origin: TypeParamOrigin::User,
-            };
+            let info = crate::query_boundaries::type_checking::user_type_param_info(
+                name_atom, None, None, is_const,
+            );
             let type_id = self.intern_type_param_for_decl(name_node, info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name.clone(), previous, false));

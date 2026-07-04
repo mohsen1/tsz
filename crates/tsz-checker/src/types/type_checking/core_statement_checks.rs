@@ -4,6 +4,7 @@
 //! Extracted from `core.rs` to keep module size manageable.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -141,7 +142,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(pt) = promise_t {
                         members.push(pt);
                     }
-                    self.ctx.types.factory().union(members)
+                    query::type_checking_union(self.ctx.types, members)
                 } else {
                     contextual_expected_type
                 };
@@ -824,17 +825,7 @@ impl<'a> CheckerState<'a> {
         };
         let name = ident.escaped_text.clone();
         let atom = self.ctx.types.intern_string(&name);
-        let provisional_type_id = self
-            .ctx
-            .types
-            .factory()
-            .type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: None,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            });
+        let provisional_type_id = query::user_type_param(self.ctx.types, atom, None, None, false);
         let previous = self
             .ctx
             .type_parameter_scope
@@ -1090,17 +1081,8 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let constrained_type_id = self
-            .ctx
-            .types
-            .factory()
-            .type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: Some(constraint_type),
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            });
+        let constrained_type_id =
+            query::user_type_param(self.ctx.types, atom, Some(constraint_type), None, false);
         self.ctx
             .type_parameter_scope
             .insert(name.clone(), constrained_type_id);

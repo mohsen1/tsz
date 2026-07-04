@@ -1,5 +1,6 @@
 //! Follow-up duplicate and merged declaration diagnostics.
 
+use crate::query_boundaries::type_checking as type_checking_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
@@ -453,18 +454,12 @@ impl<'a> CheckerState<'a> {
                                 TypeId::ANY
                             };
                             self.pop_type_parameters(tp_updates);
-                            self.ctx
-                                .types
-                                .factory()
-                                .function(tsz_solver::FunctionShape {
-                                    type_params,
-                                    params,
-                                    this_type: None,
-                                    return_type,
-                                    type_predicate: None,
-                                    is_constructor: false,
-                                    is_method: true,
-                                })
+                            type_checking_query::method_function_type(
+                                self.ctx.types,
+                                type_params,
+                                params,
+                                return_type,
+                            )
                         } else if sig.type_annotation.is_some() {
                             self.get_type_from_type_node(sig.type_annotation)
                         } else {
