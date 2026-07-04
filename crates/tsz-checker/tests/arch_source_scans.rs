@@ -143,6 +143,10 @@
 //! - `js_constructor_surface_construction_boundary_scans`: checked-JS
 //!   constructor/prototype instance surfaces route through
 //!   `query_boundaries::type_computation::complex`.
+//! - `complex_constructor_surface_construction_boundary_scans`: complex
+//!   constructor contextual inference routes evaluated signature, promise
+//!   contextual union, and intersection-member surfaces through
+//!   `query_boundaries::type_computation::complex`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -177,6 +181,8 @@ mod common_boundary_export_ratchets;
 mod commonjs_json_export_surface_construction_boundary_scans;
 #[path = "arch_source_scans/commonjs_resolution_export_surface_construction_boundary_scans.rs"]
 mod commonjs_resolution_export_surface_construction_boundary_scans;
+#[path = "arch_source_scans/complex_constructor_surface_construction_boundary_scans.rs"]
+mod complex_constructor_surface_construction_boundary_scans;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]
