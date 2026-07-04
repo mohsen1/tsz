@@ -7,9 +7,13 @@ use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, contains_index_access_with_type_parameter_object,
-    contains_index_access_with_variadic_tuple_object, is_type_parameter_type,
-    tuple_elements_for_type, tuple_slice_variable_rest_offset,
+    array_element_type_for_type, array_spread_rest_param_is_bare_type_param,
+    contains_index_access_with_type_parameter_object,
+    contains_index_access_with_variadic_tuple_object, expanded_tuple_spread_len,
+    generic_type_parameter_spread_marker_type, is_type_parameter_type,
+    open_spread_tail_needs_marker, optional_tuple_element_argument_type,
+    sensitive_argument_placeholder_type, spread_argument_marker_type, tuple_elements_for_type,
+    tuple_slice_variable_rest_offset, type_param_variadic_tuple_spread,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -17,26 +21,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeId};
-
-const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
-
-/// Whether a spread `...v` must be kept whole (single `[...A]` marker) rather
-/// than destructured through its constraint's tuple elements. True only for a
-/// type parameter whose apparent tuple is *variadic* (has a rest element, e.g.
-/// `A extends readonly [L, ...ReadonlyArray<L>]`): such spreads have
-/// indeterminate length and their identity must survive so `f<A>(...v: A):
-/// A[number]`-style rest inference infers `A` itself, not a reconstructed
-/// tuple. A *fixed*-length tuple constraint (`[number, number]`) stays
-/// positionally expandable, so multi-spread combos (`f(...u, ...v)`) keep
-/// inferring as before.
-pub(super) fn type_param_variadic_tuple_spread(
-    db: &dyn tsz_solver::construction::TypeDatabase,
-    spread_type: TypeId,
-    elems: &[TupleElement],
-) -> bool {
-    is_type_parameter_type(db, spread_type) && elems.iter().any(|elem| elem.rest)
-}
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn generic_function_argument_has_own_type_params(&self, arg_idx: NodeIndex) -> bool {
@@ -360,9 +345,6 @@ impl<'a> CheckerState<'a> {
     where
         F: FnMut(usize, usize) -> Option<TypeId>,
     {
-        use tsz_solver::FunctionShape;
-        let factory = self.ctx.types.factory();
-
         // Pre-create a single placeholder for skipped sensitive arguments.
         // CRITICAL: The placeholder must have at least one parameter so that
         // `is_contextually_sensitive` returns `true`, which causes
@@ -370,24 +352,8 @@ impl<'a> CheckerState<'a> {
         // type inference. A zero-parameter placeholder would have
         // `is_contextually_sensitive = false`, causing it to be included in inference
         // and incorrectly constraining type parameters (e.g., `T = () => any`).
-        let sensitive_placeholder = skip_sensitive_indices.map(|_| {
-            let placeholder_param_name = self.ctx.types.intern_string("__sensitive_arg__");
-            let shape = FunctionShape {
-                params: vec![tsz_solver::ParamInfo {
-                    name: Some(placeholder_param_name),
-                    type_id: TypeId::ANY,
-                    optional: true,
-                    rest: false,
-                }],
-                return_type: TypeId::ANY,
-                this_type: None,
-                type_params: vec![],
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            };
-            factory.function(shape)
-        });
+        let sensitive_placeholder =
+            skip_sensitive_indices.map(|_| sensitive_argument_placeholder_type(self.ctx.types));
 
         // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)
         let mut expanded_count = 0usize;
@@ -414,7 +380,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type)
                     && !type_param_variadic_tuple_spread(self.ctx.types, spread_type, &elems)
                 {
-                    expanded_count += self.expanded_tuple_spread_len(&elems);
+                    expanded_count += expanded_tuple_spread_len(self.ctx.types, &elems);
                     continue;
                 }
                 // Check if it's an array literal spread (skip parentheses)
@@ -629,8 +595,10 @@ impl<'a> CheckerState<'a> {
                                 // into TS2345/TS2554).
                                 continue;
                             }
-                            preserve_open_tail =
-                                self.open_spread_tail_needs_marker(callable_ctx.callable_type);
+                            preserve_open_tail = open_spread_tail_needs_marker(
+                                self.ctx.types,
+                                callable_ctx.callable_type,
+                            );
                         }
                         for elem in &elems {
                             if elem.rest {
@@ -667,14 +635,11 @@ impl<'a> CheckerState<'a> {
                                                 &mut effective_index,
                                             );
                                         } else {
-                                            let sub_type = if sub.optional {
-                                                self.ctx
-                                                    .types
-                                                    .factory()
-                                                    .union2(sub.type_id, TypeId::UNDEFINED)
-                                            } else {
-                                                sub.type_id
-                                            };
+                                            let sub_type = optional_tuple_element_argument_type(
+                                                self.ctx.types,
+                                                sub.type_id,
+                                                sub.optional,
+                                            );
                                             arg_types.push(sub_type);
                                             effective_index += 1;
                                         }
@@ -688,14 +653,11 @@ impl<'a> CheckerState<'a> {
                                     );
                                 }
                             } else {
-                                let elem_type = if elem.optional {
-                                    self.ctx
-                                        .types
-                                        .factory()
-                                        .union2(elem.type_id, TypeId::UNDEFINED)
-                                } else {
-                                    elem.type_id
-                                };
+                                let elem_type = optional_tuple_element_argument_type(
+                                    self.ctx.types,
+                                    elem.type_id,
+                                    elem.optional,
+                                );
                                 arg_types.push(elem_type);
                                 effective_index += 1;
                             }
@@ -714,7 +676,7 @@ impl<'a> CheckerState<'a> {
                         let marker_type = self
                             .declared_generic_indexed_spread_type(spread_expression)
                             .unwrap_or(spread_type);
-                        arg_types.push(self.spread_argument_marker_type(marker_type));
+                        arg_types.push(spread_argument_marker_type(self.ctx.types, marker_type));
                         effective_index += 1;
                         continue;
                     }
@@ -738,12 +700,8 @@ impl<'a> CheckerState<'a> {
                         // tuple containing the array), which fails constraint
                         // checks like `T extends (string|number|boolean)[]`
                         // because `string[]` (the array) is not an element type.
-                        let spread_marker = self.ctx.types.tuple(vec![TupleElement {
-                            type_id: spread_type,
-                            name: None,
-                            optional: false,
-                            rest: true,
-                        }]);
+                        let spread_marker =
+                            generic_type_parameter_spread_marker_type(self.ctx.types, spread_type);
                         arg_types.push(spread_marker);
                         effective_index += 1;
                         continue;
@@ -900,10 +858,12 @@ impl<'a> CheckerState<'a> {
                             // materialization, and a rest *tuple* (`...args: [...,
                             // cb]`) keeps the aggregate-rest path; neither is
                             // remarked here.
-                            if self.array_spread_rest_param_is_bare_type_param(
+                            if array_spread_rest_param_is_bare_type_param(
+                                self.ctx.types,
                                 callable_ctx.callable_type,
                             ) {
-                                arg_types.push(self.spread_argument_marker_type(spread_type));
+                                arg_types
+                                    .push(spread_argument_marker_type(self.ctx.types, spread_type));
                                 effective_index += 1;
                                 continue;
                             }
@@ -1604,20 +1564,6 @@ impl<'a> CheckerState<'a> {
         Some((literal.elements.nodes.clone(), true))
     }
 
-    fn expanded_tuple_spread_len(&self, elems: &[TupleElement]) -> usize {
-        let mut count = 0;
-        for elem in elems {
-            if elem.rest
-                && let Some(sub_elems) = tuple_elements_for_type(self.ctx.types, elem.type_id)
-            {
-                count += self.expanded_tuple_spread_len(&sub_elems);
-            } else {
-                count += 1;
-            }
-        }
-        count
-    }
-
     fn spread_expression_from_node(
         &self,
         spread_idx: NodeIndex,
@@ -1660,110 +1606,13 @@ impl<'a> CheckerState<'a> {
         effective_index: &mut usize,
     ) {
         if preserve_open_tail {
-            arg_types.push(self.spread_argument_marker_type(rest_type));
+            arg_types.push(spread_argument_marker_type(self.ctx.types, rest_type));
             *effective_index += 1;
         } else if let Some(inner) = array_element_type_for_type(self.ctx.types, rest_type) {
             arg_types.push(inner);
             *effective_index += 1;
         }
         // else: unknown rest type — skip (no args pushed)
-    }
-
-    /// Decide whether an open-ended (array-backed) tuple-spread tail must be
-    /// preserved as a spread-argument marker.
-    ///
-    /// The marker is needed only when the tail lands on a rest parameter whose
-    /// type is not a plain array — a rest *tuple* (`...args: [..., ...E[]]`) or a
-    /// bare type-parameter rest (`...args: T`), where the open-ended length feeds
-    /// an inference variable that rest-tuple inference reconstructs. For a plain
-    /// array rest (`...rest: E[]`) the historical positional materialization is
-    /// correct and avoids leaking a marker into array-rest validation paths,
-    /// which only special-case the rest-tuple inference flow. When the callee
-    /// type or rest parameter cannot be determined, fall back to the historical
-    /// materialization (no marker).
-    fn open_spread_tail_needs_marker(&self, callable_type: Option<TypeId>) -> bool {
-        let Some(rest_type) = self.unwrapped_callable_rest_parameter_type(callable_type) else {
-            // No determinable rest parameter — fall back to the historical
-            // materialization (no marker).
-            return false;
-        };
-        let is_plain_array = array_element_type_for_type(self.ctx.types, rest_type).is_some()
-            && tuple_elements_for_type(self.ctx.types, rest_type).is_none()
-            && !is_type_parameter_type(self.ctx.types, rest_type);
-        !is_plain_array
-    }
-
-    /// Whether a *bare non-tuple array/iterable* spread (`f(...arrayValue)`)
-    /// landing on this callable's rest parameter must be preserved as an
-    /// open-ended spread-argument marker.
-    ///
-    /// This is narrower than [`Self::open_spread_tail_needs_marker`]: it fires
-    /// only when the rest parameter is a *bare type parameter* (`...args: T`),
-    /// where the open array's indeterminate length directly feeds the inference
-    /// variable `T`. Without the marker, the single representative element
-    /// collapses `T` into a fixed-length `[E]` tuple, breaking every
-    /// arity-dependent read of the result (TS2493, `.length`, fixed-tuple
-    /// assignment). A plain array rest (`...rest: E[]`) needs no marker (its
-    /// element type is inferred positionally), and a rest *tuple* (`...args:
-    /// [..., cb]`) must keep the aggregate-rest path — marking it would compare
-    /// the whole array against the tuple and surface a spurious TS2345. When the
-    /// callee type or rest parameter cannot be determined, no marker is added.
-    fn array_spread_rest_param_is_bare_type_param(&self, callable_type: Option<TypeId>) -> bool {
-        self.unwrapped_callable_rest_parameter_type(callable_type)
-            .is_some_and(|rest_type| is_type_parameter_type(self.ctx.types, rest_type))
-    }
-
-    /// The callable's declared rest-parameter type with `readonly`/`NoInfer`
-    /// wrappers stripped, or `None` when the callee has no determinable rest
-    /// parameter.
-    ///
-    /// The *whole* declared rest-parameter type is inspected rather than indexing
-    /// into it: `get_rest_parameter_type(index)` resolves a type-parameter rest to
-    /// its constraint (`...args: T` -> `unknown[]`), which would look like a plain
-    /// array and erase the bare-type-parameter / rest-tuple / plain-array
-    /// distinction the spread-marker callers depend on.
-    fn unwrapped_callable_rest_parameter_type(
-        &self,
-        callable_type: Option<TypeId>,
-    ) -> Option<TypeId> {
-        let rest_type = self.callable_rest_parameter_type(callable_type?)?;
-        Some(
-            crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, rest_type)
-                .unwrap_or(rest_type),
-        )
-    }
-
-    /// The declared type of the contextual signature's rest parameter (`...args`),
-    /// or `None` when the callee has no rest parameter or is not a single-shape
-    /// function/callable. For overloaded callables the last call signature is used
-    /// (tsc's resolution preference); an open-ended spread only reaches here at a
-    /// rest position, so the rest-parameter shape is what governs preservation.
-    fn callable_rest_parameter_type(&self, callable_type: TypeId) -> Option<TypeId> {
-        let last_param = if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, callable_type)
-        {
-            shape.params.last().copied()
-        } else if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, callable_type)
-        {
-            shape
-                .call_signatures
-                .last()
-                .and_then(|sig| sig.params.last().copied())
-        } else {
-            None
-        }?;
-        last_param.rest.then_some(last_param.type_id)
-    }
-
-    fn spread_argument_marker_type(&mut self, spread_type: TypeId) -> TypeId {
-        let marker_name = self.ctx.types.intern_string(SPREAD_ARGUMENT_MARKER_NAME);
-        self.ctx.types.tuple(vec![TupleElement {
-            type_id: spread_type,
-            name: Some(marker_name),
-            optional: false,
-            rest: true,
-        }])
     }
 
     /// Whether a spread type parameter's `constraint` is array/tuple-like, so

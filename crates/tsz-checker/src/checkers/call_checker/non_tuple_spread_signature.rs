@@ -1,8 +1,8 @@
 //! Non-tuple spread validation against selected call signatures.
 
-use super::candidate_collection::type_param_variadic_tuple_spread;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
+    type_param_variadic_tuple_spread,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
