@@ -426,63 +426,31 @@ impl<'a> CheckerState<'a> {
             return crate::query_boundaries::common::widen_freshness(self.ctx.types, ty);
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(arena) = all_arenas.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(binder) = all_binders.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(source_file) = arena.source_files.first() else {
-            return TypeId::ANY;
-        };
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            arena.as_ref(),
-            binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let mut ty = checker
-            .literal_type_from_initializer(rhs_expr)
-            .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
-            .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
-        ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
-        ty = checker.augment_commonjs_export_object_type_with_expandos(
-            target_file_idx,
-            expando_root,
-            ty,
-        );
-        ty = checker.augment_commonjs_export_callable_type_with_expandos(
-            target_file_idx,
-            expando_root,
-            ty,
-        );
-        ty = checker.widen_fresh_object_literal_properties_for_display(ty);
-        ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
-        ty = if crate::query_boundaries::common::is_unique_symbol_type(checker.ctx.types, ty) {
-            ty
-        } else {
-            crate::query_boundaries::common::widen_type(checker.ctx.types, ty)
-        };
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-        ty
+        self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
+            let mut ty = checker
+                .literal_type_from_initializer(rhs_expr)
+                .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
+                .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
+            ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
+            ty = checker.augment_commonjs_export_object_type_with_expandos(
+                target_file_idx,
+                expando_root,
+                ty,
+            );
+            ty = checker.augment_commonjs_export_callable_type_with_expandos(
+                target_file_idx,
+                expando_root,
+                ty,
+            );
+            ty = checker.widen_fresh_object_literal_properties_for_display(ty);
+            ty = crate::query_boundaries::common::widen_freshness(checker.ctx.types, ty);
+            if crate::query_boundaries::common::is_unique_symbol_type(checker.ctx.types, ty) {
+                ty
+            } else {
+                crate::query_boundaries::common::widen_type(checker.ctx.types, ty)
+            }
+        })
+        .unwrap_or(TypeId::ANY)
     }
 
     pub(crate) fn current_file_commonjs_late_bound_named_export_type(
@@ -654,29 +622,9 @@ impl<'a> CheckerState<'a> {
         let literal = if target_file_idx == self.ctx.current_file_idx {
             self.literal_type_from_initializer(rhs_expr)
         } else {
-            let all_arenas = self.ctx.all_arenas.clone()?;
-            let all_binders = self.ctx.all_binders.clone()?;
-            let arena = all_arenas.get(target_file_idx)?;
-            let binder = all_binders.get(target_file_idx)?;
-            let source_file = arena.source_files.first()?;
-
-            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                arena.as_ref(),
-                binder.as_ref(),
-                self.ctx.types,
-                source_file.file_name.clone(),
-                self.ctx.compiler_options.clone(),
-                self,
-                tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-            ));
-            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-            checker.ctx.copy_cross_file_state_from(&self.ctx);
-            checker.ctx.current_file_idx = target_file_idx;
-            self.ctx.copy_symbol_file_targets_to_attributed(
-                &mut checker.ctx,
-                tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-            );
-            checker.literal_type_from_initializer(rhs_expr)
+            self.with_commonjs_child_checker_for_file_without_merge(target_file_idx, |checker| {
+                checker.literal_type_from_initializer(rhs_expr)
+            })?
         }?;
 
         crate::query_boundaries::common::string_literal_value(self.ctx.types, literal)
@@ -971,43 +919,11 @@ impl<'a> CheckerState<'a> {
             return self.get_type_of_function_impl(method_idx, &request);
         }
 
-        let Some(all_arenas) = self.ctx.all_arenas.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(all_binders) = self.ctx.all_binders.clone() else {
-            return TypeId::ANY;
-        };
-        let Some(arena) = all_arenas.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(binder) = all_binders.get(target_file_idx) else {
-            return TypeId::ANY;
-        };
-        let Some(source_file) = arena.source_files.first() else {
-            return TypeId::ANY;
-        };
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            arena.as_ref(),
-            binder.as_ref(),
-            self.ctx.types,
-            source_file.file_name.clone(),
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        ));
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.current_file_idx = target_file_idx;
-        self.ctx.copy_symbol_file_targets_to_attributed(
-            &mut checker.ctx,
-            tsz_common::perf_counters::CheckerCreationReason::CjsExports,
-        );
-
-        let request = TypingRequest::NONE.contextual_opt(contextual_type);
-        let ty = checker.get_type_of_function_impl(method_idx, &request);
-        self.ctx.merge_symbol_file_targets_from(&checker.ctx);
-        ty
+        self.with_commonjs_child_checker_for_file(target_file_idx, |checker| {
+            let request = TypingRequest::NONE.contextual_opt(contextual_type);
+            checker.get_type_of_function_impl(method_idx, &request)
+        })
+        .unwrap_or(TypeId::ANY)
     }
 }
 
