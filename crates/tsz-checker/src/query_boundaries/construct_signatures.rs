@@ -146,6 +146,25 @@ pub(crate) fn function_type_from_call_signature(
     db.function(function_shape_from_call_signature(sig, is_constructor))
 }
 
+/// Intern the standalone function type for one signature, preserving the
+/// signature's method-ness. Use this for fresh contextual call surfaces that
+/// originate from an AST declaration and must keep the declaration method flag.
+pub(crate) fn function_type_from_call_signature_preserving_method(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    is_constructor: bool,
+) -> TypeId {
+    db.function(FunctionShape {
+        type_params: sig.type_params.clone(),
+        params: sig.params.clone(),
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor,
+        is_method: sig.is_method,
+    })
+}
+
 /// Intern a bare callable carrying only call signatures.
 pub(crate) fn call_only_callable_type(
     db: &dyn TypeDatabase,
@@ -166,6 +185,11 @@ pub(crate) fn construct_only_callable_type(
         construct_signatures,
         ..CallableShape::default()
     })
+}
+
+/// Intern a callable type from an explicit, helper-built shape.
+pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableShape) -> TypeId {
+    db.callable(shape)
 }
 
 /// Re-intern `base` with the given signature lists, preserving properties,

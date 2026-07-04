@@ -16,6 +16,7 @@ use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::LiteralTypeKind;
 use crate::query_boundaries::common::{QueryDatabase, TypeDatabase};
+use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -710,7 +711,7 @@ impl<'a> CheckerState<'a> {
             self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
         let instantiated =
             instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
-        self.ctx.types.factory().function(instantiated)
+        signature_construction::function_type_from_shape(self.ctx.types, instantiated)
     }
 
     pub(crate) fn instantiate_generic_function_argument_against_target_params(
@@ -786,7 +787,7 @@ impl<'a> CheckerState<'a> {
             self.substitution_with_source_constraint_fallbacks(&source_fn, &substitution);
         let instantiated =
             instantiate_function_shape_with_substitution(self.ctx.types, &source_fn, &substitution);
-        self.ctx.types.factory().function(instantiated)
+        signature_construction::function_type_from_shape(self.ctx.types, instantiated)
     }
 
     pub(crate) fn target_has_concrete_return_context_for_generic_refinement(
@@ -1077,14 +1078,14 @@ impl<'a> CheckerState<'a> {
                 &shape,
                 &binding_pattern_param_positions,
             );
-            self.ctx.types.factory().function(sanitized)
+            signature_construction::function_type_from_shape(self.ctx.types, sanitized)
         } else if let Some(shape) = common::callable_shape_for_type(self.ctx.types, arg_type) {
             let sanitized = common::sanitize_callable_shape_binding_pattern_params(
                 &shape,
                 &binding_pattern_param_positions,
                 TypeId::UNKNOWN,
             );
-            self.ctx.types.factory().callable(sanitized)
+            signature_construction::callable_type_from_shape(self.ctx.types, sanitized)
         } else {
             arg_type
         }

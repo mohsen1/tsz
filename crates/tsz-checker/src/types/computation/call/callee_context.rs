@@ -1,4 +1,5 @@
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
+use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -55,15 +56,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.ctx.types.factory().function(FunctionShape {
-            type_params: fresh_signature.type_params,
-            params: fresh_signature.params,
-            this_type: fresh_signature.this_type,
-            return_type: fresh_signature.return_type,
-            type_predicate: fresh_signature.type_predicate,
-            is_constructor: false,
-            is_method: fresh_signature.is_method,
-        }))
+        Some(
+            signature_construction::function_type_from_call_signature_preserving_method(
+                self.ctx.types,
+                &fresh_signature,
+                false,
+            ),
+        )
     }
 
     pub(super) fn circular_identifier_callee_symbol(
@@ -163,15 +162,13 @@ impl<'a> CheckerState<'a> {
         let fresh_signature = self.call_signature_from_function(&func, initializer);
         diagnostics_before.rollback(&mut self.ctx.diagnostic_state());
 
-        Some(self.ctx.types.factory().function(FunctionShape {
-            type_params: fresh_signature.type_params,
-            params: fresh_signature.params,
-            this_type: fresh_signature.this_type,
-            return_type: fresh_signature.return_type,
-            type_predicate: fresh_signature.type_predicate,
-            is_constructor: false,
-            is_method: fresh_signature.is_method,
-        }))
+        Some(
+            signature_construction::function_type_from_call_signature_preserving_method(
+                self.ctx.types,
+                &fresh_signature,
+                false,
+            ),
+        )
     }
 
     pub(super) fn refresh_callee_shape_type_param_constraints(
@@ -259,11 +256,10 @@ impl<'a> CheckerState<'a> {
             .collect();
         snap.rollback(&mut self.ctx.diagnostic_state());
 
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(FunctionShape::new(params, ctx_type)),
-        )
+        Some(signature_construction::function_type_from_parts(
+            self.ctx.types,
+            params,
+            ctx_type,
+        ))
     }
 }
