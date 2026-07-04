@@ -78,6 +78,8 @@ fn js_class_property_boundary_owns_construction_helpers_and_literals() {
         "js_class_array_type",
         "js_class_union_type",
         "js_class_union_pair_type",
+        "class_property_optional_type_with_undefined",
+        "static_readonly_unique_symbol_type",
         "js_class_property_info",
         "js_class_method_callable_type",
         "js_class_instance_object_type",
@@ -96,6 +98,7 @@ fn js_class_property_boundary_owns_construction_helpers_and_literals() {
         "CallSignature {",
         "CallableShape {",
         "ObjectShape {",
+        "db.unique_symbol(",
     ] {
         assert!(
             source.contains(shape_pattern),

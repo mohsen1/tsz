@@ -2,6 +2,9 @@
 //! `CheckerState`. Extracted from `utilities/core.rs` to keep that module
 //! under the 2000-LOC checker boundary; behavior is unchanged.
 
+use crate::query_boundaries::checkers::{
+    class_properties as class_property_query, parameters as parameter_query,
+};
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
@@ -30,12 +33,10 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::common::tuple_elements(self.ctx.types, rest_param_type)
                 {
                     if tuple_elements.len() > index {
-                        return Some(
-                            self.ctx
-                                .types
-                                .factory()
-                                .tuple(tuple_elements[index..].to_vec()),
-                        );
+                        return Some(parameter_query::tuple_type_from_element_slice(
+                            self.ctx.types,
+                            &tuple_elements[index..],
+                        ));
                     }
                     if let Some(last) = tuple_elements.last()
                         && last.rest
@@ -45,22 +46,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if index < rest_start {
-                let mut elements = shape.params[index..rest_start]
-                    .iter()
-                    .map(|param| tsz_solver::TupleElement {
-                        type_id: param.type_id,
-                        name: param.name,
-                        optional: param.optional,
-                        rest: false,
-                    })
-                    .collect::<Vec<_>>();
-                elements.push(tsz_solver::TupleElement {
-                    type_id: rest_param.type_id,
-                    name: rest_param.name,
-                    optional: false,
-                    rest: true,
-                });
-                return Some(self.ctx.types.factory().tuple(elements));
+                return Some(parameter_query::contextual_rest_tuple_from_signature_tail(
+                    self.ctx.types,
+                    &shape.params,
+                    index,
+                    rest_start,
+                    rest_param,
+                ));
             }
             // For rest parameters aligned with the contextual rest, preserve the
             // original type (including type parameters like `Args extends any[]`).
@@ -141,7 +133,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if !element_types.is_empty() {
-                return Some(self.ctx.types.factory().union(element_types));
+                return Some(parameter_query::union_type(self.ctx.types, element_types));
             }
         }
 
@@ -298,10 +290,10 @@ impl<'a> CheckerState<'a> {
             && self.ctx.strict_null_checks()
             && !self.ctx.exact_optional_property_types()
         {
-            self.ctx
-                .types
-                .factory()
-                .union2(declared_type, TypeId::UNDEFINED)
+            class_property_query::class_property_optional_type_with_undefined(
+                self.ctx.types,
+                declared_type,
+            )
         } else {
             declared_type
         }
@@ -327,9 +319,7 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx) else {
             return raw_type;
         };
-        self.ctx
-            .types
-            .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
+        class_property_query::static_readonly_unique_symbol_type(self.ctx.types, sym_id)
     }
 
     /// Cache parameter types for function parameters.
@@ -360,7 +350,6 @@ impl<'a> CheckerState<'a> {
         params: &[NodeIndex],
         param_types: Option<&[Option<TypeId>]>,
     ) {
-        let factory = self.ctx.types.factory();
         for (i, &param_idx) in params.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -388,7 +377,7 @@ impl<'a> CheckerState<'a> {
                     && t != TypeId::UNKNOWN
                     && t != TypeId::ERROR
                 {
-                    t = factory.union2(t, TypeId::UNDEFINED);
+                    t = parameter_query::optional_parameter_type_with_undefined(self.ctx.types, t);
                 }
                 Some(t)
             } else {
@@ -656,7 +645,7 @@ impl<'a> CheckerState<'a> {
             && ty != TypeId::UNDEFINED
             && !crate::query_boundaries::common::type_contains_undefined(self.ctx.types, ty)
         {
-            ty = self.ctx.types.factory().union2(ty, TypeId::UNDEFINED);
+            ty = parameter_query::optional_parameter_type_with_undefined(self.ctx.types, ty);
         }
 
         Some(ty)
@@ -721,7 +710,10 @@ impl<'a> CheckerState<'a> {
                                     let consumed = index.saturating_sub(rest_start);
                                     let remaining =
                                         elements[consumed.min(elements.len())..].to_vec();
-                                    return Some(self.ctx.types.factory().tuple(remaining));
+                                    return Some(parameter_query::tuple_type_from_elements(
+                                        self.ctx.types,
+                                        remaining,
+                                    ));
                                 }
                             }
                             Some(last.type_id)
@@ -742,96 +734,6 @@ impl<'a> CheckerState<'a> {
                 .and_then(|shape| shape.params.get(index).map(|param| param.type_id))
             })
         }
-    }
-
-    /// Merge multiple callable contextual types into a single combined callable.
-    ///
-    /// Given `[(value: Fizz, ...) => R1, (value: Buzz|undefined, ...) => R2]`,
-    /// produces `(value: Fizz | Buzz | undefined, ...) => R1 | R2`.
-    ///
-    /// Handles entries that are unions of function types (common when each
-    /// union member's mixed-overload handler returns multiple callback variants).
-    ///
-    /// This enables correct contextual typing for callback parameters in union method
-    /// calls (e.g., `(A[] | B[]).filter(cb)` where `cb`'s parameter should be `A | B`).
-    ///
-    /// Returns `None` if the types are not all Function types (or unions of Function
-    /// types) with compatible arity, falling back to simple union semantics.
-    fn merge_callable_contextual_types(&mut self, types: &[TypeId]) -> Option<TypeId> {
-        use tsz_solver::FunctionShape;
-
-        // Collect function shapes from all members, flattening unions.
-        let mut shapes: Vec<std::sync::Arc<FunctionShape>> = Vec::new();
-        for &ty in types {
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
-            {
-                shapes.push(shape);
-            } else {
-                let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
-                // Flatten union members: collect function shapes from each.
-                let mut found_any = false;
-                for &member in &members {
-                    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                        self.ctx.types,
-                        member,
-                    ) {
-                        shapes.push(shape);
-                        found_any = true;
-                    }
-                }
-                if !found_any {
-                    return None;
-                }
-            }
-        }
-
-        if shapes.len() < 2 {
-            return None;
-        }
-
-        // Check compatible arity: all must have the same number of non-rest params.
-        let first_non_rest_count = shapes[0].params.iter().filter(|p| !p.rest).count();
-        if !shapes
-            .iter()
-            .all(|s| s.params.iter().filter(|p| !p.rest).count() == first_non_rest_count)
-        {
-            return None;
-        }
-
-        let param_count = shapes[0].params.len();
-        if !shapes.iter().all(|s| s.params.len() == param_count) {
-            return None;
-        }
-
-        // Build combined parameters: union the type at each position.
-        let mut combined_params = Vec::with_capacity(param_count);
-        for i in 0..param_count {
-            let param_types: Vec<TypeId> = shapes.iter().map(|s| s.params[i].type_id).collect();
-            let combined_type = self.ctx.types.factory().union(param_types);
-            combined_params.push(tsz_solver::ParamInfo {
-                name: shapes[0].params[i].name,
-                type_id: combined_type,
-                optional: shapes.iter().all(|s| s.params[i].optional),
-                rest: shapes[0].params[i].rest,
-            });
-        }
-
-        // Union return types.
-        let return_types: Vec<TypeId> = shapes.iter().map(|s| s.return_type).collect();
-        let combined_return = self.ctx.types.factory().union(return_types);
-
-        let combined_shape = FunctionShape {
-            params: combined_params,
-            return_type: combined_return,
-            this_type: None,
-            type_params: vec![],
-            type_predicate: None,
-            is_constructor: false,
-            is_method: shapes[0].is_method,
-        };
-
-        Some(self.ctx.types.factory().function(combined_shape))
     }
 
     pub(crate) fn contextual_parameter_type_for_call_with_env_from_expected(
@@ -952,17 +854,16 @@ impl<'a> CheckerState<'a> {
                         // (contravariance), enabling correct contextual typing for callbacks.
                         // Without this, the union of callback types causes get_parameter_type
                         // to return None (param types disagree across members), yielding `any`.
-                        if let Some(merged) =
-                            self.merge_callable_contextual_types(&contextual_members)
-                        {
+                        if let Some(merged) = parameter_query::merge_callable_contextual_types(
+                            self.ctx.types,
+                            &contextual_members,
+                        ) {
                             Some(merged)
                         } else {
-                            Some(
-                                self.ctx
-                                    .types
-                                    .factory()
-                                    .union_preserve_members(contextual_members),
-                            )
+                            Some(parameter_query::union_preserve_members_type(
+                                self.ctx.types,
+                                contextual_members,
+                            ))
                         }
                     }
                 };
@@ -1138,11 +1039,10 @@ impl<'a> CheckerState<'a> {
                 .zip(members.iter())
                 .any(|(normalized, original)| normalized != original)
             {
-                return self
-                    .ctx
-                    .types
-                    .factory()
-                    .union_preserve_members(normalized_members);
+                return parameter_query::union_preserve_members_type(
+                    self.ctx.types,
+                    normalized_members,
+                );
             }
             return expected;
         }
@@ -1159,7 +1059,7 @@ impl<'a> CheckerState<'a> {
                 .zip(members.iter())
                 .any(|(normalized, original)| normalized != original)
             {
-                return self.ctx.types.factory().intersection(normalized_members);
+                return parameter_query::intersection_type(self.ctx.types, normalized_members);
             }
             return expected;
         }
@@ -1265,7 +1165,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if changed {
-            self.ctx.types.factory().function(shape)
+            parameter_query::function_type_from_shape(self.ctx.types, shape)
         } else {
             expected
         }
