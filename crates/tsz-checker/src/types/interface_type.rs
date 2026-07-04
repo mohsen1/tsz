@@ -9,6 +9,9 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
+use crate::query_boundaries::{
+    construct_signatures as signature_boundary, type_construction as construction_boundary,
+};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
@@ -20,7 +23,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::IndexSignature;
 use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 
 // =============================================================================
 // Interface Type Resolution
@@ -238,10 +240,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{
-            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectShape,
-            PropertyInfo,
-        };
+        use tsz_solver::{CallSignature as SolverCallSignature, IndexSignature, PropertyInfo};
         let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -443,22 +442,20 @@ impl<'a> CheckerState<'a> {
                         };
 
                         member_order += 1;
-                        properties.push(PropertyInfo {
-                            name: name_atom,
-                            type_id,
-                            write_type,
-                            optional: sig.question_token,
-                            readonly: self.has_readonly_modifier(&sig.modifiers),
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: member_order,
-                            is_string_named,
-                            is_symbol_named,
-                            single_quoted_name,
-                            non_widening: false,
-                        });
+                        properties.push(construction_boundary::declared_surface_property(
+                            construction_boundary::DeclaredSurfaceProperty {
+                                name: name_atom,
+                                type_id,
+                                write_type,
+                                optional: sig.question_token,
+                                readonly: self.has_readonly_modifier(&sig.modifiers),
+                                is_method: false,
+                                declaration_order: member_order,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
+                            },
+                        ));
                     }
                 }
             } else if member_node.kind == METHOD_SIGNATURE {
@@ -638,12 +635,9 @@ impl<'a> CheckerState<'a> {
                     .get(param_data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
-                let info = IndexSignature {
-                    key_type,
-                    value_type,
-                    readonly,
-                    param_name,
-                };
+                let info = construction_boundary::declared_index_signature(
+                    key_type, value_type, readonly, param_name,
+                );
                 if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
@@ -674,44 +668,34 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .next()
                     .expect("single signature confirmed by len check");
-                factory.function(tsz_solver::FunctionShape {
-                    type_params: sig.type_params,
-                    params: sig.params,
-                    this_type: sig.this_type,
-                    return_type: sig.return_type,
-                    type_predicate: sig.type_predicate,
-                    is_constructor: false,
-                    is_method: true,
-                })
+                signature_boundary::declared_method_function_type(self.ctx.types, sig)
             } else {
                 // Multiple overloads: create a Callable type with all signatures
-                let shape = CallableShape {
-                    call_signatures: entry.signatures,
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                };
-                factory.callable(shape)
+                signature_boundary::declared_callable_surface_type(
+                    self.ctx.types,
+                    entry.signatures,
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                    None,
+                    None,
+                    false,
+                )
             };
-            properties.push(PropertyInfo {
-                name,
-                type_id,
-                write_type: type_id,
-                optional: entry.optional,
-                readonly: entry.readonly,
-                is_method: true,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: entry.declaration_order,
-                is_string_named: entry.is_string_named,
-                is_symbol_named: entry.is_symbol_named,
-                single_quoted_name: entry.single_quoted_name,
-                non_widening: false,
-            });
+            properties.push(construction_boundary::declared_surface_property(
+                construction_boundary::DeclaredSurfaceProperty {
+                    name,
+                    type_id,
+                    write_type: type_id,
+                    optional: entry.optional,
+                    readonly: entry.readonly,
+                    is_method: true,
+                    declaration_order: entry.declaration_order,
+                    is_string_named: entry.is_string_named,
+                    is_symbol_named: entry.is_symbol_named,
+                    single_quoted_name: entry.single_quoted_name,
+                },
+            ));
         }
 
         // Convert accessors to properties
@@ -728,48 +712,50 @@ impl<'a> CheckerState<'a> {
                 .or(accessor.getter)
                 .unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
-            properties.push(PropertyInfo {
-                name,
-                type_id: read_type,
-                write_type,
-                optional: false,
-                readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: accessor.declaration_order,
-                is_string_named: accessor.is_string_named,
-                is_symbol_named: accessor.is_symbol_named,
-                single_quoted_name: accessor.single_quoted_name,
-                non_widening: false,
-            });
+            properties.push(construction_boundary::declared_surface_property(
+                construction_boundary::DeclaredSurfaceProperty {
+                    name,
+                    type_id: read_type,
+                    write_type,
+                    optional: false,
+                    readonly,
+                    is_method: false,
+                    declaration_order: accessor.declaration_order,
+                    is_string_named: accessor.is_string_named,
+                    is_symbol_named: accessor.is_symbol_named,
+                    single_quoted_name: accessor.single_quoted_name,
+                },
+            ));
         }
 
         let result = if !call_signatures.is_empty() || !construct_signatures.is_empty() {
             // `CallableShape` keeps the single-slot index convention: a `symbol`
             // index rides in `string_index` (its `key_type` discriminates it).
-            let shape = CallableShape {
+            signature_boundary::declared_callable_surface_type(
+                self.ctx.types,
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index: string_index.or(symbol_index),
+                string_index.or(symbol_index),
                 number_index,
-                symbol: interface_symbol,
-                is_abstract: false,
-            };
-            factory.callable(shape)
+                interface_symbol,
+                false,
+            )
         } else if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
-            factory.object_with_index(ObjectShape {
+            construction_boundary::declared_object_with_indexes(
+                self.ctx.types,
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
-                symbol: interface_symbol,
-                ..ObjectShape::default()
-            })
+                interface_symbol,
+            )
         } else if !properties.is_empty() {
-            factory.object_with_symbol(properties, interface_symbol)
+            construction_boundary::declared_object_with_symbol(
+                self.ctx.types,
+                properties,
+                interface_symbol,
+            )
         } else {
             TypeId::ANY
         };

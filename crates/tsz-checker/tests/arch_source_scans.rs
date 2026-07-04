@@ -116,6 +116,10 @@
 //! - `module_augmentation_surface_construction_boundary_scans`: module
 //!   augmentation member and augmented base surface construction routes through
 //!   `query_boundaries::module_augmentation`.
+//! - `interface_type_literal_surface_construction_boundary_scans`: interface
+//!   and type-literal own member surfaces route through
+//!   `query_boundaries::type_construction` and
+//!   `query_boundaries::construct_signatures`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -166,6 +170,8 @@ mod import_attribute_construction_boundary_scans;
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/indexed_access_key_space_construction_boundary_scans.rs"]
 mod indexed_access_key_space_construction_boundary_scans;
+#[path = "arch_source_scans/interface_type_literal_surface_construction_boundary_scans.rs"]
+mod interface_type_literal_surface_construction_boundary_scans;
 #[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]
 mod js_class_property_construction_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]

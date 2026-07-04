@@ -4,6 +4,9 @@
 //! callable types with call/construct signatures.
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
+use crate::query_boundaries::{
+    construct_signatures as signature_boundary, type_construction as construction_boundary,
+};
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -12,7 +15,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 
 // =============================================================================
 // Type Literal Type Checking
@@ -1109,9 +1111,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
-        };
+        use tsz_solver::CallSignature;
         let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1313,22 +1313,20 @@ impl<'a> CheckerState<'a> {
                                     type_id
                                 };
                             member_order += 1;
-                            properties.push(PropertyInfo {
-                                name: name_atom,
-                                type_id,
-                                write_type,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: member_order,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                                non_widening: false,
-                            });
+                            properties.push(construction_boundary::declared_surface_property(
+                                construction_boundary::DeclaredSurfaceProperty {
+                                    name: name_atom,
+                                    type_id,
+                                    write_type,
+                                    optional: sig.question_token,
+                                    readonly: self.has_readonly_modifier(&sig.modifiers),
+                                    is_method: false,
+                                    declaration_order: member_order,
+                                    is_string_named,
+                                    is_symbol_named,
+                                    single_quoted_name,
+                                },
+                            ));
                         }
                     }
                     _ => {}
@@ -1438,12 +1436,9 @@ impl<'a> CheckerState<'a> {
                     .get(param_data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
-                let info = IndexSignature {
-                    key_type,
-                    value_type,
-                    readonly,
-                    param_name,
-                };
+                let info = construction_boundary::declared_index_signature(
+                    key_type, value_type, readonly, param_name,
+                );
                 if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         if number_index.is_none() {
@@ -1618,22 +1613,20 @@ impl<'a> CheckerState<'a> {
             let (is_string_named, single_quoted_name) = primary_name_idx
                 .map(|name_idx| self.ctx.arena.string_property_name_flags(name_idx))
                 .unwrap_or((false, false));
-            properties.push(PropertyInfo {
-                name,
-                type_id: read_type,
-                write_type,
-                optional: false,
-                readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: accessor.declaration_order,
-                is_string_named,
-                is_symbol_named,
-                single_quoted_name,
-                non_widening: false,
-            });
+            properties.push(construction_boundary::declared_surface_property(
+                construction_boundary::DeclaredSurfaceProperty {
+                    name,
+                    type_id: read_type,
+                    write_type,
+                    optional: false,
+                    readonly,
+                    is_method: false,
+                    declaration_order: accessor.declaration_order,
+                    is_string_named,
+                    is_symbol_named,
+                    single_quoted_name,
+                },
+            ));
         }
 
         // Merge overloaded method signatures into properties.
@@ -1649,101 +1642,82 @@ impl<'a> CheckerState<'a> {
                         .next()
                         .expect("sigs.len() == 1 guard ensures at least one element")
                         .signature;
-                    factory.function(FunctionShape {
-                        type_params: sig.type_params,
-                        params: sig.params,
-                        this_type: sig.this_type,
-                        return_type: sig.return_type,
-                        type_predicate: sig.type_predicate,
-                        is_constructor: false,
-                        is_method: true,
-                    })
+                    signature_boundary::declared_method_function_type(self.ctx.types, sig)
                 } else {
                     let merged_sigs: Vec<CallSignature> =
                         sigs.into_iter().map(|entry| entry.signature).collect();
-                    factory.callable(CallableShape {
-                        call_signatures: merged_sigs,
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    })
+                    signature_boundary::declared_callable_surface_type(
+                        self.ctx.types,
+                        merged_sigs,
+                        Vec::new(),
+                        Vec::new(),
+                        None,
+                        None,
+                        None,
+                        false,
+                    )
                 };
-                properties.push(PropertyInfo {
-                    name: key.name,
-                    type_id: method_type,
-                    write_type: method_type,
-                    optional,
-                    readonly,
-                    is_method: true,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: key.decl_order,
-                    is_string_named: key.is_string_named,
-                    is_symbol_named,
-                    single_quoted_name: key.single_quoted_name,
-                    non_widening: false,
-                });
+                properties.push(construction_boundary::declared_surface_property(
+                    construction_boundary::DeclaredSurfaceProperty {
+                        name: key.name,
+                        type_id: method_type,
+                        write_type: method_type,
+                        optional,
+                        readonly,
+                        is_method: true,
+                        declaration_order: key.decl_order,
+                        is_string_named: key.is_string_named,
+                        is_symbol_named,
+                        single_quoted_name: key.single_quoted_name,
+                    },
+                ));
             }
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
             // `CallableShape` keeps the single-slot index convention: a `symbol`
             // index rides in `string_index` (its `key_type` discriminates it).
-            let mut result = factory.callable(CallableShape {
+            let mut result = signature_boundary::declared_callable_surface_type(
+                self.ctx.types,
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index: string_index.or(symbol_index),
+                string_index.or(symbol_index),
                 number_index,
-                symbol: None,
-                is_abstract: has_abstract_construct_sig,
-            });
+                None,
+                has_abstract_construct_sig,
+            );
             for idx in extra_number_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    number_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
+                let member =
+                    construction_boundary::type_literal_number_index_member(self.ctx.types, idx);
+                result =
+                    construction_boundary::raw_intersection_pair(self.ctx.types, result, member);
             }
             return result;
         }
 
         if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
-            let mut shape = ObjectShape {
+            let mut result = construction_boundary::type_literal_object_with_indexes_and_late_bound(
+                self.ctx.types,
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
-                ..ObjectShape::default()
-            };
-            if has_late_bound_members {
-                shape.mark_has_late_bound_members();
-            }
-            let mut result = factory.object_with_index(shape);
-            // Record the hand-written `{ ... }` annotation so the printer never
-            // repaints it with a utility-application display alias that shares
-            // this content-interned id.
-            self.ctx.types.mark_literal_object_annotation(result);
+                has_late_bound_members,
+            );
             for idx in extra_number_indices {
-                let member = factory.object_with_index(ObjectShape {
-                    number_index: Some(idx),
-                    ..ObjectShape::default()
-                });
-                result = self.ctx.types.intersect_types_raw2(result, member);
+                let member =
+                    construction_boundary::type_literal_number_index_member(self.ctx.types, idx);
+                result =
+                    construction_boundary::raw_intersection_pair(self.ctx.types, result, member);
             }
             return result;
         }
 
-        let result = if has_late_bound_members {
-            factory.object_with_late_bound_members(properties, None)
-        } else {
-            factory.object_with_symbol(properties, None)
-        };
-        self.ctx.types.mark_literal_object_annotation(result);
-        result
+        construction_boundary::type_literal_object_with_late_bound(
+            self.ctx.types,
+            properties,
+            has_late_bound_members,
+        )
     }
 }
