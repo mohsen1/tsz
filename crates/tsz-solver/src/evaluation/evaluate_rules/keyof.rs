@@ -513,10 +513,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().keyof(operand);
             }
             Some(TypeData::Union(_members)) => {
-                let narrowed_operand = crate::type_queries::prune_impossible_object_union_members(
-                    self.interner(),
-                    operand,
-                );
+                let narrowed_operand = self.prune_impossible_object_union_members_resolved(operand);
                 let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand)
                 else {
                     return self.recurse_keyof(narrowed_operand);
@@ -554,10 +551,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             match key {
                 TypeData::Union(_members) => {
                     let narrowed_operand =
-                        crate::type_queries::prune_impossible_object_union_members(
-                            self.interner(),
-                            evaluated_operand,
-                        );
+                        self.prune_impossible_object_union_members_resolved(evaluated_operand);
                     let Some(TypeData::Union(members)) = self.interner().lookup(narrowed_operand)
                     else {
                         return self.recurse_keyof(narrowed_operand);
@@ -1075,6 +1069,112 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return false;
         }
         crate::keyof_inner_type(self.interner(), mapped.constraint).is_some_and(is_source)
+    }
+
+    /// Resolver-aware wrapper around the pure
+    /// [`prune_impossible_object_union_members`](crate::type_queries::prune_impossible_object_union_members).
+    ///
+    /// The pure prune walks the interned type DAG without a resolver, so an
+    /// object-union member whose required discriminant is an intersection of
+    /// enum members reached through an alias body (`{ v: E.A } & { v: E.B }`,
+    /// where `E.B` is still an unresolved `Lazy(DefId)`) never reduces to
+    /// `never`: `is_unit_type`/`is_subtype_of` cannot see the enum member behind
+    /// the `Lazy`, so the impossible constituent survives. `keyof` of the
+    /// discriminated union then collapses to the shared key set
+    /// (`keyof (A | B) = keyof A & keyof B`), silently dropping the
+    /// member-specific keys — e.g. `keyof ({ v: E.A, a } | { v: E.A & E.B, b })`
+    /// loses `a`. This companion runs the pure prune first (fast, memoized) and
+    /// then drops any residual member whose required discriminant is an
+    /// impossible enum-member intersection, resolving the `Lazy` references via
+    /// the evaluator's resolver. It mirrors tsc, whose `getReducedType` prunes
+    /// the impossible constituent before taking `keyof`, and materializes
+    /// nothing beyond the local disjointness decision.
+    fn prune_impossible_object_union_members_resolved(&mut self, operand: TypeId) -> TypeId {
+        let pure =
+            crate::type_queries::prune_impossible_object_union_members(self.interner(), operand);
+        let Some(TypeData::Union(list_id)) = self.interner().lookup(pure) else {
+            return pure;
+        };
+        let members = self.interner().type_list(list_id).to_vec();
+        let mut retained: Vec<TypeId> = Vec::with_capacity(members.len());
+        for &member in &members {
+            if !self.object_member_has_impossible_enum_discriminant(member) {
+                retained.push(member);
+            }
+        }
+        match retained.len() {
+            n if n == members.len() => pure,
+            0 => TypeId::NEVER,
+            1 => retained[0],
+            _ => self.interner().union_preserve_members(retained),
+        }
+    }
+
+    /// `true` when `member` is an object type carrying a required property whose
+    /// type is an impossible (`never`) intersection of pairwise-disjoint enum
+    /// members / literals, resolving transparent `Lazy(DefId)` wrappers first.
+    fn object_member_has_impossible_enum_discriminant(&mut self, member: TypeId) -> bool {
+        let Some(shape) = crate::type_queries::get_object_shape(self.interner(), member) else {
+            return false;
+        };
+        for prop in &shape.properties {
+            if prop.optional {
+                continue;
+            }
+            if self.unit_intersection_disjoint_resolving_lazy(prop.type_id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `true` when `type_id` is an intersection of two or more unit types
+    /// (literals / enum members) that are pairwise disjoint — i.e. a `never`
+    /// intersection — after peeling transparent `Lazy(DefId)` wrappers so an
+    /// alias-reached enum member is compared as its concrete member type.
+    fn unit_intersection_disjoint_resolving_lazy(&mut self, type_id: TypeId) -> bool {
+        let Some(TypeData::Intersection(list_id)) = self.interner().lookup(type_id) else {
+            return false;
+        };
+        let members = self.interner().type_list(list_id).to_vec();
+        let mut units: SmallVec<[TypeId; 4]> = SmallVec::new();
+        for &member in &members {
+            let resolved = self.resolve_lazy_alias_chain(member);
+            if !crate::type_queries::is_unit_type(self.interner(), resolved) {
+                continue;
+            }
+            let mut checker = crate::relations::subtype::SubtypeChecker::with_resolver(
+                self.interner(),
+                self.resolver(),
+            );
+            let disjoint = units.iter().any(|&other| {
+                !checker.is_subtype_of(resolved, other) && !checker.is_subtype_of(other, resolved)
+            });
+            if disjoint {
+                return true;
+            }
+            if !units.contains(&resolved) {
+                units.push(resolved);
+            }
+        }
+        false
+    }
+
+    /// Peel transparent `Lazy(DefId)` alias wrappers to the concrete target,
+    /// bounded against pathological alias cycles. Mirrors
+    /// [`resolve_index_signature_key_alias`] for non-key positions.
+    fn resolve_lazy_alias_chain(&self, type_id: TypeId) -> TypeId {
+        let mut current = type_id;
+        for _ in 0..8 {
+            let Some(TypeData::Lazy(def_id)) = self.interner().lookup(current) else {
+                return current;
+            };
+            match self.resolver().resolve_lazy(def_id, self.interner()) {
+                Some(next) if next != current => current = next,
+                _ => return current,
+            }
+        }
+        current
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
