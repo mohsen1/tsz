@@ -23,8 +23,8 @@ pub(crate) use tsz_solver::type_queries::{
     remapped_mapped_index_access_result,
 };
 pub(crate) use tsz_solver::{
-    FunctionShape, IntrinsicKind, MappedType, ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder,
-    SourceLocation, SubtypeFailureReason, TypeFormatter,
+    FunctionShape, IntrinsicKind, ParamInfo, PendingDiagnosticBuilder, SourceLocation,
+    SubtypeFailureReason, TypeFormatter,
     computation::{ContextualTypeContext, TypeSubstitution},
 };
 
@@ -1361,13 +1361,6 @@ pub(crate) fn classify_for_augmentation(
     tsz_solver::type_queries::classify_for_augmentation(db, type_id)
 }
 
-pub(crate) fn classify_promise_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> tsz_solver::type_queries::PromiseTypeKind {
-    tsz_solver::type_queries::classify_promise_type(db, type_id)
-}
-
 pub(crate) fn classify_type_query(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1572,7 +1565,7 @@ pub(crate) fn union_contains_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::type_queries::{
     ArrayLikeKind, BodyArgPreservation, ConstructorCheckKind, IdentityMappedInfo, IndexKeyKind,
-    LazyTypeKind, MappedSourceKind, PromiseTypeKind, TypeQueryKind, UnionMembersKind,
+    LazyTypeKind, MappedSourceKind, TypeQueryKind, UnionMembersKind,
 };
 
 pub(crate) fn get_construct_return_type_union(

@@ -4,6 +4,7 @@
 //! `[1, 2, 3]`, `["a", "b"]`, `[...arr]`, etc. Extracted from `helpers.rs`
 //! to keep module sizes manageable.
 
+use crate::query_boundaries::checkers::promise as promise_query;
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::array_literals as array_surfaces;
@@ -95,16 +96,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn promise_like_array_context_shape(&self, type_id: TypeId) -> Option<TypeId> {
-        match crate::query_boundaries::common::classify_promise_type(self.ctx.types, type_id) {
-            crate::query_boundaries::common::PromiseTypeKind::Application { args, .. }
-                if self.type_ref_is_promise_like(type_id) =>
-            {
-                args.first().and_then(|&inner| {
-                    crate::query_boundaries::common::array_applicable_type(self.ctx.types, inner)
-                })
-            }
-            _ => None,
+        let app = promise_query::promise_application_parts(self.ctx.types, type_id)?;
+        if !self.type_ref_is_promise_like(type_id) {
+            return None;
         }
+        app.first_arg()
+            .and_then(|inner| query_common::array_applicable_type(self.ctx.types, inner))
     }
 
     fn array_intersection_has_literal_length_context(&self, type_id: TypeId) -> bool {

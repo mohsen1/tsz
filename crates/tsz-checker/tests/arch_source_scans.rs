@@ -124,6 +124,9 @@
 //! - `async_promise_classification_boundary_scans`: async Promise diagnostics
 //!   and await cycle traversal route Promise classification through
 //!   `query_boundaries::checkers::promise`.
+//! - `common_promise_classification_boundary_scans`: array-literal Promise
+//!   contextual shape reads route through `query_boundaries::checkers::promise`,
+//!   not the generic `common` quarantine.
 //! - `awaited_assignability_normalization_boundary_scans`: `Awaited<T>`
 //!   assignability normalization routes solver shape reads and rebuilt shells
 //!   through `query_boundaries::checkers::promise`.
@@ -240,6 +243,8 @@ mod class_recovery_surface_construction_boundary_scans;
 mod class_surface_construction_boundary_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
+#[path = "arch_source_scans/common_promise_classification_boundary_scans.rs"]
+mod common_promise_classification_boundary_scans;
 #[path = "arch_source_scans/commonjs_json_export_surface_construction_boundary_scans.rs"]
 mod commonjs_json_export_surface_construction_boundary_scans;
 #[path = "arch_source_scans/commonjs_resolution_export_surface_construction_boundary_scans.rs"]
