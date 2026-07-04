@@ -466,6 +466,156 @@ pub(crate) fn commonjs_export_constructor_type_with_instance(
     db.callable(new_shape)
 }
 
+pub(crate) struct CommonJsExpandoMember {
+    pub(crate) name: String,
+    pub(crate) type_id: TypeId,
+}
+
+fn commonjs_expando_property(
+    db: &dyn TypeDatabase,
+    member: &CommonJsExpandoMember,
+    declaration_order: u32,
+) -> PropertyInfo {
+    let type_id = crate::query_boundaries::common::widen_literal_type(db, member.type_id);
+    commonjs_namespace_export_property(db, &member.name, type_id, declaration_order)
+}
+
+pub(crate) fn commonjs_export_type_with_expando_members(
+    db: &dyn TypeDatabase,
+    base_type: TypeId,
+    members: &[CommonJsExpandoMember],
+) -> TypeId {
+    if members.is_empty() {
+        return base_type;
+    }
+
+    let object_type = commonjs_export_object_type_with_expando_members(db, base_type, members);
+    commonjs_export_callable_type_with_expando_members(db, object_type, members)
+}
+
+fn commonjs_export_object_type_with_expando_members(
+    db: &dyn TypeDatabase,
+    base_type: TypeId,
+    members: &[CommonJsExpandoMember],
+) -> TypeId {
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, base_type) else {
+        return base_type;
+    };
+
+    let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = shape
+        .properties
+        .iter()
+        .map(|prop| (prop.name, prop.clone()))
+        .collect();
+    let mut changed = false;
+
+    for member in members {
+        let prop_atom = db.intern_string(&member.name);
+        if properties.contains_key(&prop_atom) {
+            continue;
+        }
+
+        properties.insert(
+            prop_atom,
+            commonjs_expando_property(db, member, properties.len() as u32),
+        );
+        changed = true;
+    }
+
+    if !changed {
+        return base_type;
+    }
+
+    db.object_with_index(ObjectShape {
+        flags: shape.flags,
+        properties: properties.into_values().collect(),
+        string_index: shape.string_index,
+        number_index: shape.number_index,
+        symbol_index: shape.symbol_index,
+        symbol: shape.symbol,
+    })
+}
+
+fn commonjs_export_callable_type_with_expando_members(
+    db: &dyn TypeDatabase,
+    base_type: TypeId,
+    members: &[CommonJsExpandoMember],
+) -> TypeId {
+    let (mut callable_shape, mut property_count) = if let Some(shape) =
+        crate::query_boundaries::common::callable_shape_for_type(db, base_type)
+    {
+        ((*shape).clone(), shape.properties.len())
+    } else if let Some(function_shape) =
+        crate::query_boundaries::common::function_shape_for_type(db, base_type)
+    {
+        let signature = CallSignature {
+            type_params: function_shape.type_params.clone(),
+            params: function_shape.params.clone(),
+            this_type: function_shape.this_type,
+            return_type: function_shape.return_type,
+            type_predicate: function_shape.type_predicate,
+            is_method: function_shape.is_method,
+        };
+        (
+            CallableShape {
+                call_signatures: if function_shape.is_constructor {
+                    Vec::new()
+                } else {
+                    vec![signature.clone()]
+                },
+                construct_signatures: if function_shape.is_constructor {
+                    vec![signature]
+                } else {
+                    Vec::new()
+                },
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            },
+            0,
+        )
+    } else {
+        return base_type;
+    };
+
+    let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = callable_shape
+        .properties
+        .iter()
+        .map(|prop| (prop.name, prop.clone()))
+        .collect();
+    let mut changed = false;
+
+    for member in members {
+        let prop_type = crate::query_boundaries::common::widen_literal_type(db, member.type_id);
+        let prop_atom = db.intern_string(&member.name);
+        if let Some(existing) = properties.get_mut(&prop_atom) {
+            let existing_is_placeholder = existing.type_id.is_any_unknown_or_error();
+            if existing_is_placeholder && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN) {
+                existing.type_id = prop_type;
+                existing.write_type = prop_type;
+                changed = true;
+            }
+            continue;
+        }
+
+        properties.insert(
+            prop_atom,
+            commonjs_expando_property(db, member, property_count as u32),
+        );
+        property_count += 1;
+        changed = true;
+    }
+
+    if !changed {
+        return base_type;
+    }
+
+    callable_shape.properties = properties.into_values().collect();
+    db.callable(callable_shape)
+}
+
 pub(crate) fn commonjs_empty_namespace_type(db: &dyn TypeDatabase) -> TypeId {
     db.object(Vec::new())
 }
