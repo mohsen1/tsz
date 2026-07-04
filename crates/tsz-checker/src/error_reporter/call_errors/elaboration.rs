@@ -1042,6 +1042,7 @@ impl<'a> CheckerState<'a> {
                     arg_idx,
                     func.body,
                     expected_return_type,
+                    param_type,
                 )
             }
             k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
@@ -1056,6 +1057,7 @@ impl<'a> CheckerState<'a> {
                     arg_idx,
                     func.body,
                     expected_return_type,
+                    param_type,
                 )
             }
             k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
@@ -1083,6 +1085,7 @@ impl<'a> CheckerState<'a> {
                         arg_idx,
                         func.body,
                         expected_return_type,
+                        param_type,
                     ),
                 }
             }
@@ -1143,16 +1146,18 @@ impl<'a> CheckerState<'a> {
     /// diagnostic — for `void` expected returns, explicitly-annotated callback
     /// parameters (the `elaborateArrowFunction` gate keys on parameters), an
     /// `error`/`any` on either side, or an already-related pair. A body whose
-    /// type is itself callable is *not* exempt: `tsc`'s `elaborateArrowFunction`
-    /// anchors the return mismatch at the body expression regardless of the
-    /// body type's shape (e.g. `const f: () => number = () => g` where
-    /// `g: () => string` reports `Type '() => string' is not assignable to type
-    /// 'number'.` at `g`, not the whole arrow).
+    /// type is itself callable drills like any other (e.g. `const f: () => number
+    /// = () => g` where `g: () => string` reports `Type '() => string' is not
+    /// assignable to type 'number'.` at `g`, not the whole arrow) — *except* when
+    /// the arrow's parameter arity also differs from the target callback, in
+    /// which case `tsc` keeps the whole-callback TS2345 (`foo(() => g)` against
+    /// `(x: string) => string`, parser536727).
     fn elaborate_expression_body_return_mismatch(
         &mut self,
         arg_idx: NodeIndex,
         body_idx: NodeIndex,
         expected_return_type: TypeId,
+        expected_callback_type: TypeId,
     ) -> bool {
         if expected_return_type == TypeId::VOID {
             return false;
@@ -1171,6 +1176,23 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        // Narrowed callable-body carve-out. `tsc` keeps the whole-callback
+        // `TS2345` (no body drill) when the body's own type is callable, the
+        // expected return is not, AND the arrow's parameter arity does not match
+        // the target callback — the callback then mismatches in more than just
+        // its return. `foo(() => g)` against `(x: string) => string` (callable
+        // body, `string` return, 0 vs 1 params) stays argument-level
+        // (parser536727), while `run(() => producer)` against `() => number`
+        // (0 vs 0 params) still drills to the body. A non-callable body (an
+        // object/optional-property source) is never exempted here.
+        if self.first_callable_return_type(body_type).is_some()
+            && self
+                .first_callable_return_type(expected_return_type)
+                .is_none()
+            && !self.arrow_param_arity_matches_expected_callback(arg_idx, expected_callback_type)
+        {
+            return false;
+        }
         // tsc anchors expression-body arrow return mismatches at the body
         // expression, not the arrow function. E.g.:
         //   `const f: (a: number) => string = (a) => a + 1`
@@ -1186,6 +1208,60 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_at_with_anchor(body_type, display_target, body_idx);
         }
         true
+    }
+
+    /// `true` when the arrow at `arg_idx` has the same parameter count as the
+    /// first call signature of `expected_callback_type`. Used to gate the
+    /// expression-body return drill: `tsc`'s `elaborateArrowFunction` anchors the
+    /// return mismatch at the body only when the arrow's parameters line up with
+    /// the target callback; a param-arity difference keeps the whole-callback
+    /// `TS2345`. Defaults to `true` (no exemption) when either side has no
+    /// comparable signature, preserving the prior drill behavior.
+    fn arrow_param_arity_matches_expected_callback(
+        &mut self,
+        arg_idx: NodeIndex,
+        expected_callback_type: TypeId,
+    ) -> bool {
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return true;
+        };
+        let Some(func) = self.ctx.arena.get_function(arg_node) else {
+            return true;
+        };
+        let arrow_param_count = func.parameters.nodes.len();
+        match self.first_callable_param_count(expected_callback_type) {
+            Some(expected) => arrow_param_count == expected,
+            None => true,
+        }
+    }
+
+    /// Parameter count of the first call signature of `ty`, resolved the same way
+    /// [`Self::first_callable_return_type`] resolves the return type (function
+    /// shape, then call signatures, then callable shape, unwrapping nullish
+    /// unions and applications). `None` when `ty` has no comparable signature.
+    fn first_callable_param_count(&mut self, ty: TypeId) -> Option<usize> {
+        use crate::query_boundaries::diagnostics::{
+            callable_shape_for_type, function_shape, type_application,
+        };
+
+        if let (Some(non_nullish), Some(_nullish_cause)) = self.split_nullish_type(ty) {
+            return self.first_callable_param_count(non_nullish);
+        }
+        if let Some(shape) = function_shape(self.ctx.types, ty) {
+            return Some(shape.params.len());
+        }
+        if let Some(signatures) =
+            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, ty)
+        {
+            return signatures.first().map(|sig| sig.params.len());
+        }
+        if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {
+            return shape.call_signatures.first().map(|sig| sig.params.len());
+        }
+        if let Some(app) = type_application(self.ctx.types, ty) {
+            return self.first_callable_param_count(app.base);
+        }
+        None
     }
 
     fn try_elaborate_function_block_returns_with_param_type(
