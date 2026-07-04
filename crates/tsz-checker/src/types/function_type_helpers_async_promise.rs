@@ -399,17 +399,10 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::checkers::promise as query;
         use tsz_binder::symbol_flags;
 
-        // Must be an Application type
-        let query::PromiseTypeKind::Application { base, .. } =
-            query::classify_promise_type(self.ctx.types, type_id)
+        // Check if the base is a Lazy(DefId) pointing to a type alias
+        let Some(def_id) = query::promise_application_base_lazy_def_id(self.ctx.types, type_id)
         else {
             return false;
-        };
-
-        // Check if the base is a Lazy(DefId) pointing to a type alias
-        let def_id = match query::classify_promise_type(self.ctx.types, base) {
-            query::PromiseTypeKind::Lazy(def_id) => def_id,
-            _ => return false,
         };
 
         let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
@@ -435,10 +428,7 @@ impl<'a> CheckerState<'a> {
 
         // The body might itself be an Application (e.g., `Promise<T>`)
         // Check if the Application base refers to the global Promise type
-        if let query::PromiseTypeKind::Application {
-            base: body_base, ..
-        } = query::classify_promise_type(self.ctx.types, body_type)
-        {
+        if let Some(body_base) = query::promise_application_base(self.ctx.types, body_type) {
             // Check if the body's base is Promise
             return self.is_global_promise_type(body_base);
         }

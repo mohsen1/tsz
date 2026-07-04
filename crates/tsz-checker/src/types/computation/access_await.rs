@@ -241,10 +241,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 type_id
             };
-            if matches!(
-                query::classify_promise_type(self.ctx.types, structural),
-                query::PromiseTypeKind::Object(_)
-            ) {
+            if query::promise_type_is_object(self.ctx.types, structural) {
                 inner = self.promise_like_return_type_argument(structural);
             }
         }
@@ -478,9 +475,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // If this type is a Lazy(DefId), check for DefId cycle and resolve its body
-        if let query::PromiseTypeKind::Lazy(def_id) =
-            query::classify_promise_type(self.ctx.types, type_id)
-        {
+        if let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, type_id) {
             if !visited_defs.insert(def_id) {
                 return self.def_revisit_is_genuine_cycle(def_id);
             }
@@ -500,8 +495,7 @@ impl<'a> CheckerState<'a> {
 
         // Also check if the evaluated form reveals a Lazy(DefId)
         if target != type_id
-            && let query::PromiseTypeKind::Lazy(def_id) =
-                query::classify_promise_type(self.ctx.types, target)
+            && let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, target)
         {
             if !visited_defs.insert(def_id) {
                 return self.def_revisit_is_genuine_cycle(def_id);
@@ -512,20 +506,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        match query::classify_promise_type(self.ctx.types, target) {
-            query::PromiseTypeKind::Union(members) => {
-                for member in members {
-                    if let Some(inner) = self.promise_like_return_type_argument(member)
-                        && (inner == target
-                            || inner == type_id
-                            || self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1))
-                    {
-                        return true;
-                    }
-                }
-            }
-            _ => {
-                if let Some(inner) = self.promise_like_return_type_argument(target)
+        if let Some(members) = query::promise_union_members(self.ctx.types, target) {
+            for member in members {
+                if let Some(inner) = self.promise_like_return_type_argument(member)
                     && (inner == target
                         || inner == type_id
                         || self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1))
@@ -533,6 +516,12 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
             }
+        } else if let Some(inner) = self.promise_like_return_type_argument(target)
+            && (inner == target
+                || inner == type_id
+                || self.has_promise_fulfillment_cycle(inner, visited_defs, depth + 1))
+        {
+            return true;
         }
 
         false
