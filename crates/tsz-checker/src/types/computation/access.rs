@@ -4,7 +4,6 @@ use self::global_this_keyed::{
 };
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
-use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
@@ -656,78 +655,13 @@ impl<'a> CheckerState<'a> {
                 .index_access(pre_resolution_object_type, index_type);
         }
 
-        // TS2476: A const enum member can only be accessed using a string literal.
-        let const_enum_sym = self
-            .resolve_identifier_symbol(access.expression)
-            .map(|sym_id| {
-                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
-                    .unwrap_or(sym_id)
-            })
-            .or_else(|| {
-                self.resolve_qualified_symbol(access.expression)
-                    .map(|sym_id| {
-                        self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
-                            .unwrap_or(sym_id)
-                    })
-            })
-            .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
-            .or_else(|| {
-                self.enum_symbol_from_type(object_type_for_access)
-                    .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
-            });
-
-        if const_enum_sym.is_some() {
-            let arg_is_string_literal =
-                self.ctx
-                    .arena
-                    .get(access.name_or_argument)
-                    .is_some_and(|arg_node| {
-                        arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-                            || arg_node.kind
-                                == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
-                    });
-            if !arg_is_string_literal {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    access.name_or_argument,
-                    diagnostic_messages::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
-                    diagnostic_codes::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
-                );
-                return TypeId::ERROR;
-            }
-        }
-
-        if let Some(index_value) = self
-            .get_number_value_from_element_index(access.name_or_argument)
-            .or_else(|| {
-                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
-            })
-            && index_value.is_finite()
-            && index_value.fract() == 0.0
-            && index_value < 0.0
-        {
-            let object_for_tuple_check = {
-                let unwrapped = crate::query_boundaries::common::unwrap_readonly(
-                    self.ctx.types,
-                    object_type_for_access,
-                );
-                self.resolve_lazy_type(unwrapped)
-            };
-            let object_for_tuple_check = crate::query_boundaries::common::unwrap_readonly(
-                self.ctx.types,
-                object_for_tuple_check,
-            );
-            if crate::query_boundaries::common::is_tuple_type(
-                self.ctx.types,
-                object_for_tuple_check,
-            ) {
-                self.error_at_node(
-                    access.name_or_argument,
-                    crate::diagnostics::diagnostic_messages::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
-                    crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
-                );
-                return TypeId::ERROR;
-            }
+        if let Some(result) = self.element_access_const_enum_and_negative_index_guard(
+            access.expression,
+            access.name_or_argument,
+            object_type_for_access,
+            index_type,
+        ) {
+            return result;
         }
 
         let literal_string_is_none = literal_string.is_none();
@@ -1219,7 +1153,10 @@ impl<'a> CheckerState<'a> {
                         // TS2339 parity for element access on `typeof const enum` with a missing
                         // string-literal member. Const enums do not have reverse mappings, so they
                         // should not fall back to TS7053 string-index diagnostics.
-                        if const_enum_sym.is_some() {
+                        if self.element_access_receiver_is_const_enum(
+                            access.expression,
+                            object_type_for_access,
+                        ) {
                             self.error_property_not_exist_at(
                                 &property_name,
                                 object_type_for_access,
