@@ -124,6 +124,8 @@ Use repo-local skills under `.agents/skills/` when the task matches:
 - `tsz-conformance`: diagnostic conformance and accepted-regression drift.
 - `tsz-emit`: JS/DTS emit.
 - `tsz-tracing`: tracing-driven debugging.
+- `rust-debugger`: live rdbg breakpoint debugging; for wrong/extra diagnostics
+  break the diagnostic sinks and backtrace to the deciding frame.
 - `tsz-performance-engineering`: perf/cache/residency.
 - `tsz-project-bench`: project corpus and benchmark rows.
 - `tsz-iteration-audit`: workflow, guardrail, context debt.
