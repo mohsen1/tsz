@@ -5,6 +5,45 @@
 use super::*;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn object_literal_initializer_display_type_for_receiver(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        // Only surface the initializer's anonymous object-literal shape when the
+        // declaration has no explicit type annotation. With an annotation the
+        // declared type *is* the annotation (not the widened initializer), and
+        // tsc renders that annotated/apparent type in the index diagnostic —
+        // e.g. `t` in `const t: T = { ... }` displays as `T`, not `{ ... }`.
+        if decl.type_annotation.is_some() {
+            return None;
+        }
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let init_type = self.get_type_of_node(init);
+        let init_type = self.resolve_type_for_property_access(init_type);
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, init_type)
+            .filter(|shape| shape.symbol.is_none())
+            .map(|_| init_type)
+    }
+
     pub(super) fn actual_lib_namespace_merged_type_has_property(
         &mut self,
         type_id: TypeId,
@@ -734,13 +773,90 @@ impl<'a> CheckerState<'a> {
             "Element implicitly has an 'any' type because expression of type '{index_str}' can't be used to index type '{object_str}'."
         );
 
+        // tsc renders TS7053 as a message chain: the "Element implicitly has an
+        // 'any' type" head, then a nested reason describing *why* the key does
+        // not index the type (`getPropertyTypeForIndexType`). Mirror that chain
+        // so element-access implicit-any diagnostics match tsc exactly; keys with
+        // no nested reason (symbol/any/union/template) emit the bare head.
+        //
         // TS7053 is reported at the full element access expression.
-        self.error_at_anchor(
-            expr_idx,
-            DiagnosticAnchorKind::ElementAccessExpr,
-            &message,
-            diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
-        );
+        if let Some(anchor) =
+            self.resolve_diagnostic_anchor(expr_idx, DiagnosticAnchorKind::ElementAccessExpr)
+        {
+            let mut diag = crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                anchor.start,
+                anchor.length,
+                message,
+                diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+            );
+            if let Some((reason_message, reason_code)) =
+                self.ts7053_index_reason_elaboration(index_type, &object_str)
+            {
+                diag.push_elaboration(reason_message, reason_code, 0);
+            }
+            self.ctx.push_diagnostic(diag);
+        }
+    }
+
+    /// Build the nested reason line tsc appends beneath a TS7053
+    /// ("Element implicitly has an 'any' type ... can't be used to index type")
+    /// element-access diagnostic.
+    ///
+    /// tsc's `getPropertyTypeForIndexType` chains one of two reasons under the
+    /// implicit-any head, keyed on the index type:
+    /// * a string/number **literal** key that is not a property ->
+    ///   `Property '<name>' does not exist on type '<T>'.` (TS2339 text);
+    /// * a general `string`/`number` key with no matching index signature ->
+    ///   `No index signature with a parameter of type '<kind>' was found on type
+    ///   '<T>'.` (TS7054 text).
+    ///
+    /// `symbol`, `any`, and template-literal keys carry no nested reason, so this
+    /// returns `None` and the caller emits the bare head. `object_str` is the
+    /// receiver display already computed for the head, reused verbatim so both
+    /// lines name the same type, matching tsc.
+    fn ts7053_index_reason_elaboration(
+        &mut self,
+        index_type: TypeId,
+        object_str: &str,
+    ) -> Option<(String, u32)> {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        // A string/number *literal* key names a property that does not exist.
+        let literal_key_name =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+                .or_else(|| {
+                    crate::query_boundaries::common::number_literal_value(
+                        self.ctx.types,
+                        index_type,
+                    )
+                    .map(|value| tsz_solver::utils::js_number_to_string(value).into_owned())
+                });
+        if let Some(name) = literal_key_name {
+            return Some((
+                format_message(
+                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[name.as_str(), object_str],
+                ),
+                diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            ));
+        }
+
+        let index_kind = if index_type == TypeId::STRING {
+            "string"
+        } else if index_type == TypeId::NUMBER {
+            "number"
+        } else {
+            return None;
+        };
+        Some((
+            format_message(
+                diagnostic_messages::NO_INDEX_SIGNATURE_WITH_A_PARAMETER_OF_TYPE_WAS_FOUND_ON_TYPE,
+                &[index_kind, object_str],
+            ),
+            diagnostic_codes::NO_INDEX_SIGNATURE_WITH_A_PARAMETER_OF_TYPE_WAS_FOUND_ON_TYPE,
+        ))
     }
 
     pub(super) fn no_index_signature_method_suggestion(

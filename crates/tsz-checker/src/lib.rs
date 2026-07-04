@@ -664,6 +664,9 @@ mod ts7041_tests;
 #[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
 mod ts7053_apparent_receiver_display_tests;
 #[cfg(test)]
+#[path = "tests/ts7053_index_reason_chain_tests.rs"]
+mod ts7053_index_reason_chain_tests;
+#[cfg(test)]
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]
