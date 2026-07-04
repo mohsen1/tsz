@@ -32,6 +32,13 @@ Fix once, don't churn: after ~2–3 edit→test cycles you're guessing — break
 the failing assertion and compare actual vs expected values, or `set` the
 suspect value and `continue` to validate the hypothesis without editing.
 
+Tap, don't walk. The debugger aims your reading; it rarely hands you the fix.
+Break at the sink, read which path fired (and which sinks show `0 hits`), `bt`
+to the deciding frame, then **read that code**. Stepping instruction-by-instruction,
+`eval`-looping to reconstruct state by hand, or adding `dbg!`/`println!` are the
+signature of the runs that burn tokens and still lose — if you're doing that, or
+on your third `launch`, stop and read the frame the backtrace pointed at.
+
 ## tsz: wrong or extra diagnostics (the main use here)
 
 tsz diagnostics funnel through a few sinks: `CheckerState::error`,
@@ -55,8 +62,10 @@ the failing `#[test]` name. Check the current stop's `code` before
 - Unhit sinks are reported at exit (`bound, 0 hits` = wrong path, try the
   next sink; `NOT BOUND` = bad name). Qualified names (`Type::method`) don't
   bind — use the base name, or `--break <file>:<line>` inside the function.
-- A **missing** diagnostic has nothing to trace. Read to find where the check
-  should fire; only then break there to see why its condition is false.
+- A **missing** diagnostic means an upstream gate wrongly accepted — the sink
+  shows `0 hits`, and that `0 hits` is usually the whole clue. **Read that gate**
+  to see why it passed; this is normally solved by reading, not stepping. Break
+  there only to confirm one specific value.
 - The same pattern works a layer down: break a `tsz-solver` relation or
   evaluation function to see the actual `TypeId`s and flags at the decision.
 - vs `tsz-tracing`: `TSZ_LOG` traces show the breadth of what solver/checker
