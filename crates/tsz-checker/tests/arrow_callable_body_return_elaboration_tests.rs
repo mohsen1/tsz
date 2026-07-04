@@ -171,3 +171,23 @@ fn callable_body_assignable_to_expected_return_is_ok() {
         "callable body assignable to the expected return must not error, got: {messages:?}"
     );
 }
+
+/// Regression (parser536727.ts): an arrow callback whose *parameter arity* does
+/// not match the target callback keeps the whole-callback `TS2345` — the
+/// body-vs-return mismatch stays a nested reason, not a top-level body-anchored
+/// `TS2322`. `() => g` (0 params) passed where `(x: string) => string` (1 param)
+/// is expected reports argument-level `TS2345` in `tsc`, never a body `TS2322`.
+/// The callable-body drill only fires when the arrow's parameters line up with
+/// the target's (see the arity-matched call-argument case above).
+#[test]
+fn param_arity_mismatched_callback_stays_argument_level() {
+    let messages = strict_ts2322(
+        "function foo(f: (x: string) => string) { return f(\"\"); }\n\
+         var g = (x: string) => x + \"blah\";\n\
+         foo(() => g);\n",
+    );
+    assert!(
+        messages.is_empty(),
+        "a param-arity-mismatched arrow callback must not drill to a body TS2322, got: {messages:?}"
+    );
+}
