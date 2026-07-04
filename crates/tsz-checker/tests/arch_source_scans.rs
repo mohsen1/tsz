@@ -123,6 +123,9 @@
 //! - `interface_merge_surface_construction_boundary_scans`: interface merge
 //!   reconstruction routes final callable/object/index/intersection surfaces
 //!   through `query_boundaries::interface_merge`.
+//! - `js_constructor_surface_construction_boundary_scans`: checked-JS
+//!   constructor/prototype instance surfaces route through
+//!   `query_boundaries::type_computation::complex`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -179,6 +182,8 @@ mod interface_merge_surface_construction_boundary_scans;
 mod interface_type_literal_surface_construction_boundary_scans;
 #[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]
 mod js_class_property_construction_boundary_scans;
+#[path = "arch_source_scans/js_constructor_surface_construction_boundary_scans.rs"]
+mod js_constructor_surface_construction_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]
 mod jsdoc_construction_boundary_scans;
 #[path = "arch_source_scans/jsx_construction_boundary_scans.rs"]

@@ -506,22 +506,7 @@ impl<'a> CheckerState<'a> {
                 let brand_name = self.ctx.types.intern_string(&brand_key);
                 properties.insert(
                     brand_name,
-                    PropertyInfo {
-                        name: brand_name,
-                        type_id: TypeId::UNKNOWN,
-                        write_type: TypeId::UNKNOWN,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: sym_id,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    },
+                    query::js_surface_property(brand_name, TypeId::UNKNOWN, sym_id, false),
                 );
             } else {
                 synthesis_diag_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
@@ -534,8 +519,7 @@ impl<'a> CheckerState<'a> {
 
         // Build an object type from the collected properties.
         let props: Vec<PropertyInfo> = properties.into_values().collect();
-        let factory = self.ctx.types.factory();
-        let instance_type = factory.object_with_symbol(props, sym_id);
+        let instance_type = query::js_instance_object_with_symbol(self.ctx.types, props, sym_id);
 
         // If the constructor function has template type params, instantiate the
         // instance type by inferring type arguments from the actual call arguments.
@@ -691,7 +675,6 @@ impl<'a> CheckerState<'a> {
         parent_sym: Option<tsz_binder::SymbolId>,
     ) {
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::{PropertyInfo, Visibility};
 
         let top_level_stmts: Vec<NodeIndex> = {
             let Some(body_node) = self.ctx.arena.get(body_idx) else {
@@ -756,22 +739,11 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let name_atom = self.ctx.types.intern_string(&prop_name);
-                properties.entry(name_atom).or_insert(PropertyInfo {
-                    name: name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: parent_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                properties
+                    .entry(name_atom)
+                    .or_insert(query::js_surface_property(
+                        name_atom, rhs_type, parent_sym, false,
+                    ));
                 continue;
             }
 
@@ -786,22 +758,11 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let name_atom = self.ctx.types.intern_string(&prop_name);
-                    properties.entry(name_atom).or_insert(PropertyInfo {
-                        name: name_atom,
-                        type_id: jsdoc_type,
-                        write_type: jsdoc_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: parent_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    properties
+                        .entry(name_atom)
+                        .or_insert(query::js_surface_property(
+                            name_atom, jsdoc_type, parent_sym, false,
+                        ));
                 }
             }
         }
