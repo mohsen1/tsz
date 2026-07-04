@@ -8,6 +8,7 @@ mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
+use crate::query_boundaries::state::type_analysis as type_analysis_boundary;
 
 struct SymbolAliasCtx<'a> {
     sym_id: SymbolId,
@@ -26,7 +27,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
@@ -166,29 +167,18 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let prop_type = self.get_type_of_symbol(export_sym_id);
-                props.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(name),
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: if name == "default" {
+                props.push(type_analysis_boundary::namespace_export_property(
+                    self.ctx.types.intern_string(name),
+                    prop_type,
+                    if name == "default" {
                         1
                     } else {
                         props.len() as u32 + 2
                     },
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                ));
             }
             Self::normalize_namespace_export_declaration_order(&mut props);
-            let module_type = self.ctx.types.factory().object(props);
+            let module_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
             self.ctx.namespace_module_names.insert(
                 module_type,
                 self.imported_namespace_display_module_name(module_name),
@@ -202,22 +192,14 @@ impl<'a> CheckerState<'a> {
             Some(self.ctx.current_file_idx),
         )?;
         let default_type = self.get_type_of_symbol(default_sym_id);
-        let module_type = self.ctx.types.factory().object(vec![PropertyInfo {
-            name: self.ctx.types.intern_string("default"),
-            type_id: default_type,
-            write_type: default_type,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 1,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        }]);
+        let module_type = type_analysis_boundary::namespace_object_type(
+            self.ctx.types,
+            vec![type_analysis_boundary::namespace_export_property(
+                self.ctx.types.intern_string("default"),
+                default_type,
+                1,
+            )],
+        );
         self.ctx.namespace_module_names.insert(
             module_type,
             self.imported_namespace_display_module_name(module_name),
@@ -442,26 +424,15 @@ impl<'a> CheckerState<'a> {
             let mut prop_type = self.get_type_of_symbol(export_sym_id);
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
             let name_atom = self.ctx.types.intern_string(name);
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: if name == "default" {
+            props.push(type_analysis_boundary::namespace_export_property(
+                name_atom,
+                prop_type,
+                if name == "default" {
                     1
                 } else {
                     props.len() as u32 + 2
                 },
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            ));
         }
 
         if has_export_equals && let Some(export_equals_sym_id) = exports_table.get("export=") {
@@ -473,22 +444,11 @@ impl<'a> CheckerState<'a> {
                 existing_default.optional = false;
                 existing_default.readonly = false;
             } else {
-                props.push(PropertyInfo {
-                    name: default_atom,
-                    type_id: export_equals_type,
-                    write_type: export_equals_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 1,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                props.push(type_analysis_boundary::namespace_export_property(
+                    default_atom,
+                    export_equals_type,
+                    1,
+                ));
             }
         }
 
@@ -497,7 +457,7 @@ impl<'a> CheckerState<'a> {
         }
 
         Self::normalize_namespace_export_declaration_order(&mut props);
-        let module_type = self.ctx.types.factory().object(props);
+        let module_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
         self.ctx.namespace_module_names.insert(
             module_type,
             self.imported_namespace_display_module_name(module_name),
@@ -571,26 +531,15 @@ impl<'a> CheckerState<'a> {
                 self.namespace_import_export_property_type(module_name, export_sym_id, name)
             });
             prop_type = self.apply_module_augmentations(module_name, name, prop_type);
-            props.push(PropertyInfo {
-                name: self.ctx.types.intern_string(name),
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: if name == "default" {
+            props.push(type_analysis_boundary::namespace_export_property(
+                self.ctx.types.intern_string(name),
+                prop_type,
+                if name == "default" {
                     1
                 } else {
                     props.len() as u32 + 2
                 },
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            ));
         }
 
         if props.is_empty() {
@@ -598,7 +547,7 @@ impl<'a> CheckerState<'a> {
         }
 
         Self::normalize_namespace_export_declaration_order(&mut props);
-        let namespace_type = self.ctx.types.factory().object(props);
+        let namespace_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
         self.ctx.namespace_module_names.insert(
             namespace_type,
             self.imported_namespace_display_module_name(module_name),
@@ -752,22 +701,11 @@ impl<'a> CheckerState<'a> {
                 props.len() as u32 + 2
             };
             let name_atom = self.ctx.types.intern_string(name);
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
+            props.push(type_analysis_boundary::namespace_export_property(
+                name_atom,
+                prop_type,
                 declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            ));
         }
         nested_module_specifier
     }
