@@ -1,5 +1,5 @@
 use tsz_binder::SymbolId;
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{CallSignature, FunctionShape, ObjectShape, TypeId};
 
 pub(crate) use super::super::common::{
@@ -30,6 +30,83 @@ pub(crate) fn promise_object_symbol_id(db: &dyn TypeDatabase, type_id: TypeId) -
         return None;
     };
     db.object_shape(shape_id).symbol
+}
+
+pub(crate) struct ThenableSignatureSurface {
+    this_type: Option<TypeId>,
+    onfulfilled_type: Option<TypeId>,
+}
+
+impl ThenableSignatureSurface {
+    pub(crate) const fn this_type(&self) -> Option<TypeId> {
+        self.this_type
+    }
+
+    pub(crate) const fn onfulfilled_type(&self) -> Option<TypeId> {
+        self.onfulfilled_type
+    }
+}
+
+pub(crate) fn thenable_property_type(
+    db: &dyn QueryDatabase,
+    receiver_type: TypeId,
+) -> Option<TypeId> {
+    crate::query_boundaries::property_access::resolve_property_access(
+        db,
+        receiver_type,
+        db.intern_string("then"),
+    )
+    .success_type()
+}
+
+pub(crate) fn thenable_signature_surfaces(
+    db: &dyn TypeDatabase,
+    then_type: TypeId,
+) -> Vec<ThenableSignatureSurface> {
+    let mut sigs = call_signatures_for_type(db, then_type).unwrap_or_default();
+    if sigs.is_empty()
+        && let Some(shape) = function_shape_for_type(db, then_type)
+    {
+        sigs.push(CallSignature {
+            type_params: shape.type_params.clone(),
+            params: shape.params.clone(),
+            this_type: shape.this_type,
+            return_type: shape.return_type,
+            type_predicate: shape.type_predicate,
+            is_method: shape.is_method,
+        });
+    }
+
+    sigs.into_iter()
+        .map(|sig| ThenableSignatureSurface {
+            this_type: sig.this_type,
+            onfulfilled_type: sig.params.first().map(|param| param.type_id),
+        })
+        .collect()
+}
+
+pub(crate) fn thenable_callback_value_type(
+    db: &dyn TypeDatabase,
+    callback_type: TypeId,
+) -> Option<TypeId> {
+    if let Some(sigs) = call_signatures_for_type(db, callback_type) {
+        return sigs.first()?.params.first().map(|param| param.type_id);
+    }
+    if let Some(shape) = function_shape_for_type(db, callback_type) {
+        return shape.params.first().map(|param| param.type_id);
+    }
+    let members = super::super::common::union_members(db, callback_type)?;
+    for member in members {
+        if let Some(sigs) = call_signatures_for_type(db, member)
+            && let Some(first) = sigs.first()
+        {
+            return first.params.first().map(|param| param.type_id);
+        }
+        if let Some(shape) = function_shape_for_type(db, member) {
+            return shape.params.first().map(|param| param.type_id);
+        }
+    }
+    None
 }
 
 pub(crate) fn type_application(
