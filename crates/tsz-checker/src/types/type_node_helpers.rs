@@ -8,6 +8,8 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::type_node::{TypeLiteralSignatureScopeUpdates, TypeNodeChecker};
+use crate::query_boundaries::indexed_access_key_space;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::query_boundaries::type_construction;
 
 /// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
@@ -495,7 +497,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return (Vec::new(), Vec::new());
         };
 
-        let factory = self.ctx.types.factory();
         let mut params = Vec::with_capacity(list.nodes.len());
         let mut updates = Vec::with_capacity(list.nodes.len());
 
@@ -515,13 +516,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                 .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
             let atom = self.ctx.types.intern_string(&name);
-            let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint: None,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            });
+            let info = signature_building_boundary::user_type_param_info(atom, None, None, false);
+            let type_id = signature_building_boundary::user_type_param(self.ctx.types, info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous));
         }
@@ -554,14 +550,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .ctx
                 .arena
                 .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
-            let info = tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default,
-                is_const,
-                origin: tsz_solver::TypeParamOrigin::User,
-            };
-            let type_id = factory.type_param(info);
+            let info = signature_building_boundary::user_type_param_info(
+                atom, constraint, default, is_const,
+            );
+            let type_id = signature_building_boundary::user_type_param(self.ctx.types, info);
             self.ctx.type_parameter_scope.insert(name, type_id);
             params.push(info);
         }
@@ -1061,7 +1053,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
             base = expanded;
         }
-        let indexed = self.ctx.types.index_access(base, index);
+        let indexed = indexed_access_key_space::indexed_access_type(self.ctx.types, base, index);
         {
             let env = self.ctx.type_environment.borrow();
             let expanded = crate::query_boundaries::flow_analysis::evaluate_application_type(
