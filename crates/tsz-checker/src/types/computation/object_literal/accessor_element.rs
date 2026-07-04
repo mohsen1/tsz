@@ -2,12 +2,15 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::object_literal_context as object_context_query;
+use crate::query_boundaries::type_computation::object_literals::{
+    self as object_literal_query, ObjectLiteralMemberProperty,
+};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId};
 
 pub(super) struct ObjectLiteralAccessorContext<'b> {
     pub(super) elem_idx: NodeIndex,
@@ -342,22 +345,21 @@ impl<'a> CheckerState<'a> {
                     (existing.type_id, accessor_type)
                 };
                 // Both getter and setter exist → not readonly
-                let prop_info = PropertyInfo {
-                    name: name_atom,
-                    type_id: read_type,
-                    write_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: existing_order,
-                    is_string_named: acc_str_named || existing.is_string_named,
-                    is_symbol_named: acc_sym_named || existing.is_symbol_named,
-                    single_quoted_name: acc_single_quoted || existing.single_quoted_name,
-                    non_widening: false,
-                };
+                let prop_info = object_literal_query::object_literal_member_property(
+                    ObjectLiteralMemberProperty {
+                        name: name_atom,
+                        type_id: read_type,
+                        write_type,
+                        optional: false,
+                        readonly: false,
+                        is_method: false,
+                        declaration_order: existing_order,
+                        is_string_named: acc_str_named || existing.is_string_named,
+                        is_symbol_named: acc_sym_named || existing.is_symbol_named,
+                        single_quoted_name: acc_single_quoted || existing.single_quoted_name,
+                        non_widening: false,
+                    },
+                );
                 properties.insert(name_atom, prop_info.clone());
                 self.record_partial_object_literal_property(
                     partial_initializer_stack_index,
@@ -374,22 +376,21 @@ impl<'a> CheckerState<'a> {
                 let (read_type, write_type) = (accessor_type, accessor_type);
                 let order = *prop_order;
                 *prop_order += 1;
-                let prop_info = PropertyInfo {
-                    name: name_atom,
-                    type_id: read_type,
-                    write_type,
-                    optional: false,
-                    readonly,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: order,
-                    is_string_named: acc_str_named,
-                    is_symbol_named: acc_sym_named,
-                    single_quoted_name: acc_single_quoted,
-                    non_widening: false,
-                };
+                let prop_info = object_literal_query::object_literal_member_property(
+                    ObjectLiteralMemberProperty {
+                        name: name_atom,
+                        type_id: read_type,
+                        write_type,
+                        optional: false,
+                        readonly,
+                        is_method: false,
+                        declaration_order: order,
+                        is_string_named: acc_str_named,
+                        is_symbol_named: acc_sym_named,
+                        single_quoted_name: acc_single_quoted,
+                        non_widening: false,
+                    },
+                );
                 properties.insert(name_atom, prop_info.clone());
                 self.record_partial_object_literal_property(
                     partial_initializer_stack_index,

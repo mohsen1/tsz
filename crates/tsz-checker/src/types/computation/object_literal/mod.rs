@@ -18,6 +18,8 @@ mod spread_element;
 mod symbol_key_routing;
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -130,15 +132,17 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let getter_type =
             self.define_property_descriptor_accessor_type(object_literal_idx, elements, "get")?;
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape::new(
-                    vec![tsz_solver::ParamInfo::unnamed(getter_type)],
-                    TypeId::VOID,
-                )),
-        )
+        let setter_context = signature_construction::function_type_from_parts(
+            self.ctx.types,
+            vec![signature_building_boundary::param_info(
+                None,
+                getter_type,
+                false,
+                false,
+            )],
+            TypeId::VOID,
+        );
+        Some(setter_context)
     }
 
     /// Check if a function node is a "set" method inside an Object.defineProperty descriptor.

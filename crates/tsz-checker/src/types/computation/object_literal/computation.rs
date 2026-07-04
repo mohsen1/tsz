@@ -8,11 +8,15 @@ use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccesso
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::index_signature::IndexSignature;
+use crate::query_boundaries::type_computation::object_literals::{
+    self as object_literal_query, ObjectLiteralMemberProperty,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::TypeId;
 
 use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
@@ -212,7 +216,7 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
-        use tsz_solver::{IndexSignature, PropertyInfo};
+        use tsz_solver::PropertyInfo;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -907,23 +911,22 @@ impl<'a> CheckerState<'a> {
                     // emit quoting: `"404": ...` vs `404: ...`.
                     let (is_string_named, is_symbol_named, single_quoted_name) =
                         self.object_literal_member_naming_flags(prop.name);
-                    let prop_info = PropertyInfo {
-                        name: name_atom,
-                        type_id: value_type,
-                        write_type: value_type,
-                        optional: is_optional_destructuring,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: order,
-                        is_string_named,
-                        is_symbol_named,
-                        single_quoted_name,
-                        // JSDoc `@type` takes the declared type (annotation-governed).
-                        non_widening: jsdoc_declared_type.is_none() && prop_non_widening,
-                    };
+                    let prop_info = object_literal_query::object_literal_member_property(
+                        ObjectLiteralMemberProperty {
+                            name: name_atom,
+                            type_id: value_type,
+                            write_type: value_type,
+                            optional: is_optional_destructuring,
+                            readonly: false,
+                            is_method: false,
+                            declaration_order: order,
+                            is_string_named,
+                            is_symbol_named,
+                            single_quoted_name,
+                            // JSDoc `@type` takes the declared type (annotation-governed).
+                            non_widening: jsdoc_declared_type.is_none() && prop_non_widening,
+                        },
+                    );
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
                         partial_initializer_stack_index,
@@ -1361,22 +1364,21 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    let prop_info = PropertyInfo {
-                        name: name_atom,
-                        type_id: value_type,
-                        write_type: value_type,
-                        optional: is_optional_shorthand,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: order,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: shorthand_prop_non_widening,
-                    };
+                    let prop_info = object_literal_query::object_literal_member_property(
+                        ObjectLiteralMemberProperty {
+                            name: name_atom,
+                            type_id: value_type,
+                            write_type: value_type,
+                            optional: is_optional_shorthand,
+                            readonly: false,
+                            is_method: false,
+                            declaration_order: order,
+                            is_string_named: false,
+                            is_symbol_named: false,
+                            single_quoted_name: false,
+                            non_widening: shorthand_prop_non_widening,
+                        },
+                    );
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
                         partial_initializer_stack_index,
@@ -1747,25 +1749,24 @@ impl<'a> CheckerState<'a> {
                     prop_order += 1;
                     let (is_string_named, is_symbol_named, single_quoted_name) =
                         self.object_literal_member_naming_flags(method.name);
-                    let prop_info = PropertyInfo {
-                        name: name_atom,
-                        type_id: method_type,
-                        write_type: method_type,
-                        // A method shorthand may carry `?` — `{ a?() {} }` —
-                        // in which case the inferred property type must be
-                        // optional so the .d.ts emits `a?(): void`.
-                        optional: method.question_token,
-                        readonly: false,
-                        is_method: true, // Object literal methods should be bivariant
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: order,
-                        is_string_named,
-                        is_symbol_named,
-                        single_quoted_name,
-                        non_widening: false,
-                    };
+                    let prop_info = object_literal_query::object_literal_member_property(
+                        ObjectLiteralMemberProperty {
+                            name: name_atom,
+                            type_id: method_type,
+                            write_type: method_type,
+                            // A method shorthand may carry `?` — `{ a?() {} }` —
+                            // in which case the inferred property type must be
+                            // optional so the .d.ts emits `a?(): void`.
+                            optional: method.question_token,
+                            readonly: false,
+                            is_method: true, // Object literal methods should be bivariant
+                            declaration_order: order,
+                            is_string_named,
+                            is_symbol_named,
+                            single_quoted_name,
+                            non_widening: false,
+                        },
+                    );
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
                         partial_initializer_stack_index,

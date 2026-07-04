@@ -8,7 +8,44 @@
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{IndexSignature, MappedType, ObjectFlags, ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{
+    IndexSignature, MappedType, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility,
+};
+
+pub(crate) struct ObjectLiteralMemberProperty {
+    pub(crate) name: Atom,
+    pub(crate) type_id: TypeId,
+    pub(crate) write_type: TypeId,
+    pub(crate) optional: bool,
+    pub(crate) readonly: bool,
+    pub(crate) is_method: bool,
+    pub(crate) declaration_order: u32,
+    pub(crate) is_string_named: bool,
+    pub(crate) is_symbol_named: bool,
+    pub(crate) single_quoted_name: bool,
+    pub(crate) non_widening: bool,
+}
+
+pub(crate) const fn object_literal_member_property(
+    input: ObjectLiteralMemberProperty,
+) -> PropertyInfo {
+    PropertyInfo {
+        name: input.name,
+        type_id: input.type_id,
+        write_type: input.write_type,
+        optional: input.optional,
+        readonly: input.readonly,
+        is_method: input.is_method,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: input.declaration_order,
+        is_string_named: input.is_string_named,
+        is_symbol_named: input.is_symbol_named,
+        single_quoted_name: input.single_quoted_name,
+        non_widening: input.non_widening,
+    }
+}
 
 pub(crate) struct ObjectLiteralIndexedType {
     pub(crate) properties: Vec<PropertyInfo>,
