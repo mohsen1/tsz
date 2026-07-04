@@ -771,8 +771,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        use crate::query_boundaries::common::PendingDiagnostic;
-
         let argument_failures: Vec<_> = failures
             .iter()
             .filter(|failure| {
@@ -1067,49 +1065,84 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        for failure in failures {
-            let mut pending: PendingDiagnostic = PendingDiagnostic {
-                span: Some(span.clone()),
-                ..failure.clone()
+        // One elaboration line at `span_of` with the given message/code/depth.
+        let related_line =
+            |span_of: &tsz_solver::SourceSpan, message_text: String, code: u32, depth: u8| {
+                DiagnosticRelatedInformation {
+                    file: span_of.file.to_string(),
+                    start: span_of.start,
+                    length: span_of.length,
+                    message_text,
+                    category: DiagnosticCategory::Message,
+                    code,
+                    depth,
+                }
             };
-            // Mirror tsc's `reportRelationError` source generalization for each
-            // overload's argument failure, matching the single-signature TS2345
-            // path: a fresh literal source (`true`, `1`) is widened to its base
-            // (`boolean`, `number`) unless the parameter target could hold a
-            // top-level singleton type. The pre-built solver diagnostic carries
-            // the raw literal source, so without this the overload elaboration
-            // diverges from tsc (and from the single-overload TS2345 display).
-            if pending.code
-                == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                && let (
-                    Some(tsz_solver::DiagnosticArg::Type(source)),
-                    Some(tsz_solver::DiagnosticArg::Type(target)),
-                ) = (pending.args.first(), pending.args.get(1))
-            {
-                let (source, target) = (*source, *target);
-                let display_source =
-                    crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                        self.ctx.types,
-                        source,
-                        target,
-                    );
-                if display_source != source {
-                    pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
+
+        // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
+        // gave the following error.` (TS2772) chain per candidate — in
+        // declaration order — when 2 or 3 candidates reached argument checking
+        // (`resolveCall`). A single candidate collapses to a plain TS2345 (no
+        // TS2769 at all, handled upstream), and >3 candidates use tsc's distinct
+        // "last overload" shape, left as the historical flat rendering. Each
+        // candidate failure carries its declared signature; a 2-3 set whose
+        // failures all have one wraps, otherwise we fall back to the flat list
+        // (e.g. callback-body sets whose failures carry no signature).
+        let wrap_overloads = matches!(failures.len(), 2 | 3)
+            && failures
+                .iter()
+                .all(|failure| failure.overload_signature.is_some());
+
+        let related_policy = if wrap_overloads {
+            let total = failures.len();
+            for (ordinal, failure) in failures.iter().enumerate() {
+                let signature = failure
+                    .overload_signature
+                    .expect("wrap_overloads requires every failure to carry a signature");
+                // signatureToString colon form (`(x: number): number`); fall
+                // back to the plain render only if the type is not a signature.
+                let signature_display = formatter
+                    .format_overload_signature(signature)
+                    .unwrap_or_else(|| formatter.format(signature).into_owned());
+                related.push(related_line(
+                    &span,
+                    format_message(
+                        diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                        &[
+                            &(ordinal + 1).to_string(),
+                            &total.to_string(),
+                            &signature_display,
+                        ],
+                    ),
+                    diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                    0,
+                ));
+                let pending = self.overload_failure_generalized_pending(failure, &span);
+                let diag = formatter.render(&pending);
+                let diag_span = diag.span.as_ref().unwrap_or(&span);
+                // The candidate's applicability error nests one level under its
+                // TS2772 header; any deeper chain it carries nests below that.
+                related.push(related_line(diag_span, diag.message, diag.code, 1));
+                for nested in &diag.related {
+                    related.push(related_line(
+                        &nested.span,
+                        nested.message.clone(),
+                        0,
+                        nested.depth.saturating_add(2),
+                    ));
                 }
             }
-            let diag = formatter.render(&pending);
-            if let Some(diag_span) = diag.span.as_ref() {
-                related.push(DiagnosticRelatedInformation {
-                    file: diag_span.file.to_string(),
-                    start: diag_span.start,
-                    length: diag_span.length,
-                    message_text: diag.message.clone(),
-                    category: DiagnosticCategory::Message,
-                    code: diag.code,
-                    depth: 0,
-                });
+            RelatedInformationPolicy::OVERLOAD_CHAINS
+        } else {
+            for failure in failures {
+                let pending = self.overload_failure_generalized_pending(failure, &span);
+                let diag = formatter.render(&pending);
+                if let Some(diag_span) = diag.span.as_ref() {
+                    related.push(related_line(diag_span, diag.message, diag.code, 0));
+                }
             }
-        }
+            RelatedInformationPolicy::OVERLOAD_FAILURES
+        };
 
         self.emit_render_request_at_anchor(
             anchor,
@@ -1118,9 +1151,45 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
                 diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL.to_string(),
                 related,
-                RelatedInformationPolicy::OVERLOAD_FAILURES,
+                related_policy,
             ),
         );
+    }
+
+    /// Build the per-overload failure diagnostic anchored at the shared
+    /// `TS2769` span, applying tsc's `reportRelationError` source
+    /// generalization: a fresh literal source (`true`, `1`) is widened to its
+    /// base (`boolean`, `number`) unless the parameter target could hold a
+    /// top-level singleton type. The pre-built solver diagnostic carries the
+    /// raw literal source, so without this the overload elaboration diverges
+    /// from tsc (and from the single-overload TS2345 display).
+    fn overload_failure_generalized_pending(
+        &self,
+        failure: &tsz_solver::PendingDiagnostic,
+        span: &tsz_solver::SourceSpan,
+    ) -> tsz_solver::PendingDiagnostic {
+        let mut pending = tsz_solver::PendingDiagnostic {
+            span: Some(span.clone()),
+            ..failure.clone()
+        };
+        if pending.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            && let (
+                Some(tsz_solver::DiagnosticArg::Type(source)),
+                Some(tsz_solver::DiagnosticArg::Type(target)),
+            ) = (pending.args.first(), pending.args.get(1))
+        {
+            let (source, target) = (*source, *target);
+            let display_source =
+                crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
+                    self.ctx.types,
+                    source,
+                    target,
+                );
+            if display_source != source {
+                pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
+            }
+        }
+        pending
     }
 
     fn tagged_template_callee_has_generic_call_signature(&mut self, idx: NodeIndex) -> bool {

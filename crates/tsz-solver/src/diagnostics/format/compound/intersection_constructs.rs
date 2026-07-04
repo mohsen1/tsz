@@ -435,6 +435,42 @@ impl<'a> TypeFormatter<'a> {
         )
     }
 
+    /// Render a single-signature function/callable as tsc's `signatureToString`
+    /// colon form (`(x: number): number`), used for the `TS2772`
+    /// overload-elaboration header. tsc's `signatureToString` defaults to the
+    /// call-signature spelling even for construct signatures, so `new`/`abstract`
+    /// prefixes are intentionally omitted (`new (x: number): C` renders as
+    /// `(x: number): C`). Returns `None` when the type is not a function/callable
+    /// with at least one signature.
+    pub fn format_overload_signature(&mut self, func_type: TypeId) -> Option<String> {
+        match self.interner.lookup(func_type)? {
+            TypeData::Function(shape_id) => {
+                let shape = self.interner.function_shape(shape_id);
+                Some(self.format_signature_with_predicate(
+                    &shape.type_params,
+                    &shape.params,
+                    shape.return_type,
+                    &SignatureFormatOpts {
+                        this_type: shape.this_type,
+                        type_predicate: shape.type_predicate.as_ref(),
+                        is_construct: false,
+                        is_abstract: false,
+                        separator: ":",
+                    },
+                ))
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(shape_id);
+                let sig = shape
+                    .call_signatures
+                    .first()
+                    .or_else(|| shape.construct_signatures.first())?;
+                Some(self.format_call_signature(sig, false, false))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn format_conditional(&mut self, cond: &ConditionalType) -> String {
         let prev = self.preserve_optional_property_surface_syntax;
         self.preserve_optional_property_surface_syntax = true;

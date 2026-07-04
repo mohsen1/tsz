@@ -1378,6 +1378,9 @@ mod overlap_relation_helper_routing_arch_tests;
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
+#[path = "tests/overload_elaboration_tests.rs"]
+mod overload_elaboration_tests;
+#[cfg(test)]
 #[path = "tests/overload_generic_wrapper_compat_tests.rs"]
 mod overload_generic_wrapper_compat_tests;
 #[cfg(test)]
