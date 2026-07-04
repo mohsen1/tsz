@@ -504,6 +504,52 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.prune_placeholder_union_members(current)
     }
 
+    /// Default any *free* inference placeholder that leaked into the finalized
+    /// call **return type** to its constraint, or to `unknown` when it has none.
+    ///
+    /// When a type parameter appears only in a nested/curried position that
+    /// never receives an inference candidate — e.g. `S` in
+    /// `zipWith<T, S, U>(a: T[], f: (x: T) => (y: S) => U): U[]` called with a
+    /// generic `pair: <T, S>(x: T) => (y: S) => { x: T; y: S }` — its resolution
+    /// can settle on a bare, self-referential inference placeholder (`__infer_N`)
+    /// that then rides into another inferred type parameter (here
+    /// `U = { x: number; y: __infer_N }`). `tsc` resolves an uninferable type
+    /// parameter to its constraint, or to `unknown` when it is unconstrained
+    /// (`getInferredType`), so the internal placeholder must never survive into
+    /// the result type. Constrained parameters already resolve to their
+    /// constraint before this point and so never leak, but honoring
+    /// `info.constraint` here keeps the fallback faithful regardless.
+    ///
+    /// Placeholders that
+    /// [`Self::hoist_source_placeholders_into_return_type`] /
+    /// [`Self::hoist_resolved_type_params_into_return_type`] re-generalized into
+    /// the return function's own type-parameter list are genuine bound
+    /// parameters (TypeScript 3.4 higher-order inference results), so they are
+    /// preserved rather than defaulted.
+    pub(super) fn default_leaked_return_type_placeholders(&self, return_type: TypeId) -> TypeId {
+        // `free_type_parameter_ids_in` is binder-aware and memoized: it reports
+        // only *free* type parameters and skips a nested generic signature's own
+        // type-parameter list, so placeholders the `hoist_*` steps re-generalized
+        // into the return function's own parameters are excluded automatically.
+        // A fully-resolved return type contributes no ids, keeping the common
+        // (leak-free) path a single cached lookup.
+        let mut subst = TypeSubstitution::new();
+        for ty in crate::visitors::visitor_predicates::free_type_parameter_ids_in(
+            self.interner.as_type_database(),
+            [return_type],
+        ) {
+            if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(ty)
+                && info.is_infer_placeholder()
+            {
+                subst.insert(info.name, info.constraint.unwrap_or(TypeId::UNKNOWN));
+            }
+        }
+        if subst.is_empty() {
+            return return_type;
+        }
+        instantiate_type(self.interner, return_type, &subst)
+    }
+
     pub(super) fn normalize_inferred_placeholder_type_preserving_source_placeholders(
         &self,
         ty: TypeId,
