@@ -3,7 +3,7 @@
 use crate::FlowAnalyzer;
 use crate::query_boundaries::assignability::are_types_overlapping_with_env;
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype_with_env, is_literal_type_through_type_constraints,
+    are_types_mutually_subtype_with_env, array_type, is_literal_type_through_type_constraints,
     object_shape_for_type, tuple_elements_for_type, union_members_for_type,
 };
 use crate::query_boundaries::state::checking::find_property_in_object_by_str;
@@ -1164,7 +1164,7 @@ fn resolve_tuple_binding_type(
             .skip(element_index)
             .find(|e| e.rest)
             .or_else(|| elems.get(element_index))?;
-        Some(db.factory().array(rest_elem.type_id))
+        Some(array_type(db, rest_elem.type_id))
     } else {
         elems.get(element_index).map(|e| e.type_id)
     }

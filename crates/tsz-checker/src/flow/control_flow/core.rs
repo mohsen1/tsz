@@ -312,7 +312,7 @@ fn resolve_tuple_binding_type(
             .skip(element_index)
             .find(|e| e.rest)
             .or_else(|| elems.get(element_index))?;
-        Some(db.factory().array(rest_elem.type_id))
+        Some(query::array_type(db, rest_elem.type_id))
     } else {
         elems.get(element_index).map(|e| e.type_id)
     }

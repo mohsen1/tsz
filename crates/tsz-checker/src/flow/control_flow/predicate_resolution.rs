@@ -12,7 +12,9 @@ use tsz_solver::{ParamInfo, TypeId, TypePredicate};
 
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow as flow_boundary;
-use crate::query_boundaries::flow_analysis::{self as flow_query, union_members_for_type};
+use crate::query_boundaries::flow_analysis::{
+    self as flow_query, union_members_for_type, union_types,
+};
 
 impl<'a> FlowAnalyzer<'a> {
     /// Resolve a generic assertion predicate's type from the call's actual argument types.
@@ -113,7 +115,7 @@ impl<'a> FlowAnalyzer<'a> {
                         match remaining.len() {
                             0 => arg_type,
                             1 => remaining[0],
-                            _ => self.interner.factory().union(remaining),
+                            _ => union_types(self.interner, remaining),
                         }
                     } else {
                         arg_type

@@ -2,7 +2,7 @@ use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
-use tsz_solver::{CallSignature, PropertyInfo, TypeId};
+use tsz_solver::{CallSignature, ParamInfo, PropertyInfo, TupleElement, TypeId};
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -33,6 +33,41 @@ pub(crate) fn intersection_types(db: &dyn QueryDatabase, members: Vec<TypeId>) -
 
 pub(crate) fn array_type(db: &dyn QueryDatabase, element: TypeId) -> TypeId {
     db.array(element)
+}
+
+pub(crate) const fn flow_property(name: tsz_common::Atom, type_id: TypeId) -> PropertyInfo {
+    PropertyInfo::new(name, type_id)
+}
+
+pub(crate) const fn optional_flow_property(
+    name: tsz_common::Atom,
+    type_id: TypeId,
+) -> PropertyInfo {
+    PropertyInfo::opt(name, type_id)
+}
+
+pub(crate) const fn flow_tuple_element(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+pub(crate) const fn flow_call_signature(
+    params: Vec<ParamInfo>,
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+) -> CallSignature {
+    CallSignature {
+        type_params: Vec::new(),
+        params,
+        this_type,
+        return_type,
+        type_predicate: None,
+        is_method: false,
+    }
 }
 
 pub(crate) fn empty_object_type(db: &dyn QueryDatabase) -> TypeId {

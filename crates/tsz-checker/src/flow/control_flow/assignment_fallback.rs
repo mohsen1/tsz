@@ -7,9 +7,10 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
     PropertyAccessResult, TypeSubstitution, call_signatures_for_type,
-    construct_signatures_for_type, contains_free_type_parameters, function_return_type,
-    get_application_info, instantiate_type, is_promise_like_type, literal_value,
-    union_members_for_type, unwrap_promise_type_argument, widen_literal_to_primitive,
+    construct_signatures_for_type, contains_free_type_parameters, flow_call_signature,
+    flow_property, function_return_type, get_application_info, instantiate_type,
+    is_promise_like_type, literal_value, optional_flow_property, union_members_for_type,
+    unwrap_promise_type_argument, widen_literal_to_primitive,
 };
 use crate::types_domain::queries::lib_resolution::{
     keyword_name_to_type_id, keyword_syntax_to_type_id,
@@ -17,7 +18,7 @@ use crate::types_domain::queries::lib_resolution::{
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, ParamInfo, PropertyInfo, SymbolRef, TypeId};
+use tsz_solver::{ParamInfo, SymbolRef, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(super) fn assigned_type_for_await_rhs(
@@ -258,9 +259,9 @@ impl<'a> FlowAnalyzer<'a> {
                     let member_type =
                         self.fallback_type_from_type_node_syntax(signature.type_annotation)?;
                     properties.push(if signature.question_token {
-                        PropertyInfo::opt(name_atom, member_type)
+                        optional_flow_property(name_atom, member_type)
                     } else {
-                        PropertyInfo::new(name_atom, member_type)
+                        flow_property(name_atom, member_type)
                     });
                 }
                 Some(
@@ -400,7 +401,7 @@ impl<'a> FlowAnalyzer<'a> {
                 let value_type = self
                     .literal_type_from_node(prop.initializer)
                     .or_else(|| self.fallback_expression_type_from_syntax(prop.initializer))?;
-                properties.push(PropertyInfo::new(name_atom, value_type));
+                properties.push(flow_property(name_atom, value_type));
                 continue;
             }
             if let Some(shorthand) = self.arena.get_shorthand_property(element_node) {
@@ -412,7 +413,7 @@ impl<'a> FlowAnalyzer<'a> {
                     .or_else(|| self.fallback_type_for_reference(shorthand.name))?;
                 // Re-intern through solver to match solver's Atom namespace.
                 let name_atom = self.interner.intern_string(&ident.escaped_text);
-                properties.push(PropertyInfo::new(name_atom, value_type));
+                properties.push(flow_property(name_atom, value_type));
                 continue;
             }
             return None;
@@ -815,12 +816,10 @@ impl<'a> FlowAnalyzer<'a> {
         Some(
             crate::query_boundaries::flow_analysis::call_only_callable_type(
                 self.interner,
-                vec![CallSignature {
-                    type_params: Vec::new(),
+                vec![flow_call_signature(
                     params,
                     this_type,
-                    return_type: self
-                        .arena
+                    self.arena
                         .get(decl)
                         .and_then(|node| self.arena.get_function(node))
                         .and_then(|func| {
@@ -830,9 +829,7 @@ impl<'a> FlowAnalyzer<'a> {
                         })
                         .and_then(|type_ann| self.fallback_type_from_type_node_syntax(type_ann))
                         .unwrap_or(TypeId::ANY),
-                    type_predicate: None,
-                    is_method: false,
-                }],
+                )],
             ),
         )
     }
