@@ -6,13 +6,58 @@ use crate::query_boundaries::checkers::call::{
 };
 use crate::query_boundaries::common::{CallResult, ContextualTypeContext};
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 use super::super::OverloadResolution;
 use super::retry_state::NoReturnContextFallback;
 
 impl<'a> CheckerState<'a> {
+    /// Collect the argument nodes that need a fresh per-overload contextual
+    /// type before the second resolution pass — those needing a contextual type
+    /// directly, needing contextual signature instantiation, or wrapping a
+    /// callback inside parentheses. Extracted from `resolve_signatures.rs` as
+    /// pure code motion to hold that file under the 2000-LOC arch limit.
+    pub(super) fn contextual_refresh_args(
+        &self,
+        args: &[NodeIndex],
+        union_contextual_param_types: &[Option<TypeId>],
+    ) -> Vec<NodeIndex> {
+        args.iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(i, arg_idx)| {
+                if self.argument_needs_contextual_type(arg_idx) {
+                    return Some(arg_idx);
+                }
+                if self.expression_needs_contextual_signature_instantiation(
+                    arg_idx,
+                    union_contextual_param_types.get(i).copied().flatten(),
+                ) {
+                    return Some(arg_idx);
+                }
+                // Also include parenthesized expressions that might contain callbacks
+                let mut current = arg_idx;
+                for _ in 0..10 {
+                    let node = self.ctx.arena.get(current)?;
+                    if node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    {
+                        return Some(arg_idx);
+                    }
+                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                        && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+                    {
+                        current = paren.expression;
+                        continue;
+                    }
+                    return None;
+                }
+                None
+            })
+            .collect()
+    }
+
     /// Report whether the union-of-signatures contextual type used by the
     /// first overload pass is lossy for some callback argument.
     ///

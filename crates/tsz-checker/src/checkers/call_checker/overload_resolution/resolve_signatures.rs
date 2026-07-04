@@ -10,7 +10,7 @@ use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
 };
 use crate::state::CheckerState;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 use super::super::{CallableContext, OverloadResolution, SelectedTypePredicate};
@@ -107,40 +107,8 @@ impl<'a> CheckerState<'a> {
             .enumerate()
             .map(|(i, _)| ctx_helper.get_parameter_type_for_call(i, args.len()))
             .collect();
-        let contextual_refresh_args: Vec<_> = args
-            .iter()
-            .copied()
-            .enumerate()
-            .filter_map(|(i, arg_idx)| {
-                if self.argument_needs_contextual_type(arg_idx) {
-                    return Some(arg_idx);
-                }
-                if self.expression_needs_contextual_signature_instantiation(
-                    arg_idx,
-                    union_contextual_param_types.get(i).copied().flatten(),
-                ) {
-                    return Some(arg_idx);
-                }
-                // Also include parenthesized expressions that might contain callbacks
-                let mut current = arg_idx;
-                for _ in 0..10 {
-                    let node = self.ctx.arena.get(current)?;
-                    if node.kind == syntax_kind_ext::ARROW_FUNCTION
-                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    {
-                        return Some(arg_idx);
-                    }
-                    if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                        && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-                    {
-                        current = paren.expression;
-                        continue;
-                    }
-                    return None;
-                }
-                None
-            })
-            .collect();
+        let contextual_refresh_args =
+            self.contextual_refresh_args(args, &union_contextual_param_types);
         let refresh_all_args = |this: &mut Self| {
             for &arg_idx in args {
                 this.invalidate_expression_for_contextual_retry(arg_idx);
