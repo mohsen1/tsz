@@ -59,6 +59,17 @@ impl<'a> CheckerState<'a> {
             let index_type = factory.literal_string(right_ident.escaped_text.as_str());
             return Some(factory.index_access(base, index_type));
         }
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            let base = self.deferred_typeof_value_chain(access.expression)?;
+            let right_node = self.ctx.arena.get(access.name_or_argument)?;
+            let right_ident = self.ctx.arena.get_identifier(right_node)?;
+            let index_type = factory.literal_string(right_ident.escaped_text.as_str());
+            return Some(factory.index_access(base, index_type));
+        }
         None
     }
 

@@ -664,11 +664,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             use tsz_parser::parser::syntax_kind_ext;
             let mut root_idx = type_query.expr_name;
             while let Some(node) = self.ctx.arena.get(root_idx) {
-                if node.kind == syntax_kind_ext::QUALIFIED_NAME
-                    && let Some(qn) = self.ctx.arena.get_qualified_name(node)
-                {
-                    root_idx = qn.left;
-                    continue;
+                if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                    if let Some(qn) = self.ctx.arena.get_qualified_name(node) {
+                        root_idx = qn.left;
+                        continue;
+                    }
+                    break;
+                }
+                if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    if let Some(access) = self.ctx.arena.get_access_expr(node) {
+                        root_idx = access.expression;
+                        continue;
+                    }
+                    break;
                 }
                 break;
             }
@@ -778,7 +786,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // first forced — and reports TS2339 for a genuinely missing member.
         if name_opt.is_none()
             && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
-            && expr_node.kind == syntax_kind_ext::QUALIFIED_NAME
+            && matches!(
+                expr_node.kind,
+                syntax_kind_ext::QUALIFIED_NAME | syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            )
             && let Some(deferred) = self.deferred_typeof_value_chain(type_query.expr_name)
         {
             if let Some(type_arguments) = &type_arguments {
@@ -1176,6 +1187,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let qn = self.ctx.arena.get_qualified_name(node)?;
             let base = self.deferred_typeof_value_chain(qn.left)?;
             let right_node = self.ctx.arena.get(qn.right)?;
+            let right_ident = self.ctx.arena.get_identifier(right_node)?;
+            let index_type = factory.literal_string(right_ident.escaped_text.as_str());
+            return Some(factory.index_access(base, index_type));
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.ctx.arena.get_access_expr(node)?;
+            if access.question_dot_token {
+                return None;
+            }
+            let base = self.deferred_typeof_value_chain(access.expression)?;
+            let right_node = self.ctx.arena.get(access.name_or_argument)?;
             let right_ident = self.ctx.arena.get_identifier(right_node)?;
             let index_type = factory.literal_string(right_ident.escaped_text.as_str());
             return Some(factory.index_access(base, index_type));
