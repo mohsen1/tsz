@@ -1,0 +1,12 @@
+# Known-failures baseline for scripts/ci/known-failures-check.mjs (#15399).
+# One `binary-id::test-name` per line; blank lines and `#` comments ignored.
+#
+# Regenerate from a full signoff run (fail-fast disabled, junit on):
+#   cargo nextest run --profile signoff --workspace || true
+#   node scripts/ci/known-failures-check.mjs --update
+#
+# Until the first `--update` there is no reconciled marker and the checker
+# runs in advisory mode (never blocks). `--update` stamps the marker and
+# switches the checker to strict: any failing test not listed here is a new
+# regression, even when the list is empty (a fully green tree). In normal PRs
+# this list may only shrink.

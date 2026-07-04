@@ -101,6 +101,27 @@ status-level = "fail"
 filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
+# Signoff profile (#15399) - precommit timeouts, but fail-fast disabled and junit
+# on. While main carries a known-failing set and CI is reduced, `precommit`'s
+# `fail-fast = true` bails on the first red test, so it can never produce a full
+# failure inventory to distinguish NEW regressions from the known baseline. This
+# profile runs the whole suite, writes junit, and lets
+# scripts/ci/known-failures-check.mjs adjudicate against
+# scripts/ci/known-failures.txt.
+[profile.signoff]
+slow-timeout = { period = "15s", terminate-after = 2 }
+leak-timeout = "2s"
+fail-fast = false
+test-threads = "num-cpus"
+status-level = "fail"
+
+[[profile.signoff.overrides]]
+filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
+slow-timeout = { period = "90s", terminate-after = 2 }
+
+[profile.signoff.junit]
+path = "target/nextest/signoff/junit.xml"
+
 # Long-running tests profile (for conformance tests)
 [profile.conformance]
 slow-timeout = { period = "120s", terminate-after = 2 }

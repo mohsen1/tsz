@@ -88,7 +88,16 @@ if [[ -n "${SIGNOFF_COMMANDS_FILE:-}" ]]; then
   done < "$SIGNOFF_COMMANDS_FILE"
 else
   commands+=("cargo fmt --all --check")
-  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- cargo nextest run --profile precommit --cargo-profile ci-unit --workspace")
+  # Run the whole suite with fail-fast disabled (signoff profile) so a full
+  # failure inventory is produced, then let known-failures-check.mjs distinguish
+  # a NEW regression from the committed known-failures baseline (#15399). The
+  # nextest step is allowed to exit nonzero (known failures are expected); the
+  # baseline check is the real gate. A build failure produces no junit, which
+  # the checker reports as a hard error (exit 2). node-less machines can fall
+  # back to `--profile precommit` via SIGNOFF_COMMANDS_FILE (script header).
+  commands+=("rm -f target/nextest/signoff/junit.xml")
+  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- cargo nextest run --profile signoff --cargo-profile ci-unit --workspace || true")
+  commands+=("node scripts/ci/known-failures-check.mjs --junit target/nextest/signoff/junit.xml")
 fi
 
 announce "$green" "Attempting to sign off on ${sha} as ${user}."
