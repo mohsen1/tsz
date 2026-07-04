@@ -124,6 +124,9 @@
 //! - `awaited_assignability_normalization_boundary_scans`: `Awaited<T>`
 //!   assignability normalization routes solver shape reads and rebuilt shells
 //!   through `query_boundaries::checkers::promise`.
+//! - `awaited_application_surface_boundary_scans`: `Awaited<T>` application
+//!   discovery and variance argument normalization route shape reads and
+//!   application rebuilds through `query_boundaries::checkers::promise`.
 //! - `thenable_surface_boundary_scans`: structural thenable extraction routes
 //!   `then` property, signature, and callback payload reads through
 //!   `query_boundaries::checkers::promise`.
@@ -199,6 +202,8 @@ mod array_literal_surface_construction_boundary_scans;
 mod assignability_surface_construction_boundary_scans;
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
+#[path = "arch_source_scans/awaited_application_surface_boundary_scans.rs"]
+mod awaited_application_surface_boundary_scans;
 #[path = "arch_source_scans/awaited_assignability_normalization_boundary_scans.rs"]
 mod awaited_assignability_normalization_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]

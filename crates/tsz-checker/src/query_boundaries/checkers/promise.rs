@@ -141,6 +141,47 @@ pub(crate) fn awaited_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) ->
     db.union(members)
 }
 
+pub(crate) fn awaited_application_arg_from_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut is_awaited_base: impl FnMut(TypeId) -> bool,
+) -> Option<TypeId> {
+    let base = super::super::common::get_application_base(db, type_id)?;
+    if !is_awaited_base(base) {
+        return None;
+    }
+    let (_, args) = super::super::common::application_info(db, type_id)?;
+    args.first().copied()
+}
+
+pub(crate) fn for_each_awaited_application_container_child(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut visit: impl FnMut(TypeId),
+) {
+    if let Some(element) = super::super::common::array_element_type(db, type_id) {
+        visit(element);
+    }
+    if let Some(members) = super::super::common::union_members(db, type_id) {
+        for member in members {
+            visit(member);
+        }
+    }
+    if let Some(elements) = super::super::common::tuple_elements(db, type_id) {
+        for element in elements {
+            visit(element.type_id);
+        }
+    }
+}
+
+pub(crate) fn awaited_variance_application_with_mapped_args(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    map_arg: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    awaited_assignability_application_with_mapped_args(db, type_id, map_arg)
+}
+
 pub(crate) fn awaited_assignability_array_with_mapped_element(
     db: &dyn TypeDatabase,
     type_id: TypeId,
