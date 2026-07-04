@@ -128,6 +128,10 @@ name = "const_assertion_dts_emit_tests"
 path = "tests/const_assertion_dts_emit_tests.rs"
 
 [[test]]
+name = "object_rest_binding_dts_emit_tests"
+path = "tests/object_rest_binding_dts_emit_tests.rs"
+
+[[test]]
 name = "inferred_const_literal_union_dts_emit_tests"
 path = "tests/inferred_const_literal_union_dts_emit_tests.rs"
 
