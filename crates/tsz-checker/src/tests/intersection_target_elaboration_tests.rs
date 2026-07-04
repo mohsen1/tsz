@@ -221,6 +221,78 @@ a = b;
     );
 }
 
+/// A **primitive** source (`number`) failing an object-only intersection target
+/// still gets the first-constituent frame. tsz merges `{ … } & { … }` into a
+/// single object before building the reason, and a primitive source against that
+/// merged object yields a missing/no-common-property reason — which the object
+/// source path (`TS2739`/`TS2741`) owns. But a primitive has no properties to
+/// enumerate, so `tsc` never emits that missing-property line; it falls back to
+/// `typeRelatedToEachType`'s per-constituent frame (`Type 'number' is not
+/// assignable to type '{ alpha: number; }'.`). Previously tsz dropped it and
+/// left only the headline.
+#[test]
+fn primitive_source_to_object_intersection_emits_first_constituent_frame() {
+    let text = elaboration(
+        r#"
+declare let a: { alpha: number } & { beta: string };
+declare let b: number;
+a = b;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("is not assignable to type '{ alpha: number; } & { beta: string; }'."),
+        "Expected the intersection headline. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ alpha: number; }'."),
+        "Expected the first-constituent frame for the primitive source. Got: {text:?}"
+    );
+}
+
+/// The same fallback holds when the constituents are named interfaces: the frame
+/// names the failing interface (`Left`), matching `tsc`. Binder names are varied
+/// so the outcome tracks the structural shape, not a fixed spelling.
+#[test]
+fn primitive_source_names_first_interface_constituent() {
+    let text = elaboration(
+        r#"
+interface Left { alpha: number }
+interface Right { beta: string }
+declare let a: Left & Right;
+declare let b: string;
+a = b;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("is not assignable to type 'Left & Right'."),
+        "Expected the interface-intersection headline. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'Left'."),
+        "Expected the first-constituent frame naming the interface. Got: {text:?}"
+    );
+}
+
+/// A `unique`-free literal source is a primitive too; the frame reports the
+/// widened operand exactly as `tsc` does inside the constituent line.
+#[test]
+fn literal_source_to_object_intersection_emits_constituent_frame() {
+    let text = elaboration(
+        r#"
+declare let a: { alpha: number } & { beta: string };
+declare const b: 5;
+a = b;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ alpha: number; }'."),
+        "Expected the widened constituent frame for the literal source. Got: {text:?}"
+    );
+}
+
 /// When the first failing constituent (in written order) fails because the
 /// source is *missing* a property it requires, the elaboration folds to the
 /// `Property 'p' is missing in type 'S' but required in type 'Ci'.` line (which
