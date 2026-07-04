@@ -9,11 +9,14 @@ fn generic_constraint_validation_no_weak_checks_use_relation_outcome_boundary() 
     )
     .expect("failed to read constraint_validation.rs");
 
+    // Four routed call sites: three landed independently on main, plus the
+    // #14337 fallback that defers TS2344 when the type-argument constraint
+    // stays an unresolved `Lazy` (added by this change).
     assert_eq!(
         source
             .matches("type_arg_constraint_no_weak_relation_outcome(")
             .count(),
-        3,
+        4,
         "generic constraint validation should route no-weak relation probes through the named type-argument constraint fallback"
     );
     assert!(
