@@ -1628,9 +1628,10 @@ impl CheckerState<'_> {
                     continue;
                 }
 
-                // Consume fuel for each DefId resolution (the expensive part)
+                // Consume only readiness-local fuel here. The resolver's
+                // actual type-resolution work charges the shared lazy fuel
+                // through `CheckerContext::consume_fuel`.
                 eval_session.increment_app_symbol_resolution_fuel();
-                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
                     eval_session.lazy_resolution_fuel_exhausted(),
                 ) {
@@ -1674,9 +1675,9 @@ impl CheckerState<'_> {
                     continue;
                 }
 
-                // Consume fuel for enum resolution too
+                // Consume only readiness-local fuel here. The resolver's
+                // actual type-resolution work charges the shared lazy fuel.
                 eval_session.increment_app_symbol_resolution_fuel();
-                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
                     eval_session.lazy_resolution_fuel_exhausted(),
                 ) {
@@ -1723,9 +1724,9 @@ impl CheckerState<'_> {
                     continue;
                 }
 
-                // Consume fuel for type query resolution
+                // Consume only readiness-local fuel here. The symbol resolver's
+                // actual type-resolution work charges the shared lazy fuel.
                 eval_session.increment_app_symbol_resolution_fuel();
-                eval_session.increment_lazy_resolution_fuel();
                 match application_resolution_post_consume_state(
                     eval_session.lazy_resolution_fuel_exhausted(),
                 ) {

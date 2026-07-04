@@ -23,7 +23,7 @@
 
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::state::CheckerState;
-use tsz_binder::BinderState;
+use tsz_binder::{BinderState, symbol_flags};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeInterner;
@@ -35,10 +35,19 @@ fn with_trivial_checker<R>(
     types: &TypeInterner,
     probe: impl FnOnce(&mut CheckerState<'_>) -> R,
 ) -> R {
+    with_seeded_trivial_checker(types, |_| (), |checker, ()| probe(checker))
+}
+
+fn with_seeded_trivial_checker<R, S>(
+    types: &TypeInterner,
+    seed_binder: impl FnOnce(&mut BinderState) -> S,
+    probe: impl FnOnce(&mut CheckerState<'_>, S) -> R,
+) -> R {
     let mut parser = ParserState::new("fixture.ts".to_string(), "export {};".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
+    let seed = seed_binder(&mut binder);
     let arena = parser.get_arena().clone();
     let mut checker = CheckerState {
         ctx: CheckerContext::new(
@@ -50,7 +59,7 @@ fn with_trivial_checker<R>(
         ),
     };
     checker.check_source_file(root);
-    probe(&mut checker)
+    probe(&mut checker, seed)
 }
 
 /// An `Application` over a `Lazy(DefId)` whose base has nothing registered is the
@@ -170,4 +179,124 @@ fn resolvable_index_access_is_still_persisted_to_env_eval_cache() {
              must not suppress its env_eval_cache write (issue #14347)",
         );
     });
+}
+
+/// Relation-readiness prewalks have their own local fuel counters. They must
+/// not also spend the session-global lazy-resolution fuel that guards actual
+/// type-resolution work in [`CheckerContext::consume_fuel`]; otherwise a
+/// prewalk over many references can starve the resolver before it reaches the
+/// semantic operation that needs the budget.
+#[test]
+fn application_readiness_spends_local_fuel_without_global_lazy_fuel() {
+    let types = TypeInterner::new();
+    let unregistered = types.lazy(DefId(987_656));
+
+    with_trivial_checker(&types, |checker| {
+        checker.ctx.eval_session.reset_lazy_readiness_guards();
+        checker.ctx.eval_session.reset_lazy_resolution_fuel();
+
+        checker.ensure_application_symbols_resolved(unregistered);
+
+        assert_eq!(
+            checker.ctx.eval_session.app_symbol_resolution_fuel(),
+            1,
+            "application-symbol readiness should charge its local prewalk budget",
+        );
+        assert_eq!(
+            checker.ctx.eval_session.lazy_resolution_fuel_value(),
+            0,
+            "application-symbol readiness must not spend the shared lazy-resolution budget",
+        );
+    });
+}
+
+/// The refs prewalk has the same ownership boundary as application-symbol
+/// readiness: local prewalk fuel bounds graph walking, while the shared lazy
+/// fuel belongs to actual type-resolution calls.
+#[test]
+fn refs_readiness_spends_local_fuel_without_global_lazy_fuel() {
+    let types = TypeInterner::new();
+    let unregistered = types.lazy(DefId(987_657));
+
+    with_trivial_checker(&types, |checker| {
+        checker.ctx.eval_session.reset_lazy_readiness_guards();
+        checker.ctx.eval_session.reset_lazy_resolution_fuel();
+
+        checker.ensure_refs_resolved(unregistered);
+
+        assert_eq!(
+            checker.ctx.eval_session.refs_resolution_fuel(),
+            1,
+            "refs readiness should charge its local prewalk budget",
+        );
+        assert_eq!(
+            checker.ctx.eval_session.lazy_resolution_fuel_value(),
+            0,
+            "refs readiness must not spend the shared lazy-resolution budget",
+        );
+    });
+}
+
+/// At the local refs-fuel edge, readiness must still register the direct
+/// `DefId` body needed by the current relation input, but the transitive tail
+/// stays bounded. This preserves the #12144 direct-resolution fix while keeping
+/// the shared lazy-resolution fuel owned by actual type-resolution work.
+#[test]
+fn refs_readiness_resolves_direct_def_at_local_fuel_edge_without_tail() {
+    let types = TypeInterner::new();
+
+    with_seeded_trivial_checker(
+        &types,
+        |binder| {
+            let root_sym = binder
+                .symbols
+                .alloc(symbol_flags::TYPE_ALIAS, "Root".to_string());
+            let leaf_sym = binder
+                .symbols
+                .alloc(symbol_flags::TYPE_ALIAS, "Leaf".to_string());
+            (root_sym, leaf_sym)
+        },
+        |checker, (root_sym, leaf_sym)| {
+            let root_def = checker.ctx.get_or_create_def_id(root_sym);
+            let leaf_def = checker.ctx.get_or_create_def_id(leaf_sym);
+            let root_lazy = types.lazy(root_def);
+            let leaf_lazy = types.lazy(leaf_def);
+
+            checker.ctx.symbol_types.insert(root_sym, leaf_lazy);
+            checker.ctx.eval_session.reset_lazy_readiness_guards();
+            checker.ctx.eval_session.reset_lazy_resolution_fuel();
+
+            {
+                let eval_session = std::rc::Rc::clone(&checker.ctx.eval_session);
+                let _refs_scope = eval_session.enter_refs_resolution_scope();
+                for _ in 0..eval_session.refs_resolution_fuel_limit().saturating_sub(1) {
+                    eval_session.increment_refs_resolution_fuel();
+                }
+
+                checker.ensure_refs_resolved(root_lazy);
+            }
+
+            assert_eq!(
+                checker.ctx.eval_session.refs_resolution_fuel(),
+                checker.ctx.eval_session.refs_resolution_fuel_limit(),
+                "refs readiness should spend exactly the final local fuel unit on the direct def",
+            );
+            assert_eq!(
+                checker.ctx.eval_session.lazy_resolution_fuel_value(),
+                0,
+                "refs readiness at its local fuel edge must not spend shared lazy-resolution fuel",
+            );
+            let type_env = checker.ctx.type_env.borrow();
+            assert_eq!(
+                type_env.get_def(root_def),
+                Some(leaf_lazy),
+                "the direct root def should still be registered at the refs-fuel edge",
+            );
+            assert_eq!(
+                type_env.get_def(leaf_def),
+                None,
+                "the transitive tail should not be walked after local refs fuel is exhausted",
+            );
+        },
+    );
 }

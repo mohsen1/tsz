@@ -31,6 +31,17 @@ fn strip_line_comments(source: &str) -> String {
         .join("\n")
 }
 
+fn source_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let start_idx = source
+        .find(start)
+        .unwrap_or_else(|| panic!("failed to find start marker {start:?}"));
+    let rest = &source[start_idx..];
+    let end_idx = rest
+        .find(end)
+        .unwrap_or_else(|| panic!("failed to find end marker {end:?} after {start:?}"));
+    &rest[..end_idx]
+}
+
 #[test]
 fn global_resolution_fuel_is_checker_session_owned() {
     let source = read_checker_source("src/state/type_environment/lazy_fuel.rs");
@@ -120,5 +131,51 @@ fn relation_input_readiness_keeps_both_steps_without_outer_fuel_gate() {
         !function_body.contains("lazy_resolution_fuel_exhausted")
             && !function_body.contains("refs_resolution_fuel_exhausted"),
         "relation input readiness should not have an outer fuel gate before the readiness steps"
+    );
+}
+
+#[test]
+fn readiness_prewalks_do_not_charge_global_lazy_resolution_fuel() {
+    let lazy = strip_line_comments(&read_checker_source("src/state/type_environment/lazy.rs"));
+    let app_body = source_between(
+        &lazy,
+        "pub(crate) fn ensure_application_symbols_resolved_inner",
+        "fn resolve_lazy_def_for_type_env",
+    );
+    assert!(
+        app_body.contains("increment_app_symbol_resolution_fuel();"),
+        "application readiness should still charge its local prewalk fuel",
+    );
+    assert!(
+        !app_body.contains("increment_lazy_resolution_fuel();"),
+        "application readiness must not double-charge the shared lazy-resolution fuel"
+    );
+
+    let assignability = strip_line_comments(&read_checker_source(
+        "src/assignability/assignability_checker.rs",
+    ));
+    let refs_body = source_between(
+        &assignability,
+        "pub(crate) fn ensure_refs_resolved",
+        "pub(crate) fn assignability_eval_memo_stamp",
+    );
+    assert!(
+        refs_body.contains("increment_refs_resolution_fuel();"),
+        "refs readiness should still charge its local prewalk fuel",
+    );
+    assert!(
+        !refs_body.contains("increment_lazy_resolution_fuel();"),
+        "refs readiness must not double-charge the shared lazy-resolution fuel",
+    );
+
+    let direct_resolution = refs_body
+        .find("resolve_and_insert_def_type(def_id)")
+        .expect("refs readiness should still resolve the direct DefId");
+    let fuel_tail_gate = refs_body
+        .find("if at_fuel_limit")
+        .expect("refs readiness should still gate transitive tail work at the fuel edge");
+    assert!(
+        direct_resolution < fuel_tail_gate,
+        "refs readiness should preserve direct resolution before stopping transitive tail work",
     );
 }
