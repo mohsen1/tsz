@@ -38,8 +38,20 @@ pub(crate) const fn user_type_param_info(
     type_param_info(name, constraint, default, is_const, TypeParamOrigin::User)
 }
 
-pub(crate) fn user_type_param(db: &dyn TypeDatabase, info: TypeParamInfo) -> TypeId {
+pub(crate) fn type_param(db: &dyn TypeDatabase, info: TypeParamInfo) -> TypeId {
     db.type_param(info)
+}
+
+pub(crate) fn user_type_param(db: &dyn TypeDatabase, info: TypeParamInfo) -> TypeId {
+    type_param(db, info)
+}
+
+pub(crate) fn param_array_type(db: &dyn TypeDatabase, element: TypeId) -> TypeId {
+    db.array(element)
+}
+
+pub(crate) fn optional_param_type_with_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    db.union2(type_id, TypeId::UNDEFINED)
 }
 
 pub(crate) const fn param_info(

@@ -5,13 +5,29 @@
 //! boundaries.
 
 use super::common::{self, TypeDatabase};
-use tsz_solver::TypeId;
+use tsz_solver::{DefId, TypeId};
 
 pub(crate) use super::common::{
     application_info, array_element_type, contains_free_type_parameters, contains_infer_types,
     contains_type_parameters, index_access_types, lazy_def_id, mapped_type_info, type_application,
     type_param_info, union_members,
 };
+
+pub(crate) fn function_return_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn function_return_lazy_type(db: &dyn TypeDatabase, def_id: DefId) -> TypeId {
+    db.lazy(def_id)
+}
+
+pub(crate) fn function_return_application(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    db.application(base, args)
+}
 
 pub(crate) fn array_literal_return_context_has_usable_tuple_slots(
     db: &dyn TypeDatabase,

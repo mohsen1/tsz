@@ -10,6 +10,8 @@ use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::function_returns as return_type_construction;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -304,7 +306,7 @@ impl<'a> CheckerState<'a> {
         let inferred_yield = if yield_types.is_empty() {
             TypeId::NEVER
         } else {
-            self.ctx.types.factory().union(yield_types)
+            return_type_construction::function_return_union(self.ctx.types, yield_types)
         };
         // tsc computes the inferred yield type as `getWidenedType(getUnionType(...))`:
         // a single literal is widened (`yield 1` -> `number`), but a multi-member
@@ -924,12 +926,12 @@ impl<'a> CheckerState<'a> {
         let uses_arguments =
             self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
         if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
-            params.push(ParamInfo {
-                name: None,
-                type_id: self.ctx.types.factory().array(TypeId::ANY),
-                optional: true,
-                rest: true,
-            });
+            params.push(signature_building_boundary::param_info(
+                None,
+                signature_building_boundary::param_array_type(self.ctx.types, TypeId::ANY),
+                true,
+                true,
+            ));
         }
     }
 
@@ -956,7 +958,7 @@ impl<'a> CheckerState<'a> {
         let _resolved = self.resolve_lib_type_by_name(gen_name);
         let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
-            self.ctx.types.factory().lazy(def_id)
+            return_type_construction::function_return_lazy_type(self.ctx.types, def_id)
         });
         let Some(base) = lazy_base else {
             return TypeId::ANY;
@@ -969,10 +971,11 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(TypeId::VOID);
         let next_t = ctx.early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
 
-        self.ctx
-            .types
-            .factory()
-            .application(base, vec![yield_t, return_t, next_t])
+        return_type_construction::function_return_application(
+            self.ctx.types,
+            base,
+            vec![yield_t, return_t, next_t],
+        )
     }
 
     fn unannotated_generator_body_return_type(
@@ -1017,10 +1020,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .lib_promise_type_ref()
             .unwrap_or(TypeId::PROMISE_BASE);
-        self.ctx
-            .types
-            .factory()
-            .application(promise_base, vec![return_type])
+        return_type_construction::function_return_application(
+            self.ctx.types,
+            promise_base,
+            vec![return_type],
+        )
     }
 
     pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
@@ -1095,7 +1099,7 @@ impl<'a> CheckerState<'a> {
         func_jsdoc: &Option<String>,
         params: &[tsz_solver::ParamInfo],
     ) -> Option<tsz_solver::TypePredicate> {
-        use tsz_solver::{TypePredicate, TypePredicateTarget};
+        use tsz_solver::TypePredicateTarget;
 
         let jsdoc = func_jsdoc.as_ref()?;
         let (is_asserts, param_name, type_str) = Self::jsdoc_returns_type_predicate(jsdoc)?;
@@ -1117,12 +1121,12 @@ impl<'a> CheckerState<'a> {
             parameter_index = params.iter().position(|p| p.name == Some(*name));
         }
 
-        Some(TypePredicate {
-            asserts: is_asserts,
+        Some(signature_building_boundary::type_predicate(
+            is_asserts,
             target,
             type_id,
             parameter_index,
-        })
+        ))
     }
 
     /// Resolve a non-predicate JSDoc `@return {TypeExpr}` to a TypeId.
@@ -1167,7 +1171,6 @@ impl<'a> CheckerState<'a> {
         type_params: &[TypeParamInfo],
     ) -> Vec<(String, Option<TypeId>, bool)> {
         let mut updates = Vec::with_capacity(type_params.len());
-        let factory = self.ctx.types.factory();
 
         for info in type_params {
             let name = self.ctx.types.resolve_atom_ref(info.name).to_string();
@@ -1179,7 +1182,7 @@ impl<'a> CheckerState<'a> {
                 shadowed_class_param = true;
             }
 
-            let type_id = factory.type_param(*info);
+            let type_id = signature_building_boundary::type_param(self.ctx.types, *info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, shadowed_class_param));
         }
@@ -1403,13 +1406,8 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
-                let info = tsz_solver::TypeParamInfo {
-                    name: atom,
-                    constraint: None,
-                    default: None,
-                    is_const,
-                    origin: tsz_solver::TypeParamOrigin::User,
-                };
+                let info =
+                    signature_building_boundary::user_type_param_info(atom, None, None, is_const);
                 // Mint through the declaration-scoped cache (not a structural
                 // `factory.type_param` intern) so the enclosing parameter
                 // resolves to the SAME `TypeId` here as under
@@ -1454,13 +1452,8 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
-            let info = tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default: None,
-                is_const,
-                origin: tsz_solver::TypeParamOrigin::User,
-            };
+            let info =
+                signature_building_boundary::user_type_param_info(atom, constraint, None, is_const);
             let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
             self.ctx
                 .type_parameter_scope

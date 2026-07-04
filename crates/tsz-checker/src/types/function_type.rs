@@ -14,12 +14,15 @@ use super::function_type_helpers::{
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::function_returns as return_type_construction;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypeParamInfo, TypeParamOrigin};
+use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
@@ -31,7 +34,6 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        use tsz_solver::{FunctionShape, ParamInfo};
         let contextual_type = request.contextual_type;
         let contextual_type_is_assertion = request.origin.is_assertion();
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -299,7 +301,6 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_target) = prototype_owner_target
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
-            let factory = self.ctx.types.factory();
             let constraint_strs = Self::jsdoc_template_constraint_strings(&owner_jsdoc);
             for (name, is_const, default_str) in Self::jsdoc_template_type_params(&owner_jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
@@ -309,14 +310,10 @@ impl<'a> CheckerState<'a> {
                 let constraint = constraint_strs
                     .get(&name)
                     .and_then(|s| self.resolve_jsdoc_reference(s));
-                let info = TypeParamInfo {
-                    name: atom,
-                    constraint,
-                    default,
-                    is_const,
-                    origin: TypeParamOrigin::User,
-                };
-                let ty = factory.type_param(info);
+                let info = signature_building_boundary::user_type_param_info(
+                    atom, constraint, default, is_const,
+                );
+                let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
                 jsdoc_type_param_updates.push((name, previous, false));
             }
@@ -328,7 +325,6 @@ impl<'a> CheckerState<'a> {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
-                let factory = self.ctx.types.factory();
                 let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
                 for (name, is_const, default_str) in template_names {
                     let atom = self.ctx.types.intern_string(&name);
@@ -338,14 +334,10 @@ impl<'a> CheckerState<'a> {
                     let constraint = constraint_strs
                         .get(&name)
                         .and_then(|s| self.resolve_jsdoc_reference(s));
-                    let info = TypeParamInfo {
-                        name: atom,
-                        constraint,
-                        default,
-                        is_const,
-                        origin: TypeParamOrigin::User,
-                    };
-                    let ty = factory.type_param(info);
+                    let info = signature_building_boundary::user_type_param_info(
+                        atom, constraint, default, is_const,
+                    );
+                    let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
                     jsdoc_type_params.push(info);
                     // Register in type_parameter_scope so inline JSDoc casts
                     // like `/** @type {T} */(expr)` can resolve `T`.
@@ -785,10 +777,10 @@ impl<'a> CheckerState<'a> {
                         if let Some(ref jsdoc) = func_jsdoc
                             && Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname)
                         {
-                            self.ctx
-                                .types
-                                .factory()
-                                .union2(inferred_type, TypeId::UNDEFINED)
+                            signature_building_boundary::optional_param_type_with_undefined(
+                                self.ctx.types,
+                                inferred_type,
+                            )
                         } else {
                             inferred_type
                         }
@@ -1030,7 +1022,10 @@ impl<'a> CheckerState<'a> {
                         )
                         && (elem_type == TypeId::ANY || elem_type == TypeId::NEVER)
                     {
-                        type_id = self.ctx.types.factory().array(TypeId::ANY);
+                        type_id = signature_building_boundary::param_array_type(
+                            self.ctx.types,
+                            TypeId::ANY,
+                        );
                         Some("any[]")
                     } else {
                         None
@@ -1179,14 +1174,14 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         type_id,
                     );
-                params.push(ParamInfo {
-                    name,
-                    type_id,
-                    optional,
-                    rest,
-                });
+                params.push(signature_building_boundary::param_info(
+                    name, type_id, optional, rest,
+                ));
                 let cached_type = if needs_undefined && self.ctx.strict_null_checks() {
-                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                    signature_building_boundary::optional_param_type_with_undefined(
+                        self.ctx.types,
+                        type_id,
+                    )
                 } else {
                     type_id
                 };
@@ -1237,12 +1232,12 @@ impl<'a> CheckerState<'a> {
                 // and returns the element type. For rest params we store the element
                 // type and set `rest: true`, matching the AST-param JSDoc path.
                 let name = self.ctx.types.intern_string(&pname);
-                params.push(ParamInfo {
-                    name: Some(name),
+                params.push(signature_building_boundary::param_info(
+                    Some(name),
                     type_id,
-                    optional: is_optional,
-                    rest: is_rest,
-                });
+                    is_optional,
+                    is_rest,
+                ));
             }
         }
 
@@ -1544,7 +1539,10 @@ impl<'a> CheckerState<'a> {
                     if let Some(pt) = promise_t {
                         members.push(pt);
                     }
-                    Some(self.ctx.types.factory().union(members))
+                    Some(return_type_construction::function_return_union(
+                        self.ctx.types,
+                        members,
+                    ))
                 } else {
                     return_context
                 };
@@ -1957,23 +1955,27 @@ impl<'a> CheckerState<'a> {
             early_gen_next_type,
         });
 
-        let shape = FunctionShape {
-            type_params,
-            params: if inherited_contextual_generics {
-                contextual_signature_shape
-                    .as_ref()
-                    .map(|shape| shape.params.clone())
-                    .unwrap_or(params)
-            } else {
-                params
-            },
-            this_type,
-            return_type: final_return_type,
-            type_predicate,
-            is_constructor: js_constructor_instance_type.is_some(),
-            is_method: false,
+        let params = if inherited_contextual_generics {
+            contextual_signature_shape
+                .as_ref()
+                .map(|shape| shape.params.clone())
+                .unwrap_or(params)
+        } else {
+            params
         };
-        let mut function_type = self.ctx.types.factory().function(shape);
+        let signature = signature_building_boundary::call_signature(
+            type_params,
+            params,
+            this_type,
+            final_return_type,
+            type_predicate,
+            false,
+        );
+        let mut function_type = signature_construction::function_type_from_call_signature(
+            self.ctx.types,
+            &signature,
+            js_constructor_instance_type.is_some(),
+        );
         if self.is_js_file()
             && is_function_declaration
             && let (Some(name), Some(sym_id)) = (

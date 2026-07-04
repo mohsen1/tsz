@@ -39,6 +39,9 @@
 //! - `flow_assignment_surface_construction_boundary_scans`: flow assignment
 //!   fallback/narrowing callers route tuple/object/callable/rest construction
 //!   through `query_boundaries::flow_analysis`.
+//! - `function_type_signature_surface_construction_boundary_scans`: function
+//!   and JSDoc signature lowering routes raw signature records, function
+//!   interning, and function return type wrappers through query boundaries.
 //! - `excess_property_construction_boundary_scans`: excess-property checking
 //!   routes object shape construction through query boundaries.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
@@ -211,6 +214,8 @@ mod excess_property_nested_target_construction_boundary_scans;
 mod expression_result_construction_boundary_scans;
 #[path = "arch_source_scans/flow_assignment_surface_construction_boundary_scans.rs"]
 mod flow_assignment_surface_construction_boundary_scans;
+#[path = "arch_source_scans/function_type_signature_surface_construction_boundary_scans.rs"]
+mod function_type_signature_surface_construction_boundary_scans;
 #[path = "arch_source_scans/import_attribute_construction_boundary_scans.rs"]
 mod import_attribute_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
