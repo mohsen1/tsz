@@ -1306,7 +1306,7 @@ const cwp: CallableWithProps = Object.assign(
   { version: "1.0" }
 );
 "#;
-    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
     assert!(
         diagnostics.is_empty(),
         "Expected no errors: fn-object intersection should satisfy callable interface with matching properties. Got: {diagnostics:#?}"
@@ -1428,7 +1428,7 @@ const fc: FullCallable = Object.assign(
   { name: "fn", version: 1 }
 );
 "#;
-    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
     assert!(
         diagnostics.is_empty(),
         "Expected no errors: fn-object intersection with all props should satisfy callable interface. Got: {diagnostics:#?}"
@@ -1447,7 +1447,7 @@ interface CallableWithProps {
 function myFn(x: number): string { return x.toString(); }
 const cwp: CallableWithProps = Object.assign(myFn, { version: "1.0" });
 "#;
-    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
     assert!(
         diagnostics.is_empty(),
         "Expected no errors: named function + Object.assign should satisfy callable interface. Got: {diagnostics:#?}"

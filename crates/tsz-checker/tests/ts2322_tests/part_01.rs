@@ -26,7 +26,7 @@ class Test {
 }
 "#;
 
-    let diagnostics = compile_with_options(
+    let diagnostics = compile_with_libs_for_ts(
         source,
         "test.ts",
         CheckerOptions {

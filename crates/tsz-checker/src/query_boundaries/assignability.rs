@@ -779,7 +779,12 @@ pub(crate) fn index_access_pair_distinct_type_param_keys_failure_reason(
 ) -> Option<SubtypeFailureReason> {
     let (s_obj, s_idx) = tsz_solver::index_access_parts(db, source)?;
     let (t_obj, t_idx) = tsz_solver::index_access_parts(db, target)?;
-    if s_obj != t_obj {
+    let same_object = s_obj == t_obj
+        || def_store
+            .find_def_for_type(s_obj)
+            .zip(def_store.find_def_for_type(t_obj))
+            .is_some_and(|(source_def, target_def)| source_def == target_def);
+    if !same_object {
         return None;
     }
     tsz_solver::type_param_info(db, s_idx)?;

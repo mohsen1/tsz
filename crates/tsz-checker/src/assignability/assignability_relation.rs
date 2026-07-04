@@ -239,11 +239,17 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        let raw_failure = self
+            .raw_input_failure_reason(source, target)
+            .map(crate::query_boundaries::relation_types::RelationFailure::from_solver_reason);
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
         let mut outcome = self.execute_relation_request(&request);
         outcome.related = false;
+        if outcome.failure.is_none() {
+            outcome.failure = raw_failure;
+        }
         outcome
     }
 

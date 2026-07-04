@@ -75,26 +75,32 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             return None;
         }
 
-        // Try infer pattern matching with unevaluated types.
-        // match_infer_pattern handles Application vs Application matching
-        // by comparing base types and recursing on type arguments.
-        let mut checker = self.conditional_subtype_checker();
-        checker.allow_bivariant_rest = true;
-        let mut bindings = FxHashMap::default();
-        let mut visited = InferPatternVisited::default();
-        let matched = self.match_infer_pattern(
-            check_type,
-            cond.extends_type,
-            &mut bindings,
-            &mut visited,
-            &mut checker,
-        );
-        if matched && !bindings.is_empty() {
-            let substituted_true = self.substitute_infer(cond.true_type, &bindings);
-            return Some(self.evaluate(substituted_true));
-        }
-        if self.application_infer_bases_match(check_type, cond.extends_type, &mut checker) {
-            return Some(self.evaluate(cond.false_type));
+        let direct_application_bases_match =
+            get_application_base(self.interner(), check_type) == Some(pattern_base);
+        if direct_application_bases_match {
+            // Try infer pattern matching with unevaluated same-base applications.
+            // Positional argument binding is only sound once the source and pattern
+            // share the same generic base. Different-base applications such as
+            // `ReturnType<F>` vs `Promise<infer T>` must fall through to the alias
+            // reducer below so `ReturnType` can expose its return application first.
+            let mut checker = self.conditional_subtype_checker();
+            checker.allow_bivariant_rest = true;
+            let mut bindings = FxHashMap::default();
+            let mut visited = InferPatternVisited::default();
+            let matched = self.match_infer_pattern(
+                check_type,
+                cond.extends_type,
+                &mut bindings,
+                &mut visited,
+                &mut checker,
+            );
+            if matched && !bindings.is_empty() {
+                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                return Some(self.evaluate(substituted_true));
+            }
+            if self.application_infer_bases_match(check_type, cond.extends_type, &mut checker) {
+                return Some(self.evaluate(cond.false_type));
+            }
         }
 
         // Last-chance recovery: reduce the source through generic-alias bodies

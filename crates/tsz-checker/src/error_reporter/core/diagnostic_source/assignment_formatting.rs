@@ -205,10 +205,6 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(source, target);
         }
 
-        if let Some(display) = self.tuple_structural_source_display(source, target) {
-            return display;
-        }
-
         // Preserve the literal surface of a plain `as T` / `<T>` assertion source
         // before the widening fallbacks below; see
         // `assertion_source_literal_display`.
@@ -230,6 +226,10 @@ impl<'a> CheckerState<'a> {
             && let Some(display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
         {
+            return display;
+        }
+
+        if let Some(display) = self.tuple_structural_source_display(source, target) {
             return display;
         }
 

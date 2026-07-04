@@ -11,11 +11,14 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
         if self.pre_evaluation_index_access_relation_rejects(source, target) {
+            let failure = self
+                .raw_input_failure_reason(source, target)
+                .map(crate::query_boundaries::relation_types::RelationFailure::from_solver_reason);
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: false,
                 depth_exceeded: false,
                 iteration_exceeded: false,
-                failure: None,
+                failure,
                 weak_union_violation: false,
                 property_classification: None,
             };
