@@ -11,7 +11,8 @@ use tsz_solver::construction::TypeDatabase;
 #[cfg(test)]
 pub(crate) use tsz_solver::construction::TypeInterner;
 use tsz_solver::{
-    IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind, TypeId, Visibility,
+    DefId, IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind,
+    TupleElement, TypeId, Visibility,
 };
 
 pub(crate) struct DeclaredSurfaceProperty {
@@ -135,6 +136,114 @@ pub(crate) fn type_literal_number_index_member(
 
 pub(crate) fn raw_intersection_pair(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> TypeId {
     db.intersect_types_raw2(left, right)
+}
+
+pub(crate) fn type_node_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn type_node_annotation_union_with_origin(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    let result = tsz_solver::utils::union_or_single_literal_reduce(db, members.clone());
+    db.store_union_origin(result, members);
+    result
+}
+
+pub(crate) fn type_node_intersection(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.intersection(members)
+}
+
+pub(crate) fn type_node_array(db: &dyn TypeDatabase, element_type: TypeId) -> TypeId {
+    db.array(element_type)
+}
+
+pub(crate) const fn type_node_tuple_element(
+    type_id: TypeId,
+    name: Option<Atom>,
+    optional: bool,
+    rest: bool,
+) -> TupleElement {
+    TupleElement {
+        type_id,
+        name,
+        optional,
+        rest,
+    }
+}
+
+pub(crate) fn type_node_tuple(db: &dyn TypeDatabase, elements: Vec<TupleElement>) -> TypeId {
+    db.tuple(elements)
+}
+
+pub(crate) fn type_node_readonly_array(db: &dyn TypeDatabase, element_type: TypeId) -> TypeId {
+    db.readonly_type(type_node_array(db, element_type))
+}
+
+pub(crate) fn type_node_array_reference(
+    db: &dyn TypeDatabase,
+    element_type: TypeId,
+    readonly: bool,
+) -> TypeId {
+    let array_type = type_node_array(db, element_type);
+    if readonly {
+        db.readonly_type(array_type)
+    } else {
+        array_type
+    }
+}
+
+pub(crate) fn type_node_readonly_any_array(db: &dyn TypeDatabase) -> TypeId {
+    type_node_readonly_array(db, TypeId::ANY)
+}
+
+pub(crate) fn type_node_application(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    db.application(base, args)
+}
+
+pub(crate) fn type_node_lazy_type(db: &dyn TypeDatabase, def_id: DefId) -> TypeId {
+    db.lazy(def_id)
+}
+
+pub(crate) fn type_node_no_infer(db: &dyn TypeDatabase, inner: TypeId) -> TypeId {
+    db.no_infer(inner)
+}
+
+pub(crate) fn type_node_lazy_application(
+    db: &dyn TypeDatabase,
+    def_id: DefId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    type_node_application(db, type_node_lazy_type(db, def_id), args)
+}
+
+pub(crate) fn type_node_unresolved_type_name(db: &dyn TypeDatabase, name: Atom) -> TypeId {
+    db.unresolved_type_name(name)
+}
+
+pub(crate) fn type_node_unresolved_application(
+    db: &dyn TypeDatabase,
+    name: Atom,
+    args: Vec<TypeId>,
+) -> TypeId {
+    let base = type_node_unresolved_type_name(db, name);
+    if args.is_empty() {
+        base
+    } else {
+        type_node_application(db, base, args)
+    }
+}
+
+pub(crate) fn type_node_nullable_predicate_union(
+    db: &dyn TypeDatabase,
+    predicate_type: TypeId,
+) -> TypeId {
+    type_node_union(db, vec![predicate_type, TypeId::NULL, TypeId::UNDEFINED])
 }
 
 /// Intern an object type carrying only a string index signature

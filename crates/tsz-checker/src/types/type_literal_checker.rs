@@ -33,7 +33,6 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-        let factory = self.ctx.types.factory();
 
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             return self.get_type_from_type_reference_in_type_literal(idx);
@@ -57,7 +56,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member_idx| self.get_type_from_type_node_in_type_literal(member_idx))
                     .collect::<Vec<_>>();
-                return factory.union(members);
+                return construction_boundary::type_node_union(self.ctx.types, members);
             }
             return TypeId::ERROR;
         }
@@ -65,7 +64,7 @@ impl<'a> CheckerState<'a> {
             if let Some(array_type) = self.ctx.arena.get_array_type(node) {
                 let elem_type =
                     self.get_type_from_type_node_in_type_literal(array_type.element_type);
-                return factory.array(elem_type);
+                return construction_boundary::type_node_array(self.ctx.types, elem_type);
             }
             return TypeId::ERROR; // Missing array type data - propagate error
         }
@@ -84,7 +83,6 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-        let factory = self.ctx.types.factory();
 
         let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
             return TypeId::ERROR; // Missing type reference data - propagate error
@@ -132,7 +130,11 @@ impl<'a> CheckerState<'a> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                return factory.application(base_type, type_args);
+                return construction_boundary::type_node_application(
+                    self.ctx.types,
+                    base_type,
+                    type_args,
+                );
             }
             return base_type;
         }
@@ -170,7 +172,11 @@ impl<'a> CheckerState<'a> {
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
-                    return factory.application(base_type, type_args);
+                    return construction_boundary::type_node_application(
+                        self.ctx.types,
+                        base_type,
+                        type_args,
+                    );
                 }
                 return base_type;
             }
@@ -261,7 +267,10 @@ impl<'a> CheckerState<'a> {
                                 && let Some(&first_arg) = args.nodes.first()
                             {
                                 let inner = self.get_type_from_type_node_in_type_literal(first_arg);
-                                return self.ctx.types.no_infer(inner);
+                                return construction_boundary::type_node_no_infer(
+                                    self.ctx.types,
+                                    inner,
+                                );
                             }
                             return TypeId::ERROR;
                         }
@@ -309,11 +318,11 @@ impl<'a> CheckerState<'a> {
                         .map_or(TypeId::UNKNOWN, |idx| {
                             self.get_type_from_type_node_in_type_literal(idx)
                         });
-                    let array_type = factory.array(elem_type);
-                    if name == "ReadonlyArray" {
-                        return factory.readonly_type(array_type);
-                    }
-                    return array_type;
+                    return construction_boundary::type_node_array_reference(
+                        self.ctx.types,
+                        elem_type,
+                        name == "ReadonlyArray",
+                    );
                 }
 
                 if !self.ctx.compiler_options.no_lib
@@ -342,10 +351,17 @@ impl<'a> CheckerState<'a> {
                             .map(|sym_id| {
                                 let _ = self.resolve_lib_type_by_name(name);
                                 let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
-                                factory.lazy(def_id)
+                                construction_boundary::type_node_lazy_type(
+                                    self.ctx.types,
+                                    def_id,
+                                )
                             })
                             .unwrap_or(TypeId::PROMISE_BASE);
-                        return factory.application(promise_base, type_args);
+                        return construction_boundary::type_node_application(
+                            self.ctx.types,
+                            promise_base,
+                            type_args,
+                        );
                     }
                 }
 
@@ -384,12 +400,11 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let atom = self.ctx.types.intern_string(name);
-                    let base = self.ctx.types.unresolved_type_name(atom);
-                    return if lowered_args.is_empty() {
-                        base
-                    } else {
-                        self.ctx.types.application(base, lowered_args)
-                    };
+                    return construction_boundary::type_node_unresolved_application(
+                        self.ctx.types,
+                        atom,
+                        lowered_args,
+                    );
                 }
                 let array_is_unshadowed = is_builtin_array
                     && type_param.is_none()
@@ -404,11 +419,11 @@ impl<'a> CheckerState<'a> {
                     && let Some(&first_arg) = args.nodes.first()
                 {
                     let elem_type = self.get_type_from_type_node_in_type_literal(first_arg);
-                    let array_type = factory.array(elem_type);
-                    if name == "ReadonlyArray" {
-                        return factory.readonly_type(array_type);
-                    }
-                    return array_type;
+                    return construction_boundary::type_node_array_reference(
+                        self.ctx.types,
+                        elem_type,
+                        name == "ReadonlyArray",
+                    );
                 }
 
                 // A reference whose name resolves to an import alias from a module
@@ -437,12 +452,11 @@ impl<'a> CheckerState<'a> {
                         })
                         .unwrap_or_default();
                     let atom = self.ctx.types.intern_string(name);
-                    let base = self.ctx.types.unresolved_type_name(atom);
-                    return if lowered_args.is_empty() {
-                        base
-                    } else {
-                        self.ctx.types.application(base, lowered_args)
-                    };
+                    return construction_boundary::type_node_unresolved_application(
+                        self.ctx.types,
+                        atom,
+                        lowered_args,
+                    );
                 }
 
                 // Validate type arguments against constraints (TS2344)
@@ -476,7 +490,11 @@ impl<'a> CheckerState<'a> {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                return factory.application(base_type, type_args);
+                return construction_boundary::type_node_application(
+                    self.ctx.types,
+                    base_type,
+                    type_args,
+                );
             }
 
             if name == "Array" || name == "ReadonlyArray" {
@@ -510,11 +528,11 @@ impl<'a> CheckerState<'a> {
                     .map_or(TypeId::UNKNOWN, |idx| {
                         self.get_type_from_type_node_in_type_literal(idx)
                     });
-                let array_type = factory.array(elem_type);
-                if name == "ReadonlyArray" {
-                    return factory.readonly_type(array_type);
-                }
-                return array_type;
+                return construction_boundary::type_node_array_reference(
+                    self.ctx.types,
+                    elem_type,
+                    name == "ReadonlyArray",
+                );
             }
 
             match name {
@@ -646,8 +664,11 @@ impl<'a> CheckerState<'a> {
                     let def_id = self
                         .ctx
                         .get_or_create_def_id_with_params(sym_id, type_params);
-                    let base_type_id = factory.lazy(def_id);
-                    return factory.application(base_type_id, default_args);
+                    return construction_boundary::type_node_lazy_application(
+                        self.ctx.types,
+                        def_id,
+                        default_args,
+                    );
                 }
                 let is_class = self
                     .get_cross_file_symbol(sym_id)
@@ -711,7 +732,11 @@ impl<'a> CheckerState<'a> {
                     let def_id = self
                         .ctx
                         .get_or_create_def_id_with_params(sym_id, type_params);
-                    return factory.application(factory.lazy(def_id), default_args);
+                    return construction_boundary::type_node_lazy_application(
+                        self.ctx.types,
+                        def_id,
+                        default_args,
+                    );
                 }
                 let is_class = self
                     .get_cross_file_symbol(sym_id)
@@ -744,7 +769,7 @@ impl<'a> CheckerState<'a> {
             // downstream display in TS2322/TS2345 messages prints the
             // original identifier rather than the bare `error` token.
             let atom = self.ctx.types.intern_string(name);
-            return self.ctx.types.unresolved_type_name(atom);
+            return construction_boundary::type_node_unresolved_type_name(self.ctx.types, atom);
         }
 
         TypeId::ANY

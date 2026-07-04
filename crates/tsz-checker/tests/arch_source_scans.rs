@@ -86,6 +86,10 @@
 //! - `type_node_fallback_construction_boundary_scans`: type-node resolution
 //!   routes intersection, callable/function, and object fallback construction
 //!   through construction query boundaries.
+//! - `type_node_annotation_surface_construction_boundary_scans`: type-node and
+//!   type-literal-context resolution route array, union, tuple, application,
+//!   lazy, `NoInfer`, and unresolved-name surfaces through
+//!   `query_boundaries::type_construction`.
 //! - `class_partial_constructor_construction_boundary_scans`: class
 //!   constructor-part helpers route partial static-constructor solver
 //!   construction through `query_boundaries::class_type`.
@@ -231,6 +235,8 @@ mod strict_bind_call_apply_construction_boundary_scans;
 mod type_checking_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
+#[path = "arch_source_scans/type_node_annotation_surface_construction_boundary_scans.rs"]
+mod type_node_annotation_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_node_fallback_construction_boundary_scans.rs"]
 mod type_node_fallback_construction_boundary_scans;
 #[path = "arch_source_scans/type_query_construction_boundary_scans.rs"]

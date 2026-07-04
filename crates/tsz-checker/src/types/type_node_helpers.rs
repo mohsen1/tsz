@@ -8,6 +8,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::type_node::{TypeLiteralSignatureScopeUpdates, TypeNodeChecker};
+use crate::query_boundaries::type_construction;
 
 /// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
 /// In type position, the index is a `LiteralType` node wrapping a string literal.
@@ -818,10 +819,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Fully-resolved concrete type that is neither array nor tuple (primitive,
         // literal, object, function, …). Defer to assignability so array-like
         // object shapes (numeric index + `length`) are still accepted.
-        let readonly_any_array = {
-            let factory = self.ctx.types.factory();
-            factory.readonly_type(factory.array(TypeId::ANY))
-        };
+        let readonly_any_array = type_construction::type_node_readonly_any_array(self.ctx.types);
         let env = self.ctx.type_environment.borrow();
         !type_utils::rest_element_array_like_relation_outcome(
             self.ctx.types,
@@ -1125,9 +1123,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             };
             let expanded_members: Vec<_> = members.iter().map(|&m| expand_once(m)).collect();
             let next = if is_union {
-                self.ctx.types.union(expanded_members)
+                type_construction::type_node_union(self.ctx.types, expanded_members)
             } else {
-                self.ctx.types.intersection(expanded_members)
+                type_construction::type_node_intersection(self.ctx.types, expanded_members)
             };
             let next = expand_once(next);
             if next == current {
@@ -1207,12 +1205,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .and_then(|args| args.nodes.first().copied())
             .map_or(TypeId::ANY, |arg_idx| self.check(arg_idx));
 
-        let factory = self.ctx.types.factory();
-        let array_type = factory.array(elem_type);
         Some(if name == "ReadonlyArray" {
-            factory.readonly_type(array_type)
+            type_construction::type_node_readonly_array(self.ctx.types, elem_type)
         } else {
-            array_type
+            type_construction::type_node_array(self.ctx.types, elem_type)
         })
     }
 
