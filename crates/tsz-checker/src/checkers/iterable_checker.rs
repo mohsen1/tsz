@@ -1017,7 +1017,8 @@ impl<'a> CheckerState<'a> {
             }
             // Not async iterable - emit TS2504
             if let Some((start, end)) = self.get_node_span(expr_idx) {
-                let type_str = self.format_type(expr_type);
+                let display_id = self.iterand_display_type(expr_idx, expr_type);
+                let type_str = self.format_type(display_id);
                 let message = format_message(
                     diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ASYNCITERATOR_METHOD_THAT_RETURNS_AN_ASYNC_ITERATOR,
                     &[&type_str],
@@ -1073,8 +1074,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(expr_type, expr_idx, false, None);
+        // Not iterable - emit TS2488 (the emitter preserves a literal iterand).
+        self.emit_ts2488_not_iterable(expr_type, expr_idx, false);
         false
     }
 
@@ -1216,8 +1217,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        let literal_display_type = self.literal_type_from_initializer(expr_idx);
-        self.emit_ts2488_not_iterable(spread_type, expr_idx, false, literal_display_type);
+        self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
         false
     }
 
@@ -1305,12 +1305,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // tsc reports TS2488 before TS2571 for this path.
-            self.emit_ts2488_not_iterable(
-                pattern_type,
-                pattern_idx,
-                is_assignment_array_target,
-                None,
-            );
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
             if let Some((start, end)) = ts2571_span {
                 self.error(
                     start,
@@ -1324,12 +1319,7 @@ impl<'a> CheckerState<'a> {
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            self.emit_ts2488_not_iterable(
-                pattern_type,
-                pattern_idx,
-                is_assignment_array_target,
-                None,
-            );
+            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
             return false;
         }
 
@@ -1416,7 +1406,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target, None);
+        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
         false
     }
 
@@ -1679,6 +1669,20 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// The type-id to display for an iterability diagnostic whose operand is
+    /// `operand_node`. `tsc` renders the operand's own *unwidened* checked type,
+    /// so a fresh primitive-literal operand (`for (… of 42)`, `yield* -5`,
+    /// `[...123n]`, `(true)`, `42 as const`) shows its literal type (`42`, `-5`,
+    /// `123n`, `true`) rather than the widened base (`number`, `bigint`,
+    /// `boolean`). Falls back to `widened` for every non-literal operand
+    /// (variables, unions such as `0 ? 1 : 2`, calls), which tsz already renders
+    /// in agreement with `tsc`. This mirrors the ES2015+ spread path, which
+    /// already preserves the literal through `literal_type_from_initializer`.
+    pub(crate) fn iterand_display_type(&self, operand_node: NodeIndex, widened: TypeId) -> TypeId {
+        self.literal_type_from_initializer(operand_node)
+            .unwrap_or(widened)
+    }
+
     /// Emit TS2488: "Type '...' must have a '[Symbol.iterator]()' method that returns an iterator."
     ///
     /// Shared by `check_for_of_iterability`, `check_spread_iterability`, and
@@ -1688,9 +1692,14 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         error_node: NodeIndex,
         is_assignment_target: bool,
-        literal_display_type: Option<TypeId>,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
+            // tsc renders the operand's own unwidened type, so a fresh
+            // primitive-literal operand keeps its literal (`42`, not `number`).
+            // Recovered from the operand node; `None` for every non-literal
+            // (including binding-pattern nodes), which fall through to the widened
+            // display below. See `iterand_display_type` for the shared rationale.
+            let literal_display_type = self.literal_type_from_initializer(error_node);
             let evaluated_type = self.evaluate_type_for_assignability(type_id);
             // tsc preserves boolean literals in TS2488 messages for assignment
             // targets (where variables are already declared with types), but
@@ -1734,7 +1743,11 @@ impl<'a> CheckerState<'a> {
         allows_strings: bool,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
-            let type_str = self.format_type(display_type);
+            // Preserve a literal operand unwidened in the ES5 messages
+            // (TS2495/TS2461); non-literal operands fall back to the widened
+            // display. See `iterand_display_type`.
+            let display_id = self.iterand_display_type(error_node, display_type);
+            let type_str = self.format_type(display_id);
             if self.is_iterable_type(resolved_type) {
                 let message = format_message(
                     diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
