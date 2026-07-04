@@ -6,7 +6,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_checker::context::{GlobalDeclaredModules, ProgramContext};
+use tsz_checker::context::{GlobalDeclaredModules, ProgramContext, ambient_pattern_matches};
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::construction::QueryCache;
@@ -125,7 +125,6 @@ fn global_declared_modules_matches_vite_style_asset_patterns() {
         ],
     );
 
-    assert!(dm.pattern_set.is_some());
     assert!(dm.matches_wildcard("./style.css"));
     assert!(dm.matches_wildcard("./assets/logo.svg"));
     assert!(dm.matches_wildcard("components/button.module.css"));
@@ -156,6 +155,78 @@ fn global_declared_modules_best_matching_pattern_none_when_unmatched() {
     let dm =
         GlobalDeclaredModules::from_skeleton(FxHashSet::default(), vec!["prefix/*".to_string()]);
     assert_eq!(dm.best_matching_pattern("./logo.svg"), None);
+}
+
+#[test]
+fn ambient_pattern_single_star_matches_prefix_and_suffix() {
+    // tsc's `tryParsePattern`: exactly one `*` → literal prefix/suffix matched by
+    // startsWith/endsWith, with `*` free to span `/`.
+    assert!(ambient_pattern_matches("*.svg", "./assets/logo.svg"));
+    assert!(ambient_pattern_matches("prefix/*", "prefix/deeply/nested"));
+    assert!(ambient_pattern_matches("*", "anything/at-all.ts"));
+    // Prefix present but suffix mismatch, and vice versa.
+    assert!(!ambient_pattern_matches("*.svg", "./assets/logo.png"));
+    assert!(!ambient_pattern_matches("prefix/*", "other/thing"));
+    // The `*` must consume at least zero chars but prefix+suffix cannot overlap:
+    // `a*a` needs length >= 2, so a bare `a` does not match.
+    assert!(!ambient_pattern_matches("a*a", "a"));
+    assert!(ambient_pattern_matches("a*a", "aa"));
+}
+
+#[test]
+fn ambient_pattern_multi_star_is_literal_parity_with_tsc() {
+    // tsc rejects patterns with more than one `*` and keeps them as exact names,
+    // so they only match an identical specifier — never as a glob.
+    assert!(ambient_pattern_matches("a*b*c", "a*b*c"));
+    assert!(!ambient_pattern_matches("a*b*c", "axbxc"));
+    assert!(!ambient_pattern_matches("**", "anything"));
+}
+
+#[test]
+fn ambient_pattern_treats_glob_metacharacters_literally() {
+    // tsc has no glob metacharacters: `?`, `[...]`, and `{...}` are literal.
+    // A single `*` still wildcards, but the brackets/braces are matched verbatim.
+    assert!(ambient_pattern_matches("*.[jt]s", "foo.[jt]s"));
+    assert!(!ambient_pattern_matches("*.[jt]s", "foo.js"));
+    assert!(ambient_pattern_matches("*.{ts,tsx}", "a.{ts,tsx}"));
+    assert!(!ambient_pattern_matches("*.{ts,tsx}", "a.ts"));
+    // `?` is a literal question mark, not a single-char wildcard.
+    assert!(ambient_pattern_matches("mod?/*", "mod?/thing"));
+    assert!(!ambient_pattern_matches("mod?/*", "modx/thing"));
+}
+
+#[test]
+fn global_declared_modules_best_matching_prefers_longest_prefix_over_broad_star() {
+    let dm = GlobalDeclaredModules::from_skeleton(
+        FxHashSet::default(),
+        vec![
+            "*".to_string(),
+            "vendor/*".to_string(),
+            "vendor/scoped/*".to_string(),
+        ],
+    );
+    // Longest literal prefix wins even when several patterns match.
+    assert_eq!(
+        dm.best_matching_pattern("vendor/scoped/thing"),
+        Some("vendor/scoped/*")
+    );
+    assert_eq!(dm.best_matching_pattern("vendor/thing"), Some("vendor/*"));
+    assert_eq!(dm.best_matching_pattern("plain"), Some("*"));
+}
+
+#[test]
+fn global_declared_modules_matches_prefix_and_suffix_wildcards() {
+    // Both suffix (`*.css`) and prefix (`vendor/*`) wildcards resolve through the
+    // shared matcher with tsc-faithful `startsWith`/`endsWith` semantics.
+    let dm = GlobalDeclaredModules::from_skeleton(
+        FxHashSet::default(),
+        vec!["*.css".to_string(), "vendor/*".to_string()],
+    );
+    assert!(dm.matches_wildcard("./styles/app.css"));
+    assert!(dm.matches_wildcard("vendor/deeply/nested"));
+    assert!(!dm.matches_wildcard("./styles/app.scss"));
+    assert_eq!(dm.best_matching_pattern("./styles/app.css"), Some("*.css"));
+    assert_eq!(dm.best_matching_pattern("vendor/thing"), Some("vendor/*"));
 }
 
 #[test]

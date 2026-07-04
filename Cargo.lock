@@ -1338,7 +1338,6 @@ name = "tsz-checker"
 version = "0.1.44"
 dependencies = [
  "dashmap",
- "globset",
  "rustc-hash",
  "serde_json",
  "smallvec",

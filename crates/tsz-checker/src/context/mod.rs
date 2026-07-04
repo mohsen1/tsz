@@ -141,7 +141,7 @@ pub struct JSDocGlobalTypedefLookupCache {
 pub(crate) const MAX_SYMBOL_RESOLUTION_DEPTH: u32 = 50;
 
 mod global_declared_modules;
-pub use global_declared_modules::GlobalDeclaredModules;
+pub use global_declared_modules::{GlobalDeclaredModules, ambient_pattern_matches};
 
 /// Info about the enclosing class for static member suggestions and abstract property checks.
 #[derive(Clone, Debug)]

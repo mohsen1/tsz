@@ -827,30 +827,12 @@ impl<'a> CheckerState<'a> {
         patterns: &rustc_hash::FxHashSet<String>,
         module_name: &str,
     ) -> bool {
+        // The shared matcher applies tsc's ambient-module semantics (exactly one
+        // `*` is a wildcard with literal prefix/suffix; everything else is an
+        // exact name) without compiling a glob regex.
         patterns
             .iter()
-            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
-    }
-
-    fn module_name_matches_pattern(pattern: &str, module_name: &str) -> bool {
-        let pattern = pattern.trim().trim_matches('"').trim_matches('\'');
-        let module_name = module_name.trim().trim_matches('"').trim_matches('\'');
-
-        if !pattern.contains('*') {
-            return pattern == module_name;
-        }
-
-        // Use globset for robust wildcard matching (handles multiple '*' correctly)
-        // Allow '*' to match path separators so patterns like "*!text" match "./file!text".
-        if let Ok(glob) = globset::GlobBuilder::new(pattern)
-            .literal_separator(false)
-            .build()
-        {
-            let matcher = glob.compile_matcher();
-            return matcher.is_match(module_name);
-        }
-
-        false
+            .any(|pattern| crate::context::ambient_pattern_matches(pattern, module_name))
     }
 
     // =========================================================================
