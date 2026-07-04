@@ -378,9 +378,6 @@ impl<'a> CheckerState<'a> {
         let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else if receiver_needs_env_fallback {
-            // Route the receiver reduction through the materialize-or-defer
-            // gateway (issue #15396). `into_type()` is byte-parity with the
-            // prior direct `evaluate_property_access_receiver_type` call.
             self.apparent_type_of_receiver_env(original_object_type)
                 .into_type()
         } else if let Some(recovered) =
@@ -400,8 +397,6 @@ impl<'a> CheckerState<'a> {
             // parameter substitution. Returns `None` for every other shape.
             materialized
         } else {
-            // Default receiver reduction, through the same gateway; byte-parity
-            // with the prior direct `evaluate_application_type` call.
             self.apparent_type_of_receiver_light(original_object_type)
                 .into_type()
         };
