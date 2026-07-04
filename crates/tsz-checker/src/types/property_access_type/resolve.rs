@@ -378,7 +378,8 @@ impl<'a> CheckerState<'a> {
         let mut object_type = if access.question_dot_token && skip_optional_base_flow {
             original_object_type
         } else if receiver_needs_env_fallback {
-            self.evaluate_property_access_receiver_type(original_object_type)
+            self.apparent_type_of_receiver_env(original_object_type)
+                .into_type()
         } else if let Some(recovered) =
             self.recover_arena_collided_application_for_property_access(original_object_type)
         {
@@ -396,7 +397,8 @@ impl<'a> CheckerState<'a> {
             // parameter substitution. Returns `None` for every other shape.
             materialized
         } else {
-            self.evaluate_application_type(original_object_type)
+            self.apparent_type_of_receiver_light(original_object_type)
+                .into_type()
         };
         let receiver_has_jsdoc_type_annotation = if self.ctx.is_js_file()
             && self.ctx.should_resolve_jsdoc()
