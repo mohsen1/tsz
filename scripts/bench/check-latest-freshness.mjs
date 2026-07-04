@@ -227,15 +227,35 @@ function runGh(args) {
 
 const TRACKED_GENERATED_RE = /generated_at:\s*`([^`]+)`/;
 
+const SENTINEL_PER_PAGE = 100;
+// The `/issues` endpoint returns open issues *and* open PRs, so on an active
+// repo the combined list routinely exceeds one 100-item page. A persistent
+// tracking issue (a standing freeze can live for hours/days) is sorted
+// created-desc and steadily sinks past page 1 as new PRs/issues land, so a
+// single-page scan silently stops finding it — then reconcileIssue re-creates a
+// duplicate every firing and can never close the real one on recovery. Page
+// through open issues until the marker is found or the list is exhausted so the
+// dedup sentinel is always located. The bound caps the walk on a pathological
+// backlog without ever masking a reachable sentinel.
+const SENTINEL_MAX_PAGES = 20;
+
 function findSentinelIssue(repository, fetchJson) {
-  const issues = fetchJson([
-    "api",
-    "-H",
-    "Accept: application/vnd.github+json",
-    `repos/${repository}/issues?state=open&per_page=100`,
-  ]);
-  if (!Array.isArray(issues)) return null;
-  return issues.find((it) => typeof it.body === "string" && it.body.includes(ISSUE_MARKER)) || null;
+  for (let page = 1; page <= SENTINEL_MAX_PAGES; page += 1) {
+    const issues = fetchJson([
+      "api",
+      "-H",
+      "Accept: application/vnd.github+json",
+      `repos/${repository}/issues?state=open&per_page=${SENTINEL_PER_PAGE}&page=${page}`,
+    ]);
+    if (!Array.isArray(issues)) return null;
+    const match = issues.find(
+      (it) => typeof it.body === "string" && it.body.includes(ISSUE_MARKER),
+    );
+    if (match) return match;
+    // A short (or empty) page is the last one — the sentinel is not open.
+    if (issues.length < SENTINEL_PER_PAGE) return null;
+  }
+  return null;
 }
 
 /**

@@ -294,6 +294,31 @@ test("reconcileIssue closes existing issue when green", () => {
   assert.ok(calls.some((a) => a[0] === "issue" && a[1] === "close"));
 });
 
+test("reconcileIssue finds a sentinel that sank past page 1", () => {
+  // The `/issues` list mixes open PRs, so a standing main-red tracking issue
+  // sinks onto a later page as new PRs/issues land. reconcileIssue must page
+  // through and find it instead of re-creating a duplicate every firing.
+  const calls = [];
+  const seenPages = [];
+  const page1 = Array.from({ length: 100 }, (_, i) => ({ number: 3000 + i, body: "unrelated PR body" }));
+  const page2 = [{ number: 77, body: "x <!-- main-red-sentinel --> y" }];
+  const v = mainCiHealth([run({ id: 5, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" })]);
+  const result = reconcileIssue(v, [], NOW, {
+    repository: "o/r",
+    fetchJson: (args) => {
+      const url = String(args[args.length - 1]);
+      const page = Number((url.match(/[?&]page=(\d+)/) || [])[1] || 1);
+      seenPages.push(page);
+      return page === 1 ? page1 : page === 2 ? page2 : [];
+    },
+    runCommand: (args) => { calls.push(args); return { status: 0, stdout: "", stderr: "" }; },
+  });
+  assert.equal(result.action, "updated");
+  assert.equal(result.number, 77);
+  assert.deepEqual(seenPages, [1, 2]);
+  assert.ok(!calls.some((a) => a[0] === "issue" && a[1] === "create"), "never creates a duplicate");
+});
+
 test("reconcileIssue noop when green and no issue", () => {
   const v = mainCiHealth([run({ id: 6, conclusion: "success", created_at: "2026-06-12T21:00:00Z" })]);
   const result = reconcileIssue(v, [], NOW, {

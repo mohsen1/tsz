@@ -187,6 +187,38 @@ function NOW_ISO() {
   assert.equal(outcome.action, "closed");
   assert.ok(calls.some((c) => c[1] === "close"), "closes the tracking issue on recovery");
 }
+{
+  // Sentinel past page 1: the `/issues` list mixes open PRs, so a persistent
+  // tracking issue sinks onto a later page as new PRs/issues land. reconcileIssue
+  // must page through and find it instead of re-creating a duplicate every firing.
+  const MARKER = "<!-- bench-latest-freshness-sentinel -->";
+  const page1 = Array.from({ length: 100 }, (_, i) => ({ number: 2000 + i, body: "unrelated PR body" }));
+  const page2 = [{ number: 42, body: `${MARKER}\nstale` }];
+  const seenPages = [];
+  const calls = [];
+  const verdict = classifyFreshness(JSON.stringify({ generated_at: at(9) }), { now: NOW, maxAgeHours: 6 });
+  const outcome = reconcileIssue(
+    verdict,
+    { url: DEFAULT_LATEST_URL, repository: "tsz-org/tsz" },
+    NOW_ISO(),
+    {
+      fetchJson: (args) => {
+        const url = String(args[args.length - 1]);
+        const page = Number((url.match(/[?&]page=(\d+)/) || [])[1] || 1);
+        seenPages.push(page);
+        return page === 1 ? page1 : page === 2 ? page2 : [];
+      },
+      runCommand: (args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    },
+  );
+  assert.equal(outcome.action, "updated", "finds the sentinel on page 2 and edits it");
+  assert.equal(outcome.number, 42, "locates the correct tracking issue past page 1");
+  assert.deepEqual(seenPages, [1, 2], "pages through until the marker is found");
+  assert.ok(!calls.some((c) => c[1] === "create"), "never creates a duplicate tracking issue");
+}
 
 // ---- end-to-end CLI via --fixture (offline, no network) ---------------------
 function runCli(args, fixtureValue) {
