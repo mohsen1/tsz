@@ -670,7 +670,10 @@ impl<'a> CheckerState<'a> {
 
                     if !all_nested.is_empty() {
                         let nested_target =
-                            tsz_solver::utils::intersection_or_single(self.ctx.types, all_nested);
+                            query::excess_property_nested_target_intersection_or_single(
+                                self.ctx.types,
+                                all_nested,
+                            );
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
@@ -850,8 +853,10 @@ impl<'a> CheckerState<'a> {
                     if nested_types.is_empty() {
                         continue;
                     }
-                    let nested_target =
-                        tsz_solver::utils::intersection_or_single(self.ctx.types, nested_types);
+                    let nested_target = query::excess_property_nested_target_intersection_or_single(
+                        self.ctx.types,
+                        nested_types,
+                    );
                     let nested_target = self.nested_property_target_type(
                         effective_target,
                         source_prop.name,

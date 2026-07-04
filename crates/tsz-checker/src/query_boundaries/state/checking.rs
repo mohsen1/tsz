@@ -149,6 +149,34 @@ pub(crate) fn excess_property_target_union(db: &dyn TypeDatabase, members: Vec<T
     tsz_solver::utils::union_or_single(db, members)
 }
 
+pub(crate) fn excess_property_nested_target_intersection_or_single(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    tsz_solver::utils::intersection_or_single(db, members)
+}
+
+pub(crate) fn excess_property_annotation_intersection_or_single(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    let mut iter = members.into_iter();
+    let Some(mut result) = iter.next() else {
+        return TypeId::UNKNOWN;
+    };
+    for member in iter {
+        result = db.intersect_types_raw2(result, member);
+    }
+    result
+}
+
+pub(crate) fn optional_excess_property_nested_target(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+) -> TypeId {
+    db.union(vec![target, TypeId::UNDEFINED])
+}
+
 pub(crate) fn excess_property_display_target_union(
     db: &dyn TypeDatabase,
     members: Vec<TypeId>,

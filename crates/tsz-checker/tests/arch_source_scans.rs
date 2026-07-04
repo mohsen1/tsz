@@ -89,6 +89,9 @@
 //! - `call_result_construction_boundary_scans`: call result handling routes
 //!   correlated unions, optional-chain returns, and recursive fallback result
 //!   construction through `query_boundaries::checkers::call`.
+//! - `excess_property_nested_target_construction_boundary_scans`: nested
+//!   excess-property target and annotation intersections route through
+//!   `query_boundaries::state::checking`.
 //! - `expression_result_construction_boundary_scans`: expression computation
 //!   routes selected result-shape construction through
 //!   `query_boundaries::type_computation::expression_results`.
@@ -131,6 +134,8 @@ mod decorator_construction_boundary_scans;
 mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]
 mod excess_property_construction_boundary_scans;
+#[path = "arch_source_scans/excess_property_nested_target_construction_boundary_scans.rs"]
+mod excess_property_nested_target_construction_boundary_scans;
 #[path = "arch_source_scans/expression_result_construction_boundary_scans.rs"]
 mod expression_result_construction_boundary_scans;
 #[path = "arch_source_scans/import_attribute_construction_boundary_scans.rs"]
