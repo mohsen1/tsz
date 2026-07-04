@@ -7,14 +7,15 @@ use super::type_node_helpers::{
 };
 use crate::context::{CheckerContext, TypeParameterScopeCacheKey};
 use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::query_boundaries::type_construction;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::TypeId;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-use tsz_solver::{TypeId, Visibility};
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -1163,7 +1164,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{CallSignature, IndexSignature, PropertyInfo};
+        use tsz_solver::CallSignature;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1209,14 +1210,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let (params, this_type) = self.extract_params_from_signature(sig);
                         let return_type = self
                             .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
-                        call_signatures.push(CallSignature {
+                        call_signatures.push(signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
-                            type_predicate: None,
-                            is_method: false,
-                        });
+                            None,
+                            false,
+                        ));
                         self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     CONSTRUCT_SIGNATURE => {
@@ -1225,14 +1226,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let (params, this_type) = self.extract_params_from_signature(sig);
                         let return_type = self
                             .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
-                        construct_signatures.push(CallSignature {
+                        construct_signatures.push(signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
-                            type_predicate: None,
-                            is_method: false,
-                        });
+                            None,
+                            false,
+                        ));
                         self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
@@ -1254,14 +1255,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 sig.type_annotation,
                                 &params,
                             );
-                            let call_sig = CallSignature {
+                            let call_sig = signature_building_boundary::call_signature(
                                 type_params,
                                 params,
                                 this_type,
                                 return_type,
-                                type_predicate: None,
-                                is_method: true,
-                            };
+                                None,
+                                true,
+                            );
                             self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                             let optional = sig.question_token;
                             let readonly = self.ctx.arena.has_modifier(
@@ -1307,25 +1308,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     type_id
                                 };
                             member_order += 1;
-                            properties.push(PropertyInfo {
-                                name: name_atom,
-                                type_id,
-                                write_type,
-                                optional: sig.question_token,
-                                readonly: self.ctx.arena.has_modifier(
-                                    &sig.modifiers,
-                                    tsz_scanner::SyntaxKind::ReadonlyKeyword,
-                                ),
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: member_order,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                                non_widening: false,
-                            });
+                            properties.push(type_construction::declared_surface_property(
+                                type_construction::DeclaredSurfaceProperty {
+                                    name: name_atom,
+                                    type_id,
+                                    write_type,
+                                    optional: sig.question_token,
+                                    readonly: self.ctx.arena.has_modifier(
+                                        &sig.modifiers,
+                                        tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                                    ),
+                                    is_method: false,
+                                    declaration_order: member_order,
+                                    is_string_named,
+                                    is_symbol_named,
+                                    single_quoted_name,
+                                },
+                            ));
                         }
                     }
                     _ => {}
@@ -1484,12 +1483,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .get(param_data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
-                let info = IndexSignature {
-                    key_type,
-                    value_type,
-                    readonly,
-                    param_name,
-                };
+                let info = type_construction::declared_index_signature(
+                    key_type, value_type, readonly, param_name,
+                );
                 if is_valid_index_type || is_valid_via_ast {
                     if key_type == TypeId::NUMBER {
                         number_index = Some(info);
@@ -1523,22 +1519,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         existing.type_id = getter_type;
                     } else {
                         member_order += 1;
-                        properties.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: getter_type,
-                            write_type: getter_type,
-                            optional: false,
-                            readonly: true,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: member_order,
-                            is_string_named,
-                            is_symbol_named,
-                            single_quoted_name,
-                            non_widening: false,
-                        });
+                        properties.push(type_construction::declared_surface_property(
+                            type_construction::DeclaredSurfaceProperty {
+                                name: name_atom,
+                                type_id: getter_type,
+                                write_type: getter_type,
+                                optional: false,
+                                readonly: true,
+                                is_method: false,
+                                declaration_order: member_order,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
+                            },
+                        ));
                     }
                 } else {
                     let setter_type = accessor
@@ -1557,22 +1551,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         existing.readonly = false;
                     } else {
                         member_order += 1;
-                        properties.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: setter_type,
-                            write_type: setter_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: member_order,
-                            is_string_named,
-                            is_symbol_named,
-                            single_quoted_name,
-                            non_widening: false,
-                        });
+                        properties.push(type_construction::declared_surface_property(
+                            type_construction::DeclaredSurfaceProperty {
+                                name: name_atom,
+                                type_id: setter_type,
+                                write_type: setter_type,
+                                optional: false,
+                                readonly: false,
+                                is_method: false,
+                                declaration_order: member_order,
+                                is_string_named,
+                                is_symbol_named,
+                                single_quoted_name,
+                            },
+                        ));
                     }
                 }
             }
@@ -1601,22 +1593,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             sigs.into_iter().map(|e| e.signature).collect();
                         signature_construction::call_only_callable_type(self.ctx.types, merged_sigs)
                     };
-                    properties.push(PropertyInfo {
-                        name: key.name,
-                        type_id: method_type,
-                        write_type: method_type,
-                        optional,
-                        readonly,
-                        is_method: true,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: key.decl_order,
-                        is_string_named: key.is_string_named,
-                        is_symbol_named,
-                        single_quoted_name: key.single_quoted_name,
-                        non_widening: false,
-                    });
+                    properties.push(type_construction::declared_surface_property(
+                        type_construction::DeclaredSurfaceProperty {
+                            name: key.name,
+                            type_id: method_type,
+                            write_type: method_type,
+                            optional,
+                            readonly,
+                            is_method: true,
+                            declaration_order: key.decl_order,
+                            is_string_named: key.is_string_named,
+                            is_symbol_named,
+                            single_quoted_name: key.single_quoted_name,
+                        },
+                    ));
                 }
             }
         }

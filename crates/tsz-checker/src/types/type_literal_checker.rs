@@ -4,6 +4,7 @@
 //! callable types with call/construct signatures.
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::query_boundaries::{
     construct_signatures as signature_boundary, type_construction as construction_boundary,
 };
@@ -1210,14 +1211,14 @@ impl<'a> CheckerState<'a> {
                                 sig.type_annotation,
                                 &params,
                             );
-                        call_signatures.push(CallSignature {
+                        call_signatures.push(signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate,
-                            is_method: false,
-                        });
+                            false,
+                        ));
                         self.pop_type_parameters(type_param_updates);
                     }
                     CONSTRUCT_SIGNATURE => {
@@ -1236,14 +1237,14 @@ impl<'a> CheckerState<'a> {
                                 sig.type_annotation,
                                 &params,
                             );
-                        construct_signatures.push(CallSignature {
+                        construct_signatures.push(signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate,
-                            is_method: false,
-                        });
+                            false,
+                        ));
                         self.pop_type_parameters(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
@@ -1274,14 +1275,14 @@ impl<'a> CheckerState<'a> {
                                     sig.type_annotation,
                                     &params,
                                 );
-                            let call_sig = CallSignature {
+                            let call_sig = signature_building_boundary::call_signature(
                                 type_params,
                                 params,
                                 this_type,
                                 return_type,
                                 type_predicate,
-                                is_method: true,
-                            };
+                                true,
+                            );
                             self.pop_type_parameters(type_param_updates);
                             let optional = sig.question_token;
                             let readonly = self.has_readonly_modifier(&sig.modifiers);

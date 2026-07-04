@@ -14,7 +14,7 @@ use crate::query_boundaries::{
     interface_merge::{
         self as interface_merge_boundary, MergedCallableSurface, MergedObjectSurface,
     },
-    type_construction as construction_boundary,
+    signature_building as signature_building_boundary, type_construction as construction_boundary,
 };
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -365,14 +365,14 @@ impl<'a> CheckerState<'a> {
                     };
                     self.pop_typeof_param_scope(&params);
 
-                    call_signatures.push(SolverCallSignature {
+                    call_signatures.push(signature_building_boundary::call_signature(
                         type_params,
                         params,
                         this_type,
                         return_type,
                         type_predicate,
-                        is_method: false,
-                    });
+                        false,
+                    ));
                     self.pop_type_parameters(type_param_updates);
                 }
             } else if member_node.kind == CONSTRUCT_SIGNATURE {
@@ -407,14 +407,14 @@ impl<'a> CheckerState<'a> {
                     };
                     self.pop_typeof_param_scope(&params);
 
-                    construct_signatures.push(SolverCallSignature {
+                    construct_signatures.push(signature_building_boundary::call_signature(
                         type_params,
                         params,
                         this_type,
                         return_type,
                         type_predicate,
-                        is_method: false,
-                    });
+                        false,
+                    ));
                     self.pop_type_parameters(type_param_updates);
                 }
             } else if member_node.kind == PROPERTY_SIGNATURE {
@@ -502,14 +502,14 @@ impl<'a> CheckerState<'a> {
                         self.pop_typeof_param_scope(&params);
                         self.pop_type_parameters(type_param_updates);
 
-                        let call_sig = SolverCallSignature {
+                        let call_sig = signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate,
-                            is_method: true,
-                        };
+                            true,
+                        );
 
                         member_order += 1;
                         let optional = sig.question_token;
