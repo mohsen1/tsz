@@ -1017,12 +1017,10 @@ impl<'a> CheckerState<'a> {
                         || self.target_is_or_displays_type_application(candidate)
                 });
 
-            // When the target has a string index signature, outer property names are
-            // valid only when they are accepted by the index key type. Broad
-            // `[k: string]` accepts every string key, while template-literal
-            // index keys such as `` `data-${string}` `` only accept matching
-            // property names. We still check nested object literals against the
-            // applicable index signature VALUE type for excess properties.
+            // With a string index signature, outer property names are valid only when
+            // accepted by the index key type: broad `[k: string]` accepts every string
+            // key; template-literal keys like `` `data-${string}` `` only matching names.
+            // Nested object literals are still checked against the index VALUE type.
             if let Some(ref idx_sig) = target_shape.string_index {
                 if self.try_union_index_signature_value_check(
                     source_props,
