@@ -399,18 +399,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn object_type_symbol_is_promise_like(&self, type_id: TypeId) -> bool {
-        let query::PromiseTypeKind::Object(shape_id) =
-            query::classify_promise_type(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-
-        let shape = self.ctx.types.object_shape(shape_id);
-        let Some(sym_id) = shape.symbol else {
-            return false;
-        };
-
-        self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
+        query::promise_object_symbol_id(self.ctx.types, type_id)
+            .is_some_and(|sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id))
     }
 
     /// Extract a Promise member from a contextual type that may be a union.
