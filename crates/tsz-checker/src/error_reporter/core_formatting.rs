@@ -1249,15 +1249,15 @@ impl<'a> CheckerState<'a> {
         Some(format!("typeof {ty_name}"))
     }
 
-    /// When `ty` is a union containing null/undefined and `other` (the
-    /// counterpart in the assignability check) is non-nullable, strip the
-    /// top-level null/undefined members from `ty`.  This matches tsc which
-    /// shows only the non-nullable part of the target to reduce noise.
-    pub(crate) fn strip_nullish_for_assignability_display(
-        &mut self,
-        ty: TypeId,
-        other: TypeId,
-    ) -> Option<TypeId> {
+    /// Shared guard behind the nullable-union assignability display policy.
+    ///
+    /// Returns the non-nullish members of `ty` when `ty` is a union carrying
+    /// `null`/`undefined`, `other` is a non-nullable type (directly or via its
+    /// base constraint), and the strip yields a proper, non-empty subset.
+    /// Returns `None` when no strip applies. Both the target-display collapse
+    /// and the source-side "carries nullish the target lacks" predicate build
+    /// on this; only the *interpretation* of the surviving members differs.
+    fn nullish_stripped_members(&mut self, ty: TypeId, other: TypeId) -> Option<Vec<TypeId>> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, ty)?;
         // Only strip when the union has null or undefined members
         let has_null = members.contains(&TypeId::NULL);
@@ -1309,10 +1309,28 @@ impl<'a> CheckerState<'a> {
         if filtered.is_empty() || filtered.len() == members.len() {
             return None;
         }
-        if filtered.len() == 1 {
-            return Some(filtered[0]);
+        Some(filtered)
+    }
+
+    /// Collapses a nullable-union *target* to its non-nullish part for display.
+    ///
+    /// tsc's assignability messages drill through `getBestMatchingType`: the
+    /// nullish members are dropped from the displayed target **only when a
+    /// single real member survives** the strip (e.g. `string | undefined` →
+    /// `string`, and a fresh literal source widens against it). When two or
+    /// more real members remain, tsc keeps the *original* union — nullish
+    /// members included — so this returns `None` to leave the full union in
+    /// place. The relation itself always runs against the full declared union;
+    /// this is display-only.
+    pub(crate) fn strip_nullish_for_assignability_display(
+        &mut self,
+        ty: TypeId,
+        other: TypeId,
+    ) -> Option<TypeId> {
+        match self.nullish_stripped_members(ty, other)?.as_slice() {
+            [only] => Some(*only),
+            _ => None,
         }
-        Some(self.ctx.types.factory().union(filtered))
     }
 
     pub(crate) fn should_strip_nullish_for_property_display(&self, target: TypeId) -> bool {
@@ -1351,10 +1369,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         // Structural witness that the source carries top-level `null`/`undefined`
-        // the target does not: `strip_nullish_for_assignability_display` yields
-        // the stripped form in exactly that case. Use it only as the predicate;
-        // the display itself is recomputed with the nullish-preserving formatter.
-        self.strip_nullish_for_assignability_display(source, target)?;
+        // the target does not: `nullish_stripped_members` yields a non-empty
+        // subset in exactly that case, independent of how many real members
+        // survive. Use it only as the predicate; the display itself is
+        // recomputed with the nullish-preserving formatter.
+        self.nullish_stripped_members(source, target)?;
         let preserved =
             self.format_assignability_type_for_message_preserving_nullish(source, target);
         (preserved != target_str).then_some(preserved)
