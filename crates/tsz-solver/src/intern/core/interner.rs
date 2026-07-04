@@ -524,6 +524,14 @@ pub struct TypeInterner {
 pub struct TypePredicateCacheStatistics {
     /// Number of memoized identity-comparability predicate results.
     pub identity_comparable_cache_entries: usize,
+    /// Number of memoized canonical `widen_type` results.
+    pub widen_type_cache_entries: usize,
+    /// Number of memoized `extract_type_params_from_type` results.
+    pub extract_type_params_cache_entries: usize,
+    /// Number of project-wide instantiation results.
+    pub proto_instantiation_cache_entries: usize,
+    /// Number of memoized contravariant `infer` name-list results.
+    pub contravariant_infer_names_cache_entries: usize,
     /// Number of memoized union-normalization results.
     pub union_normalize_cache_entries: usize,
     /// Number of `TypeId` member slots retained by union-normalization keys.
@@ -596,6 +604,10 @@ impl TypeInterner {
     pub fn type_predicate_cache_statistics(&self) -> TypePredicateCacheStatistics {
         TypePredicateCacheStatistics {
             identity_comparable_cache_entries: self.identity_comparable_cache.len(),
+            widen_type_cache_entries: self.widen_type_cache.len(),
+            extract_type_params_cache_entries: self.extract_type_params_cache.len(),
+            proto_instantiation_cache_entries: self.proto_instantiation_cache.len(),
+            contravariant_infer_names_cache_entries: self.contravariant_infer_names_cache.len(),
             union_normalize_cache_entries: self.union_normalize_cache.len(),
             union_normalize_cache_member_slots: self.union_normalize_cache_member_slots(),
             contains_this_cache_entries: self
