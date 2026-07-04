@@ -5,6 +5,45 @@
 use super::*;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn object_literal_initializer_display_type_for_receiver(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let receiver = self.access_receiver_for_diagnostic_node(idx)?;
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        // Only surface the initializer's anonymous object-literal shape when the
+        // declaration has no explicit type annotation. With an annotation the
+        // declared type *is* the annotation (not the widened initializer), and
+        // tsc renders that annotated/apparent type in the index diagnostic —
+        // e.g. `t` in `const t: T = { ... }` displays as `T`, not `{ ... }`.
+        if decl.type_annotation.is_some() {
+            return None;
+        }
+        let init = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(init)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
+        let init_type = self.get_type_of_node(init);
+        let init_type = self.resolve_type_for_property_access(init_type);
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, init_type)
+            .filter(|shape| shape.symbol.is_none())
+            .map(|_| init_type)
+    }
+
     pub(super) fn actual_lib_namespace_merged_type_has_property(
         &mut self,
         type_id: TypeId,
