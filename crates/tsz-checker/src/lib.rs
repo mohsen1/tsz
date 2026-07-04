@@ -295,6 +295,9 @@ mod generic_method_override_variance_tests;
 #[path = "tests/generic_mixed_inheritance_chain_tests.rs"]
 mod generic_mixed_inheritance_chain_tests;
 #[cfg(test)]
+#[path = "tests/generic_rest_tuple_contextual_return_tests.rs"]
+mod generic_rest_tuple_contextual_return_tests;
+#[cfg(test)]
 #[path = "tests/generic_signature_context_instantiation_tests.rs"]
 mod generic_signature_context_instantiation_tests;
 #[cfg(test)]
