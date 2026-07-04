@@ -5,6 +5,7 @@
 //! remains an inherent method on `CheckerState`, so call sites are unchanged.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::query_boundaries::checkers::call::lazy_def_id_for_type;
 use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, PendingDiagnosticBuilder,
@@ -510,7 +511,7 @@ impl<'a> CheckerState<'a> {
                             arg_types.clone(),
                             return_type,
                             selected_type_predicate.clone(),
-                            self.ctx.snapshot_full(),
+                            FullSpeculationSnapshot::new(&self.ctx),
                         ));
                         continue;
                     }
@@ -876,7 +877,7 @@ impl<'a> CheckerState<'a> {
                             final_arg_types.clone(),
                             final_return_type,
                             selected_type_predicate.clone(),
-                            self.ctx.snapshot_full(),
+                            FullSpeculationSnapshot::new(&self.ctx),
                         ));
                         continue;
                     }
@@ -892,7 +893,7 @@ impl<'a> CheckerState<'a> {
                                 final_arg_types.clone(),
                                 final_return_type,
                                 selected_type_predicate.clone(),
-                                self.ctx.snapshot_full(),
+                                FullSpeculationSnapshot::new(&self.ctx),
                             ));
                         }
                         continue;

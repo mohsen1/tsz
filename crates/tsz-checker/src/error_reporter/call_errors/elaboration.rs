@@ -1,6 +1,7 @@
 //! Call argument elaboration logic (object literal, array literal, function return).
 
 use crate::context::TypingRequest;
+use crate::context::speculation::FullSpeculationSnapshot;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
@@ -532,7 +533,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let snap = self.ctx.snapshot_full();
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
         self.invalidate_expression_for_contextual_retry(arg_idx);
         self.ctx.daa_error_nodes.remove(&arg_idx.0);
         self.ctx.flow_narrowed_nodes.remove(&arg_idx.0);
@@ -558,7 +559,7 @@ impl<'a> CheckerState<'a> {
             .cloned()
             .collect();
 
-        self.ctx.rollback_full(&snap);
+        snap.rollback(&mut self.ctx.speculation_state());
 
         if diagnostics.is_empty() {
             return false;

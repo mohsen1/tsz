@@ -1,6 +1,6 @@
 //! Shared retry-state helpers for overload resolution.
 
-use crate::context::speculation::FullSnapshot;
+use crate::context::speculation::FullSpeculationSnapshot;
 
 use super::super::{OverloadResolution, SelectedTypePredicate};
 
@@ -8,7 +8,7 @@ pub(super) type NoReturnContextFallback = (
     Vec<tsz_solver::TypeId>,
     tsz_solver::TypeId,
     SelectedTypePredicate,
-    FullSnapshot,
+    FullSpeculationSnapshot,
 );
 
 pub(super) type BestTypeMismatch = (
