@@ -1163,12 +1163,7 @@ fn unresolved_resolution_write_reaches_both_envs_and_defers_under_borrow() {
     ));
 
     // Uncontended: both envs receive the cache entry directly.
-    ctx.register_in_envs(
-        super::super::DeferredFlowEnvWrite::InsertUnresolvedResolution {
-            name: "AliasedName".to_string(),
-            def_id: def_a,
-        },
-    );
+    ctx.register_unresolved_resolution_in_envs("AliasedName".to_string(), def_a);
     assert_eq!(
         ctx.type_env.borrow().unresolved_resolution("AliasedName"),
         Some(def_a),
@@ -1185,12 +1180,7 @@ fn unresolved_resolution_write_reaches_both_envs_and_defers_under_borrow() {
     // Contended: the flow-env write defers and replays instead of skipping.
     {
         let held = ctx.type_environment.borrow();
-        ctx.register_in_envs(
-            super::super::DeferredFlowEnvWrite::InsertUnresolvedResolution {
-                name: "RenamedBinder".to_string(),
-                def_id: def_b,
-            },
-        );
+        ctx.register_unresolved_resolution_in_envs("RenamedBinder".to_string(), def_b);
         assert_eq!(
             ctx.type_env.borrow().unresolved_resolution("RenamedBinder"),
             Some(def_b),

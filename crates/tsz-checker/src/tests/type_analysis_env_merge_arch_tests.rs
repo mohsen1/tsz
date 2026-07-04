@@ -43,3 +43,35 @@ fn type_analysis_env_merges_use_deferred_helpers() {
         "enum member parent publication should route through register_enum_parent_in_envs"
     );
 }
+
+#[test]
+fn unresolved_resolution_env_writes_use_deferred_authority() {
+    let resolver =
+        fs::read_to_string("src/context/resolver.rs").expect("failed to read context/resolver.rs");
+    let lazy =
+        fs::read_to_string("src/state/type_environment/lazy.rs").expect("failed to read lazy.rs");
+    let env_writes = fs::read_to_string("src/context/def_mapping_env_writes.rs")
+        .expect("failed to read def_mapping_env_writes.rs");
+    let deferred = fs::read_to_string("src/context/deferred_flow_env_write.rs")
+        .expect("failed to read deferred_flow_env_write.rs");
+
+    for (label, source) in [("context resolver", resolver), ("lazy evaluation", lazy)] {
+        assert!(
+            !source.contains(".insert_unresolved_resolution("),
+            "{label} must not mutate only one TypeEnvironment for unresolved-name caches"
+        );
+        assert!(
+            source.contains("register_unresolved_resolution_in_envs("),
+            "{label} should route unresolved-name cache writes through register_unresolved_resolution_in_envs"
+        );
+    }
+
+    assert!(
+        env_writes.contains("register_unresolved_resolution_in_envs("),
+        "unresolved-name cache writes should have a named env authority wrapper"
+    );
+    assert!(
+        deferred.contains("InsertUnresolvedResolution"),
+        "deferred replay must retain the unresolved-name write operation"
+    );
+}

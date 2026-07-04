@@ -1675,12 +1675,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // through the env-write authority (deferring on borrow races instead
         // of silently skipping, and mirroring into the flow-analyzer env so
         // `overlay_missing_from` has nothing left to repair — #14348).
-        self.register_in_envs(
-            crate::context::DeferredFlowEnvWrite::InsertUnresolvedResolution {
-                name: name.to_string(),
-                def_id,
-            },
-        );
+        self.register_unresolved_resolution_in_envs(name.to_string(), def_id);
         Some(def_id)
     }
 

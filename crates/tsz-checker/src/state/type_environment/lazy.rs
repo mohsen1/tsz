@@ -345,9 +345,8 @@ impl CheckerState<'_> {
             else {
                 continue;
             };
-            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
-                env.insert_unresolved_resolution(name.clone(), def_id);
-            }
+            self.ctx
+                .register_unresolved_resolution_in_envs(name.clone(), def_id);
             if self.ctx.definition_store.get_body(def_id).is_some() {
                 continue;
             }
