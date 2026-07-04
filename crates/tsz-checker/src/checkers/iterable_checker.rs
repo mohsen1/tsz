@@ -5,8 +5,9 @@ use crate::query_boundaries::checkers::iterable::{
     AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind,
     async_iterable_protocol_lookup_type, call_signatures_for_type, classify_async_iterable_type,
     classify_for_of_element_type, classify_full_iterable_type, function_shape_for_type,
-    is_array_type, is_string_literal_type, is_string_type, is_this_type, is_tuple_type,
-    union_members_for_type,
+    intersection_element_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
+    is_tuple_type, iterator_info_yield_type, iterator_result_value_types, tuple_element_union_type,
+    union_element_type, union_members_for_type,
 };
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
@@ -545,21 +546,21 @@ impl<'a> CheckerState<'a> {
         }
 
         if is_async {
-            // For for-await-of: try async iterator protocol first (AsyncIterable<T> → T),
-            // then fall back to sync iterator + Promise unwrapping (Iterable<Promise<T>> → T)
-            if let Some(info) =
-                tsz_solver::operations::get_iterator_info(self.ctx.types, iterable_type, true)
-                && info.yield_type != TypeId::ANY
+            // For for-await-of: try async iterator protocol first (AsyncIterable<T> -> T),
+            // then fall back to sync iterator + Promise unwrapping (Iterable<Promise<T>> -> T).
+            if let Some(yield_type) = iterator_info_yield_type(self.ctx.types, iterable_type, true)
+                && yield_type != TypeId::ANY
             {
-                // get_iterator_info fast-paths Array/Tuple as sync iterators regardless of
-                // is_async, so for-await-of must additionally await their element type.
+                // The solver iterator-info helper fast-paths Array/Tuple as sync iterators
+                // regardless of is_async, so for-await-of must additionally await their
+                // element type.
                 if matches!(
                     classify_for_of_element_type(self.ctx.types, iterable_type),
                     ForOfElementKind::Array(_) | ForOfElementKind::Tuple(_)
                 ) {
-                    return self.apply_awaited(info.yield_type);
+                    return self.apply_awaited(yield_type);
                 }
-                return info.yield_type;
+                return yield_type;
             }
             // Solver-level resolution can return ANY (or None) for Application
             // receivers — e.g. `AsyncIterable<number>` viewed through a
@@ -588,7 +589,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Mirrors `resolve_iterator_element_type_via_property_access` but for
     /// `[Symbol.asyncIterator]` / `Promise<IteratorResult<T>>`. Used when the
-    /// solver-level `get_iterator_info(async=true)` cannot resolve through an
+    /// solver-level iterator-info resolution cannot resolve through an
     /// `Application(Lazy(DefId), [..])` receiver but the checker's
     /// `resolve_property_access_with_env` (which evaluates the alias body)
     /// can.
@@ -641,10 +642,7 @@ impl<'a> CheckerState<'a> {
         // ANY-ANY fallback for the common case.
         let resolved_awaited_next = self.ctx.types.evaluate_type(awaited_next);
         let (yield_type, _return_type) =
-            tsz_solver::operations::extract_iterator_result_value_types(
-                self.ctx.types,
-                resolved_awaited_next,
-            );
+            iterator_result_value_types(self.ctx.types, resolved_awaited_next);
         // Treat ANY as extraction failure (the operation returns
         // `(ANY, ANY)` for unresolved shapes) so we fall through to the
         // `.value` access fallback below — matching the sync version's
@@ -664,7 +662,6 @@ impl<'a> CheckerState<'a> {
     /// Internal helper that uses the solver's classification enum to compute element type.
     /// The depth parameter prevents infinite loops from circular readonly types.
     fn for_of_element_type_classified(&mut self, type_id: TypeId, depth: usize) -> TypeId {
-        let factory = self.ctx.types.factory();
         if depth > 100 {
             return TypeId::ANY;
         }
@@ -694,14 +691,14 @@ impl<'a> CheckerState<'a> {
                         }
                     })
                     .collect();
-                tsz_solver::utils::union_or_single(self.ctx.types, member_types)
+                tuple_element_union_type(self.ctx.types, member_types)
             }
             ForOfElementKind::Union(members) => {
                 let mut element_types = Vec::with_capacity(members.len());
                 for member in members {
                     element_types.push(self.for_of_element_type_classified(member, depth + 1));
                 }
-                factory.union(element_types)
+                union_element_type(self.ctx.types, element_types)
             }
             ForOfElementKind::Intersection(members) => {
                 // For an intersection of iterables (e.g. X[] & Y[]),
@@ -710,7 +707,7 @@ impl<'a> CheckerState<'a> {
                 for member in members {
                     element_types.push(self.for_of_element_type_classified(member, depth + 1));
                 }
-                factory.intersection(element_types)
+                intersection_element_type(self.ctx.types, element_types)
             }
             ForOfElementKind::Readonly(inner) => {
                 // Unwrap readonly wrapper and compute element type for inner
@@ -801,7 +798,7 @@ impl<'a> CheckerState<'a> {
     /// Resolve the element type of an iterable via the iterator protocol.
     ///
     /// Uses a hybrid approach:
-    /// 1. First tries the solver's `get_iterator_info` which properly handles
+    /// 1. First tries the solver iterator-info helper, which properly handles
     ///    Application types (`IterableIterator`<T>, `IteratorResult`<T>).
     /// 2. Falls back to checker-level property access chain which handles
     ///    merged declarations (`IArguments`) and custom iterator classes.
@@ -809,10 +806,8 @@ impl<'a> CheckerState<'a> {
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
         // Try solver-level iterator resolution first (handles Application types correctly)
-        if let Some(info) =
-            tsz_solver::operations::get_iterator_info(self.ctx.types, type_id, false)
-        {
-            return info.yield_type;
+        if let Some(yield_type) = iterator_info_yield_type(self.ctx.types, type_id, false) {
+            return yield_type;
         }
 
         // Fall back to checker-level property access chain which handles
@@ -827,8 +822,8 @@ impl<'a> CheckerState<'a> {
     /// The `IteratorResult` type is a discriminated union:
     ///   { done?: false, value: T } | { done: true, value: `TReturn` }
     /// For for-of loops, only the yield type T matters (from done:false branches).
-    /// We use the solver's `extract_iterator_result_value_types` to properly partition
-    /// by `done` instead of naively reading `.value` (which would give T | `TReturn`).
+    /// We use the iterator-result boundary helper to properly partition by `done`
+    /// instead of naively reading `.value` (which would give T | `TReturn`).
     fn resolve_iterator_element_type_via_property_access(&mut self, type_id: TypeId) -> TypeId {
         use crate::query_boundaries::common::PropertyAccessResult;
 
@@ -886,10 +881,7 @@ impl<'a> CheckerState<'a> {
         // First try the solver's discriminant-aware extraction on the evaluated type.
         let resolved_result = self.ctx.types.evaluate_type(next_return);
         let (yield_type, _return_type) =
-            tsz_solver::operations::extract_iterator_result_value_types(
-                self.ctx.types,
-                resolved_result,
-            );
+            iterator_result_value_types(self.ctx.types, resolved_result);
 
         if yield_type != TypeId::ANY {
             return yield_type;
@@ -906,10 +898,9 @@ impl<'a> CheckerState<'a> {
         // If .value resolved to `unknown` (unresolved Application type),
         // try the solver's iterator info on the iterator object itself
         if value_type == TypeId::UNKNOWN {
-            if let Some(info) =
-                tsz_solver::operations::get_iterator_info(self.ctx.types, iterator_type, false)
+            if let Some(yield_type) = iterator_info_yield_type(self.ctx.types, iterator_type, false)
             {
-                return info.yield_type;
+                return yield_type;
             }
             return TypeId::ANY;
         }
