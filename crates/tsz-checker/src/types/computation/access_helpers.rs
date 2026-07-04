@@ -3,6 +3,7 @@
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
+use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::property_access_chain_text_in_arena;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -10,6 +11,104 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
+    /// Whether the element-access receiver resolves (through aliases /
+    /// qualified names / the object type) to a `const enum` symbol. Shared by
+    /// the const-enum access guard and the TS2339 const-enum missing-member
+    /// path in `get_type_of_element_access_with_request`.
+    pub(crate) fn element_access_receiver_is_const_enum(
+        &mut self,
+        expression: NodeIndex,
+        object_type_for_access: TypeId,
+    ) -> bool {
+        self.resolve_identifier_symbol(expression)
+            .map(|sym_id| {
+                self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+                    .unwrap_or(sym_id)
+            })
+            .or_else(|| {
+                self.resolve_qualified_symbol(expression).map(|sym_id| {
+                    self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+                        .unwrap_or(sym_id)
+                })
+            })
+            .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            .or_else(|| {
+                self.enum_symbol_from_type(object_type_for_access)
+                    .filter(|&sym_id| self.is_const_enum_symbol(sym_id))
+            })
+            .is_some()
+    }
+
+    /// TS2476 (const-enum member accessed without a string literal) and the
+    /// negative-tuple-index guard for element access. Extracted verbatim from
+    /// `get_type_of_element_access_with_request` as pure code motion to keep
+    /// `access.rs` under the 2000-LOC arch cap. Returns `Some(TypeId::ERROR)`
+    /// when either guard fires (the caller returns it), `None` to continue.
+    pub(crate) fn element_access_const_enum_and_negative_index_guard(
+        &mut self,
+        expression: NodeIndex,
+        name_or_argument: NodeIndex,
+        object_type_for_access: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        // TS2476: A const enum member can only be accessed using a string literal.
+        if self.element_access_receiver_is_const_enum(expression, object_type_for_access) {
+            let arg_is_string_literal =
+                self.ctx
+                    .arena
+                    .get(name_or_argument)
+                    .is_some_and(|arg_node| {
+                        arg_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                            || arg_node.kind
+                                == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    });
+            if !arg_is_string_literal {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    name_or_argument,
+                    diagnostic_messages::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                    diagnostic_codes::A_CONST_ENUM_MEMBER_CAN_ONLY_BE_ACCESSED_USING_A_STRING_LITERAL,
+                );
+                return Some(TypeId::ERROR);
+            }
+        }
+
+        if let Some(index_value) = self
+            .get_number_value_from_element_index(name_or_argument)
+            .or_else(|| {
+                crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type)
+            })
+            && index_value.is_finite()
+            && index_value.fract() == 0.0
+            && index_value < 0.0
+        {
+            let object_for_tuple_check = {
+                let unwrapped = crate::query_boundaries::common::unwrap_readonly(
+                    self.ctx.types,
+                    object_type_for_access,
+                );
+                self.resolve_lazy_type(unwrapped)
+            };
+            let object_for_tuple_check = crate::query_boundaries::common::unwrap_readonly(
+                self.ctx.types,
+                object_for_tuple_check,
+            );
+            if crate::query_boundaries::common::is_tuple_type(
+                self.ctx.types,
+                object_for_tuple_check,
+            ) {
+                self.error_at_node(
+                    name_or_argument,
+                    crate::diagnostics::diagnostic_messages::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                    crate::diagnostics::diagnostic_codes::A_TUPLE_TYPE_CANNOT_BE_INDEXED_WITH_A_NEGATIVE_VALUE,
+                );
+                return Some(TypeId::ERROR);
+            }
+        }
+
+        None
+    }
+
     /// Resolve the member-access result type when the (resolved) object type is
     /// `unknown`, under `strictNullChecks`.
     ///
