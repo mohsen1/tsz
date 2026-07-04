@@ -1,5 +1,7 @@
 //! TypeScript compatibility layer for assignability rules.
 
+use std::cell::RefCell;
+
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::diagnostics::SubtypeFailureReason;
@@ -18,6 +20,8 @@ use crate::visitor::{
 };
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
+
+type CompatCacheKey = (TypeId, TypeId, u64, Option<(u64, u64)>);
 
 #[path = "compat_mapped.rs"]
 mod compat_mapped;
@@ -263,7 +267,13 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     /// include the weak type check. The weak type check is only applied
     /// at specific diagnostic sites in tsc.
     skip_weak_type_checks: bool,
-    cache: FxHashMap<(TypeId, TypeId), bool>,
+    cache: FxHashMap<CompatCacheKey, bool>,
+    /// Operation-local memo for recursive private/protected brand override
+    /// probes. Keyed by resolver and inheritance-graph generations because the
+    /// walk can resolve `Lazy(DefId)` references and protected/ES-private
+    /// origin checks can consult the class graph. See
+    /// `private_brand_assignability_override`.
+    private_brand_cache: RefCell<FxHashMap<CompatCacheKey, Option<bool>>>,
 }
 
 /// Operation-local cache statistics for [`CompatChecker`].
@@ -273,8 +283,10 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
 /// checker.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CompatCheckerCacheStatistics {
-    /// Entries in the compatibility relation memo keyed by source and target `TypeId`.
+    /// Entries in the compatibility relation memo keyed by type pair plus resolver/graph stamp.
     pub relation_entries: usize,
+    /// Entries in the private/protected brand override memo keyed by type pair plus resolver/graph stamp.
+    pub private_brand_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -306,6 +318,7 @@ impl<'a> CompatChecker<'a, NoopResolver> {
             disable_method_bivariance: false,
             skip_weak_type_checks: false,
             cache: FxHashMap::default(),
+            private_brand_cache: RefCell::new(FxHashMap::default()),
         }
     }
 }
@@ -315,10 +328,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     #[must_use]
     pub fn cache_statistics(&self) -> CompatCheckerCacheStatistics {
         let relation_entries = self.cache.len();
-        let estimated_size_bytes =
-            relation_entries.saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>());
+        let private_brand_entries = self.private_brand_cache.borrow().len();
+        let estimated_size_bytes = relation_entries
+            .saturating_mul(std::mem::size_of::<(CompatCacheKey, bool)>())
+            .saturating_add(
+                private_brand_entries
+                    .saturating_mul(std::mem::size_of::<(CompatCacheKey, Option<bool>)>()),
+            );
         CompatCheckerCacheStatistics {
             relation_entries,
+            private_brand_entries,
             estimated_size_bytes,
         }
     }
@@ -635,7 +654,43 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             disable_method_bivariance: false,
             skip_weak_type_checks: false,
             cache: FxHashMap::default(),
+            private_brand_cache: RefCell::new(FxHashMap::default()),
         }
+    }
+
+    fn clear_operation_caches(&mut self) {
+        self.cache.clear();
+        self.private_brand_cache.borrow_mut().clear();
+    }
+
+    pub(crate) fn lookup_private_brand_override_cache(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<Option<bool>> {
+        let key = self.compat_cache_key(source, target);
+        self.private_brand_cache.borrow().get(&key).copied()
+    }
+
+    pub(crate) fn cache_private_brand_override_result(
+        &self,
+        source: TypeId,
+        target: TypeId,
+        result: Option<bool>,
+    ) {
+        let key = self.compat_cache_key(source, target);
+        self.private_brand_cache.borrow_mut().insert(key, result);
+    }
+
+    fn compat_cache_key(&self, source: TypeId, target: TypeId) -> CompatCacheKey {
+        (
+            source,
+            target,
+            self.subtype.resolver.resolver_generation(),
+            self.subtype
+                .inheritance_graph
+                .map(|graph| (graph.identity(), graph.generation())),
+        )
     }
 
     /// Set the query database for Salsa-backed memoization.
@@ -643,20 +698,23 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_query_db(&mut self, db: &'a dyn QueryDatabase) {
         self.query_db = Some(db);
         self.subtype.query_db = Some(db);
+        self.clear_operation_caches();
     }
 
     /// Set the class-symbol classifier used by nested subtype checks.
     pub fn set_class_check(&mut self, check: &'a dyn Fn(SymbolRef) -> bool) {
         self.subtype.is_class_symbol = Some(check);
+        self.clear_operation_caches();
     }
 
     /// Set the inheritance graph for nominal class subtype checking.
     /// Propagates to the internal `SubtypeChecker`.
-    pub const fn set_inheritance_graph(
+    pub fn set_inheritance_graph(
         &mut self,
         graph: Option<&'a crate::classes::inheritance::InheritanceGraph>,
     ) {
         self.subtype.inheritance_graph = graph;
+        self.clear_operation_caches();
     }
 
     /// Configure strict function parameter checking.
@@ -664,7 +722,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_strict_function_types(&mut self, strict: bool) {
         if self.strict_function_types != strict {
             self.strict_function_types = strict;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -672,7 +730,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_strict_null_checks(&mut self, strict: bool) {
         if self.strict_null_checks != strict {
             self.strict_null_checks = strict;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -680,7 +738,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         if self.no_unchecked_indexed_access != enabled {
             self.no_unchecked_indexed_access = enabled;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -689,14 +747,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_exact_optional_property_types(&mut self, exact: bool) {
         if self.exact_optional_property_types != exact {
             self.exact_optional_property_types = exact;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
     pub fn set_allow_bivariant_rest(&mut self, allow: bool) {
         if self.allow_bivariant_rest != allow {
             self.allow_bivariant_rest = allow;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -709,21 +767,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_strict_subtype_checking(&mut self, strict: bool) {
         if self.strict_subtype_checking != strict {
             self.strict_subtype_checking = strict;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
     pub fn set_disable_method_bivariance(&mut self, disable: bool) {
         if self.disable_method_bivariance != disable {
             self.disable_method_bivariance = disable;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
     pub fn set_assume_related_on_cycle(&mut self, assume: bool) {
         if self.subtype.assume_related_on_cycle != assume {
             self.subtype.assume_related_on_cycle = assume;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -736,7 +794,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_erase_generics(&mut self, erase: bool) {
         if self.subtype.erase_generics != erase {
             self.subtype.erase_generics = erase;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -748,7 +806,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_skip_weak_type_checks(&mut self, skip: bool) {
         if self.skip_weak_type_checks != skip {
             self.skip_weak_type_checks = skip;
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -758,7 +816,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// if there's a real structural mismatch.
     pub fn set_strict_any_propagation(&mut self, strict: bool) {
         self.lawyer.set_allow_any_suppression(!strict);
-        self.cache.clear();
+        self.clear_operation_caches();
     }
 
     /// Toggle the overload subtype-pass mode (tsc `chooseOverload` with
@@ -768,7 +826,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_any_source_not_related(&mut self, enabled: bool) {
         if self.lawyer.any_source_not_related != enabled {
             self.lawyer.set_any_source_not_related(enabled);
-            self.cache.clear();
+            self.clear_operation_caches();
         }
     }
 
@@ -803,8 +861,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // of function parameters. Sound mode is the opt-in for stricter `any` behavior.
         self.lawyer.allow_any_suppression = !config.sound_mode;
 
-        // Clear cache as configuration changed
-        self.cache.clear();
+        // Clear caches as configuration changed
+        self.clear_operation_caches();
     }
 
     /// Check if `source` is assignable to `target` using TS compatibility rules.
@@ -820,7 +878,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        let key = (source, target);
+        let key = self.compat_cache_key(source, target);
         if let Some(&cached) = self.cache.get(&key) {
             return cached;
         }

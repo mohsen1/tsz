@@ -14,11 +14,13 @@ fn compat_checker_cache_statistics_account_for_relation_entries() {
 
     let empty = checker.cache_statistics();
     assert_eq!(empty.relation_entries, 0);
+    assert_eq!(empty.private_brand_entries, 0);
     assert_eq!(empty.estimated_size_bytes(), 0);
 
     assert!(!checker.is_assignable(TypeId::STRING, TypeId::NUMBER));
     let populated = checker.cache_statistics();
     assert_eq!(populated.relation_entries, 1);
+    assert_eq!(populated.private_brand_entries, 0);
     assert!(
         populated.estimated_size_bytes() > empty.estimated_size_bytes(),
         "populated compatibility cache should report nonzero estimated residency"
@@ -28,12 +30,116 @@ fn compat_checker_cache_statistics_account_for_relation_entries() {
     let repeated = checker.cache_statistics();
     assert_eq!(repeated.relation_entries, populated.relation_entries);
     assert_eq!(
+        repeated.private_brand_entries,
+        populated.private_brand_entries
+    );
+    assert_eq!(
         repeated.estimated_size_bytes(),
         populated.estimated_size_bytes()
     );
 
     checker.set_strict_function_types(true);
     assert_eq!(checker.cache_statistics().relation_entries, 0);
+    assert_eq!(checker.cache_statistics().private_brand_entries, 0);
+}
+
+#[test]
+fn private_brand_override_cache_statistics_account_for_brand_entries() {
+    let interner = TypeInterner::new();
+    let checker = CompatChecker::new(&interner);
+    let brand_a = interner.intern_string("__private_brand_A");
+    let brand_b = interner.intern_string("__private_brand_B");
+    let mut source_prop = PropertyInfo::new(brand_a, TypeId::NEVER);
+    source_prop.visibility = Visibility::Private;
+    let mut target_prop = PropertyInfo::new(brand_b, TypeId::NEVER);
+    target_prop.visibility = Visibility::Private;
+    let source = interner.object(vec![source_prop]);
+    let target = interner.object(vec![target_prop]);
+
+    assert_eq!(checker.cache_statistics().private_brand_entries, 0);
+    assert_eq!(
+        checker.private_brand_assignability_override(source, target),
+        Some(false)
+    );
+    let populated = checker.cache_statistics();
+    assert_eq!(populated.relation_entries, 0);
+    assert_eq!(populated.private_brand_entries, 1);
+
+    assert_eq!(
+        checker.private_brand_assignability_override(source, target),
+        Some(false)
+    );
+    assert_eq!(
+        checker.cache_statistics().private_brand_entries,
+        populated.private_brand_entries
+    );
+}
+
+#[test]
+fn private_brand_override_cache_partitions_by_inheritance_graph_generation() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let graph = crate::classes::inheritance::InheritanceGraph::new();
+    checker.set_inheritance_graph(Some(&graph));
+
+    let protected_name = interner.intern_string("value");
+    let base = tsz_binder::SymbolId(1);
+    let derived = tsz_binder::SymbolId(2);
+    let mut source_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    source_prop.visibility = Visibility::Protected;
+    source_prop.parent_id = Some(derived);
+    let mut target_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    target_prop.visibility = Visibility::Protected;
+    target_prop.parent_id = Some(base);
+    let source = interner.object(vec![source_prop]);
+    let target = interner.object(vec![target_prop]);
+
+    assert_eq!(
+        checker.private_brand_assignability_override(source, target),
+        Some(false)
+    );
+    let cached_miss = checker.cache_statistics().private_brand_entries;
+    assert_eq!(cached_miss, 1);
+
+    graph.add_inheritance(derived, &[base]);
+
+    assert_eq!(
+        checker.private_brand_assignability_override(source, target),
+        None,
+        "a graph mutation must not reuse the stale pre-inheritance brand result"
+    );
+    assert_eq!(checker.cache_statistics().private_brand_entries, 2);
+}
+
+#[test]
+fn compat_relation_cache_partitions_by_inheritance_graph_generation() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let graph = crate::classes::inheritance::InheritanceGraph::new();
+    checker.set_inheritance_graph(Some(&graph));
+
+    let protected_name = interner.intern_string("value");
+    let base = tsz_binder::SymbolId(10);
+    let derived = tsz_binder::SymbolId(11);
+    let mut source_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    source_prop.visibility = Visibility::Protected;
+    source_prop.parent_id = Some(derived);
+    let mut target_prop = PropertyInfo::new(protected_name, TypeId::STRING);
+    target_prop.visibility = Visibility::Protected;
+    target_prop.parent_id = Some(base);
+    let source = interner.object(vec![source_prop]);
+    let target = interner.object(vec![target_prop]);
+
+    assert!(!checker.is_assignable(source, target));
+    assert_eq!(checker.cache_statistics().relation_entries, 1);
+
+    graph.add_inheritance(derived, &[base]);
+
+    assert!(
+        checker.is_assignable(source, target),
+        "public assignability must not reuse the stale pre-inheritance verdict"
+    );
+    assert_eq!(checker.cache_statistics().relation_entries, 2);
 }
 
 #[test]

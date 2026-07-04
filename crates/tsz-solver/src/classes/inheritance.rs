@@ -8,7 +8,10 @@ use fixedbitset::FixedBitSet;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_binder::SymbolId;
+
+static NEXT_INHERITANCE_GRAPH_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Represents a node in the inheritance graph.
 #[derive(Debug, Clone, Default)]
@@ -24,12 +27,16 @@ struct ClassNode {
     mro: Option<Vec<SymbolId>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InheritanceGraph {
+    /// Process-local identity for relation cache partitioning.
+    identity: u64,
     /// Map from `SymbolId` to graph node data
     nodes: RefCell<FxHashMap<SymbolId, ClassNode>>,
     /// Maximum `SymbolId` seen so far (for `BitSet` sizing)
     max_symbol_id: Cell<usize>,
+    /// Monotonic stamp for behavior-affecting edge changes.
+    generation: Cell<u64>,
 }
 
 #[derive(Debug, Default)]
@@ -83,9 +90,19 @@ impl MroVisitState {
 impl InheritanceGraph {
     pub fn new() -> Self {
         Self {
+            identity: NEXT_INHERITANCE_GRAPH_ID.fetch_add(1, Ordering::Relaxed),
             nodes: RefCell::new(FxHashMap::default()),
             max_symbol_id: Cell::new(0),
+            generation: Cell::new(0),
         }
+    }
+
+    pub const fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation.get()
     }
 
     /// Register a class or interface and its direct parents.
@@ -134,6 +151,7 @@ impl InheritanceGraph {
         }
 
         DescendantInvalidationState::default().invalidate_from(&mut nodes, child);
+        self.generation.set(self.generation.get().saturating_add(1));
     }
 
     /// Checks if `child` is a subtype of `ancestor` nominally.
@@ -308,6 +326,7 @@ impl InheritanceGraph {
     pub fn clear(&self) {
         self.nodes.borrow_mut().clear();
         self.max_symbol_id.set(0);
+        self.generation.set(self.generation.get().saturating_add(1));
     }
 
     /// Get the number of nodes in the graph
@@ -318,6 +337,12 @@ impl InheritanceGraph {
     /// Check if the graph is empty
     pub fn is_empty(&self) -> bool {
         self.nodes.borrow().is_empty()
+    }
+}
+
+impl Default for InheritanceGraph {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

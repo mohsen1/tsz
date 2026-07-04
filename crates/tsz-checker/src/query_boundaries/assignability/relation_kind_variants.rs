@@ -57,7 +57,7 @@ pub(crate) fn cached_bivariant_assignability_with_resolver<
 ) -> tsz_solver::relations::relation_queries::RelationResult {
     let is_cacheable = is_relation_cacheable(db.as_type_database(), source, target);
     if is_cacheable {
-        let cache_key = assignability_cache_key(source, target, flags);
+        let cache_key = assignability_cache_key(source, target, flags, inheritance_graph);
         if let Some(cached) = db.lookup_assignability_cache(cache_key) {
             return tsz_solver::relations::relation_queries::RelationResult::complete(
                 tsz_solver::relations::relation_queries::RelationKind::AssignableBivariantCallbacks,
@@ -78,7 +78,7 @@ pub(crate) fn cached_bivariant_assignability_with_resolver<
     );
 
     if is_cacheable {
-        let cache_key = assignability_cache_key(source, target, flags);
+        let cache_key = assignability_cache_key(source, target, flags, inheritance_graph);
         db.insert_assignability_cache(cache_key, relation_result.is_related());
     }
 

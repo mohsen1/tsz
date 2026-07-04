@@ -14,28 +14,13 @@
 //! poison each other.
 
 use tracing::trace;
-use tsz_solver::{RelationCacheKey, TypeId};
+use tsz_solver::TypeId;
 
-use super::{AssignabilityQueryInputs, is_assignable_with_overrides, is_relation_cacheable};
-use crate::query_boundaries::relation_policy;
+use super::{
+    AssignabilityQueryInputs, checker_final_assignability_cache_key, is_assignable_with_overrides,
+    is_relation_cacheable,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
-
-/// Build a cache key for a checker-final assignability verdict.
-///
-/// Same typed `RelationCacheConfig` derivation as `assignability_cache_key`,
-/// but under `RelationCacheKind::CheckerAssignable` so checker-final entries
-/// never share a slot with raw Lawyer-relation entries.
-const fn checker_final_assignability_cache_key(
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-) -> RelationCacheKey {
-    RelationCacheKey::for_checker_assignability(
-        source,
-        target,
-        relation_policy::from_checker_flags_u16(flags).cache_config(),
-    )
-}
 
 /// Execute the checker-final assignability relation for prepared (evaluated)
 /// source/target types: cache lookup → relation execution → post-relation
@@ -58,7 +43,12 @@ pub(crate) fn cached_final_assignability(
 ) -> bool {
     let flags = checker.ctx.pack_relation_flags();
     let is_cacheable = is_relation_cacheable(checker.ctx.types.as_type_database(), source, target);
-    let cache_key = checker_final_assignability_cache_key(source, target, flags);
+    let cache_key = checker_final_assignability_cache_key(
+        source,
+        target,
+        flags,
+        &checker.ctx.inheritance_graph,
+    );
     if is_cacheable && let Some(cached) = checker.ctx.types.lookup_assignability_cache(cache_key) {
         trace!(
             source = source.0,

@@ -3,11 +3,10 @@
 //! Submodule keeps the assignability boundary under its LOC ceiling while the
 //! boundary still owns the cache-key construction and relation execution.
 
-use tsz_solver::RelationCacheKey;
-
 use super::relation_policy;
 use super::{
-    AssignabilityQueryInputs, RelationQueryInputs, SolverRelationKind, is_relation_cacheable,
+    AssignabilityQueryInputs, RelationQueryInputs, SolverRelationKind,
+    assignability_cache_key_for_policy, is_relation_cacheable,
 };
 
 /// Overload-resolution subtype pass (tsc `chooseOverload` with
@@ -33,8 +32,12 @@ pub(crate) fn cached_overload_subtype_pass_assignability<
         );
     let is_cacheable =
         is_relation_cacheable(inputs.db.as_type_database(), inputs.source, inputs.target);
-    let cache_key =
-        RelationCacheKey::for_assignability(inputs.source, inputs.target, policy.cache_config());
+    let cache_key = assignability_cache_key_for_policy(
+        inputs.source,
+        inputs.target,
+        policy,
+        inputs.inheritance_graph,
+    );
     if is_cacheable && let Some(cached) = inputs.db.lookup_assignability_cache(cache_key) {
         return tsz_solver::relations::relation_queries::RelationResult::complete(
             tsz_solver::relations::relation_queries::RelationKind::Assignable,
