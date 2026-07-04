@@ -2257,6 +2257,9 @@ path = "tests/ts2315_imported_generic_tests.rs"
 name = "type_guard_mutable_field_probe_tests"
 path = "tests/type_guard_mutable_field_probe_tests.rs"
 [[test]]
+name = "type_guard_union_interface_narrowing_tests"
+path = "tests/type_guard_union_interface_narrowing_tests.rs"
+[[test]]
 name = "index_signature_type_check_probe_tests"
 path = "tests/index_signature_type_check_probe_tests.rs"
 [[test]]
