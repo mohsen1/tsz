@@ -440,7 +440,9 @@ fn format_string_intrinsic_uncapitalize() {
 fn format_error_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(TypeId::ERROR), "error");
+    // tsc renders the error-type sentinel as `any`, never the internal
+    // `error` spelling (the sentinel keeps its distinct identity).
+    assert_eq!(fmt.format(TypeId::ERROR), "any");
 }
 
 // =================================================================

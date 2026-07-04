@@ -1455,7 +1455,12 @@ impl<'a> TypeFormatter<'a> {
         match type_id {
             TypeId::NEVER => return Cow::Borrowed("never"),
             TypeId::UNKNOWN => return Cow::Borrowed("unknown"),
-            TypeId::ANY => return Cow::Borrowed("any"),
+            // The error-type sentinel keeps its distinct `TypeId::ERROR`
+            // identity (any-poisoning prevention), but tsc's printer always
+            // renders `errorType` as `any` — never the internal `error`
+            // spelling. Render it identically to `any` so a failed-resolution
+            // type never leaks the token `error` into a user-facing diagnostic.
+            TypeId::ANY | TypeId::ERROR => return Cow::Borrowed("any"),
             TypeId::VOID => return Cow::Borrowed("void"),
             TypeId::UNDEFINED => return Cow::Borrowed("undefined"),
             TypeId::NULL => return Cow::Borrowed("null"),
@@ -1466,7 +1471,6 @@ impl<'a> TypeFormatter<'a> {
             TypeId::SYMBOL => return Cow::Borrowed("symbol"),
             TypeId::OBJECT => return Cow::Borrowed("object"),
             TypeId::FUNCTION => return Cow::Borrowed("Function"),
-            TypeId::ERROR => return Cow::Borrowed("error"),
             _ => {}
         }
 
