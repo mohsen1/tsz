@@ -407,7 +407,10 @@ fn test_widen_readonly_array_widens_element_type() {
 // failure rather than a cascade.
 // ============================================================================
 
-use crate::types::{FunctionShape, ParamInfo, TemplateSpan, TupleElement};
+use crate::types::{
+    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, ParamInfo,
+    TemplateSpan, TupleElement,
+};
 
 // -------- widen_type: bigint and boolean intrinsic edge cases ----------------
 
@@ -1211,6 +1214,153 @@ fn annotation_widen_object_property_literals() {
     assert_eq!(property_type(&interner, &shape, "s"), TypeId::STRING);
     assert_eq!(property_type(&interner, &shape, "n"), TypeId::NUMBER);
     assert_eq!(property_type(&interner, &shape, "b"), TypeId::BOOLEAN);
+}
+
+#[test]
+fn annotation_widen_object_index_signature_literals() {
+    let interner = TypeInterner::new();
+    let obj = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: interner.literal_string("x"),
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: interner.literal_number(1.0),
+            readonly: false,
+            param_name: None,
+        }),
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN_TRUE,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+    });
+
+    let outcome = annotation_widen_all(&interner, obj);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::ObjectWithIndex(id)) => interner.object_shape(id),
+        other => panic!("expected object-with-index, got {other:?}"),
+    };
+
+    assert_eq!(shape.string_index.unwrap().value_type, TypeId::STRING);
+    assert_eq!(shape.number_index.unwrap().value_type, TypeId::NUMBER);
+    assert_eq!(shape.symbol_index.unwrap().value_type, TypeId::BOOLEAN);
+}
+
+#[test]
+fn annotation_widen_callable_index_and_write_literals() {
+    let interner = TypeInterner::new();
+    let mut prop = PropertyInfo::new(interner.intern_string("p"), TypeId::STRING);
+    prop.write_type = interner.literal_string("write");
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::STRING)],
+            TypeId::NUMBER,
+        )],
+        construct_signatures: Vec::new(),
+        properties: vec![prop],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: interner.literal_string("x"),
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::BOOLEAN_TRUE,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let outcome = annotation_widen_all(&interner, callable);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Callable(id)) => interner.callable_shape(id),
+        other => panic!("expected callable, got {other:?}"),
+    };
+
+    assert_eq!(shape.properties[0].type_id, TypeId::STRING);
+    assert_eq!(shape.properties[0].write_type, TypeId::STRING);
+    assert_eq!(shape.string_index.unwrap().value_type, TypeId::STRING);
+    assert_eq!(shape.number_index.unwrap().value_type, TypeId::BOOLEAN);
+}
+
+#[test]
+fn annotation_widen_noop_compounds_preserve_type_id() {
+    let interner = TypeInterner::new();
+    let obj = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::STRING,
+        )],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+    });
+    let func = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: Some(TypeId::NUMBER),
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(
+            vec![ParamInfo::unnamed(TypeId::STRING)],
+            TypeId::NUMBER,
+        )],
+        construct_signatures: Vec::new(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("p"),
+            TypeId::BOOLEAN,
+        )],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    interner.store_display_properties(
+        obj,
+        vec![PropertyInfo::new(
+            interner.intern_string("value"),
+            TypeId::STRING,
+        )],
+    );
+
+    let obj_outcome = annotation_widen_all(&interner, obj);
+    assert_eq!(obj_outcome.type_id, obj);
+    assert!(!obj_outcome.display_residue);
+    assert_eq!(annotation_widen_all(&interner, func).type_id, func);
+    assert_eq!(annotation_widen_all(&interner, callable).type_id, callable);
 }
 
 #[test]

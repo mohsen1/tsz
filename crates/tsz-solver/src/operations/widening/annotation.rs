@@ -2,7 +2,7 @@ use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
-use crate::types::{TypeData, TypeId};
+use crate::types::{CallSignature, CallableShape, FunctionShape, ObjectShape, TypeData, TypeId};
 
 /// Which literal kinds an annotation-position display widening pass rewrites.
 ///
@@ -331,6 +331,234 @@ fn propagate_widened_annotation_alias(
     }
 }
 
+fn widen_annotation_object_shape(
+    db: &dyn crate::construction::TypeDatabase,
+    shape: &ObjectShape,
+    mode: AnnotationWidenMode,
+    policy: AnnotationLiteralWideningPolicy,
+    st: &mut AnnotationWidenState<'_>,
+) -> Option<ObjectShape> {
+    let mut new_shape: Option<ObjectShape> = None;
+    for (index, prop) in shape.properties.iter().enumerate() {
+        let (widened, widened_write) = if mode == AnnotationWidenMode::Active {
+            (
+                widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st),
+                widen_annotation_property_type(db, prop.write_type, prop.is_method, policy, st),
+            )
+        } else {
+            (
+                widen_annotation_walk(db, prop.type_id, mode, policy, st),
+                widen_annotation_walk(db, prop.write_type, mode, policy, st),
+            )
+        };
+        if widened != prop.type_id || widened_write != prop.write_type {
+            let target = new_shape.get_or_insert_with(|| shape.clone());
+            target.properties[index].type_id = widened;
+            target.properties[index].write_type = widened_write;
+        }
+    }
+
+    if mode == AnnotationWidenMode::Active {
+        if let Some(index) = shape.string_index {
+            let widened = widen_annotation_position(db, index.value_type, mode, policy, st);
+            if widened != index.value_type {
+                let target = new_shape.get_or_insert_with(|| shape.clone());
+                if let Some(target_index) = &mut target.string_index {
+                    target_index.value_type = widened;
+                }
+            }
+        }
+        if let Some(index) = shape.number_index {
+            let widened = widen_annotation_position(db, index.value_type, mode, policy, st);
+            if widened != index.value_type {
+                let target = new_shape.get_or_insert_with(|| shape.clone());
+                if let Some(target_index) = &mut target.number_index {
+                    target_index.value_type = widened;
+                }
+            }
+        }
+        if let Some(index) = shape.symbol_index {
+            let widened = widen_annotation_position(db, index.value_type, mode, policy, st);
+            if widened != index.value_type {
+                let target = new_shape.get_or_insert_with(|| shape.clone());
+                if let Some(target_index) = &mut target.symbol_index {
+                    target_index.value_type = widened;
+                }
+            }
+        }
+    }
+
+    new_shape
+}
+
+fn widen_annotation_signature_fields(
+    db: &dyn crate::construction::TypeDatabase,
+    params: &[crate::ParamInfo],
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+    return_is_method: bool,
+    policy: AnnotationLiteralWideningPolicy,
+    st: &mut AnnotationWidenState<'_>,
+) -> Option<(Vec<crate::ParamInfo>, Option<TypeId>, TypeId)> {
+    let mode = AnnotationWidenMode::Active;
+    let mut changed = false;
+    let mut new_params: Option<Vec<crate::ParamInfo>> = None;
+    for (index, param) in params.iter().enumerate() {
+        let widened = widen_annotation_position(db, param.type_id, mode, policy, st);
+        if widened != param.type_id {
+            let target = new_params.get_or_insert_with(|| params.to_vec());
+            target[index].type_id = widened;
+            changed = true;
+        }
+    }
+
+    let widened_this = if let Some(this_ty) = this_type {
+        let widened = widen_annotation_position(db, this_ty, mode, policy, st);
+        changed |= widened != this_ty;
+        Some(widened)
+    } else {
+        None
+    };
+    let widened_return = if return_is_method {
+        widen_annotation_position(db, return_type, mode, policy, st)
+    } else {
+        widen_annotation_walk(db, return_type, mode, policy, st)
+    };
+    changed |= widened_return != return_type;
+
+    if changed {
+        Some((
+            new_params.unwrap_or_else(|| params.to_vec()),
+            widened_this,
+            widened_return,
+        ))
+    } else {
+        None
+    }
+}
+
+fn widen_annotation_function_shape(
+    db: &dyn crate::construction::TypeDatabase,
+    shape: &FunctionShape,
+    return_is_method: bool,
+    policy: AnnotationLiteralWideningPolicy,
+    st: &mut AnnotationWidenState<'_>,
+) -> Option<FunctionShape> {
+    widen_annotation_signature_fields(
+        db,
+        &shape.params,
+        shape.this_type,
+        shape.return_type,
+        return_is_method,
+        policy,
+        st,
+    )
+    .map(|(params, this_type, return_type)| {
+        let mut new_shape = shape.clone();
+        new_shape.params = params;
+        new_shape.this_type = this_type;
+        new_shape.return_type = return_type;
+        new_shape
+    })
+}
+
+fn widen_annotation_call_signature(
+    db: &dyn crate::construction::TypeDatabase,
+    sig: &CallSignature,
+    return_is_method: bool,
+    policy: AnnotationLiteralWideningPolicy,
+    st: &mut AnnotationWidenState<'_>,
+) -> Option<CallSignature> {
+    widen_annotation_signature_fields(
+        db,
+        &sig.params,
+        sig.this_type,
+        sig.return_type,
+        return_is_method,
+        policy,
+        st,
+    )
+    .map(|(params, this_type, return_type)| {
+        let mut new_sig = sig.clone();
+        new_sig.params = params;
+        new_sig.this_type = this_type;
+        new_sig.return_type = return_type;
+        new_sig
+    })
+}
+
+fn widen_annotation_callable_shape(
+    db: &dyn crate::construction::TypeDatabase,
+    shape: &CallableShape,
+    force_method_returns: bool,
+    policy: AnnotationLiteralWideningPolicy,
+    st: &mut AnnotationWidenState<'_>,
+) -> Option<CallableShape> {
+    let mut new_shape: Option<CallableShape> = None;
+    for (index, sig) in shape.call_signatures.iter().enumerate() {
+        let return_is_method = force_method_returns || sig.is_method;
+        if let Some(widened) =
+            widen_annotation_call_signature(db, sig, return_is_method, policy, st)
+        {
+            new_shape
+                .get_or_insert_with(|| shape.clone())
+                .call_signatures[index] = widened;
+        }
+    }
+    for (index, sig) in shape.construct_signatures.iter().enumerate() {
+        let return_is_method = force_method_returns || sig.is_method;
+        if let Some(widened) =
+            widen_annotation_call_signature(db, sig, return_is_method, policy, st)
+        {
+            new_shape
+                .get_or_insert_with(|| shape.clone())
+                .construct_signatures[index] = widened;
+        }
+    }
+    for (index, prop) in shape.properties.iter().enumerate() {
+        let widened = widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st);
+        let widened_write =
+            widen_annotation_property_type(db, prop.write_type, prop.is_method, policy, st);
+        if widened != prop.type_id || widened_write != prop.write_type {
+            let target = new_shape.get_or_insert_with(|| shape.clone());
+            target.properties[index].type_id = widened;
+            target.properties[index].write_type = widened_write;
+        }
+    }
+    if let Some(index) = shape.string_index {
+        let widened = widen_annotation_position(
+            db,
+            index.value_type,
+            AnnotationWidenMode::Active,
+            policy,
+            st,
+        );
+        if widened != index.value_type {
+            let target = new_shape.get_or_insert_with(|| shape.clone());
+            if let Some(target_index) = &mut target.string_index {
+                target_index.value_type = widened;
+            }
+        }
+    }
+    if let Some(index) = shape.number_index {
+        let widened = widen_annotation_position(
+            db,
+            index.value_type,
+            AnnotationWidenMode::Active,
+            policy,
+            st,
+        );
+        if widened != index.value_type {
+            let target = new_shape.get_or_insert_with(|| shape.clone());
+            if let Some(target_index) = &mut target.number_index {
+                target_index.value_type = widened;
+            }
+        }
+    }
+
+    new_shape
+}
+
 /// Structural walk for [`widen_annotation_literals_for_display`]: descends
 /// into compounds rebuilding only what changed, widening literals solely
 /// through [`widen_annotation_position`].
@@ -357,48 +585,7 @@ fn widen_annotation_walk(
                 other => other,
             };
             let shape = db.object_shape(shape_id);
-            let mut new_shape = (*shape).clone();
-            let mut changed = false;
-            if mode == AnnotationWidenMode::Active {
-                for prop in &mut new_shape.properties {
-                    // Method properties render as `m(): R`, putting the return
-                    // type in annotation position; pass that context down.
-                    let widened = widen_annotation_property_type(
-                        db,
-                        prop.type_id,
-                        prop.is_method,
-                        policy,
-                        st,
-                    );
-                    let widened_write = widen_annotation_property_type(
-                        db,
-                        prop.write_type,
-                        prop.is_method,
-                        policy,
-                        st,
-                    );
-                    changed |= widened != prop.type_id || widened_write != prop.write_type;
-                    prop.type_id = widened;
-                    prop.write_type = widened_write;
-                }
-                for index in [&mut new_shape.string_index, &mut new_shape.number_index]
-                    .into_iter()
-                    .flatten()
-                {
-                    let widened = widen_annotation_position(db, index.value_type, mode, policy, st);
-                    changed |= widened != index.value_type;
-                    index.value_type = widened;
-                }
-            } else {
-                for prop in &mut new_shape.properties {
-                    let widened = widen_annotation_walk(db, prop.type_id, mode, policy, st);
-                    let widened_write =
-                        widen_annotation_walk(db, prop.write_type, mode, policy, st);
-                    changed |= widened != prop.type_id || widened_write != prop.write_type;
-                    prop.type_id = widened;
-                    prop.write_type = widened_write;
-                }
-            }
+            let new_shape = widen_annotation_object_shape(db, shape.as_ref(), mode, policy, st);
             // Fresh-object-literal *display properties* (literal spellings
             // recorded as provenance) print instead of the canonical shape,
             // so widen those spellings too.
@@ -434,15 +621,17 @@ fn widen_annotation_walk(
             let display_changed = widened_display
                 .as_ref()
                 .is_some_and(|(_, display_changed)| *display_changed);
-            if changed {
+            if let Some(new_shape) = new_shape {
                 let symbol = new_shape.symbol;
                 let flags = new_shape.flags;
-                let widened_id =
-                    if new_shape.string_index.is_some() || new_shape.number_index.is_some() {
-                        db.object_with_index(new_shape)
-                    } else {
-                        db.object_with_flags_and_symbol(new_shape.properties, flags, symbol)
-                    };
+                let widened_id = if new_shape.string_index.is_some()
+                    || new_shape.number_index.is_some()
+                    || new_shape.symbol_index.is_some()
+                {
+                    db.object_with_index(new_shape)
+                } else {
+                    db.object_with_flags_and_symbol(new_shape.properties, flags, symbol)
+                };
                 if let Some((display_properties, _)) = widened_display {
                     display_provenance::record_fresh_object_literal_display(
                         db,
@@ -473,17 +662,9 @@ fn widen_annotation_walk(
         // (`m(): 1` renders with a colon).
         Some(TypeData::Function(shape_id)) if mode == AnnotationWidenMode::Active => {
             let shape = db.function_shape(shape_id);
-            let mut new_shape = (*shape).clone();
-            let changed = widen_annotation_signature_parts(
-                db,
-                &mut new_shape.params,
-                &mut new_shape.this_type,
-                &mut new_shape.return_type,
-                new_shape.is_method,
-                policy,
-                st,
-            );
-            if changed {
+            if let Some(new_shape) =
+                widen_annotation_function_shape(db, shape.as_ref(), shape.is_method, policy, st)
+            {
                 db.function(new_shape)
             } else {
                 type_id
@@ -492,31 +673,9 @@ fn widen_annotation_walk(
 
         Some(TypeData::Callable(shape_id)) if mode == AnnotationWidenMode::Active => {
             let shape = db.callable_shape(shape_id);
-            let mut new_shape = (*shape).clone();
-            let mut changed = false;
-            for sig in new_shape
-                .call_signatures
-                .iter_mut()
-                .chain(new_shape.construct_signatures.iter_mut())
+            if let Some(new_shape) =
+                widen_annotation_callable_shape(db, shape.as_ref(), false, policy, st)
             {
-                let is_method = sig.is_method;
-                changed |= widen_annotation_signature_parts(
-                    db,
-                    &mut sig.params,
-                    &mut sig.this_type,
-                    &mut sig.return_type,
-                    is_method,
-                    policy,
-                    st,
-                );
-            }
-            for prop in &mut new_shape.properties {
-                let widened =
-                    widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st);
-                changed |= widened != prop.type_id;
-                prop.type_id = widened;
-            }
-            if changed {
                 db.callable(new_shape)
             } else {
                 type_id
@@ -646,40 +805,6 @@ fn widen_annotation_walk(
     result
 }
 
-/// Widen the annotation-position parts of one function/call signature:
-/// parameters and `this` always render with a colon; the return type renders
-/// with a colon only in method form (`m(): R`).
-fn widen_annotation_signature_parts(
-    db: &dyn crate::construction::TypeDatabase,
-    params: &mut [crate::ParamInfo],
-    this_type: &mut Option<TypeId>,
-    return_type: &mut TypeId,
-    is_method: bool,
-    policy: AnnotationLiteralWideningPolicy,
-    st: &mut AnnotationWidenState<'_>,
-) -> bool {
-    let mode = AnnotationWidenMode::Active;
-    let mut changed = false;
-    for param in params {
-        let widened = widen_annotation_position(db, param.type_id, mode, policy, st);
-        changed |= widened != param.type_id;
-        param.type_id = widened;
-    }
-    if let Some(this_ty) = this_type {
-        let widened = widen_annotation_position(db, *this_ty, mode, policy, st);
-        changed |= widened != *this_ty;
-        *this_ty = widened;
-    }
-    let widened_return = if is_method {
-        widen_annotation_position(db, *return_type, mode, policy, st)
-    } else {
-        widen_annotation_walk(db, *return_type, mode, policy, st)
-    };
-    changed |= widened_return != *return_type;
-    *return_type = widened_return;
-    changed
-}
-
 /// Widen an object property's type: the property annotation itself is an
 /// annotation position; method properties additionally place their return
 /// type in annotation position (`m(): R`).
@@ -699,17 +824,9 @@ fn widen_annotation_property_type(
     match db.lookup(type_id) {
         Some(TypeData::Function(shape_id)) => {
             let shape = db.function_shape(shape_id);
-            let mut new_shape = (*shape).clone();
-            let changed = widen_annotation_signature_parts(
-                db,
-                &mut new_shape.params,
-                &mut new_shape.this_type,
-                &mut new_shape.return_type,
-                true,
-                policy,
-                st,
-            );
-            if changed {
+            if let Some(new_shape) =
+                widen_annotation_function_shape(db, shape.as_ref(), true, policy, st)
+            {
                 let widened_fn = db.function(new_shape);
                 propagate_widened_annotation_alias(
                     db,
@@ -726,30 +843,9 @@ fn widen_annotation_property_type(
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            let mut new_shape = (*shape).clone();
-            let mut changed = false;
-            for sig in new_shape
-                .call_signatures
-                .iter_mut()
-                .chain(new_shape.construct_signatures.iter_mut())
+            if let Some(new_shape) =
+                widen_annotation_callable_shape(db, shape.as_ref(), true, policy, st)
             {
-                changed |= widen_annotation_signature_parts(
-                    db,
-                    &mut sig.params,
-                    &mut sig.this_type,
-                    &mut sig.return_type,
-                    true,
-                    policy,
-                    st,
-                );
-            }
-            for prop in &mut new_shape.properties {
-                let widened =
-                    widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st);
-                changed |= widened != prop.type_id;
-                prop.type_id = widened;
-            }
-            if changed {
                 let widened_callable = db.callable(new_shape);
                 propagate_widened_annotation_alias(
                     db,
