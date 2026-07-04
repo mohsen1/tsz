@@ -385,6 +385,58 @@ fn deprecated_module_amd_accepted() {
 }
 
 #[test]
+fn ts6046_module_resolution_hint_omits_deprecated_modes() {
+    // tsc 6.x lists only the non-deprecated modes in the TS6046 hint. This runs tsz
+    // standalone (no tsc required), so it guards the exact hint text in CI regardless of
+    // whether a PATH `tsc` is present.
+    let temp = TempDir::new("ts6046_modres_hint").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export {};\n");
+    let (code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &["--moduleResolution", "badValue", "test.ts"],
+    )
+    .expect("tsz binary not found");
+    assert_ne!(
+        code, 0,
+        "invalid --moduleResolution should be a non-zero exit: {output}"
+    );
+    assert!(
+        output.contains(
+            "error TS6046: Argument for '--moduleResolution' option must be: 'node16', 'nodenext', 'bundler'."
+        ),
+        "TS6046 hint should list only the non-deprecated modes: {output}"
+    );
+    assert!(
+        !output.contains("'node10'") && !output.contains("'classic'"),
+        "TS6046 hint must not list the deprecated node10/classic modes: {output}"
+    );
+}
+
+#[test]
+fn deprecated_module_resolution_node10_accepted() {
+    // node10/classic are dropped from the TS6046 hint but remain accepted as input
+    // (tsc keeps them in the value set, warning via TS5107). tsz must not reject them.
+    let temp = TempDir::new("deprecated_modres_node10").expect("temp dir");
+    write_file(&temp.path.join("test.ts"), "export const x = 1;\n");
+    let (_code, output) = run_tsz_with_exit_code(
+        &temp.path,
+        &[
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--moduleResolution",
+            "node10",
+            "test.ts",
+        ],
+    )
+    .expect("tsz binary not found");
+    assert!(
+        !output.contains("TS6046"),
+        "Deprecated --moduleResolution node10 should not produce TS6046: {output}"
+    );
+}
+
+#[test]
 fn dom_deprecated_tag_name_map_keeps_element_constraint_under_node_merge() {
     let Some(_) = find_tsz_binary() else {
         println!("skipping: tsz binary not found");

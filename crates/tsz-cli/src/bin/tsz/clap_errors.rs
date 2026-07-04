@@ -187,7 +187,13 @@ fn get_valid_values_for_option(option_name: &str) -> Option<&'static str> {
         ),
         "jsx" => Some("'preserve', 'react-native', 'react-jsx', 'react-jsxdev', 'react'"),
         "moduleResolution" | "module-resolution" | "moduleresolution" => {
-            Some("'node10', 'classic', 'node16', 'nodenext', 'bundler'")
+            // tsc 6.x omits the deprecated 'node10'/'node'/'classic' modes from the
+            // TS6046 hint. They remain *accepted* (with a TS5107 deprecation warning) —
+            // see `ModuleResolution` in `commands/args.rs` — but TypeScript filters them
+            // out of the "must be" list via `deprecatedKeys` in
+            // `createCompilerDiagnosticForInvalidCustomType`, so the hint lists only the
+            // non-deprecated set.
+            Some("'node16', 'nodenext', 'bundler'")
         }
         "moduleDetection" | "module-detection" | "moduledetection" => {
             Some("'auto', 'legacy', 'force'")
