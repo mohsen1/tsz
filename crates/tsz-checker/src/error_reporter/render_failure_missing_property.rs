@@ -639,6 +639,27 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
+        // A nullable union whose only non-nullish member is the object the
+        // property is missing from renders as that member, even when the target
+        // is reached through a bare-alias reference (`x: MaybeRec` where
+        // `type MaybeRec = Rec0 | null`): tsc shows `Rec0`, not the alias. This
+        // must beat the alias-surface restore below, which would otherwise keep
+        // the alias name. Non-nullable / multi-member aliases and the already
+        // strip-rebound member cases (`Point | null` → `Point`,
+        // `MappedAlias<{ m }> | undefined`) are not unions here, so the restore
+        // path still governs them.
+        let resolved_target = self.evaluate_type_with_env(target);
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, resolved_target)
+        {
+            let mut non_nullish = members
+                .iter()
+                .copied()
+                .filter(|&member| member != TypeId::NULL && member != TypeId::UNDEFINED);
+            if non_nullish.next().is_some() && non_nullish.next().is_none() {
+                return self.recursive_non_generic_alias_body_name(target_type);
+            }
+        }
         // `target` here may already be the strip-rebound union member (the
         // annotation verdict governed that rebind), so the annotation only
         // *adds* the bare-alias-reference case (`x: MaybeBox`); a negative
