@@ -1021,6 +1021,81 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn normalize_contextual_signature_with_env(&mut self, expected: TypeId) -> TypeId {
+        if expected.is_intrinsic() {
+            return expected;
+        }
+        let lazy_failures_at_entry = crate::query_boundaries::common::lazy_resolve_failure_count();
+        if !self.contextual_signature_normalization_session_clean(lazy_failures_at_entry) {
+            return self.normalize_contextual_signature_with_env_uncached(expected);
+        }
+        let Some(eval_stamp) = self.assignability_eval_memo_stamp() else {
+            return self.normalize_contextual_signature_with_env_uncached(expected);
+        };
+        let stamp = (
+            eval_stamp,
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+            self.ctx.compiler_options.exact_optional_property_types,
+            self.ctx.compiler_options.strict_null_checks,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+        if let Some(cached) = self
+            .ctx
+            .lookup_contextual_signature_normalization_cache(expected, stamp)
+        {
+            return cached;
+        }
+        let normalized = self.normalize_contextual_signature_with_env_uncached(expected);
+        let stamp_after = self.assignability_eval_memo_stamp().map(|eval_stamp| {
+            (
+                eval_stamp,
+                self.ctx.compiler_options.no_unchecked_indexed_access,
+                self.ctx.compiler_options.exact_optional_property_types,
+                self.ctx.compiler_options.strict_null_checks,
+                self.ctx.compiler_options.no_implicit_any,
+            )
+        });
+        if self.contextual_signature_normalization_session_clean(lazy_failures_at_entry)
+            && stamp_after == Some(stamp)
+            && self.contextual_signature_normalization_cacheable(expected, normalized)
+        {
+            self.ctx
+                .cache_contextual_signature_normalization_result(expected, stamp, normalized);
+        }
+        normalized
+    }
+
+    fn contextual_signature_normalization_session_clean(
+        &self,
+        lazy_failures_at_entry: u64,
+    ) -> bool {
+        !self.ctx.eval_session.refs_resolution_fuel_exhausted()
+            && !self.ctx.eval_session.lazy_resolution_fuel_exhausted()
+            && !self.ctx.depth_exceeded.get()
+            && crate::query_boundaries::common::lazy_resolve_failure_count()
+                == lazy_failures_at_entry
+    }
+
+    fn contextual_signature_normalization_cacheable(
+        &self,
+        expected: TypeId,
+        normalized: TypeId,
+    ) -> bool {
+        let contains_context_placeholder = |ty| {
+            crate::query_boundaries::common::contains_infer_types(self.ctx.types, ty)
+                || crate::query_boundaries::common::contains_this_type(self.ctx.types, ty)
+                || crate::query_boundaries::state::type_environment::contains_type_query_db(
+                    self.ctx.types,
+                    ty,
+                )
+                || crate::query_boundaries::common::contains_file_relative_content(
+                    self.ctx.types,
+                    ty,
+                )
+        };
+        !contains_context_placeholder(expected) && !contains_context_placeholder(normalized)
+    }
+
+    fn normalize_contextual_signature_with_env_uncached(&mut self, expected: TypeId) -> TypeId {
         fn should_preserve_contextual_param_type(
             db: &dyn tsz_solver::construction::TypeDatabase,
             ty: TypeId,
