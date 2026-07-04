@@ -134,9 +134,9 @@ impl EvaluationResult {
     }
 
     /// Collapse the result to a single `TypeId`, ignoring the termination
-    /// verdict. The verdict-aware path is reserved for a future stage; today
-    /// every consumer collapses here, so the emitted type and diagnostics are
-    /// byte-identical to the pre-channel evaluator.
+    /// verdict. The collapse is byte-identical to the pre-channel evaluator;
+    /// verdict-aware consumers (the relation layer's cache-taint gate, #14346)
+    /// read [`Self::is_incomplete`] before collapsing here.
     pub const fn into_type_id(self) -> TypeId {
         self.type_id
     }
@@ -269,6 +269,13 @@ impl EvaluationMemoResult {
     #[cfg(test)]
     pub(crate) const fn evaluation_result(self) -> EvaluationResult {
         self.result
+    }
+
+    /// Whether the underlying evaluation walk was cut short by a guard
+    /// ([`Termination::Incomplete`]), independent of the request-state taints
+    /// that only affect memo publication.
+    pub(crate) const fn is_incomplete_termination(self) -> bool {
+        self.result.is_incomplete()
     }
 
     pub(crate) const fn type_id(self) -> TypeId {

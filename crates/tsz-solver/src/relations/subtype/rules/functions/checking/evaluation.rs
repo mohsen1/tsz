@@ -53,11 +53,45 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         let Some(memo_result) = memo_result else {
             return RelationEvaluationResult::unstable(type_id);
         };
+        // #14346 verdict consumption: a guard-truncated evaluation makes any
+        // relation verdict computed from it a budget artifact. Note the event
+        // on the checker-local taint counter so `record_definitive_verdict`
+        // and maybe-key promotion keep the enclosing frames out of the
+        // relation caches.
+        if memo_result.is_incomplete_termination() {
+            self.note_incomplete_evaluation_relation_event();
+        }
         let entry = RelationEvaluationResult::from_depth_agnostic_memo(memo_result);
         if entry.is_stable_for_depth_agnostic_cache() {
             self.eval_cache.insert(cache_key, entry);
         }
         entry
+    }
+
+    /// Resolver-backed evaluation with a resolver-less raw fallback, used by
+    /// function-shape recovery: when [`Self::evaluate_type`] leaves the type
+    /// unchanged, retry without the resolver and keep whichever form moved.
+    pub(crate) fn evaluate_type_or_raw_fallback(&mut self, type_id: TypeId) -> TypeId {
+        let evaluated = self.evaluate_type(type_id);
+        if evaluated != type_id {
+            return evaluated;
+        }
+        self.raw_fallback_evaluate(type_id)
+    }
+
+    /// Resolver-less raw evaluation fallback. Applies the same #14346 taint
+    /// discipline as the primary seat: a guard-truncated walk notes the
+    /// checker-local event before collapsing to a `TypeId`.
+    fn raw_fallback_evaluate(&self, type_id: TypeId) -> TypeId {
+        let result = crate::evaluation::evaluate::evaluate_type_result_with_request(
+            self.interner,
+            EvaluationRequest::new(type_id)
+                .with_exact_optional_property_types(self.interner.exact_optional_property_types()),
+        );
+        if result.is_incomplete() {
+            self.note_incomplete_evaluation_relation_event();
+        }
+        result.into_type_id()
     }
 
     fn evaluate_type_with_session(

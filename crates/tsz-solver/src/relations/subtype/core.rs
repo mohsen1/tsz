@@ -351,6 +351,50 @@ mod relation_evaluation_result_tests {
     }
 }
 
+/// Monotonic checker-local event counter gating relation cache writes.
+///
+/// One instance per taint source
+/// ([`SubtypeChecker::unresolved_lazy_relation_events`],
+/// [`SubtypeChecker::incomplete_evaluation_relation_events`]). Scoped to one
+/// [`SubtypeChecker`]: fresh unrelated checkers keep their own counters, and a
+/// contributing subchecker's events are propagated by the `absorb_*` methods.
+#[derive(Debug)]
+pub(crate) struct RelationEventCounter(Cell<u64>);
+
+impl RelationEventCounter {
+    pub(crate) const fn new() -> Self {
+        Self(Cell::new(0))
+    }
+
+    /// Record one event.
+    #[inline]
+    pub(crate) fn note(&self) {
+        self.0.set(self.0.get().wrapping_add(1));
+    }
+
+    /// Current event count; compare a snapshot taken before computing a
+    /// verdict with the value after to detect a mid-frame event.
+    #[inline]
+    pub(crate) const fn count(&self) -> u64 {
+        self.0.get()
+    }
+
+    /// Zero the counter (per-check reuse via [`SubtypeChecker::reset`]).
+    #[inline]
+    pub(crate) fn reset(&self) {
+        self.0.set(0);
+    }
+
+    /// Propagate events another counter accrued since `other_count_at_entry`
+    /// into this one (a contributing subchecker's verdict was consumed).
+    #[inline]
+    pub(crate) fn absorb_from(&self, other: &Self, other_count_at_entry: u64) {
+        if other.count() != other_count_at_entry {
+            self.note();
+        }
+    }
+}
+
 /// One alpha-rename type-parameter equivalence registered during generic
 /// function subtype checking.
 ///
@@ -635,14 +679,22 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Monotonic count of unresolved `Lazy(DefId)` events seen while computing
     /// relation answers for this checker.
     ///
-    /// This is deliberately scoped to one [`SubtypeChecker`] instance. The
-    /// legacy thread-local lazy counter still feeds checker-side proof caches
-    /// and conditional branch selection, but relation cache writes should be
-    /// gated only by unresolved bodies observed through this relation checker
-    /// or by a subchecker whose verdict contributes to it. Fresh unrelated
-    /// checkers keep their own scoped counters without poisoning this relation
-    /// verdict.
-    pub(crate) unresolved_lazy_relation_events: Cell<u64>,
+    /// The legacy thread-local lazy counter still feeds checker-side proof
+    /// caches and conditional branch selection, but relation cache writes are
+    /// gated only by this scoped counter.
+    pub(crate) unresolved_lazy_relation_events: RelationEventCounter,
+    /// Monotonic count of guard-truncated meta-type evaluations
+    /// ([`crate::evaluation::result::Termination::Incomplete`]) consumed while
+    /// computing relation answers for this checker.
+    ///
+    /// First verdict-aware consumer of the #14346 typed termination channel:
+    /// a relation verdict computed from a budget-truncated evaluation is a
+    /// function of the ambient depth/fuel state, not a pure function of the
+    /// `RelationCacheKey`, so definitive cache writes and maybe-key promotion
+    /// treat a change in this counter exactly like an unresolved-`Lazy` event:
+    /// skip the write (the pair is recomputed later), never publish the
+    /// approximation.
+    pub(crate) incomplete_evaluation_relation_events: RelationEventCounter,
     /// Instance-local fallback memo for definitive relation verdicts that the
     /// cross-checker shared cache must skip (issue #13828).
     ///
@@ -756,7 +808,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
-            unresolved_lazy_relation_events: Cell::new(0),
+            unresolved_lazy_relation_events: RelationEventCounter::new(),
+            incomplete_evaluation_relation_events: RelationEventCounter::new(),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -813,7 +866,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
             maybe_keys: Vec::new(),
-            unresolved_lazy_relation_events: Cell::new(0),
+            unresolved_lazy_relation_events: RelationEventCounter::new(),
+            incomplete_evaluation_relation_events: RelationEventCounter::new(),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -863,15 +917,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// relation frame owner.
     #[inline]
     pub(crate) fn note_unresolved_lazy_relation_event(&self) {
-        self.unresolved_lazy_relation_events
-            .set(self.unresolved_lazy_relation_events.get().wrapping_add(1));
+        self.unresolved_lazy_relation_events.note();
         crate::limits::note_lazy_resolve_failure();
     }
 
     /// Current checker-local unresolved-lazy relation event count.
     #[inline]
     pub(crate) const fn unresolved_lazy_relation_event_count(&self) -> u64 {
-        self.unresolved_lazy_relation_events.get()
+        self.unresolved_lazy_relation_events.count()
     }
 
     /// Propagate unresolved-lazy events from a subchecker whose verdict was
@@ -885,6 +938,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if subchecker.unresolved_lazy_relation_event_count() != subchecker_events_at_entry {
             self.note_unresolved_lazy_relation_event();
         }
+    }
+
+    /// Record that a meta-type evaluation consumed by this relation checker was
+    /// cut short by an evaluation guard
+    /// ([`crate::evaluation::result::Termination::Incomplete`]).
+    ///
+    /// The checker-local counter gates definitive relation cache writes and
+    /// maybe-key promotion the same way the unresolved-`Lazy` counter does: a
+    /// verdict that leaned on a budget-truncated evaluation is recomputed later
+    /// instead of being published as a pure function of its key.
+    #[inline]
+    pub(crate) fn note_incomplete_evaluation_relation_event(&self) {
+        self.incomplete_evaluation_relation_events.note();
+    }
+
+    /// Current checker-local guard-truncated evaluation event count.
+    #[inline]
+    pub(crate) const fn incomplete_evaluation_relation_event_count(&self) -> u64 {
+        self.incomplete_evaluation_relation_events.count()
+    }
+
+    /// Propagate guard-truncated evaluation events from a subchecker whose
+    /// verdict was consumed by this checker.
+    #[inline]
+    pub(crate) fn absorb_incomplete_evaluation_relation_events_from<S: TypeResolver>(
+        &self,
+        subchecker: &SubtypeChecker<'_, S>,
+        subchecker_events_at_entry: u64,
+    ) {
+        self.incomplete_evaluation_relation_events.absorb_from(
+            &subchecker.incomplete_evaluation_relation_events,
+            subchecker_events_at_entry,
+        );
     }
 
     /// Set whether strict null checks are enabled.
@@ -997,7 +1083,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.sym_visiting.clear();
         self.eval_cache.clear();
         self.maybe_keys.clear();
-        self.unresolved_lazy_relation_events.set(0);
+        self.unresolved_lazy_relation_events.reset();
+        self.incomplete_evaluation_relation_events.reset();
         self.local_relation_cache.clear();
         self.explain_eval_fuel = None;
     }
