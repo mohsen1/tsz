@@ -83,6 +83,9 @@
 //! - `class_surface_construction_boundary_scans`: class instance/interface and
 //!   final constructor surface construction routes through
 //!   `query_boundaries::class_type`.
+//! - `class_member_surface_construction_boundary_scans`: class instance and
+//!   constructor member/in-progress surfaces route through
+//!   `query_boundaries::class_type`.
 //! - `class_constructor_return_construction_boundary_scans`: class constructor
 //!   checking routes return/intersection/static-property construction through
 //!   `query_boundaries::checkers::constructor`.
@@ -123,6 +126,8 @@ mod call_result_construction_boundary_scans;
 mod class_constructor_return_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
+#[path = "arch_source_scans/class_member_surface_construction_boundary_scans.rs"]
+mod class_member_surface_construction_boundary_scans;
 #[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]
 mod class_partial_constructor_construction_boundary_scans;
 #[path = "arch_source_scans/class_surface_construction_boundary_scans.rs"]

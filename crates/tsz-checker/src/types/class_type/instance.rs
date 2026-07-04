@@ -13,6 +13,7 @@
 
 use super::helpers::{AccessorAggregate, MethodAggregate};
 use crate::context::{EnclosingClassInfo, is_js_file_name};
+use crate::query_boundaries::class_type;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -20,10 +21,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
-    Visibility,
-};
+use tsz_solver::{IndexSignature, PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
 /// Whether Phase 2 swapped in a temporary `enclosing_class` and, if so, the
 /// previous value to restore afterward.
@@ -175,7 +173,6 @@ impl<'a> CheckerState<'a> {
         class: &'b tsz_parser::parser::node::ClassData,
         b: &mut ClassInstanceBuilder<'b>,
     ) {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
         let member_count = b.member_count;
         {
@@ -244,22 +241,14 @@ impl<'a> CheckerState<'a> {
                         let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                             || self.jsdoc_has_readonly_tag(member_idx);
                         let visibility = self.get_member_visibility(&prop.modifiers, prop.name);
-                        prescan_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: declared_type,
-                            write_type: declared_type,
-                            optional: prop.question_token,
-                            readonly: is_readonly,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility,
-                            parent_id: current_sym,
-                            declaration_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                        prescan_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, declared_type)
+                                .optional(prop.question_token)
+                                .readonly(is_readonly)
+                                .visibility(visibility)
+                                .parent(current_sym)
+                                .declaration_order(declaration_order),
+                        ));
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
                         let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
@@ -283,46 +272,26 @@ impl<'a> CheckerState<'a> {
                                 self.push_type_parameters(&method.type_parameters);
                             let return_type = self.get_type_from_type_node(method.type_annotation);
                             self.pop_type_parameters(type_param_updates);
-                            self.ctx.types.factory().callable(CallableShape {
-                                call_signatures: vec![CallSignature {
+                            class_type::class_method_callable_type(
+                                self.ctx.types,
+                                vec![class_type::class_method_call_signature(
                                     type_params,
-                                    params: vec![tsz_solver::ParamInfo {
-                                        name: None,
-                                        type_id: TypeId::ANY,
-                                        optional: false,
-                                        rest: true,
-                                    }],
-                                    this_type: None,
+                                    vec![class_type::class_rest_any_param()],
+                                    None,
                                     return_type,
-                                    type_predicate: None,
-                                    is_method: true,
-                                }],
-                                construct_signatures: Vec::new(),
-                                properties: Vec::new(),
-                                string_index: None,
-                                number_index: None,
-                                symbol: None,
-                                is_abstract: false,
-                            })
+                                    None,
+                                )],
+                            )
                         } else {
                             TypeId::ANY
                         };
-                        prescan_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: method_type,
-                            write_type: method_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: true,
-                            is_class_prototype: false,
-                            visibility,
-                            parent_id: current_sym,
-                            declaration_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                        prescan_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, method_type)
+                                .method(false)
+                                .visibility(visibility)
+                                .parent(current_sym)
+                                .declaration_order(declaration_order),
+                        ));
                     }
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
@@ -344,23 +313,15 @@ impl<'a> CheckerState<'a> {
                         } else {
                             TypeId::ANY
                         };
-                        prescan_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: accessor_type,
-                            write_type: accessor_type,
-                            optional: false,
-                            readonly: k == syntax_kind_ext::GET_ACCESSOR,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: self
-                                .get_member_visibility(&accessor.modifiers, accessor.name),
-                            parent_id: current_sym,
-                            declaration_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                        prescan_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, accessor_type)
+                                .readonly(k == syntax_kind_ext::GET_ACCESSOR)
+                                .visibility(
+                                    self.get_member_visibility(&accessor.modifiers, accessor.name),
+                                )
+                                .parent(current_sym)
+                                .declaration_order(declaration_order),
+                        ));
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
                         let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
@@ -390,22 +351,14 @@ impl<'a> CheckerState<'a> {
                                 TypeId::ANY
                             };
                             let visibility = self.get_visibility_from_modifiers(&param.modifiers);
-                            prescan_props.push(PropertyInfo {
-                                name: name_atom,
-                                type_id: declared_type,
-                                write_type: declared_type,
-                                optional: param.question_token,
-                                readonly: is_readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility,
-                                parent_id: current_sym,
-                                declaration_order: declaration_order + param_pos as u32 + 1,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                                non_widening: false,
-                            });
+                            prescan_props.push(class_type::class_member_property(
+                                class_type::ClassMemberProperty::new(name_atom, declared_type)
+                                    .optional(param.question_token)
+                                    .readonly(is_readonly)
+                                    .visibility(visibility)
+                                    .parent(current_sym)
+                                    .declaration_order(declaration_order + param_pos as u32 + 1),
+                            ));
                         }
                     }
                     _ => {}
@@ -416,28 +369,18 @@ impl<'a> CheckerState<'a> {
                 self.inherited_prescan_this_base_type(class, needs_inherited_prescan_this);
 
             if !prescan_props.is_empty() || base_prescan_type.is_some() {
-                let own_prescan_type = if !prescan_props.is_empty() {
-                    Some(factory.object_with_index(ObjectShape {
-                        properties: prescan_props,
-                        symbol: current_sym,
-                        ..ObjectShape::default()
-                    }))
-                } else {
-                    None
-                };
-                let prescan_type = match (own_prescan_type, base_prescan_type) {
-                    (Some(own), Some(base)) => {
-                        // Intersection: derived-class own props take priority in lookup,
-                        // base props are reachable through the second member.
-                        self.ctx.types.factory().intersection(vec![own, base])
-                    }
-                    (Some(own), None) => own,
-                    (None, Some(base)) => base,
-                    (None, None) => unreachable!(
-                        "guarded by `!prescan_props.is_empty() || base_prescan_type.is_some()`: \
-                         at least one of own/base prescan types is present"
-                    ),
-                };
+                let prescan_type = class_type::class_member_partial_this_type(
+                    self.ctx.types,
+                    prescan_props,
+                    None,
+                    None,
+                    current_sym,
+                    base_prescan_type,
+                )
+                .expect(
+                    "guarded by `!prescan_props.is_empty() || base_prescan_type.is_some()`: \
+                     at least one of own/base prescan types is present",
+                );
                 self.ctx
                     .class_instance_type_cache
                     .borrow_mut()
@@ -477,7 +420,6 @@ impl<'a> CheckerState<'a> {
     ) where
         'a: 'b,
     {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
         // A derived class can only assign `this.<prop>` after `super()`, so
         // constructor-flow property inference must respect the same gate when
@@ -546,43 +488,28 @@ impl<'a> CheckerState<'a> {
                     let type_id = if let Some(declared_type) = declared_type {
                         declared_type
                     } else if prop.initializer.is_some() {
-                        let current_property_placeholder = PropertyInfo {
-                            name: name_atom,
-                            type_id: TypeId::ANY,
-                            write_type: TypeId::ANY,
-                            optional: prop.question_token,
-                            readonly: is_readonly,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility,
-                            parent_id: current_sym,
-                            declaration_order,
-                            is_string_named: false,
-                            is_symbol_named,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        };
+                        let current_property_placeholder = class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, TypeId::ANY)
+                                .optional(prop.question_token)
+                                .readonly(is_readonly)
+                                .visibility(visibility)
+                                .parent(current_sym)
+                                .declaration_order(declaration_order)
+                                .symbol_named(is_symbol_named),
+                        );
                         let mut partial_props: Vec<PropertyInfo> =
                             b.properties.values().cloned().collect();
                         if !partial_props.iter().any(|p| p.name == name_atom) {
                             partial_props.push(current_property_placeholder);
                         }
-                        let refreshed_this_type = if partial_props.is_empty() {
-                            b.prescan_this_type
-                        } else {
-                            let own_partial = factory.object_with_index(ObjectShape {
-                                properties: partial_props,
-                                string_index: b.string_index,
-                                number_index: b.number_index,
-                                symbol: current_sym,
-                                ..ObjectShape::default()
-                            });
-                            Some(if let Some(prescan) = b.prescan_this_type {
-                                factory.intersection(vec![own_partial, prescan])
-                            } else {
-                                own_partial
-                            })
-                        };
+                        let refreshed_this_type = class_type::class_member_partial_this_type(
+                            self.ctx.types,
+                            partial_props,
+                            b.string_index,
+                            b.number_index,
+                            current_sym,
+                            b.prescan_this_type,
+                        );
                         if let Some(partial_this) = refreshed_this_type {
                             self.ctx.this_type_stack.push(partial_this);
                             // Property initializers may already have been typed earlier
@@ -669,22 +596,15 @@ impl<'a> CheckerState<'a> {
 
                     b.properties.insert(
                         name_atom,
-                        PropertyInfo {
-                            name: name_atom,
-                            type_id,
-                            write_type: type_id,
-                            optional: prop.question_token,
-                            readonly: is_readonly,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility,
-                            parent_id: current_sym,
-                            declaration_order,
-                            is_string_named: false,
-                            is_symbol_named,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        },
+                        class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, type_id)
+                                .optional(prop.question_token)
+                                .readonly(is_readonly)
+                                .visibility(visibility)
+                                .parent(current_sym)
+                                .declaration_order(declaration_order)
+                                .symbol_named(is_symbol_named),
+                        ),
                     );
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -800,22 +720,14 @@ impl<'a> CheckerState<'a> {
                         let visibility = self.get_visibility_from_modifiers(&param.modifiers);
                         b.properties.insert(
                             name_atom,
-                            PropertyInfo {
-                                name: name_atom,
-                                type_id,
-                                write_type: type_id,
-                                optional: param.question_token,
-                                readonly: is_readonly,
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility,
-                                parent_id: current_sym,
-                                declaration_order: declaration_order + param_pos as u32 + 1,
-                                is_string_named: false,
-                                is_symbol_named: false,
-                                single_quoted_name: false,
-                                non_widening: false,
-                            },
+                            class_type::class_member_property(
+                                class_type::ClassMemberProperty::new(name_atom, type_id)
+                                    .optional(param.question_token)
+                                    .readonly(is_readonly)
+                                    .visibility(visibility)
+                                    .parent(current_sym)
+                                    .declaration_order(declaration_order + param_pos as u32 + 1),
+                            ),
                         );
                     }
 
@@ -899,12 +811,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                         .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
 
-                    let index = IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly,
-                        param_name,
-                    };
+                    let index = class_type::class_declared_index_signature(
+                        key_type, value_type, readonly, param_name,
+                    );
 
                     if is_valid_index_type {
                         if key_type == TypeId::NUMBER {
@@ -979,7 +888,6 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         b: &mut ClassInstanceBuilder<'b>,
     ) {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
         if !b.deferred_methods.is_empty() {
             let mut partial_method_props = b.properties.clone();
@@ -1065,73 +973,45 @@ impl<'a> CheckerState<'a> {
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&method.type_parameters);
                         self.pop_type_parameters(type_param_updates);
-                        let placeholder = factory.callable(CallableShape {
-                            call_signatures: vec![CallSignature {
+                        let placeholder = class_type::class_method_callable_type(
+                            self.ctx.types,
+                            vec![class_type::class_method_call_signature(
                                 type_params,
-                                params: vec![tsz_solver::ParamInfo {
-                                    name: None,
-                                    type_id: TypeId::ANY,
-                                    optional: false,
-                                    rest: true,
-                                }],
-                                this_type: None,
+                                vec![class_type::class_rest_any_param()],
+                                None,
                                 return_type,
-                                type_predicate: None,
-                                is_method: true,
-                            }],
-                            construct_signatures: Vec::new(),
-                            properties: Vec::new(),
-                            string_index: None,
-                            number_index: None,
-                            symbol: None,
-                            is_abstract: false,
-                        });
-                        partial_props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: placeholder,
-                            write_type: placeholder,
-                            optional: false,
-                            readonly: false,
-                            is_method: true,
-                            is_class_prototype: true,
-                            visibility: Visibility::Public,
-                            parent_id: current_sym,
-                            declaration_order: *declaration_order,
-                            is_string_named: false,
-                            is_symbol_named,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                                None,
+                            )],
+                        );
+                        partial_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, placeholder)
+                                .method(true)
+                                .parent(current_sym)
+                                .declaration_order(*declaration_order)
+                                .symbol_named(is_symbol_named),
+                        ));
                     }
                 }
             }
             for deferred in &b.deferred_accessors {
                 if partial_prop_names.insert(deferred.name_atom) {
-                    partial_props.push(PropertyInfo {
-                        name: deferred.name_atom,
-                        type_id: TypeId::ANY,
-                        write_type: TypeId::UNKNOWN,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: true,
-                        visibility: deferred.visibility,
-                        parent_id: current_sym,
-                        declaration_order: deferred.declaration_order,
-                        is_string_named: false,
-                        is_symbol_named: deferred.is_symbol_named,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    partial_props.push(class_type::class_member_property(
+                        class_type::ClassMemberProperty::new(deferred.name_atom, TypeId::ANY)
+                            .with_write_type(TypeId::UNKNOWN)
+                            .visibility(deferred.visibility)
+                            .parent(current_sym)
+                            .declaration_order(deferred.declaration_order)
+                            .symbol_named(deferred.is_symbol_named),
+                    ));
                 }
             }
-            let partial_type = factory.object_with_index(ObjectShape {
-                properties: partial_props,
-                string_index: partial_method_string_index,
-                number_index: partial_method_number_index,
-                symbol: current_sym,
-                ..ObjectShape::default()
-            });
+            let partial_type = class_type::class_member_object_with_indexes_type(
+                self.ctx.types,
+                partial_props,
+                partial_method_string_index,
+                partial_method_number_index,
+                current_sym,
+            );
             self.ctx.this_type_stack.push(partial_type);
 
             // Cache the partial instance type in the node-indexed cache only.
@@ -1179,14 +1059,13 @@ impl<'a> CheckerState<'a> {
                     let (params, this_type) =
                         self.extract_params_from_parameter_list(&method.parameters);
                     self.pop_type_parameters(type_param_updates);
-                    tsz_solver::CallSignature {
+                    class_type::class_method_call_signature(
                         type_params,
                         params,
                         this_type,
-                        return_type: TypeId::ANY,
-                        type_predicate: None,
-                        is_method: true,
-                    }
+                        TypeId::ANY,
+                        None,
+                    )
                 } else {
                     self.call_signature_from_method(method, member_idx)
                 };
@@ -1209,20 +1088,13 @@ impl<'a> CheckerState<'a> {
                         signature.return_type = self.ctx.types.this_type();
                     }
                 }
-                let callable_type = factory.callable(CallableShape {
-                    call_signatures: vec![signature.clone()],
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                });
-                let callable_or_undefined = if method.question_token {
-                    factory.union2(callable_type, TypeId::UNDEFINED)
-                } else {
-                    callable_type
-                };
+                let callable_type =
+                    class_type::class_method_callable_type(self.ctx.types, vec![signature.clone()]);
+                let callable_or_undefined = class_type::optional_class_member_type(
+                    self.ctx.types,
+                    callable_type,
+                    method.question_token,
+                );
                 let Some(name) = self.get_property_name_resolved(method.name) else {
                     if self
                         .ctx
@@ -1295,31 +1167,16 @@ impl<'a> CheckerState<'a> {
                 if signatures.is_empty() {
                     continue;
                 }
-                let type_id = self.ctx.types.factory().callable(CallableShape {
-                    call_signatures: signatures.clone(),
-                    construct_signatures: Vec::new(),
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                });
-                base_props.push(PropertyInfo {
-                    name,
-                    type_id,
-                    write_type: type_id,
-                    optional,
-                    readonly: false,
-                    is_method: true,
-                    is_class_prototype: true,
-                    visibility: method.visibility,
-                    parent_id: current_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: method.is_symbol_named,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                let type_id =
+                    class_type::class_method_callable_type(self.ctx.types, signatures.clone());
+                base_props.push(class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(name, type_id)
+                        .optional(optional)
+                        .method(true)
+                        .visibility(method.visibility)
+                        .parent(current_sym)
+                        .symbol_named(method.is_symbol_named),
+                ));
             }
             let deferred_accessors = std::mem::take(&mut b.deferred_accessors);
 
@@ -1355,30 +1212,21 @@ impl<'a> CheckerState<'a> {
                         .get(&ad.name_atom)
                         .and_then(|a| a.getter.or(a.setter))
                         .unwrap_or(TypeId::ANY);
-                    props.push(PropertyInfo {
-                        name: ad.name_atom,
-                        type_id: resolved,
-                        write_type: resolved,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: true,
-                        visibility: ad.visibility,
-                        parent_id: current_sym,
-                        declaration_order: ad.declaration_order,
-                        is_string_named: false,
-                        is_symbol_named: ad.is_symbol_named,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    props.push(class_type::class_member_property(
+                        class_type::ClassMemberProperty::new(ad.name_atom, resolved)
+                            .visibility(ad.visibility)
+                            .parent(current_sym)
+                            .declaration_order(ad.declaration_order)
+                            .symbol_named(ad.is_symbol_named),
+                    ));
                 }
-                let partial_type = self.ctx.types.factory().object_with_index(ObjectShape {
-                    properties: props,
-                    string_index: b.string_index,
-                    number_index: b.number_index,
-                    symbol: current_sym,
-                    ..ObjectShape::default()
-                });
+                let partial_type = class_type::class_member_object_with_indexes_type(
+                    self.ctx.types,
+                    props,
+                    b.string_index,
+                    b.number_index,
+                    current_sym,
+                );
                 if pushed_this {
                     self.ctx.this_type_stack.pop();
                 }
@@ -1510,7 +1358,6 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         b: &mut ClassInstanceBuilder<'_>,
     ) {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
 
         // Convert accessors to properties
@@ -1527,22 +1374,15 @@ impl<'a> CheckerState<'a> {
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             b.properties.insert(
                 name,
-                PropertyInfo {
-                    name,
-                    type_id: read_type,
-                    write_type,
-                    optional: false,
-                    readonly,
-                    is_method: false,
-                    is_class_prototype: true,
-                    visibility: accessor.visibility,
-                    parent_id: current_sym,
-                    declaration_order: accessor.declaration_order,
-                    is_string_named: false,
-                    is_symbol_named: accessor.is_symbol_named,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(name, read_type)
+                        .with_write_type(write_type)
+                        .readonly(readonly)
+                        .visibility(accessor.visibility)
+                        .parent(current_sym)
+                        .declaration_order(accessor.declaration_order)
+                        .symbol_named(accessor.is_symbol_named),
+                ),
             );
         }
 
@@ -1562,15 +1402,7 @@ impl<'a> CheckerState<'a> {
             if signatures.is_empty() {
                 continue;
             }
-            let type_id = factory.callable(CallableShape {
-                call_signatures: signatures,
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            });
+            let type_id = class_type::class_method_callable_type(self.ctx.types, signatures);
             // Note: we intentionally do NOT cache instance method types in
             // node_types here. Instance methods go through deferred processing
             // where the return type may be rewritten (e.g., `this` returns).
@@ -1578,22 +1410,15 @@ impl<'a> CheckerState<'a> {
             // when the type differs from what the emitter's fallback expects.
             b.properties.insert(
                 name,
-                PropertyInfo {
-                    name,
-                    type_id,
-                    write_type: type_id,
-                    optional,
-                    readonly: false,
-                    is_method: true,
-                    is_class_prototype: true,
-                    visibility: method.visibility,
-                    parent_id: current_sym,
-                    declaration_order: method.declaration_order,
-                    is_string_named: false,
-                    is_symbol_named: method.is_symbol_named,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(name, type_id)
+                        .optional(optional)
+                        .method(true)
+                        .visibility(method.visibility)
+                        .parent(current_sym)
+                        .declaration_order(method.declaration_order)
+                        .symbol_named(method.is_symbol_named),
+                ),
             );
         }
 
@@ -1605,22 +1430,12 @@ impl<'a> CheckerState<'a> {
                 format!("__private_brand_node_{}", class_idx.0)
             };
             let brand_atom = self.ctx.types.intern_string(&brand_name);
-            b.properties.entry(brand_atom).or_insert(PropertyInfo {
-                name: brand_atom,
-                type_id: TypeId::UNKNOWN,
-                write_type: TypeId::UNKNOWN,
-                optional: false,
-                readonly: true,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            b.properties
+                .entry(brand_atom)
+                .or_insert(class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(brand_atom, TypeId::UNKNOWN)
+                        .readonly(true),
+                ));
         }
     }
 }

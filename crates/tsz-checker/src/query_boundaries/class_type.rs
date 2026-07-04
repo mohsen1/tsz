@@ -159,12 +159,114 @@ pub(crate) fn merged_class_instance_interface_type(
     }
 }
 
-pub(crate) fn partial_static_method_type(
+pub(crate) struct ClassMemberProperty {
+    name: Atom,
+    type_id: TypeId,
+    write_type: TypeId,
+    flags: u8,
+    visibility: Visibility,
+    parent_id: Option<SymbolId>,
+    declaration_order: u32,
+}
+
+impl ClassMemberProperty {
+    const OPTIONAL: u8 = 1 << 0;
+    const READONLY: u8 = 1 << 1;
+    const IS_METHOD: u8 = 1 << 2;
+    const IS_CLASS_PROTOTYPE: u8 = 1 << 3;
+    const IS_SYMBOL_NAMED: u8 = 1 << 4;
+
+    pub(crate) const fn new(name: Atom, type_id: TypeId) -> Self {
+        Self {
+            name,
+            type_id,
+            write_type: type_id,
+            flags: 0,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+        }
+    }
+
+    const fn set_flag(&mut self, flag: u8, value: bool) {
+        if value {
+            self.flags |= flag;
+        } else {
+            self.flags &= !flag;
+        }
+    }
+
+    const fn flag(&self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+
+    pub(crate) const fn with_write_type(mut self, write_type: TypeId) -> Self {
+        self.write_type = write_type;
+        self
+    }
+
+    pub(crate) const fn optional(mut self, optional: bool) -> Self {
+        self.set_flag(Self::OPTIONAL, optional);
+        self
+    }
+
+    pub(crate) const fn readonly(mut self, readonly: bool) -> Self {
+        self.set_flag(Self::READONLY, readonly);
+        self
+    }
+
+    pub(crate) const fn method(mut self, is_class_prototype: bool) -> Self {
+        self.set_flag(Self::IS_METHOD, true);
+        self.set_flag(Self::IS_CLASS_PROTOTYPE, is_class_prototype);
+        self
+    }
+
+    pub(crate) const fn visibility(mut self, visibility: Visibility) -> Self {
+        self.visibility = visibility;
+        self
+    }
+
+    pub(crate) const fn parent(mut self, parent_id: Option<SymbolId>) -> Self {
+        self.parent_id = parent_id;
+        self
+    }
+
+    pub(crate) const fn declaration_order(mut self, declaration_order: u32) -> Self {
+        self.declaration_order = declaration_order;
+        self
+    }
+
+    pub(crate) const fn symbol_named(mut self, is_symbol_named: bool) -> Self {
+        self.set_flag(Self::IS_SYMBOL_NAMED, is_symbol_named);
+        self
+    }
+}
+
+pub(crate) const fn class_member_property(surface: ClassMemberProperty) -> PropertyInfo {
+    PropertyInfo {
+        name: surface.name,
+        type_id: surface.type_id,
+        write_type: surface.write_type,
+        optional: surface.flag(ClassMemberProperty::OPTIONAL),
+        readonly: surface.flag(ClassMemberProperty::READONLY),
+        is_method: surface.flag(ClassMemberProperty::IS_METHOD),
+        is_class_prototype: surface.flag(ClassMemberProperty::IS_CLASS_PROTOTYPE),
+        visibility: surface.visibility,
+        parent_id: surface.parent_id,
+        declaration_order: surface.declaration_order,
+        is_string_named: false,
+        is_symbol_named: surface.flag(ClassMemberProperty::IS_SYMBOL_NAMED),
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
+pub(crate) fn class_method_callable_type(
     db: &dyn TypeDatabase,
-    signatures: &[CallSignature],
+    signatures: Vec<CallSignature>,
 ) -> TypeId {
     db.callable(CallableShape {
-        call_signatures: signatures.to_vec(),
+        call_signatures: signatures,
         construct_signatures: Vec::new(),
         properties: Vec::new(),
         string_index: None,
@@ -174,6 +276,126 @@ pub(crate) fn partial_static_method_type(
     })
 }
 
+pub(crate) fn optional_class_member_type(
+    db: &dyn TypeDatabase,
+    member_type: TypeId,
+    optional: bool,
+) -> TypeId {
+    if optional {
+        db.union2(member_type, TypeId::UNDEFINED)
+    } else {
+        member_type
+    }
+}
+
+pub(crate) const fn class_rest_any_param() -> ParamInfo {
+    class_construct_param(None, TypeId::ANY, false, true)
+}
+
+pub(crate) const fn class_method_call_signature(
+    type_params: Vec<TypeParamInfo>,
+    params: Vec<ParamInfo>,
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+    type_predicate: Option<TypePredicate>,
+) -> CallSignature {
+    class_construct_signature(
+        type_params,
+        params,
+        this_type,
+        return_type,
+        type_predicate,
+        true,
+    )
+}
+
+pub(crate) const fn class_declared_index_signature(
+    key_type: TypeId,
+    value_type: TypeId,
+    readonly: bool,
+    param_name: Option<Atom>,
+) -> IndexSignature {
+    IndexSignature {
+        key_type,
+        value_type,
+        readonly,
+        param_name,
+    }
+}
+
+pub(crate) fn class_member_object_type(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn class_member_object_with_indexes_type(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol,
+        ..ObjectShape::default()
+    })
+}
+
+pub(crate) fn class_member_partial_this_type(
+    db: &dyn TypeDatabase,
+    own_properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+    prescan_this_type: Option<TypeId>,
+) -> Option<TypeId> {
+    if own_properties.is_empty() {
+        return prescan_this_type;
+    }
+
+    let own_partial = class_member_object_with_indexes_type(
+        db,
+        own_properties,
+        string_index,
+        number_index,
+        symbol,
+    );
+    Some(if let Some(prescan) = prescan_this_type {
+        db.intersection(vec![own_partial, prescan])
+    } else {
+        own_partial
+    })
+}
+
+pub(crate) fn rough_class_instance_return_type(
+    db: &dyn TypeDatabase,
+    self_ref: Option<TypeId>,
+    rough_instance_return_type: TypeId,
+) -> TypeId {
+    match self_ref {
+        Some(self_ref)
+            if rough_instance_return_type != TypeId::ANY
+                && rough_instance_return_type != TypeId::ERROR =>
+        {
+            db.intersection2(self_ref, rough_instance_return_type)
+        }
+        Some(self_ref) => self_ref,
+        None => rough_instance_return_type,
+    }
+}
+
+pub(crate) fn partial_static_method_type(
+    db: &dyn TypeDatabase,
+    signatures: &[CallSignature],
+) -> TypeId {
+    class_method_callable_type(db, signatures.to_vec())
+}
+
 pub(crate) const fn partial_static_method_property(
     name: Atom,
     type_id: TypeId,
@@ -181,22 +403,13 @@ pub(crate) const fn partial_static_method_property(
     visibility: Visibility,
     parent_id: Option<SymbolId>,
 ) -> PropertyInfo {
-    PropertyInfo {
-        name,
-        type_id,
-        write_type: type_id,
-        optional,
-        readonly: false,
-        is_method: true,
-        is_class_prototype: false,
-        visibility,
-        parent_id,
-        declaration_order: 0,
-        is_string_named: false,
-        is_symbol_named: false,
-        single_quoted_name: false,
-        non_widening: false,
-    }
+    class_member_property(
+        ClassMemberProperty::new(name, type_id)
+            .optional(optional)
+            .method(false)
+            .visibility(visibility)
+            .parent(parent_id),
+    )
 }
 
 pub(crate) const fn partial_static_accessor_property(
@@ -207,44 +420,20 @@ pub(crate) const fn partial_static_accessor_property(
     visibility: Visibility,
     parent_id: Option<SymbolId>,
 ) -> PropertyInfo {
-    PropertyInfo {
-        name,
-        type_id: read_type,
-        write_type,
-        optional: false,
-        readonly,
-        is_method: false,
-        is_class_prototype: false,
-        visibility,
-        parent_id,
-        declaration_order: 0,
-        is_string_named: false,
-        is_symbol_named: false,
-        single_quoted_name: false,
-        non_widening: false,
-    }
+    class_member_property(
+        ClassMemberProperty::new(name, read_type)
+            .with_write_type(write_type)
+            .readonly(readonly)
+            .visibility(visibility)
+            .parent(parent_id),
+    )
 }
 
 pub(crate) const fn partial_static_placeholder_property(
     name: Atom,
     parent_id: Option<SymbolId>,
 ) -> PropertyInfo {
-    PropertyInfo {
-        name,
-        type_id: TypeId::ANY,
-        write_type: TypeId::ANY,
-        optional: false,
-        readonly: false,
-        is_method: false,
-        is_class_prototype: false,
-        visibility: Visibility::Public,
-        parent_id,
-        declaration_order: 0,
-        is_string_named: false,
-        is_symbol_named: false,
-        single_quoted_name: false,
-        non_widening: false,
-    }
+    class_member_property(ClassMemberProperty::new(name, TypeId::ANY).parent(parent_id))
 }
 
 pub(crate) fn partial_static_constructor_callable_type(
