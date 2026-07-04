@@ -227,6 +227,102 @@ const t2: [number, string?, boolean?] = [1, "ok", undefined];
     );
 }
 
+/// Issue #15612: a present element following an elision (a "hole") in a
+/// sparse array literal is, under `exactOptionalPropertyTypes`, widened and
+/// unioned with `undefined` — target-independently — mirroring tsc's
+/// cumulative `hasOmittedExpression` model in `checkArrayLiteral`. Against a
+/// *required* target slot the relation therefore drills into that element's
+/// position and reports `Type 'boolean | undefined' is not assignable to type
+/// 'boolean'`, matching the oracle, instead of a whole-tuple message.
+#[test]
+fn mid_hole_present_element_widens_with_undefined_against_required_slot() {
+    let source = r#"
+function f(t: [number, string, boolean]) {
+    t = [42, , true];
+}
+"#;
+    let diags = check_exact_optional(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert!(
+        ts2322
+            .iter()
+            .any(|msg| msg
+                .contains("Type 'boolean | undefined' is not assignable to type 'boolean'")),
+        "mid-hole element must surface `boolean | undefined` vs `boolean` at its own position; got: {ts2322:#?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the after-hole widening is structural, not tied to
+/// the `boolean`/index-2 shape. A leading hole before a `string` element
+/// against a required `string` slot surfaces `string | undefined` too.
+#[test]
+fn leading_hole_present_element_widens_with_undefined() {
+    let source = r#"
+function f(t: [string, string]) {
+    t = [, "b"];
+}
+"#;
+    let diags = check_exact_optional(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert!(
+        ts2322
+            .iter()
+            .any(|msg| msg.contains("Type 'string | undefined' is not assignable to type 'string'")),
+        "leading-hole element must surface `string | undefined` vs `string`; got: {ts2322:#?}"
+    );
+}
+
+/// Anti-hardcoding (§25): the source model is target-independent, so a tuple
+/// *alias* target behaves identically to the inline tuple — the after-hole
+/// element still drills to `boolean | undefined` vs the alias's `boolean` slot.
+#[test]
+fn mid_hole_present_element_widens_against_alias_tuple_target() {
+    let source = r#"
+type Triple = [number, string, boolean];
+function f(t: Triple) {
+    t = [42, , true];
+}
+"#;
+    let diags = check_exact_optional(source);
+    let ts2322: Vec<_> = diags
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert!(
+        ts2322
+            .iter()
+            .any(|msg| msg
+                .contains("Type 'boolean | undefined' is not assignable to type 'boolean'")),
+        "alias tuple target must still drill to `boolean | undefined` vs `boolean`; got: {ts2322:#?}"
+    );
+}
+
+/// Positive companion: against an *optional* target slot the after-hole
+/// `| undefined` is absorbed, so the mid-hole literal must stay assignable and
+/// emit no TS2322 — the divergence is required-target-only (issue #15612).
+#[test]
+fn mid_hole_present_element_stays_green_against_optional_slot() {
+    let source = r#"
+function f(t: [number, string?, boolean?]) {
+    t = [42, , true];
+}
+"#;
+    let diags = check_exact_optional(source);
+    assert!(
+        !diags.iter().any(|diag| diag.code == 2322),
+        "mid-hole literal into an all-optional tail must stay assignable; got: {diags:#?}"
+    );
+}
+
 #[test]
 fn exact_optional_tuple_elisions_remain_absence_not_undefined() {
     let source = r#"
