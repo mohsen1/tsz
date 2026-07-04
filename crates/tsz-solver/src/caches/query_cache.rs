@@ -260,8 +260,15 @@ pub struct QueryCache<'a> {
     property_cache: RefCell<FxHashMap<PropertyAccessCacheKey, PropertyAccessResult>>,
     /// Computed variance masks for generic `DefIds`.
     variance_cache: RefCell<FxHashMap<DefId, Arc<[Variance]>>>,
-    /// Canonical `TypeId` for structurally identical types.
+    /// Canonical `TypeId` for structurally identical types — stable entries
+    /// only, used as the canonicalizer cross-probe interior memo.
     canonical_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Dirty canonical results (registration-window or guard-truncated artifacts),
+    /// memoized so repeat probes stay O(1). Kept separate from
+    /// `canonical_cache` because reusing one must taint the consumer (see
+    /// `Canonicalizer::shared_artifacts`) — merging the tiers would launder
+    /// artifacts into stable entries for every type containing them.
+    canonical_artifact_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Cache for intersection-to-merged-object results.
     /// Avoids expensive `collect_properties` calls for the same intersection target
     /// across multiple `SubtypeChecker` instances (common in constraint checking).
@@ -353,6 +360,7 @@ impl<'a> QueryCache<'a> {
             property_cache: RefCell::new(FxHashMap::default()),
             variance_cache: RefCell::new(FxHashMap::default()),
             canonical_cache: RefCell::new(FxHashMap::default()),
+            canonical_artifact_cache: RefCell::new(FxHashMap::default()),
             intersection_merge_cache: RefCell::new(
                 intersection_merge_memo::IntersectionMergeMemo::default(),
             ),
@@ -410,6 +418,7 @@ impl<'a> QueryCache<'a> {
         self.property_cache.borrow_mut().clear();
         self.variance_cache.borrow_mut().clear();
         self.canonical_cache.borrow_mut().clear();
+        self.canonical_artifact_cache.borrow_mut().clear();
         self.intersection_merge_cache.borrow_mut().clear();
         self.instantiation_cache.clear();
         self.subtype_reduction_cache.clear();
@@ -713,6 +722,16 @@ impl TypePredicateCache for QueryCache<'_> {
     fn set_contains_free_type_params_cache(&self, type_id: TypeId, result: bool) {
         self.interner
             .set_contains_free_type_params_cache(type_id, result);
+    }
+
+    fn contains_extractable_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner
+            .contains_extractable_type_params_cached(type_id)
+    }
+
+    fn set_contains_extractable_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.interner
+            .set_contains_extractable_type_params_cache(type_id, result);
     }
 
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
@@ -1946,24 +1965,38 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
-        // Check cache first
-        let cached = self.canonical_cache.borrow().get(&type_id).copied();
-
-        if let Some(canonical) = cached {
+        // Check the stable tier first, then the artifact tier.
+        if let Some(canonical) = self
+            .canonical_cache
+            .borrow()
+            .get(&type_id)
+            .copied()
+            .or_else(|| {
+                self.canonical_artifact_cache
+                    .borrow()
+                    .get(&type_id)
+                    .copied()
+            })
+        {
             return canonical;
         }
 
         // Compute canonical form using a fresh Canonicalizer
         // CRITICAL: Always start with empty stacks for absolute De Bruijn indices
         // This ensures the cached TypeId represents the absolute structural form
+        //
+        // The canonicalizer shares interior and root results through the two
+        // tiers (see `Canonicalizer::shared_cache` / `shared_artifacts` for
+        // the invariants, #13508): stable results land in `canonical_cache`,
+        // dirty (registration-window or guard-truncated) results land in
+        // `canonical_artifact_cache`, whose reuse taints the consumer so an
+        // artifact can never be laundered into the stable tier through an
+        // enclosing type.
         use crate::canonicalize::Canonicalizer;
-        let mut canon = Canonicalizer::new(self.as_type_database(), self);
-        let canonical = canon.canonicalize(type_id);
-
-        // Cache the result
-        self.canonical_cache.borrow_mut().insert(type_id, canonical);
-
-        canonical
+        let mut canon = Canonicalizer::new(self.as_type_database(), self)
+            .with_shared_cache(&self.canonical_cache)
+            .with_shared_artifacts(&self.canonical_artifact_cache);
+        canon.canonicalize(type_id)
     }
 }
 

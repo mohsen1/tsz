@@ -141,6 +141,61 @@ impl ContentPredicate for FreeTypeParamPredicate {
     }
 }
 
+/// Reachability gate for `extract_type_params_from_type`: whether `type_id`
+/// can contribute at least one collected entry — a `TypeParameter` node, or a
+/// `Callable` whose call/construct signatures *declare* type parameters (the
+/// collector reads those declarations without descending signature bodies).
+///
+/// The walk uses the collector's child surface: [`ChildPolicy::CONTENT_PREDICATE`]
+/// widened with `application_base: true`, because the collector descends into
+/// `Application` bases. Every child edge the collector walks is included, so a
+/// `false` answer soundly proves the collector would return an empty list and
+/// its descent can be pruned. `Infer`/`ThisType`/`BoundParameter` are *not*
+/// matches: the collector ignores them.
+pub(super) struct ExtractableTypeParamsPredicate;
+impl ContentPredicate for ExtractableTypeParamsPredicate {
+    fn matches_node(&self, db: &dyn TypeDatabase, key: &TypeData) -> bool {
+        match key {
+            TypeData::TypeParameter(_) => true,
+            TypeData::Callable(shape_id) => {
+                let shape = db.callable_shape(*shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| !sig.type_params.is_empty())
+            }
+            _ => false,
+        }
+    }
+    fn cached(&self, db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+        db.contains_extractable_type_params_cached(type_id)
+    }
+    fn set_cache(&self, db: &dyn TypeDatabase, type_id: TypeId, result: bool) {
+        db.set_contains_extractable_type_params_cache(type_id, result);
+    }
+    fn child_policy(&self) -> ChildPolicy {
+        ChildPolicy {
+            application_base: true,
+            ..ChildPolicy::CONTENT_PREDICATE
+        }
+    }
+}
+
+/// Whether `type_id` can contribute anything to `extract_type_params_from_type`.
+///
+/// A `false` answer proves the collector's walk over this subtree yields no
+/// entries, so the collector prunes its descent. The answer is a pure function
+/// of the immutable interned structure and is memoized per node project-wide;
+/// without the gate every deferred-conditional reduction over a large evaluated
+/// operand re-walks the whole concrete interior to collect nothing (#13508).
+pub fn contains_extractable_type_params_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    contains_content_cached(db, type_id, &ExtractableTypeParamsPredicate)
+}
+
 struct ParamOrInferPredicate;
 impl ContentPredicate for ParamOrInferPredicate {
     fn matches_node(&self, _db: &dyn TypeDatabase, key: &TypeData) -> bool {

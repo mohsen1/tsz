@@ -672,7 +672,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Solver boundary: evaluation/evaluate/support.rs size ratchet",
         ROOT / "crates/tsz-solver/src/evaluation/evaluate/support.rs",
-        2037,
+        2008,
     ),
     (
         "Solver boundary: diagnostics/format/mod.rs size ratchet",

@@ -883,7 +883,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .resolver()
             .get_lazy_type_params(def_id)
             .filter(|params| params.len() == app.args.len())
-            .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
+            .unwrap_or_else(|| self.extract_type_params_from_type(resolved).to_vec());
         if type_params.len() != app.args.len() {
             return None;
         }

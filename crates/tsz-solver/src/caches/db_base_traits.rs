@@ -70,6 +70,17 @@ pub trait TypePredicateCache {
     /// cache. Default impl is a no-op.
     fn set_contains_free_type_params_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached extractable-type-parameter containment result (the
+    /// reachability gate on `extract_type_params_from_type`) if available.
+    /// Default impl returns `None` (no caching).
+    fn contains_extractable_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record an extractable-type-parameter containment result in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_extractable_type_params_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_parameters_db(type_id)` result if
     /// available. Default impl returns `None` (no caching).
     fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {

@@ -136,92 +136,104 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
-    /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
+    /// Extract the reachable type-parameter infos of a type: the node's
+    /// children's lists merged bottom-up in child order, deduplicated by
+    /// parameter name on first occurrence — the same set and order the
+    /// historical accumulate-into-one-vec DFS produced.
     ///
-    /// The reachable type-parameter set is a pure function of the immutable
-    /// interned structure of `type_id` (the walk never consults the resolver or
-    /// the substitution environment), so the result is memoized per `TypeId` on
-    /// the shared interner. The conditional evaluator extracts the params of
-    /// both the check and extends operands on every deferred-conditional
-    /// reduction; a recursive conditional re-applied over an alias `Application`
-    /// drives that re-walk thousands of times because each unwrap step mints a
-    /// fresh `TypeId`. The memo collapses the repeats to O(1) and is shared
-    /// across the many fresh evaluators created during instantiation (#14330).
-    pub(crate) fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
-        // Bare intrinsics carry no type parameters; skip the memo round-trip.
-        if type_id.is_intrinsic() {
-            return Vec::new();
-        }
-        if let Some(cached) = self.interner.extract_type_params_memo(type_id) {
-            return cached.to_vec();
-        }
-        let mut seen_params = FxHashSet::default();
-        let mut visited = FxHashSet::default();
-        let mut params = Vec::new();
-        self.collect_type_params(type_id, &mut visited, &mut seen_params, &mut params);
-        self.interner
-            .set_extract_type_params_memo(type_id, std::sync::Arc::from(params.as_slice()));
-        params
-    }
-
-    /// Recursively collect `TypeParameter` types from a type.
-    fn collect_type_params(
+    /// The list is a pure function of the immutable interned structure (the
+    /// walk never consults the resolver or the substitution environment), so
+    /// every visited node — not just the query root — is memoized per
+    /// `TypeId` on the shared interner. That per-node sharing is what lets a
+    /// fresh root over a large shared interior reuse the interior's lists
+    /// instead of re-walking them: each unwrap step of a recursive
+    /// conditional mints a fresh root whose subtrees were all walked before
+    /// (#14330, #13508). The interned type DAG is acyclic without resolver
+    /// indirection (this walk never resolves `Lazy`), so no cycle guard is
+    /// needed.
+    ///
+    /// A reachability gate prunes provably-empty subtrees without descending
+    /// or allocating: no `TypeParameter` node and no `Callable` declaring
+    /// signature type parameters is reachable on this collector's child
+    /// surface (see `contains_extractable_type_params_db`).
+    pub(crate) fn extract_type_params_from_type(
         &self,
         type_id: TypeId,
-        visited: &mut FxHashSet<TypeId>,
-        seen_params: &mut FxHashSet<Atom>,
-        params: &mut Vec<TypeParamInfo>,
-    ) {
-        if type_id.is_intrinsic() {
-            return;
+    ) -> std::sync::Arc<[TypeParamInfo]> {
+        fn empty_params() -> std::sync::Arc<[TypeParamInfo]> {
+            static EMPTY: std::sync::OnceLock<std::sync::Arc<[TypeParamInfo]>> =
+                std::sync::OnceLock::new();
+            std::sync::Arc::clone(EMPTY.get_or_init(|| std::sync::Arc::from(&[][..])))
         }
-        if !visited.insert(type_id) {
-            return;
+        /// First-occurrence-wins merge by parameter name (lists stay tiny, so
+        /// the linear scan beats a per-node hash set).
+        fn merge_params(out: &mut Vec<TypeParamInfo>, list: &[TypeParamInfo]) {
+            for info in list {
+                if !out.iter().any(|p| p.name == info.name) {
+                    out.push(*info);
+                }
+            }
         }
 
+        if type_id.is_intrinsic() {
+            return empty_params();
+        }
+        if let Some(cached) = self.interner.extract_type_params_memo(type_id) {
+            return cached;
+        }
+        if !crate::type_queries::contains_extractable_type_params_db(self.interner, type_id) {
+            // The predicate cache already answers this O(1) per node; skip the
+            // memo write so provably-empty subtrees cost no map entries.
+            return empty_params();
+        }
         let Some(key) = self.interner.lookup(type_id) else {
-            return;
+            return empty_params();
         };
 
+        let mut out: Vec<TypeParamInfo> = Vec::new();
         match key {
-            TypeData::TypeParameter(ref info) if !seen_params.contains(&info.name) => {
-                seen_params.insert(info.name);
-                params.push(*info);
-            }
+            TypeData::TypeParameter(info) => out.push(info),
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
-                    self.collect_type_params(prop.type_id, visited, seen_params, params);
+                    merge_params(&mut out, &self.extract_type_params_from_type(prop.type_id));
                 }
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
                 for param in &shape.params {
-                    self.collect_type_params(param.type_id, visited, seen_params, params);
+                    merge_params(&mut out, &self.extract_type_params_from_type(param.type_id));
                 }
-                self.collect_type_params(shape.return_type, visited, seen_params, params);
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(shape.return_type),
+                );
             }
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
-                    self.collect_type_params(member, visited, seen_params, params);
+                    merge_params(&mut out, &self.extract_type_params_from_type(member));
                 }
             }
             TypeData::Array(elem) => {
-                self.collect_type_params(elem, visited, seen_params, params);
+                merge_params(&mut out, &self.extract_type_params_from_type(elem));
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.interner.get_conditional(cond_id);
-                self.collect_type_params(cond.check_type, visited, seen_params, params);
-                self.collect_type_params(cond.extends_type, visited, seen_params, params);
-                self.collect_type_params(cond.true_type, visited, seen_params, params);
-                self.collect_type_params(cond.false_type, visited, seen_params, params);
+                for side in [
+                    cond.check_type,
+                    cond.extends_type,
+                    cond.true_type,
+                    cond.false_type,
+                ] {
+                    merge_params(&mut out, &self.extract_type_params_from_type(side));
+                }
             }
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
-                self.collect_type_params(app.base, visited, seen_params, params);
+                merge_params(&mut out, &self.extract_type_params_from_type(app.base));
                 for &arg in &app.args {
-                    self.collect_type_params(arg, visited, seen_params, params);
+                    merge_params(&mut out, &self.extract_type_params_from_type(arg));
                 }
             }
             TypeData::Mapped(mapped_id) => {
@@ -232,29 +244,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 //   - type_param is K (iteration var, NOT the outer param)
                 //   - constraint is "keyof T" (contains T, the actual param to extract)
                 //   - template is DeepPartial<T[K]> (also contains T)
-                self.collect_type_params(mapped.constraint, visited, seen_params, params);
-                self.collect_type_params(mapped.template, visited, seen_params, params);
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(mapped.constraint),
+                );
+                merge_params(
+                    &mut out,
+                    &self.extract_type_params_from_type(mapped.template),
+                );
                 if let Some(name_type) = mapped.name_type {
-                    self.collect_type_params(name_type, visited, seen_params, params);
+                    merge_params(&mut out, &self.extract_type_params_from_type(name_type));
                 }
             }
             TypeData::KeyOf(operand) => {
-                // Extract type params from the operand of keyof
                 // e.g., keyof T -> extract T
-                self.collect_type_params(operand, visited, seen_params, params);
+                merge_params(&mut out, &self.extract_type_params_from_type(operand));
             }
             TypeData::IndexAccess(obj, idx) => {
-                // Extract type params from both object and index
                 // e.g., T[K] -> extract T and K
-                self.collect_type_params(obj, visited, seen_params, params);
-                self.collect_type_params(idx, visited, seen_params, params);
+                merge_params(&mut out, &self.extract_type_params_from_type(obj));
+                merge_params(&mut out, &self.extract_type_params_from_type(idx));
             }
             TypeData::TemplateLiteral(spans) => {
-                // Extract type params from template literal interpolations
                 let spans = self.interner.template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span {
-                        self.collect_type_params(*inner, visited, seen_params, params);
+                        merge_params(&mut out, &self.extract_type_params_from_type(*inner));
                     }
                 }
             }
@@ -268,16 +283,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .iter()
                     .chain(shape.call_signatures.iter())
                 {
-                    for tp in &sig.type_params {
-                        if !seen_params.contains(&tp.name) {
-                            seen_params.insert(tp.name);
-                            params.push(*tp);
-                        }
-                    }
+                    merge_params(&mut out, &sig.type_params);
                 }
             }
             _ => {}
         }
+
+        let result: std::sync::Arc<[TypeParamInfo]> = std::sync::Arc::from(out.as_slice());
+        self.interner
+            .set_extract_type_params_memo(type_id, std::sync::Arc::clone(&result));
+        result
     }
 
     /// Try to expand a type argument that may be a `TypeQuery` or Application.
@@ -1985,53 +2000,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 }
 
 #[cfg(test)]
-mod extract_type_params_memo_tests {
-    use super::TypeEvaluator;
-    use crate::intern::TypeInterner;
-    use crate::types::{TypeId, TypeParamInfo, TypeParamOrigin};
-
-    #[test]
-    fn memoizes_extract_type_params_per_type_id() {
-        let interner = TypeInterner::new();
-        let t_atom = interner.intern_string("T");
-        let t_param = interner.type_param(TypeParamInfo {
-            name: t_atom,
-            constraint: None,
-            default: None,
-            is_const: false,
-            origin: TypeParamOrigin::User,
-        });
-        // `T[]` forces the walk to descend one structural level before
-        // collecting the parameter, so the memo covers a non-leaf type.
-        let arr = interner.array(t_param);
-
-        // Nothing cached before the first extraction.
-        assert!(interner.extract_type_params_memo(arr).is_none());
-
-        let ev = TypeEvaluator::new(&interner);
-        let first = ev.extract_type_params_from_type(arr);
-        assert_eq!(first.len(), 1);
-        assert_eq!(first[0].name, t_atom);
-
-        // The first extraction populated the shared interner memo.
-        let cached = interner
-            .extract_type_params_memo(arr)
-            .expect("memo populated after first extraction");
-        assert_eq!(cached.len(), 1);
-        assert_eq!(cached[0].name, t_atom);
-
-        // A second extraction (served from the memo) is identical.
-        let second = ev.extract_type_params_from_type(arr);
-        assert_eq!(second.len(), first.len());
-        assert_eq!(second[0].name, first[0].name);
-    }
-
-    #[test]
-    fn intrinsic_types_bypass_the_memo() {
-        let interner = TypeInterner::new();
-        let ev = TypeEvaluator::new(&interner);
-        assert!(ev.extract_type_params_from_type(TypeId::NUMBER).is_empty());
-        // Intrinsics short-circuit before touching the cache.
-        assert!(interner.extract_type_params_memo(TypeId::NUMBER).is_none());
-    }
-}
+#[path = "../../../tests/extract_type_params_memo_tests.rs"]
+mod extract_type_params_memo_tests;

@@ -695,6 +695,18 @@ impl TypePredicateCache for TypeInterner {
         self.predicate_cache_set(type_id, PredicateCacheKind::ContainsFreeTypeParams, result);
     }
 
+    fn contains_extractable_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsExtractableTypeParams)
+    }
+
+    fn set_contains_extractable_type_params_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(
+            type_id,
+            PredicateCacheKind::ContainsExtractableTypeParams,
+            result,
+        );
+    }
+
     fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::ContainsGenericParamsRoot)
     }

@@ -169,6 +169,20 @@ pub(crate) enum PredicateCacheKind {
     /// [`ChildPolicy::FREE_TYPE_PARAMS`]:
     ///     crate::visitors::child_policy::ChildPolicy::FREE_TYPE_PARAMS
     ContainsFreeTypeParams = 17,
+    /// `type_id` can contribute at least one entry to
+    /// `extract_type_params_from_type` — a `TypeParameter` node, or a
+    /// `Callable` whose call/construct signatures declare type parameters,
+    /// reachable over that collector's child surface
+    /// ([`ChildPolicy::CONTENT_PREDICATE`] widened with `application_base`,
+    /// which the collector walks). Purely structural and immutable per
+    /// `TypeId`, so the deep walk is memoized per node like the sibling
+    /// `Contains*` predicates. Gates the collector's descent: without it every
+    /// deferred-conditional reduction over a large evaluated operand re-walks
+    /// the whole concrete interior to collect nothing (#13508).
+    ///
+    /// [`ChildPolicy::CONTENT_PREDICATE`]:
+    ///     crate::visitors::child_policy::ChildPolicy::CONTENT_PREDICATE
+    ContainsExtractableTypeParams = 18,
 }
 
 impl PredicateCacheKind {
