@@ -127,6 +127,9 @@
 //! - `awaited_application_surface_boundary_scans`: `Awaited<T>` application
 //!   discovery and variance argument normalization route shape reads and
 //!   application rebuilds through `query_boundaries::checkers::promise`.
+//! - `promise_application_classification_boundary_scans`: promise checking
+//!   routes application/reference/object classification through
+//!   `query_boundaries::checkers::promise`.
 //! - `thenable_surface_boundary_scans`: structural thenable extraction routes
 //!   `then` property, signature, and callback payload reads through
 //!   `query_boundaries::checkers::promise`.
@@ -298,6 +301,8 @@ mod object_literal_member_surface_construction_boundary_scans;
 mod object_literal_result_construction_boundary_scans;
 #[path = "arch_source_scans/parameter_contextual_surface_construction_boundary_scans.rs"]
 mod parameter_contextual_surface_construction_boundary_scans;
+#[path = "arch_source_scans/promise_application_classification_boundary_scans.rs"]
+mod promise_application_classification_boundary_scans;
 #[path = "arch_source_scans/property_access_result_construction_boundary_scans.rs"]
 mod property_access_result_construction_boundary_scans;
 #[path = "arch_source_scans/relation_boundary_session_scans.rs"]

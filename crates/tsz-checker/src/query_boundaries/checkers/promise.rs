@@ -1,3 +1,4 @@
+use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use tsz_binder::SymbolId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{CallSignature, FunctionShape, ObjectShape, TypeId};
@@ -30,6 +31,131 @@ pub(crate) fn promise_object_symbol_id(db: &dyn TypeDatabase, type_id: TypeId) -
         return None;
     };
     db.object_shape(shape_id).symbol
+}
+
+pub(crate) struct PromiseApplicationParts {
+    base: TypeId,
+    args: Vec<TypeId>,
+}
+
+impl PromiseApplicationParts {
+    pub(crate) const fn base(&self) -> TypeId {
+        self.base
+    }
+
+    pub(crate) fn args(&self) -> &[TypeId] {
+        &self.args
+    }
+
+    pub(crate) fn first_arg(&self) -> Option<TypeId> {
+        self.args.first().copied()
+    }
+
+    pub(crate) fn first_arg_or_unknown(&self) -> TypeId {
+        self.first_arg().unwrap_or(TypeId::UNKNOWN)
+    }
+}
+
+pub(crate) fn promise_application_parts(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<PromiseApplicationParts> {
+    let PromiseTypeKind::Application { base, args, .. } = classify_promise_type(db, type_id) else {
+        return None;
+    };
+    Some(PromiseApplicationParts { base, args })
+}
+
+pub(crate) fn promise_base_symbol_id(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    mut def_to_symbol_id: impl FnMut(tsz_solver::DefId) -> Option<SymbolId>,
+) -> Option<SymbolId> {
+    match classify_promise_type(db, base) {
+        PromiseTypeKind::Lazy(def_id) => def_to_symbol_id(def_id),
+        PromiseTypeKind::TypeQuery(sym_ref) => Some(symbol_ref_to_symbol_id(sym_ref)),
+        _ => None,
+    }
+}
+
+pub(crate) fn promise_base_matches(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    lazy_matches: impl FnMut(tsz_solver::DefId) -> bool,
+    symbol_matches: impl FnMut(SymbolId) -> bool,
+) -> bool {
+    promise_reference_matches(db, base, lazy_matches, symbol_matches)
+}
+
+pub(crate) fn promise_reference_matches(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut lazy_matches: impl FnMut(tsz_solver::DefId) -> bool,
+    mut symbol_matches: impl FnMut(SymbolId) -> bool,
+) -> bool {
+    promise_reference_matches_inner(db, type_id, &mut lazy_matches, &mut symbol_matches)
+}
+
+fn promise_reference_matches_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    lazy_matches: &mut impl FnMut(tsz_solver::DefId) -> bool,
+    symbol_matches: &mut impl FnMut(SymbolId) -> bool,
+) -> bool {
+    match classify_promise_type(db, type_id) {
+        PromiseTypeKind::Lazy(def_id) => lazy_matches(def_id),
+        PromiseTypeKind::TypeQuery(sym_ref) => symbol_matches(symbol_ref_to_symbol_id(sym_ref)),
+        _ => false,
+    }
+}
+
+pub(crate) fn promise_type_matches_through_applications(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut lazy_matches: impl FnMut(tsz_solver::DefId) -> bool,
+    mut symbol_matches: impl FnMut(SymbolId) -> bool,
+    object_matches: bool,
+) -> bool {
+    fn matches_inner(
+        db: &dyn TypeDatabase,
+        type_id: TypeId,
+        lazy_matches: &mut impl FnMut(tsz_solver::DefId) -> bool,
+        symbol_matches: &mut impl FnMut(SymbolId) -> bool,
+        object_matches: bool,
+    ) -> bool {
+        match classify_promise_type(db, type_id) {
+            PromiseTypeKind::Application { base, .. } => {
+                matches_inner(db, base, lazy_matches, symbol_matches, object_matches)
+            }
+            PromiseTypeKind::Object(_) => object_matches,
+            PromiseTypeKind::Union(_) | PromiseTypeKind::NotPromise => false,
+            PromiseTypeKind::Lazy(_) | PromiseTypeKind::TypeQuery(_) => {
+                promise_reference_matches_inner(db, type_id, lazy_matches, symbol_matches)
+            }
+        }
+    }
+
+    matches_inner(
+        db,
+        type_id,
+        &mut lazy_matches,
+        &mut symbol_matches,
+        object_matches,
+    )
+}
+
+pub(crate) fn promise_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::DefId> {
+    super::super::common::lazy_def_id(db, type_id)
+}
+
+pub(crate) fn promise_type_is_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        classify_promise_type(db, type_id),
+        PromiseTypeKind::Object(_)
+    )
 }
 
 pub(crate) struct ThenableSignatureSurface {
