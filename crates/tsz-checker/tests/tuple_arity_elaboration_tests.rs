@@ -372,3 +372,42 @@ fn matching_arity_has_no_tuple_arity_diagnostic() {
         "matching-arity assignment must not emit an arity reason"
     );
 }
+
+/// Regression (strictOptionalProperties1.ts): a present array-literal element
+/// that follows an elision is Optional, not Required. `[, , true]` against
+/// `[number, string?, boolean?]` infers `[never?, never?, true?]` and must
+/// report `TS2322` (element 0 `never?` may not supply the required `number`).
+/// Typing the trailing `true` Required made the tuple assignable and dropped
+/// that error. All six sparse/oversized/`undefined` assignments below report a
+/// `TS2322`, matching tsc's baseline.
+#[test]
+fn sparse_tuple_present_element_after_elision_is_optional() {
+    let options = CheckerOptions {
+        strict: true,
+        strict_null_checks: true,
+        no_implicit_any: true,
+        exact_optional_property_types: true,
+        ..Default::default()
+    };
+    let source = r#"
+function f5(t: [number, string?, boolean?]) {
+    t = [42, , , ,];
+    t = [, , true];
+    t = [42, undefined, true];
+}
+const c1: [number, string?, boolean?] = [1, undefined];
+const c2: [number, string?, boolean?] = [1, "string", undefined];
+const c3: [number, string?, boolean?] = [1, undefined, undefined];
+"#;
+    let diags = tsz_checker::test_utils::check_source(source, "test.ts", options);
+    let ts2322 = diags.iter().filter(|d| d.code == 2322).count();
+    assert_eq!(
+        ts2322,
+        6,
+        "expected 6 TS2322 tuple mismatches (incl. `[, , true]`), got {ts2322}: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
