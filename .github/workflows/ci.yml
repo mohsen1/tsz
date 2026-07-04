@@ -20,6 +20,7 @@ concurrency:
 jobs:
   clippy:
     name: clippy
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -40,6 +41,7 @@ jobs:
 
   unit:
     name: unit
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -51,6 +53,7 @@ jobs:
 
   conformance:
     name: conformance-${{ matrix.shard }}
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -106,6 +109,7 @@ jobs:
 
   emit:
     name: emit-${{ matrix.shard }}
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -159,6 +163,7 @@ jobs:
 
   fourslash:
     name: fourslash-${{ matrix.shard }}
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -233,6 +238,7 @@ jobs:
       - name: Verify core CI jobs
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           python3 - <<'PY'
           import json
@@ -251,10 +257,18 @@ jobs:
               "fourslash-aggregate",
           }
 
+          # On pull_request the heavy jobs are intentionally skipped: the merge
+          # campaign validates PRs via local delta-verified trains, and the full
+          # suite still runs on merge_group / push-to-main / workflow_dispatch.
+          # So "skipped" counts as a pass ONLY for pull_request; a real failure or
+          # cancellation still fails, and every non-PR event stays strict.
+          allow_skipped = os.environ.get("EVENT_NAME") == "pull_request"
+          passing = {"success", "skipped"} if allow_skipped else {"success"}
+
           failures = []
           for name in sorted(required):
               result = needs.get(name, {}).get("result")
-              if result != "success":
+              if result not in passing:
                   failures.append(f"{name}: {result}")
 
           if failures:
@@ -263,5 +277,8 @@ jobs:
                   print(f"  - {failure}")
               sys.exit(1)
 
-          print("Clippy, unit, conformance, emit, and fourslash checks passed.")
+          if allow_skipped:
+              print("PR event: heavy jobs skipped by design; core gate passes.")
+          else:
+              print("Clippy, unit, conformance, emit, and fourslash checks passed.")
           PY
