@@ -12,7 +12,6 @@ mod diagnostics;
 mod non_tuple_spread_signature;
 mod overload_resolution;
 mod spread_arity;
-mod spread_constraints;
 mod spread_overload_selection;
 
 use crate::query_boundaries::common::TypeResolver;
