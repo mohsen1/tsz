@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
+use tsz_solver::type_queries::TypeIdList;
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -892,7 +893,19 @@ pub(crate) fn narrow_assignment(
         );
     }
 
-    let Some(members) = union_members_for_type(db, resolved_initial) else {
+    // `union_members_for_type` returns `None` for any declared type that is not
+    // a stored union — including an unevaluated `keyof T` operator, whose keys
+    // form a union but are not materialized until the operator is evaluated.
+    // Without the `keyof` fallback the reduction bails and keeps the whole
+    // `keyof T` type, surfacing a spurious assignment error at later reads (e.g.
+    // reading a `keyof number[]` binding initialized to `"length"` where a
+    // `string` is expected). Mirror tsc's `getAssignmentReducedType`, which
+    // resolves `keyof T` to its key set before reducing. Other unevaluated
+    // operators (a generic `T[K]`, a conditional) stay non-enumerable after
+    // evaluation, so they still bail here with byte-identical behaviour.
+    let Some(members) = union_members_for_type(db, resolved_initial)
+        .or_else(|| keyof_key_union_members(db, env, resolved_initial))
+    else {
         return initial_type;
     };
     if members.len() <= 1 {
@@ -921,6 +934,36 @@ pub(crate) fn narrow_assignment(
     } else {
         union_types(db, kept)
     }
+}
+
+/// Enumerate the key literals of a `keyof T` declared type for assignment
+/// reduction.
+///
+/// `keyof T` is interned as an unevaluated `KeyOf` operator whose key set is not
+/// a stored union, so [`union_members_for_type`] returns `None` for it and
+/// [`narrow_assignment`] cannot reduce it against an assigned key. Evaluating the
+/// operator to its concrete key union (through the flow `TypeEnvironment` so a
+/// `Lazy(DefId)` operand such as `keyof Arr` where `type Arr = number[]` resolves
+/// too) recovers those members. Returns `None` for any non-`keyof` type, or when
+/// the operator does not reduce to an enumerable union (e.g. a still-generic
+/// `keyof T` or a single-key `keyof { a: 1 }` that already equals its sole key),
+/// leaving those declarations' narrowing untouched.
+fn keyof_key_union_members(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> Option<TypeIdList> {
+    if !is_keyof_type(db, type_id) {
+        return None;
+    }
+    let evaluated = match env {
+        Some(environment) => evaluate_type_structure_with_resolver(db, environment, type_id),
+        None => evaluate_type_structure(db, type_id),
+    };
+    if evaluated == type_id {
+        return None;
+    }
+    union_members_for_type(db, evaluated)
 }
 
 pub(crate) fn are_types_mutually_subtype(
@@ -1107,6 +1150,27 @@ pub(crate) fn get_application_info(
 /// resolved structure but should not call `tsz_solver::computation::evaluate_type()` directly.
 pub(crate) fn evaluate_type_structure(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::computation::evaluate_type(db, type_id)
+}
+
+/// Env-aware variant of [`evaluate_type_structure`].
+///
+/// Evaluates a type to its structural form using the flow `TypeEnvironment` as
+/// the lazy-alias resolver, so a type operator whose operand is a `Lazy(DefId)`
+/// alias (e.g. `keyof Arr` where `type Arr = number[]`) resolves through to its
+/// concrete form. Callers should use this boundary instead of constructing a
+/// `TypeEvaluator` directly.
+///
+/// This is the `TypeDatabase`-only sibling of the `QueryDatabase`-based
+/// `evaluate_type_with_resolver` boundaries (`dispatch`,
+/// `state::type_environment`); use those when a `QueryDatabase` is in scope, and
+/// this one on flow paths that only hold a `TypeDatabase` (e.g.
+/// [`narrow_assignment`]).
+pub(crate) fn evaluate_type_structure_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &tsz_solver::relations::subtype::TypeEnvironment,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver).evaluate(type_id)
 }
 
 /// If `type_id` is a promise-like application type, return the inner type argument.
