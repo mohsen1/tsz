@@ -61,6 +61,9 @@
 //! - `commonjs_json_export_surface_construction_boundary_scans`: JSON module
 //!   and current-file CommonJS namespace surfaces route solver construction
 //!   through `query_boundaries::js_exports`.
+//! - `commonjs_resolution_export_surface_construction_boundary_scans`: CommonJS
+//!   resolution routes descriptor, overlay, constructor, and imported module
+//!   value-surface construction through `query_boundaries::js_exports`.
 //! - `binding_pattern_construction_boundary_scans`: binding/destructuring
 //!   pattern callers route contextual tuple/object/property/union construction
 //!   through `query_boundaries::binding_patterns`.
@@ -108,6 +111,8 @@ mod class_partial_constructor_construction_boundary_scans;
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/commonjs_json_export_surface_construction_boundary_scans.rs"]
 mod commonjs_json_export_surface_construction_boundary_scans;
+#[path = "arch_source_scans/commonjs_resolution_export_surface_construction_boundary_scans.rs"]
+mod commonjs_resolution_export_surface_construction_boundary_scans;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]
