@@ -919,7 +919,7 @@ impl<'a> CheckerState<'a> {
         annotation.is_some().then_some(annotation)
     }
 
-    fn error_type_not_assignable_at_with_raw_display_types(
+    pub(crate) fn error_type_not_assignable_at_with_raw_display_types(
         &mut self,
         source_for_display: TypeId,
         target_for_display: TypeId,

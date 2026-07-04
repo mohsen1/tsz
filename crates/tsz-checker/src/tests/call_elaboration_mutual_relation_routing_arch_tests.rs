@@ -174,7 +174,7 @@ fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
 
     assert_eq!(
         helpers.matches("call_arg_relation_outcome(").count(),
-        5,
+        6,
         "object/array call elaboration helper probes should route through call_arg_relation_outcome"
     );
     assert_eq!(

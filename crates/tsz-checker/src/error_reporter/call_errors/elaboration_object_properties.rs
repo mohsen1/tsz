@@ -1108,6 +1108,23 @@ impl<'a> CheckerState<'a> {
         let tuple_target_elements =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, effective_param_type);
 
+        // tsc's `checkArrayLiteral` carries a cumulative `hasOmittedExpression`
+        // flag: once an elision precedes a present element, `elaborateArrayLiteral`
+        // compares that element's *widened, `| undefined`-unioned* source type
+        // (`addOptionality(widen(type), /*isProperty*/ true, true)`) against the
+        // target slot (issue #15612). tsz models the hole as absence (`never?`)
+        // rather than a distinct `missingType`, so the source tuple keeps the bare
+        // element type and the whole-tuple relation reports a coarse message. Only
+        // failing assignments reach this elaborator, so recovering the widening
+        // here — for a present element after an elision, in a tuple context, under
+        // `exactOptionalPropertyTypes` — drills to `T | undefined` vs the required
+        // target slot without perturbing the (already-correct) assignability
+        // decision. The optional-target case never fails the relation, so it never
+        // reaches this path and stays green.
+        let elision_widening_applies = self.ctx.compiler_options.exact_optional_property_types
+            && tuple_target_elements.is_some();
+        let mut saw_elision = false;
+
         // For variadic-rest tuples with trailing fixed elements (e.g., [number, ...string[], number]),
         // element positions can only be reliably matched against the leading fixed section.
         // Trailing fixed elements cannot be mapped without knowing the total source length, and
@@ -1128,6 +1145,10 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                // Elided slot (a "hole"): tsc's `elaborateArrayLiteral` skips it
+                // (no expression to anchor) but records that later present
+                // elements are now optional-with-`| undefined` (issue #15612).
+                saw_elision = true;
                 continue;
             };
 
@@ -1193,6 +1214,45 @@ impl<'a> CheckerState<'a> {
             } else {
                 target_element_type
             };
+
+            // Present element following an elision under `exactOptionalPropertyTypes`
+            // in a tuple context: widen its type and union `undefined`, mirroring
+            // tsc's `addOptionality(widen(type), /*isProperty*/ true, true)`
+            // (issue #15612). When that `T | undefined` is exactly what the target
+            // slot rejects — a *required* target element — report it at this
+            // element. An optional target slot would make the whole assignment
+            // succeed, so this elaborator never runs for it.
+            if elision_widening_applies
+                && saw_elision
+                && elem_node.kind != syntax_kind_ext::SPREAD_ELEMENT
+            {
+                let widened = crate::query_boundaries::common::widen_literal_type(
+                    self.ctx.types,
+                    self.elaboration_source_expression_type(elem_idx),
+                );
+                let src_elem_type = self.ctx.types.union2(widened, TypeId::UNDEFINED);
+                if src_elem_type != target_element_type
+                    && target_element_type != TypeId::ERROR
+                    && target_element_type != TypeId::ANY
+                    && !self
+                        .call_arg_relation_outcome(src_elem_type, target_element_type)
+                        .related
+                {
+                    // Render the widened source (`T | undefined`) and the target
+                    // slot verbatim, anchored at the element. The role-based
+                    // emitters re-derive an `AssignmentSource` from the enclosing
+                    // assignment's RHS (surfacing the whole source tuple), which
+                    // would defeat the per-element drill; the raw emitter keeps
+                    // the element types.
+                    self.error_type_not_assignable_at_with_raw_display_types(
+                        src_elem_type,
+                        display_target_element_type,
+                        elem_idx,
+                    );
+                    elaborated = true;
+                    continue;
+                }
+            }
 
             let elem_type = self.elaboration_source_expression_type(elem_idx);
             let contextual_request =
