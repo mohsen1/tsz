@@ -6,9 +6,10 @@
 //! - `are_var_decl_types_compatible` (TS2403)
 
 use crate::query_boundaries::assignability::{
-    are_types_structurally_identical, is_redeclaration_identical_with_resolver,
-    is_relation_cacheable, is_subtype_with_resolver, mutable_array_element_for_redeclaration,
-    subtype_cache_key,
+    are_types_structurally_identical, assignability_array_type,
+    assignability_namespace_export_property, assignability_object_type,
+    is_redeclaration_identical_with_resolver, is_relation_cacheable, is_subtype_with_resolver,
+    mutable_array_element_for_redeclaration, subtype_cache_key,
 };
 use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
@@ -177,29 +178,17 @@ impl<'a> CheckerState<'a> {
 
             let member_type = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
-            properties.push(tsz_solver::PropertyInfo {
-                name: name_atom,
-                type_id: member_type,
-                write_type: member_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: tsz_solver::Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            properties.push(assignability_namespace_export_property(
+                name_atom,
+                member_type,
+            ));
         }
 
         if properties.is_empty() {
             return type_id;
         }
 
-        self.ctx.types.factory().object(properties)
+        assignability_object_type(self.ctx.types, properties)
     }
 
     /// Build a structural object type from a namespace symbol's exports.
@@ -241,29 +230,17 @@ impl<'a> CheckerState<'a> {
 
             let member_type = self.get_type_of_symbol(*member_id);
             let name_atom = self.ctx.types.intern_string(name);
-            properties.push(tsz_solver::PropertyInfo {
-                name: name_atom,
-                type_id: member_type,
-                write_type: member_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: tsz_solver::Visibility::Public,
-                parent_id: None,
-                declaration_order: 0,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            properties.push(assignability_namespace_export_property(
+                name_atom,
+                member_type,
+            ));
         }
 
         if properties.is_empty() {
             return TypeId::UNKNOWN;
         }
 
-        self.ctx.types.factory().object(properties)
+        assignability_object_type(self.ctx.types, properties)
     }
 
     /// Resolve a `TypeQuery` chain iteratively until a non-TypeQuery type is reached.
@@ -600,7 +577,9 @@ impl<'a> CheckerState<'a> {
             type_id,
             Some(self.ctx.definition_store.as_ref()),
         )
-        .map_or(type_id, |elem| self.ctx.types.array(elem))
+        .map_or(type_id, |elem| {
+            assignability_array_type(self.ctx.types, elem)
+        })
     }
 
     /// Widen literal return types within function signatures for TS2403 comparison.

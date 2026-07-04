@@ -2,8 +2,13 @@
 //! Subtype, identity, and redeclaration compatibility live in `subtype_identity_checker`.
 
 use crate::query_boundaries::assignability::{
-    AssignabilityEvalKind, classify_for_assignability_eval, get_keyof_type,
-    get_string_literal_value, get_union_members, keyof_object_properties, map_compound_members,
+    AssignabilityEvalKind, assignability_array_type, assignability_function_with_return_type,
+    assignability_intersection_type, assignability_noinfer_type, assignability_object_type,
+    assignability_readonly_type, assignability_resolved_property,
+    assignability_resolved_tuple_element, assignability_tuple_type,
+    assignability_union_preserve_members, assignability_union_type,
+    classify_for_assignability_eval, get_keyof_type, get_string_literal_value, get_union_members,
+    keyof_object_properties, map_compound_members,
 };
 use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
@@ -313,7 +318,7 @@ impl<'a> CheckerState<'a> {
         {
             let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
             if normalized != inner {
-                self.ctx.types.readonly_type(normalized)
+                assignability_readonly_type(self.ctx.types, normalized)
             } else {
                 type_id
             }
@@ -322,7 +327,7 @@ impl<'a> CheckerState<'a> {
         {
             let normalized = self.normalize_nested_type_for_assignability_inner(inner, visited);
             if normalized != inner {
-                self.ctx.types.no_infer(normalized)
+                assignability_noinfer_type(self.ctx.types, normalized)
             } else {
                 type_id
             }
@@ -332,7 +337,7 @@ impl<'a> CheckerState<'a> {
             if crate::query_boundaries::common::is_array_type(self.ctx.types, type_id) {
                 let normalized = self.normalize_nested_type_for_assignability_inner(elem, visited);
                 if normalized != elem {
-                    self.ctx.types.array(normalized)
+                    assignability_array_type(self.ctx.types, normalized)
                 } else {
                     type_id
                 }
@@ -352,16 +357,11 @@ impl<'a> CheckerState<'a> {
                         if normalized != elem.type_id {
                             changed = true;
                         }
-                        tsz_solver::TupleElement {
-                            type_id: normalized,
-                            name: elem.name,
-                            optional: elem.optional,
-                            rest: elem.rest,
-                        }
+                        assignability_resolved_tuple_element(elem, normalized)
                     })
                     .collect();
                 if changed {
-                    self.ctx.types.factory().tuple(normalized_elements)
+                    assignability_tuple_type(self.ctx.types, normalized_elements)
                 } else {
                     type_id
                 }
@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             if changed {
-                self.ctx.types.factory().union(normalized_members)
+                assignability_union_type(self.ctx.types, normalized_members)
             } else {
                 type_id
             }
@@ -404,7 +404,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             if changed {
-                self.ctx.types.factory().intersection(normalized_members)
+                assignability_intersection_type(self.ctx.types, normalized_members)
             } else {
                 type_id
             }
@@ -610,13 +610,7 @@ impl<'a> CheckerState<'a> {
             && self.call_return_is_lazy_lib_deferrable(shape.return_type)
         {
             let inputs_probe =
-                self.ctx
-                    .types
-                    .factory()
-                    .function(crate::query_boundaries::common::FunctionShape {
-                        return_type: TypeId::UNKNOWN,
-                        ..(*shape).clone()
-                    });
+                assignability_function_with_return_type(self.ctx.types, &shape, TypeId::UNKNOWN);
             self.ensure_relation_input_ready(inputs_probe);
             return;
         }
@@ -998,7 +992,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)
         {
             let mut any_changed = false;
-            let new_elements: Vec<tsz_solver::TupleElement> = elements
+            let new_elements: Vec<_> = elements
                 .iter()
                 .map(|elem| {
                     if matches!(
@@ -1011,14 +1005,12 @@ impl<'a> CheckerState<'a> {
                     if elem_eval != elem.type_id {
                         any_changed = true;
                     }
-                    tsz_solver::TupleElement {
-                        type_id: elem_eval,
-                        ..*elem
-                    }
+                    assignability_resolved_tuple_element(elem, elem_eval)
                 })
                 .collect();
             if any_changed {
-                evaluated = self.ctx.types.as_type_database().tuple(new_elements);
+                evaluated =
+                    assignability_tuple_type(self.ctx.types.as_type_database(), new_elements);
             }
         }
 
@@ -1065,10 +1057,16 @@ impl<'a> CheckerState<'a> {
         for branch in union_members {
             let mut branch_members = evaluated_members.clone();
             branch_members[union_member_index] = branch;
-            distributed.push(self.ctx.types.factory().intersection(branch_members));
+            distributed.push(assignability_intersection_type(
+                self.ctx.types,
+                branch_members,
+            ));
         }
 
-        Some(self.ctx.types.factory().union_preserve_members(distributed))
+        Some(assignability_union_preserve_members(
+            self.ctx.types,
+            distributed,
+        ))
     }
 
     fn object_union_has_branch_only_keys(&self, type_id: TypeId) -> bool {
@@ -1145,7 +1143,7 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
         {
             let mut any_changed = false;
-            let new_elements: Vec<tsz_solver::TupleElement> = elements
+            let new_elements: Vec<_> = elements
                 .iter()
                 .map(|elem| {
                     let mut eval_ty = elem.type_id;
@@ -1164,14 +1162,11 @@ impl<'a> CheckerState<'a> {
                         any_changed = true;
                         eval_ty = deep;
                     }
-                    tsz_solver::TupleElement {
-                        type_id: eval_ty,
-                        ..*elem
-                    }
+                    assignability_resolved_tuple_element(elem, eval_ty)
                 })
                 .collect();
             if any_changed {
-                return self.ctx.types.as_type_database().tuple(new_elements);
+                return assignability_tuple_type(self.ctx.types.as_type_database(), new_elements);
             }
             return type_id;
         }
@@ -1185,7 +1180,7 @@ impl<'a> CheckerState<'a> {
 
         let shape = db.object_shape(shape_id);
         let mut any_changed = false;
-        let new_props: Vec<tsz_solver::PropertyInfo> = shape
+        let new_props: Vec<_> = shape
             .properties
             .iter()
             .map(|p| {
@@ -1220,11 +1215,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                tsz_solver::PropertyInfo {
-                    type_id: eval_ty,
-                    write_type: eval_write,
-                    ..*p
-                }
+                assignability_resolved_property(p, eval_ty, eval_write)
             })
             .collect();
 
@@ -1233,7 +1224,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Re-intern the object with resolved property types
-        self.ctx.types.as_type_database().object(new_props)
+        assignability_object_type(self.ctx.types.as_type_database(), new_props)
     }
 
     /// Resolve a deferred Mapped type by pre-resolving its constraint's Applications.

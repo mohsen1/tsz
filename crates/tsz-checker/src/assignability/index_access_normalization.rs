@@ -43,7 +43,10 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect();
             if changed {
-                return self.ctx.types.factory().union(normalized_members);
+                return crate::query_boundaries::assignability::assignability_union_type(
+                    self.ctx.types,
+                    normalized_members,
+                );
             }
         }
 
