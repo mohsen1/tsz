@@ -97,6 +97,11 @@ class VisitedCloneReportTests(unittest.TestCase):
         ]
         self.assertEqual(infer_pattern_hits, [])
 
+    def test_lsp_completions_avoid_branch_local_visited_clone(self):
+        candidates = self.module.scan([ROOT / "crates/tsz-lsp/src/completions"])
+
+        self.assertEqual(candidates, [])
+
 
 if __name__ == "__main__":
     unittest.main()

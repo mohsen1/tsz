@@ -963,10 +963,6 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
                 "let mut type_only_visited = visited.clone();",
             ),
             (
-                "crates/tsz-lsp/src/completions/member.rs",
-                "let mut member_visited = visited.clone();",
-            ),
-            (
                 "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
                 "let mut alias_visited = visited.clone();",
             ),

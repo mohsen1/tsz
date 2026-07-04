@@ -1057,11 +1057,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2198,
     ),
     (
-        "LSP boundary: completions/member.rs size ratchet",
-        ROOT / "crates" / "tsz-lsp" / "src" / "completions" / "member.rs",
-        2117,
-    ),
-    (
         "LSP boundary: hierarchy/call_hierarchy.rs size ratchet",
         ROOT / "crates" / "tsz-lsp" / "src" / "hierarchy" / "call_hierarchy.rs",
         2091,
@@ -1763,10 +1758,6 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
             (
                 "crates/tsz-checker/src/types/queries/type_only.rs",
                 "let mut type_only_visited = visited.clone();",
-            ),
-            (
-                "crates/tsz-lsp/src/completions/member.rs",
-                "let mut member_visited = visited.clone();",
             ),
             (
                 "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern.rs",
