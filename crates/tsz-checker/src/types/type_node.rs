@@ -6,6 +6,8 @@ use super::type_node_helpers::{
     type_node_includes_explicit_undefined,
 };
 use crate::context::{CheckerContext, TypeParameterScopeCacheKey};
+use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::type_construction;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -350,7 +352,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return TypeId::UNKNOWN; // Empty intersection is unknown
             }
 
-            return tsz_solver::utils::intersection_or_single(self.ctx.types, member_types);
+            return type_construction::type_node_intersection_or_single(
+                self.ctx.types,
+                member_types,
+            );
         }
 
         TypeId::ERROR
@@ -1180,9 +1185,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
-        };
+        use tsz_solver::{CallSignature, IndexSignature, PropertyInfo};
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1600,7 +1603,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Merge overloaded method signatures into properties.
         // Single-signature methods become Function types; multi-signature become Callable types.
         {
-            let factory = self.ctx.types.factory();
             for key in method_overload_order {
                 if let Some(sigs) = method_overloads.remove(&key.name) {
                     let optional = sigs.iter().all(|e| e.optional);
@@ -1612,27 +1614,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             .next()
                             .expect("sigs.len() == 1 guard ensures at least one element")
                             .signature;
-                        factory.function(FunctionShape {
-                            type_params: sig.type_params,
-                            params: sig.params,
-                            this_type: sig.this_type,
-                            return_type: sig.return_type,
-                            type_predicate: sig.type_predicate,
-                            is_constructor: false,
-                            is_method: true,
-                        })
+                        signature_construction::method_function_type_from_call_signature(
+                            self.ctx.types,
+                            sig,
+                        )
                     } else {
                         let merged_sigs: Vec<CallSignature> =
                             sigs.into_iter().map(|e| e.signature).collect();
-                        factory.callable(CallableShape {
-                            call_signatures: merged_sigs,
-                            construct_signatures: Vec::new(),
-                            properties: Vec::new(),
-                            string_index: None,
-                            number_index: None,
-                            symbol: None,
-                            is_abstract: false,
-                        })
+                        signature_construction::call_only_callable_type(self.ctx.types, merged_sigs)
                     };
                     properties.push(PropertyInfo {
                         name: key.name,
@@ -1655,42 +1644,30 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            let factory = self.ctx.types.factory();
-
             // `CallableShape` keeps the single-slot index convention: a `symbol`
             // index rides in `string_index` (its `key_type` discriminates it).
-            return factory.callable(CallableShape {
+            return signature_construction::type_literal_callable_type(
+                self.ctx.types,
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index: string_index.or(symbol_index),
+                string_index.or(symbol_index),
                 number_index,
-                symbol: None,
-                is_abstract: false,
-            });
+            );
         }
 
         if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
-            let factory = self.ctx.types.factory();
-
-            let result = factory.object_with_index(ObjectShape {
+            let result = type_construction::type_literal_object_with_indexes(
+                self.ctx.types,
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
-                ..ObjectShape::default()
-            });
-            // Record the hand-written `{ ... }` annotation so the printer never
-            // repaints it with a utility-application display alias that shares
-            // this content-interned id.
-            self.ctx.types.mark_literal_object_annotation(result);
+            );
             return result;
         }
 
-        let factory = self.ctx.types.factory();
-        let result = factory.object(properties);
-        self.ctx.types.mark_literal_object_annotation(result);
-        result
+        type_construction::type_literal_object(self.ctx.types, properties)
     }
 
     /// Resolve a type symbol from a node index.

@@ -19,7 +19,8 @@
 
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, ParamInfo, TypeId, TypePredicate,
+    CallSignature, CallableShape, CallableShapeId, FunctionShape, IndexSignature, ParamInfo,
+    PropertyInfo, TypeId, TypePredicate,
 };
 
 pub(crate) fn construct_signatures_for_type(
@@ -165,6 +166,15 @@ pub(crate) fn function_type_from_call_signature_preserving_method(
     })
 }
 
+/// Intern a type-literal method property as a function type.
+pub(crate) fn method_function_type_from_call_signature(
+    db: &dyn TypeDatabase,
+    mut sig: CallSignature,
+) -> TypeId {
+    sig.is_method = true;
+    function_type_from_call_signature_preserving_method(db, &sig, false)
+}
+
 /// Intern a bare callable carrying only call signatures.
 pub(crate) fn call_only_callable_type(
     db: &dyn TypeDatabase,
@@ -190,6 +200,27 @@ pub(crate) fn construct_only_callable_type(
 /// Intern a callable type from an explicit, helper-built shape.
 pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableShape) -> TypeId {
     db.callable(shape)
+}
+
+/// Intern a type literal carrying call/construct signatures plus property and
+/// index members.
+pub(crate) fn type_literal_callable_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+    construct_signatures: Vec<CallSignature>,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures,
+        construct_signatures,
+        properties,
+        string_index,
+        number_index,
+        symbol: None,
+        is_abstract: false,
+    })
 }
 
 /// Re-intern `base` with the given signature lists, preserving properties,

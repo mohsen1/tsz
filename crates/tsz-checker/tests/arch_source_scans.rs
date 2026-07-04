@@ -74,6 +74,9 @@
 //! - `type_checking_surface_construction_boundary_scans`: type-checking
 //!   helpers route temporary type surfaces and user type-parameter
 //!   construction through `query_boundaries::type_checking`.
+//! - `type_node_fallback_construction_boundary_scans`: type-node resolution
+//!   routes intersection, callable/function, and object fallback construction
+//!   through construction query boundaries.
 //! - `class_partial_constructor_construction_boundary_scans`: class
 //!   constructor-part helpers route partial static-constructor solver
 //!   construction through `query_boundaries::class_type`.
@@ -172,6 +175,8 @@ mod strict_bind_call_apply_construction_boundary_scans;
 mod type_checking_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
+#[path = "arch_source_scans/type_node_fallback_construction_boundary_scans.rs"]
+mod type_node_fallback_construction_boundary_scans;
 #[path = "arch_source_scans/type_query_construction_boundary_scans.rs"]
 mod type_query_construction_boundary_scans;
 #[path = "arch_source_scans/type_reference_depth_session_scans.rs"]
