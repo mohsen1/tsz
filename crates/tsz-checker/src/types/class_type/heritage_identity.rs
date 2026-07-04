@@ -1,8 +1,10 @@
-use crate::query_boundaries::class_type::callable_shape_for_type;
+use crate::query_boundaries::class_type::{
+    callable_shape_for_type, class_constructor_callable_with_construct_signatures_replaced,
+};
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{CallableShape, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn record_heritage_extends(
@@ -95,15 +97,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let refreshed = self.ctx.types.factory().callable(CallableShape {
-            call_signatures: shape.call_signatures.clone(),
+        let refreshed = class_constructor_callable_with_construct_signatures_replaced(
+            self.ctx.types,
+            &shape,
             construct_signatures,
-            properties: shape.properties.clone(),
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol: shape.symbol,
-            is_abstract: shape.is_abstract,
-        });
+        );
         self.ctx
             .class_constructor_type_cache
             .borrow_mut()

@@ -2,14 +2,13 @@
 
 use crate::query_boundaries::class_type::{self, callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::is_plain_object_type;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    CallSignature, IndexSignature, TypeId, TypeParamInfo, TypeParamOrigin, Visibility,
-};
+use tsz_solver::{CallSignature, IndexSignature, TypeId, TypeParamInfo, Visibility};
 
 /// Bookkeeping record for a single type parameter pushed into
 /// `type_parameter_scope`: the parameter name, its previous binding in that
@@ -476,7 +475,6 @@ impl<'a> CheckerState<'a> {
 
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut scope_updates = Vec::with_capacity(template_names.len());
-        let factory = self.ctx.types.factory();
         let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in template_names {
             let atom = self.ctx.types.intern_string(&name);
@@ -486,14 +484,10 @@ impl<'a> CheckerState<'a> {
             let constraint = constraint_strs
                 .get(&name)
                 .and_then(|s| self.resolve_jsdoc_reference(s));
-            let info = TypeParamInfo {
-                name: atom,
-                constraint,
-                default,
-                is_const,
-                origin: TypeParamOrigin::User,
-            };
-            let ty = factory.type_param(info);
+            let info = signature_building_boundary::user_type_param_info(
+                atom, constraint, default, is_const,
+            );
+            let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
             type_params.push(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
             scope_updates.push((name, previous, false));
