@@ -57,6 +57,7 @@ use tsz_common::interner::Atom;
 
 mod application;
 mod closed_eval;
+mod compound_simplification;
 mod display_alias;
 mod meta_recursion_identity;
 use meta_recursion_identity::MetaRecursionIdentity;
@@ -118,6 +119,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// pattern thousands of times while checking whether the application-level
     /// infer fast path applies.
     contains_infer_cache: FxHashMap<TypeId, bool>,
+    /// PERF: Cache definitive subtype-pair results used only by compound
+    /// union/intersection simplification. Entries are operation-local to this
+    /// evaluator and keyed by the full relation configuration plus the
+    /// simplifier-specific bypass/depth mode.
+    compound_subtype_cache: FxHashMap<CompoundSubtypePairKey, bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -274,6 +280,8 @@ pub struct TypeEvaluatorCacheStatistics {
     pub conditional_subtype_entries: usize,
     /// Entries in the `contains infer` predicate memo keyed by `TypeId`.
     pub contains_infer_entries: usize,
+    /// Entries in the compound simplification subtype memo.
+    pub compound_subtype_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -282,6 +290,31 @@ impl TypeEvaluatorCacheStatistics {
     #[must_use]
     pub const fn estimated_size_bytes(self) -> usize {
         self.estimated_size_bytes
+    }
+}
+
+/// Operation-local cache key for subtype probes performed by compound
+/// simplification. `RelationCacheKey` owns the regular relation mode bits; the
+/// extra fields separate simplifier-only relation configuration that the shared
+/// relation cache deliberately does not encode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct CompoundSubtypePairKey {
+    relation: crate::types::RelationCacheKey,
+    bypass_evaluation: bool,
+    max_depth: u32,
+}
+
+impl CompoundSubtypePairKey {
+    pub(crate) fn from_checker<R: TypeResolver>(
+        checker: &crate::relations::subtype::SubtypeChecker<'_, R>,
+        source: TypeId,
+        target: TypeId,
+    ) -> Self {
+        Self {
+            relation: checker.make_cache_key(source, target),
+            bypass_evaluation: checker.bypass_evaluation,
+            max_depth: checker.max_depth,
+        }
     }
 }
 
@@ -327,6 +360,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
+            compound_subtype_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -355,15 +389,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
         let conditional_subtype_entries = self.conditional_subtype_cache.len();
         let contains_infer_entries = self.contains_infer_cache.len();
+        let compound_subtype_entries = self.compound_subtype_cache.len();
         let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
             .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
             .saturating_add(
                 contains_infer_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>()),
+            )
+            .saturating_add(
+                compound_subtype_entries
+                    .saturating_mul(std::mem::size_of::<(CompoundSubtypePairKey, bool)>()),
             );
 
         TypeEvaluatorCacheStatistics {
             conditional_subtype_entries,
             contains_infer_entries,
+            compound_subtype_entries,
             estimated_size_bytes: type_evaluator_cache_estimated_size_bytes,
         }
     }
@@ -586,6 +626,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.no_unchecked_indexed_access != enabled {
             self.cache.clear();
             self.tainted.clear();
+            self.compound_subtype_cache.clear();
         }
         self.no_unchecked_indexed_access = enabled;
     }
@@ -594,6 +635,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.exact_optional_property_types != enabled {
             self.cache.clear();
             self.tainted.clear();
+            self.compound_subtype_cache.clear();
         }
         self.exact_optional_property_types = enabled;
     }
@@ -627,6 +669,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.unresolved_def_seen = false;
         self.unresolved_def_epoch = 0;
         self.app_body_unresolved_def_epoch = 0;
+        self.compound_subtype_cache.clear();
     }
 
     /// Evaluate a normalized request, applying option-sensitive configuration
@@ -1448,7 +1491,9 @@ impl<R: TypeResolver> Drop for TypeEvaluator<'_, R> {
         }
         tsz_common::perf_counters::record_eval_dropped_memo_entries(self.cache.len() as u64);
         tsz_common::perf_counters::record_eval_dropped_aux_entries(
-            (self.conditional_subtype_cache.len() + self.contains_infer_cache.len()) as u64,
+            (self.conditional_subtype_cache.len()
+                + self.contains_infer_cache.len()
+                + self.compound_subtype_cache.len()) as u64,
         );
     }
 }
