@@ -381,14 +381,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For array literal sources, drill into element-level errors, matching
-        // tsc's `elaborateElementwise` behavior. Check the unwrapped source so
-        // equivalent forms like `([10, "20"]) satisfies number[]` and
-        // `([10, "20"] as (number | string)[]) satisfies number[]` use the same
-        // element elaboration path.
-        let unwrapped_source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
-        if let Some(node) = self.ctx.arena.get(unwrapped_source_idx)
-            && node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        // For the other fresh source kinds that tsc's `elaborateError` drills into
+        // — array literals and expression-bodied arrow / function expressions —
+        // route through the same assignment-source elaboration boundary the
+        // direct-assignment path uses. tsc runs the identical `elaborateError` for
+        // a `satisfies` operand as for an assignment (only the outer error code and
+        // keyword anchor differ), so `[10, "20"] satisfies number[]` reports TS2322
+        // at the offending element and `(() => 1) satisfies () => string` reports
+        // TS2322 at the arrow's returned expression, instead of the coarse
+        // whole-expression TS1360. Block-bodied functions (where tsc keeps the
+        // coarse TS1360) and every non-drilling source fall through to the TS1360
+        // report below. (Object-literal sources took the dedicated
+        // `elaborate_satisfies_object_literal` path above.)
+        if self.satisfies_source_drills_to_inner_anchor(source_idx)
             && self.try_elaborate_assignment_source_error(source_idx, target)
         {
             return false;
@@ -396,6 +401,42 @@ impl<'a> CheckerState<'a> {
 
         self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx, keyword_pos);
         false
+    }
+
+    /// Whether a `satisfies` source expression drills into an inner node under
+    /// tsc's `elaborateElementwise` / `elaborateArrowFunction`, producing a
+    /// nested `TS2322` anchor (rather than the coarse whole-expression frame).
+    ///
+    /// Object and array literals always drill (into a property or an element).
+    /// A function expression drills only when its body is an *expression* — tsc's
+    /// `elaborateArrowFunction` bails on a block body and keeps the
+    /// function-level frame, so a block-bodied arrow/function value must fall
+    /// through to the coarse report (`TS1360` at the keyword for a direct source,
+    /// or the function-level `TS2322` at the property name for an object-literal
+    /// member) instead of being drilled here. Parentheses and assertions are
+    /// transparent, matching the boundary's own `skip_parenthesized_and_assertions`.
+    fn satisfies_source_drills_to_inner_anchor(&self, source_idx: NodeIndex) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_function(node)
+                    .and_then(|func| self.ctx.arena.get(func.body))
+                    .is_some_and(|body| body.kind != syntax_kind_ext::BLOCK)
+            }
+            _ => false,
+        }
     }
 
     /// Elaborate a `satisfies` failure for object literal expressions by checking
@@ -503,6 +544,24 @@ impl<'a> CheckerState<'a> {
                     // Excess property errors were reported — skip assignability check
                     continue;
                 }
+            }
+
+            // tsc's `elaborateElementwise` recurses into a property value that is
+            // itself a fresh object/array literal or an expression-bodied arrow,
+            // anchoring the mismatch at the innermost node — a nested property, an
+            // array element, or the arrow's returned expression — rather than
+            // reporting the whole property-value type. Route those values through
+            // the same assignment-source elaboration boundary the direct-assignment
+            // path uses so `satisfies` and assignment stay in lockstep. It is
+            // relation-gated (emits only on a genuine nested mismatch), so a passing
+            // value falls through to the leaf report below. Values that do not drill
+            // (a leaf primitive, a block-bodied function whose function-level frame
+            // tsc keeps at the property name) are excluded so the leaf report owns
+            // their anchor and elaboration chain.
+            if self.satisfies_source_drills_to_inner_anchor(prop_value_idx)
+                && self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type)
+            {
+                continue;
             }
 
             let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
