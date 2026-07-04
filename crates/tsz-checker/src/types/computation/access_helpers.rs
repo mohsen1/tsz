@@ -1387,7 +1387,7 @@ impl<'a> CheckerState<'a> {
     /// signature's value type, so this only governs *which diagnostic* is
     /// emitted, never the access result.
     pub(crate) fn symbol_key_resolves_via_string_index_only(
-        &self,
+        &mut self,
         object_type: TypeId,
         index_type: TypeId,
         index_type_for_access: TypeId,
@@ -1410,6 +1410,7 @@ impl<'a> CheckerState<'a> {
         if self.is_array_like_type(object_type) {
             return false;
         }
+        let object_type = self.resolve_receiver_index_signature_keys(object_type);
         // Without a `string` index the object reports the implicit-any TS7053
         // family instead; TS2538 is reserved for the string-fallthrough case.
         // (This also excludes namespace / expando receivers, which have none.)

@@ -129,7 +129,11 @@ impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
     }
 
     fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
-        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let mapped = self.db.get_mapped(MappedTypeId(mapped_id));
+        if mapped.name_type.is_none() && key_space_includes_symbol(self.db, mapped.constraint) {
+            return Some(mapped.template);
+        }
+        let type_id = self.db.mapped(mapped);
         let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
         (evaluated != type_id)
             .then(|| self.visit_type(self.db, evaluated))
@@ -167,17 +171,27 @@ impl<R: TypeResolver> TypeVisitor for SymbolIndexResolver<'_, R> {
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
-        shape.symbol_index_signature().map(|idx| idx.value_type)
+        shape
+            .symbol_index_signature()
+            .or_else(|| {
+                shape
+                    .string_index
+                    .as_ref()
+                    .filter(|idx| key_space_includes_symbol(self.db, idx.key_type))
+            })
+            .map(|idx| idx.value_type)
     }
 
     fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
         // `CallableShape` has no dedicated `symbol_index` slot, so only the
-        // historical `string_index`-with-`symbol`-key representation applies.
+        // historical `string_index` representation applies. The key can be the
+        // bare `symbol` intrinsic or a composite key space that includes it
+        // (for example `PropertyKey` after alias normalization).
         let shape = self.db.callable_shape(CallableShapeId(shape_id));
         shape
             .string_index
             .as_ref()
-            .filter(|idx| idx.key_type == TypeId::SYMBOL)
+            .filter(|idx| key_space_includes_symbol(self.db, idx.key_type))
             .map(|idx| idx.value_type)
     }
 
@@ -232,6 +246,19 @@ impl<R: TypeResolver> TypeVisitor for SymbolIndexResolver<'_, R> {
 
     fn default_output() -> Self::Output {
         None
+    }
+}
+
+fn key_space_includes_symbol(db: &dyn TypeDatabase, key_type: TypeId) -> bool {
+    if key_type == TypeId::SYMBOL {
+        return true;
+    }
+    match db.lookup(key_type) {
+        Some(TypeData::Union(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| key_space_includes_symbol(db, member)),
+        _ => false,
     }
 }
 
