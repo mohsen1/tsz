@@ -14,11 +14,13 @@
 //! The result is cached per target file index to avoid redundant computation.
 
 use crate::{context::is_js_file_name, state::CheckerState};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use serde_json::Value as JsonValue;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
@@ -50,6 +52,241 @@ pub(crate) fn commonjs_direct_export_supports_named_props(
         || crate::query_boundaries::common::callable_shape_for_type(types, direct_export_type)
             .is_some()
         || tsz_solver::type_queries::get_function_shape(types, direct_export_type).is_some()
+}
+
+fn public_export_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    type_id: TypeId,
+    optional: bool,
+    declaration_order: u32,
+) -> PropertyInfo {
+    PropertyInfo {
+        name: db.intern_string(name),
+        type_id,
+        write_type: type_id,
+        optional,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
+pub(crate) fn json_module_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn json_module_array_type(db: &dyn TypeDatabase, element_type: TypeId) -> TypeId {
+    db.array(element_type)
+}
+
+pub(crate) fn json_module_object_type(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn json_module_object_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    type_id: TypeId,
+    declaration_order: u32,
+) -> PropertyInfo {
+    public_export_property(db, name, type_id, false, declaration_order)
+}
+
+pub(crate) fn json_module_missing_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    declaration_order: u32,
+) -> PropertyInfo {
+    public_export_property(db, name, TypeId::UNDEFINED, true, declaration_order)
+}
+
+pub(crate) fn json_module_value_type(db: &dyn TypeDatabase, value: &JsonValue) -> TypeId {
+    match value {
+        JsonValue::Null => TypeId::NULL,
+        JsonValue::Bool(_) => TypeId::BOOLEAN,
+        JsonValue::Number(_) => TypeId::NUMBER,
+        JsonValue::String(_) => TypeId::STRING,
+        JsonValue::Array(elements) => json_array_type(db, elements),
+        JsonValue::Object(entries) => json_object_type(db, entries, None),
+    }
+}
+
+fn json_array_type(db: &dyn TypeDatabase, elements: &[JsonValue]) -> TypeId {
+    let object_property_order = json_array_object_property_order(elements);
+    let element_types: Vec<TypeId> = elements
+        .iter()
+        .map(|element| match element {
+            JsonValue::Object(entries) if !object_property_order.is_empty() => {
+                json_object_type(db, entries, Some(&object_property_order))
+            }
+            _ => json_module_value_type(db, element),
+        })
+        .collect();
+    let element_type = match element_types.as_slice() {
+        [] => TypeId::NEVER,
+        [single] => *single,
+        _ => json_module_union(db, element_types),
+    };
+    json_module_array_type(db, element_type)
+}
+
+fn json_array_object_property_order(elements: &[JsonValue]) -> Vec<String> {
+    let mut names = Vec::new();
+    for element in elements {
+        let JsonValue::Object(entries) = element else {
+            continue;
+        };
+        for name in entries.keys() {
+            if !names.iter().any(|existing| existing == name) {
+                names.push(name.clone());
+            }
+        }
+    }
+    names
+}
+
+fn json_object_type(
+    db: &dyn TypeDatabase,
+    entries: &serde_json::Map<String, JsonValue>,
+    complete_property_order: Option<&[String]>,
+) -> TypeId {
+    let mut props = Vec::with_capacity(entries.len());
+    let mut present_names = FxHashSet::default();
+    for (declaration_order, (name, entry_value)) in entries.iter().enumerate() {
+        let prop_type = json_module_value_type(db, entry_value);
+        present_names.insert(name.as_str());
+        props.push(json_module_object_property(
+            db,
+            name,
+            prop_type,
+            (declaration_order + 1) as u32,
+        ));
+    }
+
+    if let Some(all_names) = complete_property_order {
+        let mut declaration_order = props.len() as u32 + 1;
+        for name in all_names {
+            if present_names.contains(name.as_str()) {
+                continue;
+            }
+            props.push(json_module_missing_property(db, name, declaration_order));
+            declaration_order += 1;
+        }
+    }
+
+    json_module_object_type(db, props)
+}
+
+pub(crate) fn json_esm_namespace_type(db: &dyn TypeDatabase, json_type: TypeId) -> TypeId {
+    db.object(vec![public_export_property(
+        db, "default", json_type, false, 0,
+    )])
+}
+
+pub(crate) fn commonjs_json_namespace_type(db: &dyn TypeDatabase, json_type: TypeId) -> TypeId {
+    let default_atom = db.intern_string("default");
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, json_type) else {
+        return json_type;
+    };
+    if !shape
+        .properties
+        .iter()
+        .any(|property| property.name == default_atom)
+    {
+        return json_type;
+    }
+
+    let mut properties = shape.properties.clone();
+    for property in &mut properties {
+        if property.name == default_atom {
+            property.type_id = json_type;
+            property.write_type = json_type;
+            property.optional = false;
+            property.readonly = false;
+            property.declaration_order = 0;
+        }
+    }
+    db.object(properties)
+}
+
+pub(crate) fn commonjs_namespace_any_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    declaration_order: u32,
+) -> PropertyInfo {
+    public_export_property(db, name, TypeId::ANY, false, declaration_order)
+}
+
+pub(crate) fn commonjs_empty_namespace_type(db: &dyn TypeDatabase) -> TypeId {
+    db.object(Vec::new())
+}
+
+pub(crate) fn commonjs_export_surface_can_merge_named_exports(
+    db: &dyn TypeDatabase,
+    surface: &JsExportSurface,
+) -> bool {
+    surface.direct_export_type.is_none_or(|direct_export_type| {
+        commonjs_direct_export_supports_named_props(db, direct_export_type)
+    })
+}
+
+pub(crate) fn current_file_commonjs_namespace_type(
+    checker: &mut CheckerState<'_>,
+    surface: JsExportSurface,
+    late_export_names: impl IntoIterator<Item = String>,
+    display_name: String,
+) -> TypeId {
+    let can_merge_named_exports =
+        commonjs_export_surface_can_merge_named_exports(checker.ctx.types, &surface);
+
+    let mut props = if can_merge_named_exports {
+        surface.named_exports
+    } else {
+        Vec::new()
+    };
+
+    if can_merge_named_exports {
+        for name in late_export_names {
+            let name_atom = checker.ctx.types.intern_string(&name);
+            if props.iter().any(|p| p.name == name_atom) {
+                continue;
+            }
+            props.push(commonjs_namespace_any_property(
+                checker.ctx.types,
+                &name,
+                props.len() as u32,
+            ));
+        }
+    }
+
+    let has_named_props = !props.is_empty();
+    JsExportSurface {
+        direct_export_type: surface.direct_export_type,
+        named_exports: props,
+        prototype_members: surface.prototype_members,
+        has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
+        has_augmented_named_exports: surface.has_augmented_named_exports || has_named_props,
+    }
+    .to_type_id_with_display_name(checker, Some(display_name.clone()))
+    .unwrap_or_else(|| {
+        let empty_namespace = commonjs_empty_namespace_type(checker.ctx.types);
+        checker
+            .ctx
+            .namespace_module_names
+            .insert(empty_namespace, display_name);
+        empty_namespace
+    })
 }
 
 /// Represents the synthesized export surface of a JS/CommonJS module.
@@ -1052,7 +1289,7 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::JsExportSurface;
+    use super::*;
     use tsz_solver::construction::TypeInterner;
     use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
@@ -1099,5 +1336,74 @@ mod tests {
         assert_eq!(props[0].declaration_order, 1);
         assert_eq!(db.resolve_atom_ref(props[1].name).as_ref(), "configs");
         assert_eq!(props[1].declaration_order, 2);
+    }
+
+    #[test]
+    fn constructs_commonjs_json_export_surfaces() {
+        let db = TypeInterner::new();
+        let present = json_module_object_property(&db, "present", TypeId::STRING, 1);
+        assert_eq!(db.resolve_atom_ref(present.name).as_ref(), "present");
+        assert_eq!(present.type_id, TypeId::STRING);
+        assert!(!present.optional);
+        assert_eq!(present.declaration_order, 1);
+
+        let missing = json_module_missing_property(&db, "missing", 2);
+        assert_eq!(db.resolve_atom_ref(missing.name).as_ref(), "missing");
+        assert_eq!(missing.type_id, TypeId::UNDEFINED);
+        assert_eq!(missing.write_type, TypeId::UNDEFINED);
+        assert!(missing.optional);
+
+        let object = json_module_object_type(&db, vec![present.clone(), missing]);
+        assert_eq!(
+            object,
+            db.object(vec![
+                present,
+                json_module_missing_property(&db, "missing", 2)
+            ])
+        );
+        assert_eq!(
+            json_module_union(&db, vec![TypeId::STRING, TypeId::NUMBER]),
+            db.union(vec![TypeId::STRING, TypeId::NUMBER])
+        );
+        assert_eq!(
+            json_module_array_type(&db, TypeId::STRING),
+            db.array(TypeId::STRING)
+        );
+
+        let esm_namespace = json_esm_namespace_type(&db, TypeId::BOOLEAN);
+        let esm_shape = tsz_solver::type_queries::get_object_shape(&db, esm_namespace)
+            .expect("ESM JSON namespace should be an object");
+        assert_eq!(esm_shape.properties.len(), 1);
+        let default_prop = &esm_shape.properties[0];
+        assert_eq!(db.resolve_atom_ref(default_prop.name).as_ref(), "default");
+        assert_eq!(default_prop.type_id, TypeId::BOOLEAN);
+        assert!(!default_prop.optional);
+
+        assert_eq!(commonjs_json_namespace_type(&db, object), object);
+
+        let object_with_default = json_module_object_type(
+            &db,
+            vec![json_module_object_property(
+                &db,
+                "default",
+                TypeId::STRING,
+                1,
+            )],
+        );
+        let cjs_namespace = commonjs_json_namespace_type(&db, object_with_default);
+        let cjs_shape = tsz_solver::type_queries::get_object_shape(&db, cjs_namespace)
+            .expect("CJS JSON namespace should be an object");
+        assert_eq!(cjs_shape.properties.len(), 1);
+        assert_eq!(cjs_shape.properties[0].type_id, object_with_default);
+        assert_eq!(cjs_shape.properties[0].write_type, object_with_default);
+        assert!(!cjs_shape.properties[0].optional);
+        assert!(!cjs_shape.properties[0].readonly);
+
+        let late = commonjs_namespace_any_property(&db, "late", 3);
+        assert_eq!(db.resolve_atom_ref(late.name).as_ref(), "late");
+        assert_eq!(late.type_id, TypeId::ANY);
+        assert_eq!(late.write_type, TypeId::ANY);
+        assert!(!late.optional);
+        assert_eq!(commonjs_empty_namespace_type(&db), db.object(Vec::new()));
     }
 }
