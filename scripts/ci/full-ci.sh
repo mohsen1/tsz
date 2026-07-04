@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
+source scripts/lib/sh-portability.sh
 source scripts/ci/suite-metadata.sh
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
@@ -398,6 +399,11 @@ run_lint() {
     [[ -f "$test_file" ]] || continue
     python3 "$test_file" || return $?
   done
+  # Keep shell scripts within macOS system /bin/bash (3.2). The guard scans the
+  # whole script surface for Bash 4+ constructs; its unit test proves it flags
+  # them (#15440).
+  python3 scripts/lib/check-sh-portability.py || return $?
+  python3 scripts/lib/test_check_sh_portability.py || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
@@ -521,7 +527,8 @@ checker_integration_test_names() {
 run_unit_tests() {
   ci_section "Workspace nextest suites"
   local package package_names checker_selected general_pkg_args
-  mapfile -t package_names < <(unit_test_packages)
+  # Bash 3.2 (macOS system `/bin/bash`) has no `mapfile`; use the portable shim.
+  portable_read_lines package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
