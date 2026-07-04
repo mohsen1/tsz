@@ -1,6 +1,8 @@
 use super::*;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
+use crate::types::{ConditionalType, TypeParamInfo, TypeParamOrigin};
+use std::cell::Cell;
 
 // Mock resolver for testing
 struct MockResolver;
@@ -28,6 +30,77 @@ impl TypeResolver for MockResolver {
 
     fn def_to_symbol_id(&self, _def_id: DefId) -> Option<tsz_binder::SymbolId> {
         None
+    }
+}
+
+struct CountingResolver {
+    def_id: DefId,
+    body: TypeId,
+    lazy_resolutions: Cell<usize>,
+}
+
+impl CountingResolver {
+    const fn new(def_id: DefId, body: TypeId) -> Self {
+        Self {
+            def_id,
+            body,
+            lazy_resolutions: Cell::new(0),
+        }
+    }
+
+    fn lazy_resolutions(&self) -> usize {
+        self.lazy_resolutions.get()
+    }
+}
+
+impl TypeResolver for CountingResolver {
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        if def_id == self.def_id {
+            self.lazy_resolutions
+                .set(self.lazy_resolutions.get().saturating_add(1));
+            Some(self.body)
+        } else {
+            None
+        }
+    }
+
+    fn symbol_to_def_id(&self, _symbol: SymbolRef) -> Option<DefId> {
+        None
+    }
+
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn get_type_params(&self, _symbol: SymbolRef) -> Option<Vec<crate::types::TypeParamInfo>> {
+        None
+    }
+
+    fn get_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<crate::types::TypeParamInfo>> {
+        None
+    }
+
+    fn def_to_symbol_id(&self, _def_id: DefId) -> Option<tsz_binder::SymbolId> {
+        None
+    }
+}
+
+fn test_property(interner: &TypeInterner, name: &str, type_id: TypeId) -> PropertyInfo {
+    PropertyInfo {
+        name: interner.intern_string(name),
+        type_id,
+        write_type: type_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
     }
 }
 
@@ -474,4 +547,72 @@ fn test_collect_properties_deep_intersection_chain_is_iterative() {
             .any(|prop| prop.name == interner.intern_string("p4095")),
         "expected the outermost property to be preserved"
     );
+}
+
+#[test]
+fn collect_properties_reuses_union_member_within_one_outer_collection() {
+    let interner = TypeInterner::new();
+
+    let shared_body = interner.object(vec![test_property(&interner, "shared", TypeId::STRING)]);
+    let shared_lazy_def = DefId(7_001);
+    let shared_lazy = interner.lazy(shared_lazy_def);
+    let branch_a = interner.object(vec![test_property(&interner, "shared", TypeId::NUMBER)]);
+    let branch_b = interner.object(vec![test_property(&interner, "shared", TypeId::BOOLEAN)]);
+    let union_a = interner.union(vec![shared_lazy, branch_a]);
+    let union_b = interner.union(vec![shared_lazy, branch_b]);
+    let outer = interner.intersect_types_raw2(union_a, union_b);
+    let resolver = CountingResolver::new(shared_lazy_def, shared_body);
+
+    let result = collect_properties(outer, &interner, &resolver);
+
+    let PropertyCollectionResult::Properties { properties, .. } = result else {
+        panic!("outer union fan-out should collect common properties");
+    };
+    assert!(
+        properties
+            .iter()
+            .any(|prop| prop.name == interner.intern_string("shared")),
+        "expected the shared lazy member to contribute its common property"
+    );
+    assert_eq!(
+        resolver.lazy_resolutions(),
+        1,
+        "one outer collection should reuse the completed shared union member"
+    );
+
+    let _ = collect_properties(outer, &interner, &resolver);
+    assert_eq!(
+        resolver.lazy_resolutions(),
+        2,
+        "operation-local memo must not leak across public collections"
+    );
+}
+
+#[test]
+fn collect_properties_operation_memo_rejects_infer_conditionals() {
+    let interner = TypeInterner::new();
+    let infer_member = interner.infer(TypeParamInfo {
+        name: interner.intern_string("Value"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: infer_member,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    let plain = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    assert!(!operation_memo_eligible(&interner, conditional));
+    assert!(operation_memo_eligible(&interner, plain));
 }
