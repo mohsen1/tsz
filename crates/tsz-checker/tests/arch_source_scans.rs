@@ -80,6 +80,9 @@
 //! - `class_partial_constructor_construction_boundary_scans`: class
 //!   constructor-part helpers route partial static-constructor solver
 //!   construction through `query_boundaries::class_type`.
+//! - `class_surface_construction_boundary_scans`: class instance/interface and
+//!   final constructor surface construction routes through
+//!   `query_boundaries::class_type`.
 //! - `class_constructor_return_construction_boundary_scans`: class constructor
 //!   checking routes return/intersection/static-property construction through
 //!   `query_boundaries::checkers::constructor`.
@@ -122,6 +125,8 @@ mod class_constructor_return_construction_boundary_scans;
 mod class_instance_walk_state_scans;
 #[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]
 mod class_partial_constructor_construction_boundary_scans;
+#[path = "arch_source_scans/class_surface_construction_boundary_scans.rs"]
+mod class_surface_construction_boundary_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
 #[path = "arch_source_scans/commonjs_json_export_surface_construction_boundary_scans.rs"]

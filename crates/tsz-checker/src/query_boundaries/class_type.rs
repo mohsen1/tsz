@@ -3,8 +3,8 @@ use tsz_common::interner::Atom;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::DefId;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
-    TypePredicate, TypePredicateTarget, Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
 };
 
 pub(crate) use super::common::{
@@ -81,6 +81,81 @@ pub(crate) const fn static_late_bound_index_signature(
         value_type,
         readonly: false,
         param_name: None,
+    }
+}
+
+pub(crate) struct MergedClassInstanceInterfaceSurface {
+    result_is_callable: bool,
+    call_signatures: Vec<CallSignature>,
+    construct_signatures: Vec<CallSignature>,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+    plain_object_without_indexes: bool,
+}
+
+impl MergedClassInstanceInterfaceSurface {
+    pub(crate) const fn new(
+        result_is_callable: bool,
+        call_signatures: Vec<CallSignature>,
+        construct_signatures: Vec<CallSignature>,
+        properties: Vec<PropertyInfo>,
+        string_index: Option<IndexSignature>,
+        number_index: Option<IndexSignature>,
+        symbol: Option<SymbolId>,
+        plain_object_without_indexes: bool,
+    ) -> Self {
+        Self {
+            result_is_callable,
+            call_signatures,
+            construct_signatures,
+            properties,
+            string_index,
+            number_index,
+            symbol,
+            plain_object_without_indexes,
+        }
+    }
+}
+
+pub(crate) fn merged_class_instance_interface_type(
+    db: &dyn TypeDatabase,
+    surface: MergedClassInstanceInterfaceSurface,
+) -> TypeId {
+    let MergedClassInstanceInterfaceSurface {
+        result_is_callable,
+        call_signatures,
+        construct_signatures,
+        properties,
+        string_index,
+        number_index,
+        symbol,
+        plain_object_without_indexes,
+    } = surface;
+
+    if result_is_callable {
+        return db.callable(CallableShape {
+            call_signatures,
+            construct_signatures,
+            properties,
+            string_index,
+            number_index,
+            symbol,
+            is_abstract: false,
+        });
+    }
+
+    if plain_object_without_indexes {
+        db.object(properties)
+    } else {
+        db.object_with_index(ObjectShape {
+            properties,
+            string_index,
+            number_index,
+            symbol,
+            ..ObjectShape::default()
+        })
     }
 }
 
@@ -189,6 +264,34 @@ pub(crate) fn partial_static_constructor_callable_type(
         symbol,
         is_abstract: false,
     })
+}
+
+pub(crate) fn class_constructor_callable_type(
+    db: &dyn TypeDatabase,
+    symbol: Option<SymbolId>,
+    properties: Vec<PropertyInfo>,
+    construct_signatures: Vec<CallSignature>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    is_abstract: bool,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures,
+        properties,
+        string_index,
+        number_index,
+        symbol,
+        is_abstract,
+    })
+}
+
+pub(crate) fn class_constructor_mixin_intersection(
+    db: &dyn TypeDatabase,
+    base_type_param: TypeId,
+    constructor_type: TypeId,
+) -> TypeId {
+    db.intersection2(base_type_param, constructor_type)
 }
 
 pub(crate) fn class_constructor_companion_lazy_type(
