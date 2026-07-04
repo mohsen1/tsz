@@ -226,7 +226,7 @@ impl<'a> CheckerState<'a> {
                             normalized,
                         )
                     };
-                    tsz_solver::ParamInfo { type_id, ..*param }
+                    query::display_param_with_type(param, type_id)
                 })
                 .collect();
 
@@ -581,9 +581,11 @@ impl<'a> CheckerState<'a> {
             let params: Vec<_> = shape
                 .params
                 .iter()
-                .map(|param| tsz_solver::ParamInfo {
-                    type_id: self.normalize_excess_display_type(param.type_id),
-                    ..*param
+                .map(|param| {
+                    query::display_param_with_type(
+                        param,
+                        self.normalize_excess_display_type(param.type_id),
+                    )
                 })
                 .collect();
             let return_type = self.normalize_excess_display_type(shape.return_type);
@@ -858,7 +860,7 @@ impl<'a> CheckerState<'a> {
                                 depth + 1,
                             )
                         };
-                        params.push(tsz_solver::ParamInfo { type_id, ..*param });
+                        params.push(query::display_param_with_type(param, type_id));
                         if crate::error_reporter::display_budget::is_exhausted() {
                             visiting.remove(&ty);
                             return evaluated;
@@ -1128,14 +1130,14 @@ impl<'a> CheckerState<'a> {
             } else if let Some(shape) = query::function_shape(self.ctx.types, evaluated) {
                 let mut params = Vec::with_capacity(shape.params.len());
                 for param in shape.params.iter() {
-                    params.push(tsz_solver::ParamInfo {
-                        type_id: self.normalize_assignability_display_type_inner(
+                    params.push(query::display_param_with_type(
+                        param,
+                        self.normalize_assignability_display_type_inner(
                             param.type_id,
                             visiting,
                             depth + 1,
                         ),
-                        ..*param
-                    });
+                    ));
                     if crate::error_reporter::display_budget::is_exhausted() {
                         visiting.remove(&ty);
                         return evaluated;

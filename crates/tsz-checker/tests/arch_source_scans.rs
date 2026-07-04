@@ -30,6 +30,9 @@
 //! - `diagnostic_construction_boundary_scans`: diagnostic reporters route
 //!   display-only solver shape construction through
 //!   `query_boundaries::diagnostics`.
+//! - `reporter_signature_tuple_diagnostic_surface_boundary_scans`: diagnostic
+//!   reporters route raw signature, parameter, tuple-element, and type-parameter
+//!   display construction through `query_boundaries::diagnostics`.
 //! - `flow_assignment_surface_construction_boundary_scans`: flow assignment
 //!   fallback/narrowing callers route tuple/object/callable/rest construction
 //!   through `query_boundaries::flow_analysis`.
@@ -239,6 +242,8 @@ mod property_access_result_construction_boundary_scans;
 mod relation_boundary_session_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
 mod relation_routing_residual_arch_tests;
+#[path = "arch_source_scans/reporter_signature_tuple_diagnostic_surface_boundary_scans.rs"]
+mod reporter_signature_tuple_diagnostic_surface_boundary_scans;
 #[path = "arch_source_scans/spelling_suggestion_gateway_scans.rs"]
 mod spelling_suggestion_gateway_scans;
 #[path = "arch_source_scans/strict_bind_call_apply_construction_boundary_scans.rs"]

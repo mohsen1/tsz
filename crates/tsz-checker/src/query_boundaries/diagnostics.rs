@@ -3,7 +3,8 @@ use tsz_common::interner::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::{DefKind, DefinitionStore};
 use tsz_solver::{
-    CallSignature, CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    CallSignature, CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo,
+    TupleElement, TypeId, TypeParamInfo, TypeParamOrigin,
 };
 
 pub(crate) use super::common::{
@@ -311,6 +312,108 @@ fn type_includes_undefined(db: &dyn TypeDatabase, ty: TypeId) -> bool {
 
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
     crate::query_boundaries::construct_signatures::function_type_from_shape(db, shape)
+}
+
+pub(crate) fn call_signature_from_function_shape_for_display(
+    shape: &FunctionShape,
+) -> CallSignature {
+    crate::query_boundaries::construct_signatures::call_signature_from_function_shape(
+        shape.clone(),
+        shape.is_method,
+    )
+}
+
+pub(crate) const fn display_param_with_type(param: &ParamInfo, type_id: TypeId) -> ParamInfo {
+    ParamInfo {
+        name: param.name,
+        type_id,
+        optional: param.optional,
+        rest: param.rest,
+    }
+}
+
+pub(crate) const fn display_tuple_element_with_type(
+    element: &TupleElement,
+    type_id: TypeId,
+) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: element.name,
+        optional: element.optional,
+        rest: element.rest,
+    }
+}
+
+pub(crate) fn tuple_elements_with_unknown_fixed_display(
+    elements: &[TupleElement],
+) -> Vec<TupleElement> {
+    elements
+        .iter()
+        .map(|element| {
+            display_tuple_element_with_type(
+                element,
+                if element.rest {
+                    element.type_id
+                } else {
+                    TypeId::UNKNOWN
+                },
+            )
+        })
+        .collect()
+}
+
+pub(crate) const fn source_display_tuple_element(
+    union_type: TypeId,
+    optional: bool,
+) -> TupleElement {
+    TupleElement {
+        type_id: union_type,
+        name: None,
+        optional,
+        rest: false,
+    }
+}
+
+pub(crate) fn instantiate_call_signature_for_display(
+    db: &dyn QueryDatabase,
+    sig: &CallSignature,
+    type_args: &[TypeId],
+) -> Option<CallSignature> {
+    if sig.type_params.len() != type_args.len() {
+        return None;
+    }
+
+    let subst = TypeSubstitution::from_args(db, &sig.type_params, type_args);
+    Some(CallSignature {
+        type_params: Vec::new(),
+        params: sig
+            .params
+            .iter()
+            .map(|param| {
+                display_param_with_type(param, instantiate_type(db, param.type_id, &subst))
+            })
+            .collect(),
+        this_type: sig
+            .this_type
+            .map(|this_type| instantiate_type(db, this_type, &subst)),
+        return_type: instantiate_type(db, sig.return_type, &subst),
+        type_predicate: sig.type_predicate,
+        is_method: sig.is_method,
+    })
+}
+
+pub(crate) fn diagnostic_user_type_param(
+    db: &dyn TypeDatabase,
+    name: Atom,
+    constraint: Option<TypeId>,
+) -> TypeId {
+    db.type_param(TypeParamInfo {
+        name,
+        constraint,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    })
 }
 
 pub(crate) fn function_type_with_params_replaced(

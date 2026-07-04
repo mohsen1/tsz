@@ -275,12 +275,12 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     &type_ids_buf,
                 );
-            result.push(tsz_solver::TupleElement {
-                type_id: union_type,
-                name: None,
-                optional: optional_at[position],
-                rest: false,
-            });
+            result.push(
+                crate::query_boundaries::diagnostics::source_display_tuple_element(
+                    union_type,
+                    optional_at[position],
+                ),
+            );
         }
         Some(result)
     }

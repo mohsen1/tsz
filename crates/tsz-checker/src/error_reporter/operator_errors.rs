@@ -7,6 +7,7 @@ use crate::diagnostics::{
     DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
     format_message,
 };
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -447,17 +448,11 @@ impl<'a> CheckerState<'a> {
                     )
                     .map(|identifier| identifier.escaped_text.as_str())
             {
-                let annotated_surface =
-                    self.ctx
-                        .types
-                        .factory()
-                        .type_param(tsz_solver::TypeParamInfo {
-                            name: self.ctx.types.intern_string(type_name),
-                            constraint: Some(fallback),
-                            default: None,
-                            is_const: false,
-                            origin: tsz_solver::TypeParamOrigin::User,
-                        });
+                let annotated_surface = diagnostic_query::diagnostic_user_type_param(
+                    self.ctx.types,
+                    self.ctx.types.intern_string(type_name),
+                    Some(fallback),
+                );
                 return annotated_surface;
             }
             if let Some((parameter_idx, type_annotation)) = parameter_declaration
@@ -516,17 +511,11 @@ impl<'a> CheckerState<'a> {
                     } else {
                         None
                     };
-                    let surface = self
-                        .ctx
-                        .types
-                        .factory()
-                        .type_param(tsz_solver::TypeParamInfo {
-                            name: self.ctx.types.intern_string(type_name),
-                            constraint,
-                            default: None,
-                            is_const: false,
-                            origin: tsz_solver::TypeParamOrigin::User,
-                        });
+                    let surface = diagnostic_query::diagnostic_user_type_param(
+                        self.ctx.types,
+                        self.ctx.types.intern_string(type_name),
+                        constraint,
+                    );
                     if self.operator_operand_may_include_bigint(surface) {
                         return surface;
                     }

@@ -92,29 +92,7 @@ impl<'a> CheckerState<'a> {
         sig: &CallSignature,
         type_args: &[TypeId],
     ) -> Option<CallSignature> {
-        if sig.type_params.len() != type_args.len() {
-            return None;
-        }
-        let subst = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
-        Some(CallSignature {
-            type_params: Vec::new(),
-            params: sig
-                .params
-                .iter()
-                .map(|param| tsz_solver::ParamInfo {
-                    name: param.name,
-                    type_id: instantiate_type(self.ctx.types, param.type_id, &subst),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            this_type: sig
-                .this_type
-                .map(|this_type| instantiate_type(self.ctx.types, this_type, &subst)),
-            return_type: instantiate_type(self.ctx.types, sig.return_type, &subst),
-            type_predicate: sig.type_predicate,
-            is_method: sig.is_method,
-        })
+        diagnostic_query::instantiate_call_signature_for_display(self.ctx.types, sig, type_args)
     }
 
     fn symbol_type_parameter_count(&self, sym_id: SymbolId) -> usize {
