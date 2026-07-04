@@ -2401,3 +2401,6 @@ path = "tests/class_duplicate_member_implicit_any_tests.rs"
 [[test]]
 name = "readonly_alias_display_14826_tests"
 path = "tests/readonly_alias_display_14826_tests.rs"
+[[test]]
+name = "interface_extends_generic_mapped_base_no_ts2430_tests"
+path = "tests/interface_extends_generic_mapped_base_no_ts2430_tests.rs"
