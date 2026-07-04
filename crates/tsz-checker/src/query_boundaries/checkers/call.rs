@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
+use crate::query_boundaries::construct_signatures as signature_construction;
 use tsz_common::Atom;
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
-use tsz_solver::{FunctionShape, ObjectShape, PropertyInfo, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId};
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
@@ -106,15 +107,7 @@ pub(crate) fn get_call_signature(
             .or_else(|| sigs.first())?
     };
 
-    Some(FunctionShape {
-        type_params: sig.type_params.clone(),
-        params: sig.params.clone(),
-        this_type: sig.this_type,
-        return_type: sig.return_type,
-        type_predicate: sig.type_predicate,
-        is_constructor: false,
-        is_method: sig.is_method,
-    })
+    Some(signature_construction::function_shape_from_call_signature_preserving_method(sig, false))
 }
 
 pub(crate) fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
@@ -319,15 +312,9 @@ pub(crate) fn get_construct_signature(
             .find(|s| !s.type_params.is_empty())
             .or_else(|| sigs.first())?
     };
-    Some(FunctionShape {
-        type_params: sig.type_params.clone(),
-        params: sig.params.clone(),
-        this_type: sig.this_type,
-        return_type: sig.return_type,
-        type_predicate: sig.type_predicate,
-        is_constructor: true,
-        is_method: false,
-    })
+    Some(signature_construction::function_shape_from_call_signature(
+        sig, true,
+    ))
 }
 
 pub(crate) fn resolve_call<C: AssignabilityChecker>(
@@ -489,6 +476,120 @@ pub(crate) fn call_inference_tuple_type(db: &dyn TypeDatabase, elements: Vec<Typ
 
 pub(crate) fn call_result_correlated_union(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
     db.union(members)
+}
+
+pub(crate) fn call_result_unknown_return_shape(
+    sig: tsz_solver::CallSignature,
+) -> Arc<FunctionShape> {
+    Arc::new(FunctionShape {
+        type_params: sig.type_params,
+        params: sig.params,
+        this_type: sig.this_type,
+        return_type: TypeId::UNKNOWN,
+        type_predicate: sig.type_predicate,
+        is_constructor: false,
+        is_method: sig.is_method,
+    })
+}
+
+pub(crate) fn call_result_finite_mapped_display_object(
+    db: &dyn TypeDatabase,
+    properties: Vec<(Atom, TypeId)>,
+    optional: bool,
+    readonly: bool,
+) -> TypeId {
+    let properties = properties
+        .into_iter()
+        .map(|(name, type_id)| {
+            let mut property = PropertyInfo::new(name, type_id);
+            property.optional = optional;
+            property.readonly = readonly;
+            property
+        })
+        .collect();
+    db.object(properties)
+}
+
+pub(crate) fn call_result_literalized_tuple_actual(
+    db: &dyn TypeDatabase,
+    original_elements: Vec<TupleElement>,
+    element_types: Vec<TypeId>,
+) -> TypeId {
+    debug_assert_eq!(original_elements.len(), element_types.len());
+    db.tuple(
+        original_elements
+            .into_iter()
+            .zip(element_types)
+            .map(|(element, type_id)| TupleElement {
+                type_id,
+                name: element.name,
+                optional: element.optional,
+                rest: element.rest,
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn call_result_tuple_tail(
+    db: &dyn TypeDatabase,
+    elements: &[TupleElement],
+    drop_count: usize,
+) -> Option<TypeId> {
+    if drop_count > elements.len() {
+        return None;
+    }
+    Some(db.tuple(elements[drop_count..].to_vec()))
+}
+
+pub(crate) fn call_result_spread_rest_tuple_display_target(
+    db: &dyn TypeDatabase,
+    callback_shape: &FunctionShape,
+    spread_type: TypeId,
+) -> Option<TypeId> {
+    let mut params = callback_shape.params.clone();
+    let last_param = params.last_mut()?;
+    if !last_param.rest {
+        return None;
+    }
+    *last_param = ParamInfo {
+        type_id: spread_type,
+        ..*last_param
+    };
+    let callback_type =
+        crate::query_boundaries::construct_signatures::function_type_with_params_replaced(
+            db,
+            callback_shape,
+            params,
+        );
+    Some(db.tuple(vec![
+        TupleElement {
+            type_id: spread_type,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: callback_type,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]))
+}
+
+pub(crate) fn call_result_generic_callable_display_target(
+    db: &dyn TypeDatabase,
+    target_fn: &FunctionShape,
+) -> TypeId {
+    db.function(FunctionShape {
+        type_params: vec![],
+        params: target_fn.params.clone(),
+        this_type: target_fn.this_type,
+        return_type: target_fn.return_type,
+        type_predicate: target_fn.type_predicate,
+        is_constructor: target_fn.is_constructor,
+        is_method: target_fn.is_method,
+    })
 }
 
 pub(crate) fn call_result_optional_chain_return(

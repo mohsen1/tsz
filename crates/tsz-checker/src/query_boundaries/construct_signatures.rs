@@ -84,6 +84,23 @@ pub(crate) fn function_shape_from_call_signature(
     }
 }
 
+/// View one call signature as a standalone `FunctionShape`, preserving the
+/// signature's method-ness for contextual call surfaces.
+pub(crate) fn function_shape_from_call_signature_preserving_method(
+    sig: &CallSignature,
+    is_constructor: bool,
+) -> FunctionShape {
+    FunctionShape {
+        type_params: sig.type_params.clone(),
+        params: sig.params.clone(),
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor,
+        is_method: sig.is_method,
+    }
+}
+
 /// Collapse a `FunctionShape` back into a `CallSignature`.
 ///
 /// Constructor-ness is positional in a `CallableShape` (which signature list
@@ -131,6 +148,26 @@ pub(crate) fn function_type_with_params_replaced(
             params,
             this_type: shape.this_type,
             return_type: shape.return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        },
+    )
+}
+
+/// Intern a function type preserving `shape` metadata with a new return type.
+pub(crate) fn function_type_with_return_replaced(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: shape.params.clone(),
+            this_type: shape.this_type,
+            return_type,
             type_predicate: shape.type_predicate,
             is_constructor: shape.is_constructor,
             is_method: shape.is_method,

@@ -222,10 +222,12 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         .expect("failed to read query_boundaries/construct_signatures.rs");
     for helper in [
         "function_shape_from_call_signature",
+        "function_shape_from_call_signature_preserving_method",
         "call_signature_from_function_shape",
         "function_type_from_shape",
         "function_type_from_parts",
         "function_type_with_params_replaced",
+        "function_type_with_return_replaced",
         "function_type_from_call_signature",
         "function_type_from_call_signature_preserving_method",
         "call_only_callable_type",
