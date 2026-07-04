@@ -32,12 +32,29 @@ Fix once, don't churn: after ~2–3 edit→test cycles you're guessing — break
 the failing assertion and compare actual vs expected values, or `set` the
 suspect value and `continue` to validate the hypothesis without editing.
 
-Tap, don't walk. The debugger aims your reading; it rarely hands you the fix.
-Break at the sink, read which path fired (and which sinks show `0 hits`), `bt`
-to the deciding frame, then **read that code**. Stepping instruction-by-instruction,
-`eval`-looping to reconstruct state by hand, or adding `dbg!`/`println!` are the
-signature of the runs that burn tokens and still lose — if you're doing that, or
-on your third `launch`, stop and read the frame the backtrace pointed at.
+Tap, don't walk — hard rules. The debugger aims your reading; it rarely hands
+you the fix. Break at the sink, read which path fired (and which sinks show
+`0 hits`), `bt` to the deciding frame, then **read that code**. Every losing
+benchmark run broke one of these while sure it was "making progress":
+- **`bt` named a `file:line` → STOP; don't launch again.** Read it; the fix is in
+  that frame or its **caller** — don't break into a *callee* the backtrace names
+  to "confirm" a return value.
+- **Budget 2 launches** (a `--cargo` `trace` counts — it rebuilds tsz). Before a
+  3rd, name the runtime fact you still lack and can't get by reading; if you can't,
+  read.
+- **`0 hits`/`NOT BOUND` → the emit is elsewhere: READ the upstream gate.** A named
+  wrong diagnostic (a `TSxxxx` code) is a `grep` task — find the emit site by
+  reading, then launch once; don't relaunch guessing sinks.
+- **`eval` can't run Rust methods** — a type's display name, `.len()`, any method
+  value fails. Break *inside* the formatter/interner lookup and read its inputs, or
+  read the code. A failed `eval` on an opaque `Arc`/`TypeId` is not a "flaky
+  debugger." **Never add `dbg!`/`eprintln!`** (forbidden here, and it rebuilds tsz);
+  use `rdbg vars` for all locals instead of re-`--capture`.
+- **State only what the output shows** — cite the command+output or say "unknown."
+  A raw test `FAILED`/`exited 101` with no `>>> STOP`/hit-count ran to completion
+  *without pausing*; it does not mean the line didn't run (`rdbg breaks` shows
+  whether a breakpoint bound). Degraded tooling (DWARF error, breakpoints won't
+  bind) → stop and read.
 
 ## tsz: wrong or extra diagnostics (the main use here)
 
