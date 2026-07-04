@@ -994,6 +994,9 @@ mod fresh_object_literal_union_literal_kind_display_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
 #[cfg(test)]
+#[path = "tests/generic_alias_application_display_tests.rs"]
+mod generic_alias_application_display_tests;
+#[cfg(test)]
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
 mod generic_argument_suppression_relation_routing_arch_tests;
 #[cfg(test)]

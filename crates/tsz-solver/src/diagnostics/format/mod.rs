@@ -196,7 +196,7 @@ pub struct TypeFormatter<'a> {
     /// Formatting a generic `Application` attempts up to four alias-reduction
     /// strategies (`scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`,
+    /// `reducing_application_display`,
     /// `variadic_tuple_alias_application_display`). Each strategy runs a fresh
     /// `instantiate_generic` + `evaluate_type` over the alias body. Deeply
     /// nested generic receiver types (e.g. drizzle's relational builders) form
@@ -389,30 +389,28 @@ impl<'a> TypeFormatter<'a> {
             .then_some(evaluated)
     }
 
-    /// A non-distributive application of a generic alias whose *declared body is
-    /// a conditional type* loses its alias symbol when the conditional resolves:
-    /// the operator resolves into its branch and never stamps the enclosing
-    /// alias onto the result, so tsc renders the resolved type structurally for
-    /// any shape — scalar (`DeepReadonly<number>` → `number`), tuple
-    /// (`Parameters<F>` → `[a: number]`), union (`A | B`), and object
-    /// (`DeepReadonly<{ b: number }>` → `{ readonly b: number; }`, issue
-    /// #10914) alike — not as `Name<Args>`.
-    ///
-    /// Returns the evaluated type to format in place of the application form.
-    /// Returns `None` only when the conditional cannot drop its name: a
-    /// mapped/object-bodied application (`Partial<T>` keeps its alias symbol)
-    /// fails the structural gate, a result that stays generic is rejected
-    /// above, and a result that fails to reduce (a still-deferred conditional,
-    /// or one whose evaluation made no progress) keeps the application form.
-    /// The distributive form is handled earlier by
-    /// [`Self::distributed_conditional_application_display`].
-    fn reducing_conditional_application_display(&self, type_id: TypeId) -> Option<TypeId> {
+    /// Maximum times [`Self::reducing_application_display`] re-applies
+    /// its instantiate + evaluate step while a reduction keeps producing another
+    /// reducing-alias application (alias forwarding or a converging recursive
+    /// conditional). A converging chain resolves in a handful of steps; the cap
+    /// is a display-only guard against a genuinely non-terminating alias and is
+    /// generous relative to any real diagnostic type.
+    const REDUCING_APPLICATION_RESOLVE_FUEL: u32 = 64;
+
+    /// A fully-instantiated non-distributive application of a generic alias whose
+    /// declared body is a name-dropping reducing operator (conditional, indexed
+    /// access, `keyof`, template literal, string-mapping intrinsic, or an alias
+    /// chain forwarding to one) drops its alias symbol: tsc renders the reduced
+    /// result structurally for any concrete shape (issues #10914/#15368), not as
+    /// `Name<Args>`. Returns the evaluated type, or `None` when the alias keeps its
+    /// name — mapped/object-bodied (`Partial<T>`), still-generic, or non-reducing
+    /// (see [`alias_underlying::application_reduces_to_displayable_shape`]). The
+    /// distributive form is [`Self::distributed_conditional_application_display`].
+    fn reducing_application_display(&self, type_id: TypeId) -> Option<TypeId> {
         let def_store = self.def_store?;
-        // Cheap structural gate (shared with the checker boundary): the base
-        // must resolve to a generic alias whose declared body is a conditional.
-        // Mapped/object-bodied applications (`Partial<T>`) fail this and keep
-        // their alias symbol.
-        if !crate::type_queries::application_base_has_conditional_alias_body(
+        // Structural gate (shared with the checker boundary): base must be a
+        // generic alias whose declared body reduces through a name-dropping operator.
+        if !crate::type_queries::application_base_has_reducing_alias_body(
             self.interner,
             def_store,
             type_id,
@@ -428,56 +426,67 @@ impl<'a> TypeFormatter<'a> {
         if crate::type_queries::contains_type_parameters_db(self.interner, type_id) {
             return None;
         }
-        // Instantiate the conditional body with the concrete arguments and
-        // evaluate. `instantiate_generic` substitutes the def body directly,
-        // which reduces a nested helper application (`DeepReadonly<{ b }>`)
-        // that a bare `evaluate_type` of the wrapper would leave deferred.
-        let TypeData::Application(app_id) = self.interner.lookup(type_id)? else {
-            return None;
-        };
-        let app = self.interner.type_application(app_id);
-        let def_id = crate::type_queries::get_lazy_def_id(self.interner, app.base)
-            .or_else(|| def_store.find_def_for_type(app.base))?;
-        let def = def_store.get(def_id)?;
-        let instantiated = crate::computation::instantiate_generic(
-            self.interner,
-            def.body?,
-            &def.type_params,
-            &app.args,
-        );
-        let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
-        if evaluated == TypeId::ERROR
-            || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+        // Instantiate the reducing body with the concrete args and evaluate
+        // (instantiate_generic substitutes the def body directly, reducing nested
+        // helper applications a bare evaluate would defer). One step reduces the
+        // outermost operator; re-apply while the result stays a concrete
+        // reducing-alias application (alias-forwarding / recursive), fuel-bounded.
+        let mut current = type_id;
+        for _ in 0..Self::REDUCING_APPLICATION_RESOLVE_FUEL {
+            let TypeData::Application(app_id) = self.interner.lookup(current)? else {
+                return None;
+            };
+            let app = self.interner.type_application(app_id);
+            let def_id = crate::type_queries::get_lazy_def_id(self.interner, app.base)
+                .or_else(|| def_store.find_def_for_type(app.base))?;
+            let def = def_store.get(def_id)?;
+            let instantiated = crate::computation::instantiate_generic(
+                self.interner,
+                def.body?,
+                &def.type_params,
+                &app.args,
+            );
+            let evaluated = crate::evaluation::evaluate::evaluate_type(self.interner, instantiated);
+            if evaluated == TypeId::ERROR
+                || crate::type_queries::contains_type_parameters_db(self.interner, evaluated)
+            {
+                return None;
+            }
+            // Stop once the reduction stops making progress or no longer yields a
+            // concrete reducing-alias application: anything else (an object,
+            // tuple, scalar, or a still-deferred operator) is the final shape the
+            // gate below judges. The `evaluated == current` guard also prevents an
+            // infinite spin on an alias that evaluates to itself.
+            let done = evaluated == current
+                || !crate::type_queries::application_base_has_reducing_alias_body(
+                    self.interner,
+                    def_store,
+                    evaluated,
+                );
+            current = evaluated;
+            if done {
+                break;
+            }
+        }
+        // A still-deferred operator (unresolved operand) is no more informative
+        // than the application form, so keep it. Otherwise tsc renders the reduced
+        // concrete shape structurally; bare literal/union results are excluded
+        // (application_reduces_to_displayable_shape) — tsc widens those separately.
+        if matches!(
+            self.interner.lookup(current),
+            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
+        ) || !alias_underlying::application_reduces_to_displayable_shape(self.interner, current)
         {
             return None;
         }
-        // A conditional/indexed access still deferred after evaluation never
-        // reduced (an unresolved operand); the raw node is no more informative
-        // than the application form, so keep the application form. Otherwise tsc
-        // drops the alias symbol and renders the reduced result structurally for
-        // any concrete shape — `Reverse<[1, 2, 3]>` → `[3, 2, 1]`,
-        // `Unbox<Promise<Promise<number>>>` → `number`, `DeepReadonly<{ b }>` →
-        // `{ readonly b: number; }`. Bare literal / union results are excluded
-        // (`application_reduces_to_displayable_shape`): tsc applies literal-union
-        // display widening to those, a separate display concern, so they keep
-        // the application surface.
-        if matches!(
-            self.interner.lookup(evaluated),
-            Some(TypeData::Conditional(_) | TypeData::IndexAccess(_, _))
-        ) || !alias_underlying::application_reduces_to_displayable_shape(
-            self.interner,
-            evaluated,
-        ) {
-            return None;
-        }
-        Some(evaluated)
+        Some(current)
     }
 
     /// Memoized dispatch for the four `Application` display-reduction strategies.
     ///
     /// Tries, in order, `scalar_mapped_alias_application_display`,
     /// `distributed_conditional_application_display`,
-    /// `reducing_conditional_application_display`, and
+    /// `reducing_application_display`, and
     /// `variadic_tuple_alias_application_display`; the first that fires wins and
     /// its reduced `TypeId` is returned for the caller to format in place of the
     /// `Name<Args>` application surface. Each strategy runs an
@@ -500,7 +509,7 @@ impl<'a> TypeFormatter<'a> {
         let reduced = self
             .scalar_mapped_alias_application_display(type_id, app.base, &app.args)
             .or_else(|| self.distributed_conditional_application_display(app.base, &app.args))
-            .or_else(|| self.reducing_conditional_application_display(type_id))
+            .or_else(|| self.reducing_application_display(type_id))
             .or_else(|| self.variadic_tuple_alias_application_display(app.base, &app.args));
         self.application_reduction_cache
             .borrow_mut()

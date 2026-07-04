@@ -4,7 +4,7 @@
 //! The parent `mod.rs` re-exports everything; callers should use `type_queries::*`.
 
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::def::DefinitionStore;
+use crate::def::{DefKind, DefinitionStore};
 use crate::evaluation::evaluate::evaluate_type;
 use crate::types::{IntrinsicKind, LiteralValue};
 use crate::{TypeData, TypeId, TypeParamInfo};
@@ -156,24 +156,106 @@ pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::F
     atoms.into_iter().map(|a| db.resolve_atom(a)).collect()
 }
 
+/// `true` when `type_id` is a type operator that never carries tsc's
+/// `aliasSymbol` onto its result — a *name-dropping reducing operator*: a
+/// conditional, an indexed access, a `keyof`, a template literal, or a
+/// `Uppercase`/`Lowercase`/… string-mapping intrinsic. A type alias whose body
+/// is one of these resolves *into* the operator's result without stamping the
+/// enclosing alias, so tsc renders the evaluated type rather than the name. This
+/// is the single definition of the set shared by the generic-application gate
+/// ([`application_base_has_reducing_alias_body`]) and the non-generic policy in
+/// `diagnostics::format::alias_underlying`.
+pub fn is_name_dropping_reducing_operator(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::KeyOf(_)
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+        )
+    )
+}
+
+/// Resolve a generic `Application`'s base to the declared body of the type alias
+/// it names, or `None` when `type_id` is not an alias application. Shared base
+/// resolution for the alias-body display gates.
+fn application_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let TypeData::Application(app_id) = db.lookup(type_id)? else {
+        return None;
+    };
+    let app = db.type_application(app_id);
+    let def_id = get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))?;
+    def_store.get(def_id).and_then(|def| def.body)
+}
+
 pub fn application_base_has_conditional_alias_body(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
-        return false;
-    };
-    let app = db.type_application(app_id);
-    let Some(def_id) =
-        get_lazy_def_id(db, app.base).or_else(|| def_store.find_def_for_type(app.base))
-    else {
-        return false;
-    };
-    def_store
-        .get(def_id)
-        .and_then(|def| def.body)
+    application_alias_body(db, def_store, type_id)
         .is_some_and(|body| matches!(db.lookup(body), Some(TypeData::Conditional(_))))
+}
+
+/// `true` when `type_id` is a generic type-alias `Application` whose declared
+/// body is (or forwards through an alias chain to) a name-dropping reducing
+/// operator (see [`is_name_dropping_reducing_operator`]).
+///
+/// `tsc` attaches an `aliasSymbol` (and so renders the alias name) only to
+/// *freshly-constructed* structural types — mapped, union, intersection, object.
+/// A generic alias whose body is a reducing operator resolves *into* the
+/// operator's result without stamping the enclosing alias, so once the
+/// application is instantiated with concrete arguments `tsc` renders the
+/// evaluated structural type rather than `Name<Args>`. This generalizes
+/// [`application_base_has_conditional_alias_body`] (conditional-only) to the
+/// full reducing-operator set, and follows both bare alias forwarding
+/// (`type A<T> = B<T>`) and nested application bases.
+pub fn application_base_has_reducing_alias_body(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    application_alias_body(db, def_store, type_id)
+        .is_some_and(|body| alias_body_is_name_dropping_reducing_operator(db, def_store, body, 0))
+}
+
+/// Recursive worker for [`application_base_has_reducing_alias_body`]: `true` when
+/// `body` is a name-dropping reducing operator, or forwards to one through an
+/// alias reference (`type A<T> = B`) or an alias application base
+/// (`type NestedCond<T> = CondResolved<T>`). Bounded to guard against cyclic
+/// alias chains.
+fn alias_body_is_name_dropping_reducing_operator(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    body: TypeId,
+    depth: usize,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
+    if is_name_dropping_reducing_operator(db, body) {
+        return true;
+    }
+    let forwarded_def_id = match db.lookup(body) {
+        Some(TypeData::Application(app_id)) => {
+            get_lazy_def_id(db, db.type_application(app_id).base)
+        }
+        Some(TypeData::Lazy(def_id)) => Some(def_id),
+        _ => None,
+    };
+    forwarded_def_id
+        .and_then(|def_id| def_store.get(def_id))
+        .filter(|def| def.kind == DefKind::TypeAlias)
+        .and_then(|def| def.body)
+        .is_some_and(|next| {
+            alias_body_is_name_dropping_reducing_operator(db, def_store, next, depth + 1)
+        })
 }
 
 /// When `type_id` is a plain mutable array of a boolean literal element
