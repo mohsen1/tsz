@@ -89,6 +89,10 @@
 //! - `type_checking_surface_construction_boundary_scans`: type-checking
 //!   helpers route temporary type surfaces and user type-parameter
 //!   construction through `query_boundaries::type_checking`.
+//! - `type_environment_surface_construction_boundary_scans`: type-environment
+//!   globalThis, JS expando, mapped-result, instantiation-expression, and lazy
+//!   provisional surfaces route solver record construction through
+//!   `query_boundaries::state::type_environment`.
 //! - `type_node_fallback_construction_boundary_scans`: type-node resolution
 //!   routes intersection, callable/function, and object fallback construction
 //!   through construction query boundaries.
@@ -255,6 +259,8 @@ mod spelling_suggestion_gateway_scans;
 mod strict_bind_call_apply_construction_boundary_scans;
 #[path = "arch_source_scans/type_checking_surface_construction_boundary_scans.rs"]
 mod type_checking_surface_construction_boundary_scans;
+#[path = "arch_source_scans/type_environment_surface_construction_boundary_scans.rs"]
+mod type_environment_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
 #[path = "arch_source_scans/type_node_annotation_surface_construction_boundary_scans.rs"]

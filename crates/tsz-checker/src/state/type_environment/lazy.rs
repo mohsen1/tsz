@@ -580,7 +580,6 @@ impl CheckerState<'_> {
     fn try_provisional_class_expr_ctor_type(&self, sym_id: SymbolId) -> Option<TypeId> {
         use tsz_parser::parser::base::NodeIndex;
         use tsz_parser::parser::syntax_kind_ext;
-        use tsz_solver::{CallSignature, CallableShape, TypeParamInfo};
 
         // Only handle VARIABLE symbols (class declarations already return Lazy on circular ref).
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -614,36 +613,20 @@ impl CheckerState<'_> {
             .unwrap_or(0);
 
         // Build provisional type params with placeholder names.
-        let prov_type_params: Vec<TypeParamInfo> = (0..n_type_params)
+        let prov_type_params: Vec<_> = (0..n_type_params)
             .map(|i| {
                 let name = self.ctx.types.intern_string(&format!("$$prov{i}"));
-                TypeParamInfo::simple(name)
+                query::provisional_class_expression_type_param(name)
             })
             .collect();
 
-        // Build construct signature: `new<$$prov0, ...>() => any`.
+        // Build construct surface: `new<$$prov0, ...>() => any`.
         // The return type is `any` so `InstanceType<typeof Anon<T>>` reduces to `any`
         // during circular resolution, which is assignable to everything.
-        let construct_sig = CallSignature {
-            type_params: prov_type_params,
-            params: Vec::new(),
-            return_type: TypeId::ANY,
-            this_type: None,
-            type_predicate: None,
-            is_method: false,
-        };
-
-        let callable = self.ctx.types.factory().callable(CallableShape {
-            construct_signatures: vec![construct_sig],
-            call_signatures: Vec::new(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-            is_abstract: false,
-        });
-
-        Some(callable)
+        Some(query::provisional_class_expression_constructor_type(
+            self.ctx.types,
+            prov_type_params,
+        ))
     }
 
     pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {

@@ -1,16 +1,257 @@
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::{MappedTypeId, TypeId};
+use tsz_solver::{
+    CallSignature, CallableShape, MappedTypeId, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
+    TypeId, TypeParamInfo, TypeParamOrigin,
+};
 
 pub(crate) use super::super::common::{
-    TypeSubstitution, callable_shape_for_type as callable_shape, is_generic_type, lazy_def_id,
+    TypeSubstitution, callable_shape_for_type as callable_shape,
+    function_shape_for_type as function_shape, is_generic_type, lazy_def_id,
     object_shape_for_type as object_shape,
 };
 pub(crate) use super::super::generic_instantiation::instantiate_type;
 pub(crate) use tsz_solver::type_queries::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
+
+pub(crate) const fn enum_namespace_member_property(
+    name: Atom,
+    type_id: TypeId,
+    declaration_order: u32,
+) -> PropertyInfo {
+    let mut property = PropertyInfo::new(name, type_id);
+    property.readonly = true;
+    property.declaration_order = declaration_order;
+    property
+}
+
+pub(crate) const fn mapped_property(
+    name: Atom,
+    type_id: TypeId,
+    optional: bool,
+    readonly: bool,
+) -> PropertyInfo {
+    let mut property = PropertyInfo::new(name, type_id);
+    property.optional = optional;
+    property.readonly = readonly;
+    property
+}
+
+pub(crate) const fn global_this_surface_property(
+    name: Atom,
+    type_id: TypeId,
+    parent_id: Option<SymbolId>,
+    readonly: bool,
+    declaration_order: u32,
+) -> PropertyInfo {
+    let mut property = PropertyInfo::new(name, type_id);
+    property.write_type = type_id;
+    property.readonly = readonly;
+    property.parent_id = parent_id;
+    property.declaration_order = declaration_order;
+    property
+}
+
+pub(crate) const fn js_expando_property(
+    name: Atom,
+    type_id: TypeId,
+    parent_id: SymbolId,
+    declaration_order: u32,
+) -> PropertyInfo {
+    let mut property = PropertyInfo::new(name, type_id);
+    property.write_type = type_id;
+    property.parent_id = Some(parent_id);
+    property.declaration_order = declaration_order;
+    property
+}
+
+pub(crate) fn global_this_surface_object(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        properties,
+        flags: ObjectFlags::GLOBAL_THIS_SURFACE,
+        ..ObjectShape::default()
+    })
+}
+
+pub(crate) fn mapped_result_object(db: &dyn TypeDatabase, properties: Vec<PropertyInfo>) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn object_with_expando_properties(
+    db: &dyn TypeDatabase,
+    base_shape: &ObjectShape,
+    properties: Vec<PropertyInfo>,
+    fallback_symbol: SymbolId,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        flags: base_shape.flags,
+        properties,
+        string_index: base_shape.string_index,
+        number_index: base_shape.number_index,
+        symbol_index: base_shape.symbol_index,
+        symbol: base_shape.symbol.or(Some(fallback_symbol)),
+    })
+}
+
+pub(crate) fn callable_shape_for_expando_base(
+    db: &dyn TypeDatabase,
+    base_type: TypeId,
+    symbol: SymbolId,
+) -> Option<(CallableShape, u32)> {
+    if let Some(shape) = callable_shape(db, base_type) {
+        return Some(((*shape).clone(), shape.properties.len() as u32));
+    }
+
+    let function_shape = function_shape(db, base_type)?;
+    let signature = super::super::signature_building::call_signature(
+        function_shape.type_params.clone(),
+        function_shape.params.clone(),
+        function_shape.this_type,
+        function_shape.return_type,
+        function_shape.type_predicate,
+        function_shape.is_method,
+    );
+    let callable_shape = CallableShape {
+        call_signatures: if function_shape.is_constructor {
+            Vec::new()
+        } else {
+            vec![signature.clone()]
+        },
+        construct_signatures: if function_shape.is_constructor {
+            vec![signature]
+        } else {
+            Vec::new()
+        },
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: Some(symbol),
+        is_abstract: false,
+    };
+    Some((callable_shape, 0))
+}
+
+pub(crate) fn callable_with_appended_properties(
+    db: &dyn TypeDatabase,
+    mut shape: CallableShape,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    shape.properties.extend(properties);
+    db.callable(shape)
+}
+
+pub(crate) fn callable_with_instantiated_signatures(
+    db: &dyn TypeDatabase,
+    shape: &CallableShape,
+    call_signatures: Option<Vec<CallSignature>>,
+    construct_signatures: Option<Vec<CallSignature>>,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: call_signatures.unwrap_or_else(|| shape.call_signatures.clone()),
+        construct_signatures: construct_signatures
+            .unwrap_or_else(|| shape.construct_signatures.clone()),
+        properties: shape.properties.clone(),
+        string_index: shape.string_index,
+        number_index: shape.number_index,
+        symbol: shape.symbol,
+        is_abstract: shape.is_abstract,
+    })
+}
+
+pub(crate) fn instantiate_type_environment_signatures(
+    db: &dyn QueryDatabase,
+    signatures: &[CallSignature],
+    type_args: &[TypeId],
+) -> Option<Vec<CallSignature>> {
+    let mut changed = false;
+    let signatures = signatures
+        .iter()
+        .map(|signature| {
+            if signature.type_params.len() == type_args.len() && !signature.type_params.is_empty() {
+                changed = true;
+                instantiate_type_environment_signature(db, signature, type_args)
+            } else {
+                signature.clone()
+            }
+        })
+        .collect();
+
+    changed.then_some(signatures)
+}
+
+fn instantiate_type_environment_signature(
+    db: &dyn QueryDatabase,
+    signature: &CallSignature,
+    type_args: &[TypeId],
+) -> CallSignature {
+    let substitution =
+        TypeSubstitution::from_args(db.as_type_database(), &signature.type_params, type_args);
+    let params = signature
+        .params
+        .iter()
+        .map(|param| {
+            super::super::signature_building::param_info(
+                param.name,
+                instantiate_type(db, param.type_id, &substitution),
+                param.optional,
+                param.rest,
+            )
+        })
+        .collect();
+
+    super::super::signature_building::call_signature(
+        Vec::new(),
+        params,
+        signature
+            .this_type
+            .map(|type_id| instantiate_type(db, type_id, &substitution)),
+        instantiate_type(db, signature.return_type, &substitution),
+        signature.type_predicate,
+        signature.is_method,
+    )
+}
+
+pub(crate) fn unconstrained_type_environment_type_param(
+    db: &dyn TypeDatabase,
+    name: Atom,
+    origin: TypeParamOrigin,
+) -> TypeId {
+    let info = super::super::signature_building::type_param_info(name, None, None, false, origin);
+    db.type_param(info)
+}
+
+pub(crate) const fn provisional_class_expression_type_param(name: Atom) -> TypeParamInfo {
+    TypeParamInfo::simple(name)
+}
+
+pub(crate) fn provisional_class_expression_constructor_type(
+    db: &dyn TypeDatabase,
+    type_params: Vec<TypeParamInfo>,
+) -> TypeId {
+    let construct_signature = super::super::signature_building::call_signature(
+        type_params,
+        Vec::<ParamInfo>::new(),
+        None,
+        TypeId::ANY,
+        None,
+        false,
+    );
+    db.callable(CallableShape {
+        construct_signatures: vec![construct_signature],
+        call_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    })
+}
 
 /// Collect every unique concrete `Application` of `def_id` reachable from
 /// `type_id` (arguments free of type parameters). Used by the TS2589
