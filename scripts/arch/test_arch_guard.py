@@ -2,8 +2,9 @@ import json
 
 from test_arch_guard_support import ROOT, load_arch_guard_module, pathlib, tempfile, unittest
 from test_arch_guard_counts import *
+from test_arch_guard_lsp import *
+from test_arch_guard_project import *
 from test_arch_guard_policy import *
-from test_arch_guard_projects import *
 
 
 class ArchGuardJsonReportTests(unittest.TestCase):

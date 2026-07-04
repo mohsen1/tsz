@@ -1141,6 +1141,27 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardProjectCompatShimTests(unittest.TestCase):
+    """Keep the plural project guard files from becoming a second owner."""
+
+    def _script_text(self, name: str) -> str:
+        return (ROOT / "scripts" / "arch" / name).read_text(encoding="utf-8")
+
+    def test_plural_project_guard_module_is_thin_shim(self):
+        text = self._script_text("arch_guard_projects.py")
+        self.assertIn("from arch_guard_project import *", text)
+        self.assertNotIn("def scan_project_", text)
+        self.assertLessEqual(len(text.splitlines()), 8)
+
+    def test_plural_project_guard_test_module_delegates_to_owner_tests(self):
+        text = self._script_text("test_arch_guard_projects.py")
+        self.assertIn('("test_arch_guard_lsp", "test_arch_guard_project")', text)
+        self.assertIn("loadTestsFromName(module_name)", text)
+        self.assertNotIn("def load_tests", text)
+        self.assertNotIn("class ArchGuardProjectDashboardRowTests", text)
+        self.assertLessEqual(len(text.splitlines()), 14)
+
+
 
 
 if __name__ == "__main__":
