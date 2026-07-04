@@ -1,11 +1,12 @@
 //! Call/construct signature building (parameter extraction, instantiation, return types).
 
+use crate::query_boundaries::signature_building as signature_query;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, TypeId, TypeParamInfo, TypeParamOrigin};
+use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
 
 type JsdocTemplateParamScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
 type JsdocTemplateParamPushResult = (Vec<TypeParamInfo>, JsdocTemplateParamScopeUpdates);
@@ -41,14 +42,14 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 
-        CallSignature {
+        signature_query::call_signature(
             type_params,
             params,
             this_type,
             return_type,
             type_predicate,
-            is_method: false,
-        }
+            false,
+        )
     }
 
     pub(crate) fn jsdoc_overload_call_signatures_for_function(
@@ -137,7 +138,6 @@ impl<'a> CheckerState<'a> {
             return (Vec::new(), Vec::new());
         }
 
-        let factory = self.ctx.types.factory();
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut updates = Vec::with_capacity(template_names.len());
 
@@ -146,14 +146,8 @@ impl<'a> CheckerState<'a> {
             let default = default_str
                 .as_deref()
                 .and_then(|type_expr| self.resolve_jsdoc_reference(type_expr));
-            let info = TypeParamInfo {
-                name: atom,
-                constraint: None,
-                default,
-                is_const,
-                origin: TypeParamOrigin::User,
-            };
-            let type_id = factory.type_param(info);
+            let info = signature_query::user_type_param_info(atom, None, default, is_const);
+            let type_id = signature_query::user_type_param(self.ctx.types, info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, false));
             type_params.push(info);
@@ -324,14 +318,14 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 
-        tsz_solver::CallSignature {
+        signature_query::call_signature(
             type_params,
             params,
             this_type,
             return_type,
             type_predicate,
-            is_method: true,
-        }
+            true,
+        )
     }
 
     /// Build a `CallSignature` from a constructor declaration.
@@ -399,14 +393,14 @@ impl<'a> CheckerState<'a> {
         all_type_params.extend_from_slice(class_type_params);
         all_type_params.extend(type_params);
 
-        tsz_solver::CallSignature {
-            type_params: all_type_params,
+        signature_query::call_signature(
+            all_type_params,
             params,
             this_type,
-            return_type: instance_type,
-            type_predicate: None,
-            is_method: false,
-        }
+            instance_type,
+            None,
+            false,
+        )
     }
 
     // =========================================================================
@@ -421,45 +415,7 @@ impl<'a> CheckerState<'a> {
         sig: &tsz_solver::CallSignature,
         type_args: &[TypeId],
     ) -> tsz_solver::CallSignature {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-        use tsz_solver::ParamInfo;
-
-        let substitution = TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
-        let params: Vec<ParamInfo> = sig
-            .params
-            .iter()
-            .map(|param| ParamInfo {
-                name: param.name,
-                type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
-                optional: param.optional,
-                rest: param.rest,
-            })
-            .collect();
-
-        let this_type = sig
-            .this_type
-            .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
-        let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
-        let type_predicate =
-            sig.type_predicate
-                .as_ref()
-                .map(|predicate| tsz_solver::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate
-                        .type_id
-                        .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
-                    parameter_index: predicate.parameter_index,
-                });
-
-        tsz_solver::CallSignature {
-            type_params: Vec::new(),
-            params,
-            this_type,
-            return_type,
-            type_predicate,
-            is_method: sig.is_method,
-        }
+        signature_query::instantiate_signature(self.ctx.types, sig, type_args)
     }
 
     /// Partially instantiate a signature with fewer type arguments than type
@@ -473,70 +429,7 @@ impl<'a> CheckerState<'a> {
         sig: &tsz_solver::CallSignature,
         supplied_args: &[TypeId],
     ) -> tsz_solver::CallSignature {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-        use tsz_solver::{ParamInfo, TypeParamInfo};
-
-        debug_assert!(supplied_args.len() < sig.type_params.len());
-
-        // Build substitution from only the supplied type arguments.
-        let substitution = TypeSubstitution::from_args(
-            self.ctx.types,
-            &sig.type_params[..supplied_args.len()],
-            supplied_args,
-        );
-
-        // Remaining type params — update constraints/defaults that may reference
-        // the supplied type parameters.
-        let remaining_type_params: Vec<TypeParamInfo> = sig.type_params[supplied_args.len()..]
-            .iter()
-            .map(|tp| TypeParamInfo {
-                name: tp.name,
-                is_const: tp.is_const,
-                constraint: tp
-                    .constraint
-                    .map(|c| instantiate_type(self.ctx.types, c, &substitution)),
-                default: tp
-                    .default
-                    .map(|d| instantiate_type(self.ctx.types, d, &substitution)),
-                origin: tp.origin,
-            })
-            .collect();
-
-        let params: Vec<ParamInfo> = sig
-            .params
-            .iter()
-            .map(|param| ParamInfo {
-                name: param.name,
-                type_id: instantiate_type(self.ctx.types, param.type_id, &substitution),
-                optional: param.optional,
-                rest: param.rest,
-            })
-            .collect();
-
-        let this_type = sig
-            .this_type
-            .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution));
-        let return_type = instantiate_type(self.ctx.types, sig.return_type, &substitution);
-        let type_predicate =
-            sig.type_predicate
-                .as_ref()
-                .map(|predicate| tsz_solver::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate
-                        .type_id
-                        .map(|type_id| instantiate_type(self.ctx.types, type_id, &substitution)),
-                    parameter_index: predicate.parameter_index,
-                });
-
-        tsz_solver::CallSignature {
-            type_params: remaining_type_params,
-            params,
-            this_type,
-            return_type,
-            type_predicate,
-            is_method: sig.is_method,
-        }
+        signature_query::partially_instantiate_signature(self.ctx.types, sig, supplied_args)
     }
 
     // =========================================================================
@@ -579,8 +472,6 @@ impl<'a> CheckerState<'a> {
         params_list: &tsz_parser::parser::NodeList,
         mode: ParamTypeResolutionMode,
     ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
-        use tsz_solver::ParamInfo;
-
         let mut params = Vec::with_capacity(params_list.nodes.len());
         let mut this_type = None;
         let this_atom = self.ctx.types.intern_string("this");
@@ -665,12 +556,12 @@ impl<'a> CheckerState<'a> {
                 type_id
             };
 
-            params.push(ParamInfo {
+            params.push(signature_query::param_info(
                 name,
-                type_id: sig_type_id,
+                sig_type_id,
                 optional,
                 rest,
-            });
+            ));
         }
 
         (params, this_type)
@@ -707,7 +598,7 @@ impl<'a> CheckerState<'a> {
         params: &[tsz_solver::ParamInfo],
         in_type_literal: bool,
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        use tsz_solver::{TypePredicate, TypePredicateTarget};
+        use tsz_solver::TypePredicateTarget;
 
         if type_annotation.is_none() {
             return (TypeId::ANY, None);
@@ -793,12 +684,12 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let predicate = TypePredicate {
-            asserts: data.asserts_modifier,
+        let predicate = signature_query::type_predicate(
+            data.asserts_modifier,
             target,
             type_id,
             parameter_index,
-        };
+        );
 
         (return_type, Some(predicate))
     }
