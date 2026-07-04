@@ -7,6 +7,7 @@ use super::computation_support::{
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::index_signature::IndexSignature;
+use crate::query_boundaries::type_computation::object_literals;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -425,11 +426,11 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     resolved_spread,
                                 )
-                                .map(|value_type| IndexSignature {
-                                        key_type: TypeId::STRING,
+                                .map(|value_type| {
+                                    object_literals::spread_fallback_index_signature(
+                                        TypeId::STRING,
                                         value_type,
-                                        readonly: false,
-                                        param_name: None,
+                                    )
                                 });
                             if let Some(string_index) =
                                 crate::query_boundaries::index_signature::string_index_signature(
@@ -445,11 +446,11 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     resolved_spread,
                                 )
-                                .map(|value_type| IndexSignature {
-                                        key_type: TypeId::NUMBER,
+                                .map(|value_type| {
+                                    object_literals::spread_fallback_index_signature(
+                                        TypeId::NUMBER,
                                         value_type,
-                                        readonly: false,
-                                        param_name: None,
+                                    )
                                 });
                             if let Some(number_index) =
                                 crate::query_boundaries::index_signature::number_index_signature(
