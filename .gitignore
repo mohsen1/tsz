@@ -153,3 +153,6 @@ crates/tsz-website/data/*
 .local-target-main/
 __pycache__
 dist/
+
+# rdbg (rust-debugger-skill) per-project daemon state
+.rdbg/
