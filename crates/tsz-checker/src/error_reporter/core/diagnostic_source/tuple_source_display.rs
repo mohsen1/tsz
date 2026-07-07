@@ -5,6 +5,34 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Expression whose syntax backs an array-literal tuple source display.
+    ///
+    /// Element-level elaboration anchors a diagnostic on the mismatching
+    /// element itself. When that anchor is an array literal, its own elements
+    /// are what pair with the (element-level) target type; walking up to the
+    /// enclosing assignment RHS would pair the *outer* literal with the inner
+    /// target slot and mis-render the source (e.g. `[(string | number)[]]`
+    /// instead of `[number, string]`). Ordinary assignment diagnostics anchor
+    /// on a non-expression node (the binder name — rejected by
+    /// `direct_diagnostic_source_expression`) or on the RHS itself, so they
+    /// keep the enclosing-assignment walk. Callers may feed the selected
+    /// expression to non-tuple displays too (annotation text, literal
+    /// display); the preference applies to any array-literal anchor.
+    pub(in crate::error_reporter) fn tuple_display_source_expression(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        self.direct_diagnostic_source_expression(anchor_idx)
+            .map(|expr_idx| self.ctx.arena.skip_parenthesized(expr_idx))
+            .filter(|&expr_idx| {
+                self.ctx
+                    .arena
+                    .get(expr_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+            })
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+    }
+
     pub(crate) fn array_literal_tuple_source_type_display(
         &mut self,
         expr_idx: NodeIndex,

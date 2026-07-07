@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
-        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+        if let Some(expr_idx) = self.tuple_display_source_expression(anchor_idx)
             && let Some(display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
         {
@@ -325,7 +325,7 @@ impl<'a> CheckerState<'a> {
             return self.format_assignability_type_for_message(widened, target);
         }
 
-        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx)
+        if let Some(expr_idx) = self.tuple_display_source_expression(anchor_idx)
             && let Some(display) =
                 self.array_literal_tuple_source_type_display(expr_idx, source, target)
         {
@@ -546,7 +546,7 @@ impl<'a> CheckerState<'a> {
                 return display;
             }
         }
-        if let Some(expr_idx) = self.assignment_source_expression(anchor_idx) {
+        if let Some(expr_idx) = self.tuple_display_source_expression(anchor_idx) {
             if let Some(display) = self.type_assertion_mapped_alias_source_display(expr_idx) {
                 return display;
             }
