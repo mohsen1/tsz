@@ -70,6 +70,7 @@ pub fn check_multi_file(
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
     checker.ctx.set_resolved_modules(resolved_modules);
 
+    checker.prime_module_augmentation_bodies();
     checker.check_source_file(roots[entry_idx]);
     checker.ctx.diagnostics.clone()
 }
@@ -143,6 +144,7 @@ pub fn check_multi_file_with_global_index(
         .ctx
         .set_global_symbol_file_index(Arc::new(symbol_file_index));
 
+    checker.prime_module_augmentation_bodies();
     checker.check_source_file(roots[entry_idx]);
     checker.ctx.diagnostics.clone()
 }
@@ -207,6 +209,7 @@ pub fn check_all_multi_file_with_global_index(
             .ctx
             .set_global_symbol_file_index(Arc::clone(&symbol_file_index));
 
+        checker.prime_module_augmentation_bodies();
         checker.check_source_file(roots[file_idx]);
         diagnostics.extend(checker.ctx.diagnostics.clone());
     }
@@ -339,6 +342,7 @@ fn check_multi_file_with_libs_impl(
             .set_global_symbol_file_index(Arc::new(symbol_file_index));
     }
 
+    checker.prime_module_augmentation_bodies();
     checker.check_source_file(roots[entry_idx]);
     checker.ctx.diagnostics.clone()
 }
@@ -400,6 +404,7 @@ pub fn check_multi_file_with_type_params_cache(
     let cache = Arc::new(dashmap::DashMap::new());
     checker.ctx.cross_file_type_params_cache = Some(Arc::clone(&cache));
 
+    checker.prime_module_augmentation_bodies();
     checker.check_source_file(roots[entry_idx]);
     (checker.ctx.diagnostics.clone(), cache)
 }

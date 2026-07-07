@@ -381,6 +381,7 @@ pub fn check_files_parallel(
     ensure_rayon_global_pool();
 
     let plan = ParallelCheckPlan::build(program, checker_options, lib_files);
+    plan.prime_module_augmentation_bodies();
     let mut file_results = plan.run_file_checks();
     plan.run_lib_checks(&mut file_results);
     plan.aggregate(file_results)
@@ -597,6 +598,53 @@ impl<'a> ParallelCheckPlan<'a> {
         // Attach the shared DefinitionStore so generic-call inference can resolve
         // cross-arena declaration identity (issue #14344, `TSZ_XARENA_BASE_DECL`).
         cache.with_definition_store(&self.program.definition_store)
+    }
+
+    fn prime_module_augmentation_bodies(&self) {
+        if self.program.files.is_empty() {
+            return;
+        }
+
+        let file = &self.program.files[0];
+        let binder = Arc::clone(&self.all_binders[0]);
+        let query_cache = self.make_query_cache();
+        let mut checker = CheckerState::with_options_and_shared_def_store(
+            &file.arena,
+            binder.as_ref(),
+            &query_cache,
+            file.file_name.clone(),
+            self.checker_options,
+            std::sync::Arc::clone(&self.program.definition_store),
+        );
+        checker.ctx.set_all_arenas(Arc::clone(&self.all_arenas));
+        checker.ctx.set_all_binders(Arc::clone(&self.all_binders));
+        checker.ctx.set_current_file_idx(0);
+        checker
+            .ctx
+            .set_resolved_module_paths(Arc::clone(&self.resolved_module_paths));
+        checker
+            .ctx
+            .set_resolved_modules(Arc::clone(&self.resolved_modules));
+        checker
+            .ctx
+            .set_global_symbol_file_index(Arc::clone(&self.global_symbol_file_index));
+
+        if let Some(ref modules) = self.shared_declared_modules {
+            checker
+                .ctx
+                .set_declared_modules_from_skeleton(Arc::clone(modules));
+        }
+        if !self.lib_contexts.is_empty() {
+            checker
+                .ctx
+                .set_lib_contexts_shared(Arc::clone(&self.lib_contexts));
+            checker
+                .ctx
+                .set_lib_file_local_names(self.lib_file_local_names.clone());
+            checker.ctx.set_actual_lib_file_count(self.lib_contexts.len());
+        }
+
+        checker.prime_module_augmentation_bodies();
     }
 
     /// Build a `FileCheckResult` for a lib file at `lib_idx` with the given

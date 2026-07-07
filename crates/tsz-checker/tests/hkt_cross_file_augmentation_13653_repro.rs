@@ -154,10 +154,9 @@ export type MyArr = Kind<"MyArray", number>;
 }
 
 /// Direct literal indexed access bypasses the normal `resolve_lazy` call chain
-/// in a few syntax/diagnostic paths. With body publication enabled, those reads
-/// must still observe the augmented registry body instead of the empty base.
+/// in a few syntax/diagnostic paths. The program-level priming pass must make
+/// those reads observe the augmented registry body instead of the empty base.
 #[test]
-#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
 fn direct_literal_indexed_access_observes_augmented_registry_body() {
     let diags = diagnostics(&[
         (
@@ -195,7 +194,6 @@ export const wrong: URItoKind<number>["MyArray"] = ["x"];
 /// Same direct-read path, but with the registry hidden behind an alias. This
 /// guards alias-body probes that inspect a `Lazy(DefId)` body directly.
 #[test]
-#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
 fn alias_wrapped_indexed_access_observes_augmented_registry_body() {
     let diags = diagnostics(&[
         (
@@ -235,7 +233,6 @@ export const wrong: Registry<number>["Widget"] = ["x"];
 /// relation fallback. With body publication enabled, that probe must see the
 /// augmented registry body so the missing augmented member is still required.
 #[test]
-#[ignore = "requires TSZ_MODULE_AUG_BODY_PUBLISH=1"]
 fn alias_assignability_observes_augmented_registry_body() {
     let diags = diagnostics(&[
         (

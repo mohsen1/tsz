@@ -651,6 +651,7 @@ where
             if state.ctx.has_lib_loaded() {
                 state.prime_boxed_types();
             }
+            state.prime_module_augmentation_bodies();
             checker = Some(state);
         } else if let Some(ref mut state) = checker {
             state.ctx.switch_to_file(

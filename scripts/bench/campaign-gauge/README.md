@@ -13,10 +13,10 @@ All modes export the composed substrate stack once (see `CAMPAIGN_FLAGS` in
 `crates/tsz-solver/src/def/core/campaign_channels.rs`).
 
 - **flag-tests** (GATING): runs the flag-ON tests designed to pass under the
-  stack — the three `TSZ_MODULE_AUG_BODY_PUBLISH`-gated tests in
-  `crates/tsz-checker/tests/hkt_cross_file_augmentation_13653_repro.rs` (via
-  `--ignored`) plus the channel-registry / election-ordering unit tests. A
-  regression here means a landed flag's own parity contract broke.
+  stack — the HKT body-publication tests in
+  `crates/tsz-checker/tests/hkt_cross_file_augmentation_13653_repro.rs` plus the
+  channel-registry / election-ordering unit tests. A regression here means a
+  landed flag's own parity contract broke.
 - **determinism** (GATING): builds (or reuses `TSZ_BIN`) the `tsz` CLI and
   compiles the committed `fixture/` cross-file HKT-augmentation project
   `TSZ_GAUGE_REPEATS` times (default 3), asserting the sorted diagnostic output
