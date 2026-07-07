@@ -1,5 +1,6 @@
 //! Spread element handling for object literal type computation.
 
+use super::super::object_literal_support::UnionSpreadBranch;
 use super::computation_support::{
     SPREAD_DISPLAY_ORDER_STRIDE, rebase_spread_display_property_order,
     remove_synthetic_missing_union_spread_props,
@@ -26,7 +27,7 @@ pub(super) struct ObjectLiteralSpreadContext<'b> {
 pub(super) struct ObjectLiteralSpreadState<'b> {
     pub(super) properties: &'b mut FxHashMap<Atom, PropertyInfo>,
     pub(super) named_property_nodes: &'b mut FxHashMap<Atom, (NodeIndex, String)>,
-    pub(super) union_spread_branches: &'b mut Vec<FxHashMap<Atom, PropertyInfo>>,
+    pub(super) union_spread_branches: &'b mut Vec<UnionSpreadBranch>,
     pub(super) spread_string_index_signatures: &'b mut Vec<IndexSignature>,
     pub(super) spread_number_index_signatures: &'b mut Vec<IndexSignature>,
     pub(super) spread_symbol_index_signatures: &'b mut Vec<IndexSignature>,
@@ -252,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 // Union spread distribution: fork current property set
                 // into N branches, one per union member.
                 *has_union_spread = true;
-                let mut new_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
+                let mut new_branches: Vec<UnionSpreadBranch> = Vec::new();
 
                 // When earlier union spreads already produced branches, any
                 // named properties written since then accumulate in the main
@@ -280,6 +281,10 @@ impl<'a> CheckerState<'a> {
                 let mut all_member_props: Vec<Vec<PropertyInfo>> = members
                     .iter()
                     .map(|m| self.collect_object_spread_properties(*m))
+                    .collect();
+                let all_member_indexes: Vec<Vec<IndexSignature>> = members
+                    .iter()
+                    .map(|m| self.collect_object_spread_index_signatures(*m))
                     .collect();
                 remove_synthetic_missing_union_spread_props(&mut all_member_props);
 
@@ -332,14 +337,24 @@ impl<'a> CheckerState<'a> {
                 let spread_order_base = *spread_display_order_base;
                 *spread_display_order_base =
                     (*spread_display_order_base).saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
-                for member_props in all_member_props {
+                for (member_props, member_indexes) in
+                    all_member_props.into_iter().zip(all_member_indexes)
+                {
                     let member_props =
                         rebase_spread_display_property_order(&member_props, spread_order_base);
                     if union_spread_branches.is_empty() {
                         // First union spread: fork from the main properties
-                        let mut branch = properties.clone();
+                        let mut branch = UnionSpreadBranch::new(
+                            properties.clone(),
+                            spread_string_index_signatures,
+                            spread_number_index_signatures,
+                            spread_symbol_index_signatures,
+                        );
                         for prop in member_props {
-                            self.merge_spread_property(&mut branch, &prop);
+                            self.merge_spread_property(&mut branch.properties, &prop);
+                        }
+                        for index in member_indexes {
+                            branch.add_index_signature(index);
                         }
                         new_branches.push(branch);
                     } else {
@@ -350,11 +365,14 @@ impl<'a> CheckerState<'a> {
                             // union spread so they survive this distribution.
                             for name in &intervening_prop_names {
                                 if let Some(prop) = properties.get(name) {
-                                    self.merge_spread_property(&mut branch, prop);
+                                    self.merge_spread_property(&mut branch.properties, prop);
                                 }
                             }
                             for prop in &member_props {
-                                self.merge_spread_property(&mut branch, prop);
+                                self.merge_spread_property(&mut branch.properties, prop);
+                            }
+                            for index in &member_indexes {
+                                branch.add_index_signature(*index);
                             }
                             new_branches.push(branch);
                         }
@@ -422,65 +440,16 @@ impl<'a> CheckerState<'a> {
                                 resolved_spread,
                             )
                         {
-                            let fallback_string_index =
-                                crate::query_boundaries::index_signature::resolve_string_index(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .map(|value_type| IndexSignature {
-                                        key_type: TypeId::STRING,
-                                        value_type,
-                                        readonly: false,
-                                        param_name: None,
-                                });
-                            if let Some(string_index) =
-                                crate::query_boundaries::index_signature::string_index_signature(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .or(fallback_string_index)
+                            for index in self.collect_object_spread_index_signatures(resolved_spread)
                             {
-                                spread_string_index_signatures.push(string_index);
-                            }
-                            let fallback_number_index =
-                                crate::query_boundaries::index_signature::resolve_number_index(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .map(|value_type| IndexSignature {
-                                        key_type: TypeId::NUMBER,
-                                        value_type,
-                                        readonly: false,
-                                        param_name: None,
-                                });
-                            if let Some(number_index) =
-                                crate::query_boundaries::index_signature::number_index_signature(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .or(fallback_number_index)
-                            {
-                                spread_number_index_signatures.push(number_index);
-                            }
-                            let fallback_symbol_index =
-                                crate::query_boundaries::index_signature::resolve_symbol_index(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .map(|value_type| IndexSignature {
-                                    key_type: TypeId::SYMBOL,
-                                    value_type,
-                                    readonly: false,
-                                    param_name: None,
-                                });
-                            if let Some(symbol_index) =
-                                crate::query_boundaries::index_signature::symbol_index_signature(
-                                    self.ctx.types,
-                                    resolved_spread,
-                                )
-                                .or(fallback_symbol_index)
-                            {
-                                spread_symbol_index_signatures.push(symbol_index);
+                                match index.key_type {
+                                    TypeId::NUMBER => spread_number_index_signatures.push(index),
+                                    TypeId::SYMBOL => spread_symbol_index_signatures.push(index),
+                                    _ => spread_string_index_signatures.push(index),
+                                }
+                                for branch in union_spread_branches.iter_mut() {
+                                    branch.add_index_signature(index);
+                                }
                             }
                         }
 
@@ -526,12 +495,87 @@ impl<'a> CheckerState<'a> {
                 // Also apply non-union spread to any existing union branches
                 for branch in union_spread_branches.iter_mut() {
                     for prop in &spread_props_for_display {
-                        self.merge_spread_property(branch, prop);
+                        self.merge_spread_property(&mut branch.properties, prop);
                     }
                 }
             }
         }
         None
+    }
+
+    fn collect_object_spread_index_signatures(
+        &mut self,
+        resolved_spread: TypeId,
+    ) -> Vec<IndexSignature> {
+        if crate::query_boundaries::type_computation::core::is_fresh_literal_indexed_object(
+            self.ctx.types,
+            resolved_spread,
+        ) {
+            return Vec::new();
+        }
+
+        let mut indexes = Vec::new();
+        let fallback_string_index = crate::query_boundaries::index_signature::resolve_string_index(
+            self.ctx.types,
+            resolved_spread,
+        )
+        .map(|value_type| IndexSignature {
+            key_type: TypeId::STRING,
+            value_type,
+            readonly: false,
+            param_name: None,
+        });
+        if let Some(string_index) =
+            crate::query_boundaries::index_signature::string_index_signature(
+                self.ctx.types,
+                resolved_spread,
+            )
+            .or(fallback_string_index)
+        {
+            indexes.push(string_index);
+        }
+
+        let fallback_number_index = crate::query_boundaries::index_signature::resolve_number_index(
+            self.ctx.types,
+            resolved_spread,
+        )
+        .map(|value_type| IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type,
+            readonly: false,
+            param_name: None,
+        });
+        if let Some(number_index) =
+            crate::query_boundaries::index_signature::number_index_signature(
+                self.ctx.types,
+                resolved_spread,
+            )
+            .or(fallback_number_index)
+        {
+            indexes.push(number_index);
+        }
+
+        let fallback_symbol_index = crate::query_boundaries::index_signature::resolve_symbol_index(
+            self.ctx.types,
+            resolved_spread,
+        )
+        .map(|value_type| IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type,
+            readonly: false,
+            param_name: None,
+        });
+        if let Some(symbol_index) =
+            crate::query_boundaries::index_signature::symbol_index_signature(
+                self.ctx.types,
+                resolved_spread,
+            )
+            .or(fallback_symbol_index)
+        {
+            indexes.push(symbol_index);
+        }
+
+        indexes
     }
 
     fn apply_direct_object_literal_set_only_accessor_spread_surface(

@@ -934,6 +934,9 @@ path = "tests/spread_deferred_conditional_apparent_tests.rs"
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 [[test]]
+name = "union_spread_index_bucket_tests"
+path = "tests/union_spread_index_bucket_tests.rs"
+[[test]]
 name = "spread_rest_diagnostics_tests"
 path = "tests/spread_rest_diagnostics_tests.rs"
 [[test]]

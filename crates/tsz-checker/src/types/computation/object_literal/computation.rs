@@ -4,6 +4,7 @@
 //! over object literal elements and builds the resulting object type.
 
 use super::super::object_literal_context::ContextualPropertyPresence;
+use super::super::object_literal_support::{UnionSpreadBranch, merge_spread_index_signatures};
 use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
@@ -14,7 +15,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
-use super::computation_support::{SPREAD_DISPLAY_ORDER_OFFSET, merge_spread_index_signatures};
+use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
 
 struct ObjectLiteralRequestFacts {
@@ -252,9 +253,10 @@ impl<'a> CheckerState<'a> {
         let mut spread_number_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut spread_symbol_index_signatures: Vec<IndexSignature> = Vec::new();
         let mut has_spread = false;
+        let mut spread_count = 0usize;
         let mut has_any_spread = false;
         let mut has_union_spread = false;
-        let mut union_spread_branches: Vec<FxHashMap<Atom, PropertyInfo>> = Vec::new();
+        let mut union_spread_branches: Vec<UnionSpreadBranch> = Vec::new();
         // Track type-parameter-containing spread types for intersection creation.
         // When a type parameter (or type containing type parameters) is spread
         // alongside other properties, we create an intersection of the type parameter
@@ -1902,9 +1904,11 @@ impl<'a> CheckerState<'a> {
             ) {
             }
             // Spread assignment: { ...obj }
-            else if (elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
-                && let Some(spread_type) = self.process_object_literal_spread_element(
+            else if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                spread_count += 1;
+                if let Some(spread_type) = self.process_object_literal_spread_element(
                     ObjectLiteralSpreadContext {
                         elem_idx,
                         obj_element_count: obj.elements.nodes.len(),
@@ -1926,16 +1930,17 @@ impl<'a> CheckerState<'a> {
                         has_union_spread: &mut has_union_spread,
                         spread_display_order_base: &mut spread_display_order_base,
                     },
-                )
-            {
-                return spread_type;
+                ) {
+                    return spread_type;
+                }
             }
 
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
+        let drop_spread_index_signatures = !explicit_property_names.is_empty() || spread_count != 1;
         let (string_index_param_name, number_index_param_name) = merge_spread_index_signatures(
-            !explicit_property_names.is_empty(),
+            drop_spread_index_signatures,
             &mut string_index_types,
             &mut number_index_types,
             &mut symbol_index_types,
@@ -1958,6 +1963,7 @@ impl<'a> CheckerState<'a> {
                 has_any_spread,
                 has_union_spread,
                 union_spread_branches,
+                drop_spread_index_signatures,
                 generic_spread_types,
                 all_properties_context_sensitive,
             },

@@ -5,11 +5,10 @@ use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
 };
-use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{IndexSignature, PropertyInfo, TypeId};
+use tsz_solver::{PropertyInfo, TypeId};
 
 pub(super) const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
 pub(super) const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
@@ -63,48 +62,6 @@ pub(super) fn remove_synthetic_missing_union_spread_props(member_props: &mut [Ve
                 && required_names.contains(&prop.name))
         });
     }
-}
-
-pub(super) fn merge_spread_index_signatures(
-    has_explicit_properties: bool,
-    string_index_types: &mut Vec<TypeId>,
-    number_index_types: &mut Vec<TypeId>,
-    symbol_index_types: &mut Vec<TypeId>,
-    spread_string_index_signatures: Vec<IndexSignature>,
-    spread_number_index_signatures: Vec<IndexSignature>,
-    spread_symbol_index_signatures: Vec<IndexSignature>,
-) -> (Option<Atom>, Option<Atom>) {
-    if has_explicit_properties {
-        return (None, None);
-    }
-
-    let string_index_param_name = spread_string_index_signatures
-        .iter()
-        .filter(|idx| idx.key_type != TypeId::SYMBOL)
-        .find_map(|idx| idx.param_name);
-    let number_index_param_name = spread_number_index_signatures
-        .iter()
-        .find_map(|idx| idx.param_name);
-
-    for idx in spread_string_index_signatures {
-        if idx.key_type == TypeId::SYMBOL {
-            symbol_index_types.push(idx.value_type);
-        } else {
-            string_index_types.push(idx.value_type);
-        }
-    }
-    number_index_types.extend(
-        spread_number_index_signatures
-            .into_iter()
-            .map(|idx| idx.value_type),
-    );
-    symbol_index_types.extend(
-        spread_symbol_index_signatures
-            .into_iter()
-            .map(|idx| idx.value_type),
-    );
-
-    (string_index_param_name, number_index_param_name)
 }
 
 impl<'a> CheckerState<'a> {
