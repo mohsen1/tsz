@@ -275,7 +275,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .iter()
                     .map(|&arg_idx| self.check(arg_idx))
                     .collect();
-                resolved = self.ctx.types.application(resolved, type_args);
+                resolved =
+                    type_construction::type_node_application(self.ctx.types, resolved, type_args);
             }
             return resolved;
         }
@@ -308,21 +309,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return TypeId::NEVER;
             }
 
-            // Use literal-only reduction for type annotation unions to match tsc's
-            // UnionReduction.Literal behavior. This preserves the union structure
-            // (e.g., C | D stays as C | D even when D extends C) which is important
-            // for TS2403 redeclaration checks and type display in diagnostics.
-            let result = tsz_solver::utils::union_or_single_literal_reduce(
+            return type_construction::type_node_annotation_union_with_origin(
                 self.ctx.types,
-                member_types.clone(),
+                member_types,
             );
-
-            // Mirror tsc's `UnionType.origin`: record the as-written input
-            // member list so the diagnostic printer can preserve top-level
-            // alias names that union flattening would otherwise dissolve
-            // (see `TypeInterner::store_union_origin`).
-            self.ctx.types.store_union_origin(result, member_types);
-            return result;
         }
 
         TypeId::ERROR
@@ -367,11 +357,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        let factory = self.ctx.types.factory();
-
         if let Some(array_type) = self.ctx.arena.get_array_type(node) {
             let elem_type = self.check(array_type.element_type);
-            return factory.array(elem_type);
+            return type_construction::type_node_array(self.ctx.types, elem_type);
         }
 
         TypeId::ERROR
@@ -385,12 +373,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// - Rest elements (e.g., `[number, ...string[]]`)
     /// - Named elements (e.g., `[x: number, y: string]`)
     fn get_type_from_tuple_type(&mut self, idx: NodeIndex) -> TypeId {
-        use tsz_solver::TupleElement;
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        let factory = self.ctx.types.factory();
 
         if self.tuple_type_directly_references_resolving_alias(idx) {
             self.ctx.error(
@@ -453,12 +438,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             self.emit_rest_element_type_must_be_array(elem_node.pos, elem_node.end);
                             grammar_broke = true;
                         }
-                        elements.push(TupleElement {
-                            type_id: elem_type,
-                            name: None,
-                            optional: true,
-                            rest: is_rest_optional,
-                        });
+                        elements.push(type_construction::type_node_tuple_element(
+                            elem_type,
+                            None,
+                            true,
+                            is_rest_optional,
+                        ));
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
@@ -475,12 +460,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             &mut seen_rest,
                             &mut grammar_broke,
                         );
-                        elements.push(TupleElement {
-                            type_id: elem_type,
-                            name: None,
-                            optional: false,
-                            rest: true,
-                        });
+                        elements.push(type_construction::type_node_tuple_element(
+                            elem_type, None, false, true,
+                        ));
                     }
                 } else if elem_node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
                     if let Some(data) = self.ctx.arena.get_named_tuple_member(elem_node) {
@@ -542,12 +524,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             grammar_broke = true;
                         }
 
-                        elements.push(TupleElement {
-                            type_id: elem_type,
+                        elements.push(type_construction::type_node_tuple_element(
+                            elem_type,
                             name,
-                            optional: data.question_token || misplaced_optional_marker,
-                            rest: data.dot_dot_dot_token,
-                        });
+                            data.question_token || misplaced_optional_marker,
+                            data.dot_dot_dot_token,
+                        ));
                     }
                 } else {
                     // Regular element
@@ -562,16 +544,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         grammar_broke = true;
                     }
                     let elem_type = self.check(elem_idx);
-                    elements.push(TupleElement {
-                        type_id: elem_type,
-                        name: None,
-                        optional: false,
-                        rest: false,
-                    });
+                    elements.push(type_construction::type_node_tuple_element(
+                        elem_type, None, false, false,
+                    ));
                 }
             }
 
-            return factory.tuple(elements);
+            return type_construction::type_node_tuple(self.ctx.types, elements);
         }
 
         TypeId::ERROR
@@ -975,11 +954,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .contains(&type_pos)
             {
                 // Widen predicate type to T | null | undefined to match tsc behavior
-                predicate_type = self.ctx.types.factory().union(vec![
+                predicate_type = type_construction::type_node_nullable_predicate_union(
+                    self.ctx.types,
                     predicate_type,
-                    TypeId::NULL,
-                    TypeId::UNDEFINED,
-                ]);
+                );
             }
         }
 
