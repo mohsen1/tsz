@@ -517,6 +517,75 @@ fn conditional_subtype_relation_tracks_exact_optional_property_types() {
     );
 }
 
+#[test]
+fn local_conditional_subtype_cache_partitions_exact_optional_property_types() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("x");
+    let source = interner.object(vec![PropertyInfo::new(name, TypeId::UNDEFINED)]);
+    let target = interner.object(vec![PropertyInfo::opt(name, TypeId::NUMBER)]);
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+
+    evaluator.set_exact_optional_property_types(false);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(source, target),
+        BranchRelation::Holds
+    );
+    assert_eq!(evaluator.cache_statistics().conditional_subtype_entries, 1);
+
+    evaluator.set_exact_optional_property_types(true);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(source, target),
+        BranchRelation::Fails,
+        "the same evaluator must not reuse the non-exact optional-property verdict",
+    );
+    assert_eq!(
+        evaluator.cache_statistics().conditional_subtype_entries,
+        2,
+        "local branch verdicts should be partitioned by exact optional mode",
+    );
+
+    evaluator.set_exact_optional_property_types(false);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(source, target),
+        BranchRelation::Holds
+    );
+    assert_eq!(evaluator.cache_statistics().conditional_subtype_entries, 2);
+}
+
+#[test]
+fn local_conditional_subtype_cache_partitions_no_unchecked_indexed_access() {
+    let interner = TypeInterner::new();
+    let array = interner.array(TypeId::STRING);
+    let indexed = interner.index_access(array, TypeId::NUMBER);
+    let mut evaluator = TypeEvaluator::<crate::relations::subtype::NoopResolver>::new(&interner);
+
+    evaluator.set_no_unchecked_indexed_access(false);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(indexed, TypeId::STRING),
+        BranchRelation::Holds
+    );
+    assert_eq!(evaluator.cache_statistics().conditional_subtype_entries, 1);
+
+    evaluator.set_no_unchecked_indexed_access(true);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(indexed, TypeId::STRING),
+        BranchRelation::Fails,
+        "the same evaluator must not reuse the unchecked indexed-access verdict",
+    );
+    assert_eq!(
+        evaluator.cache_statistics().conditional_subtype_entries,
+        2,
+        "local branch verdicts should be partitioned by noUncheckedIndexedAccess",
+    );
+
+    evaluator.set_no_unchecked_indexed_access(false);
+    assert_eq!(
+        evaluator.conditional_subtype_relation(indexed, TypeId::STRING),
+        BranchRelation::Holds
+    );
+    assert_eq!(evaluator.cache_statistics().conditional_subtype_entries, 2);
+}
+
 fn test_type_parameter(interner: &TypeInterner, name: &str) -> TypeId {
     interner.type_param(crate::types::TypeParamInfo::simple(
         interner.intern_string(name),
