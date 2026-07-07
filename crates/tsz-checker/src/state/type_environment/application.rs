@@ -211,6 +211,60 @@ impl<'a> CheckerState<'a> {
         (materialized != underlying).then_some(materialized)
     }
 
+    /// Instantiate a *cross-file* generic interface/class application from its
+    /// `DefinitionStore` body and parameters.
+    ///
+    /// The def is the identity authority for a cross-file base: resolving the
+    /// base through its raw `SymbolId` reads the *current* binder, where
+    /// per-file binders mint colliding raw ids (#14344), so the shared
+    /// evaluator could bind the wrong symbol and no-op the argument
+    /// substitution (a free `T` leaks into members — false `TS2322`).
+    ///
+    /// Returns `None` for every shape the def store does not own — same-file
+    /// bases, non-program (lib/synthetic) defs, `declare`d ambient defs,
+    /// non-interface/class defs, defs without a registered body or parameters
+    /// — so the caller keeps the existing symbol-based path. `base`/`args`
+    /// are `application`'s already-extracted parts (the caller holds them;
+    /// re-deriving would re-clone the args). Refs #13212 / #10663.
+    pub(crate) fn instantiate_cross_file_interface_application(
+        &mut self,
+        application: TypeId,
+        base: TypeId,
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let base_def_id = query::lazy_def_id(self.ctx.types, base)?;
+        let (file_id, kind, is_declare) =
+            self.ctx.definition_store.get_classification(base_def_id)?;
+        // A def is cross-file only when it names a genuine *program* file
+        // that is not the current one — the non-program sentinel marks
+        // lib/synthetic defs, and ambient `declare` defs stay on the symbol
+        // path too.
+        if file_id.is_none_or(|file_id| {
+            file_id == self.ctx.current_file_idx as u32
+                || file_id == tsz_solver::def::DefinitionStore::NON_PROGRAM_FILE_SENTINEL
+        }) || is_declare
+            || !matches!(
+                kind,
+                tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+            )
+        {
+            return None;
+        }
+        let ApplicationBaseBody {
+            body_type,
+            type_params,
+        } = self.resolve_application_base_body(base)?;
+        if body_type == TypeId::ANY || body_type == TypeId::ERROR || type_params.is_empty() {
+            return None;
+        }
+        Some(self.instantiate_application_body_for_property_access(
+            body_type,
+            &type_params,
+            args,
+            application,
+        ))
+    }
+
     /// Instantiate a generic interface/class body with its type parameters bound
     /// to an application's arguments, then env-evaluate the result.
     ///

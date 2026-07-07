@@ -844,6 +844,16 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.kind)
     }
 
+    /// Get the `Copy` classification fields of a definition — `(file_id,
+    /// kind, is_declare)` — in one lookup, without cloning the whole
+    /// `DefinitionInfo` (whose heap fields make [`Self::get`] expensive for
+    /// gate checks that only classify the def).
+    pub fn get_classification(&self, id: DefId) -> Option<(Option<u32>, DefKind, bool)> {
+        self.definitions
+            .get(&id)
+            .map(|r| (r.file_id, r.kind, r.is_declare))
+    }
+
     /// Update the body `TypeId` for a definition (for lazy evaluation).
     ///
     /// If no entry exists for this `DefId` (e.g., it was created by
