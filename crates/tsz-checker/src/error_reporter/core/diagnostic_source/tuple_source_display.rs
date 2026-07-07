@@ -260,7 +260,6 @@ impl<'a> CheckerState<'a> {
             }
             per_member.push(elements);
         }
-        let factory = self.ctx.types.factory();
         // Precompute optional flags to avoid an O(members) scan per position.
         let optional_at: Vec<bool> = (0..arity)
             .map(|pos| per_member.iter().any(|e| e[pos].optional))
@@ -271,11 +270,11 @@ impl<'a> CheckerState<'a> {
         for position in 0..arity {
             type_ids_buf.clear();
             type_ids_buf.extend(per_member.iter().map(|elems| elems[position].type_id));
-            let union_type = if type_ids_buf.len() == 1 {
-                type_ids_buf[0]
-            } else {
-                factory.union_from_slice(&type_ids_buf)
-            };
+            let union_type =
+                crate::query_boundaries::diagnostics::source_display_union_type_from_slice(
+                    self.ctx.types,
+                    &type_ids_buf,
+                );
             result.push(tsz_solver::TupleElement {
                 type_id: union_type,
                 name: None,

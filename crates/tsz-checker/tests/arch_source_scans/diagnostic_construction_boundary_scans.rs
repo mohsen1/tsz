@@ -23,6 +23,13 @@ const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/state/type_environment/formatting.rs",
 ];
 const DIAGNOSTIC_FUNCTION_CONSTRUCTION_MODULES: &[&str] = &["src/error_reporter/render_failure.rs"];
+const DIAGNOSTIC_SOURCE_COLLECTION_MODULES: &[&str] = &[
+    "src/error_reporter/core/identifier_source_display.rs",
+    "src/error_reporter/core/diagnostic_source/contextual_index_display.rs",
+    "src/error_reporter/core/diagnostic_source/computed_index_source_display.rs",
+    "src/error_reporter/core/diagnostic_source/collection_source_display.rs",
+    "src/error_reporter/core/diagnostic_source/tuple_source_display.rs",
+];
 
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -109,6 +116,32 @@ fn diagnostic_display_callers_route_solver_shape_construction_through_diagnostic
 }
 
 #[test]
+fn diagnostic_source_collection_routes_collection_construction_through_diagnostics_boundary() {
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        ".factory().union(",
+        ".factory().union_from_slice(",
+        ".factory.union(",
+        ".factory.union_from_slice(",
+        ".types.union(",
+        ".types.union_from_slice(",
+        ".types.array(",
+        ".types.readonly_type(",
+    ];
+
+    let mut violations = Vec::new();
+    for relative in DIAGNOSTIC_SOURCE_COLLECTION_MODULES {
+        scan_for_patterns(relative, FORBIDDEN_PATTERNS, &mut violations);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic source collection display callers must route union/array \
+         construction through query_boundaries::diagnostics:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn diagnostics_boundary_owns_construction_helpers() {
     let source = fs::read_to_string(checker_path(DIAGNOSTICS_BOUNDARY))
         .expect("failed to read query_boundaries/diagnostics.rs");
@@ -120,6 +153,9 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "object_type_with_unknown_display_members",
         "mapped_property_mismatch_parameter_display_type",
         "display_property_literals_widened_for_related_info",
+        "source_display_union_type",
+        "source_display_union_type_from_slice",
+        "rebuilt_array_source_display_type",
         "function_type_from_shape",
         "function_type_with_params_replaced",
         "function_type_with_return_replaced",
