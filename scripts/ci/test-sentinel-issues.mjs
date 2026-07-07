@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {
   collectSentinelIssues,
   splitSentinels,
+  createSentinelIssue,
   closeDuplicateSentinels,
-  SENTINEL_LABEL,
   SENTINEL_PER_PAGE,
 } from "./lib/sentinel-issues.mjs";
 
@@ -77,36 +77,25 @@ test("collects ALL matches across pages, oldest (lowest number) first", () => {
   assert.deepEqual(matches.map((m) => m.number), [42, 900], "all matches, oldest first");
 });
 
-test("answers from the label-scoped listing in one call when the sentinel is labeled", () => {
-  const urls = [];
+test("the lookup does not depend on labels — a re-labeled sentinel is still found", () => {
   const matches = collectSentinelIssues(
     REPO,
-    (args) => {
-      const url = String(args[args.length - 1]);
-      urls.push(url);
-      return url.includes(`labels=${SENTINEL_LABEL}`) ? [{ number: 5, title: TITLE, body: MARKER }] : [];
-    },
+    () => [{ number: 6, title: "renamed", body: MARKER, labels: [] }],
     { marker: MARKER, title: TITLE },
   );
-  assert.deepEqual(matches.map((m) => m.number), [5]);
-  assert.equal(urls.length, 1, "label-scoped listing answers without the exhaustive walk");
-  assert.match(urls[0], new RegExp(`labels=${SENTINEL_LABEL}`));
+  assert.deepEqual(matches.map((m) => m.number), [6]);
 });
 
-test("a de-labeled sentinel is still found by the exhaustive fallback walk", () => {
-  const urls = [];
-  const matches = collectSentinelIssues(
-    REPO,
-    (args) => {
-      const url = String(args[args.length - 1]);
-      urls.push(url);
-      // The sentinel lost its label, so the label-scoped listing misses it.
-      return url.includes("labels=") ? [] : [{ number: 6, title: "renamed", body: MARKER }];
-    },
-    { marker: MARKER, title: TITLE },
-  );
-  assert.deepEqual(matches.map((m) => m.number), [6], "fallback walk finds the de-labeled sentinel");
-  assert.ok(urls.some((u) => !u.includes("labels=")), "falls through to the unlabeled listing");
+test("createSentinelIssue owns the tech-debt label", () => {
+  const calls = [];
+  createSentinelIssue(REPO, (args) => {
+    calls.push(args);
+    return { status: 0, stdout: "https://gh/issues/1", stderr: "" };
+  }, { title: TITLE, body: `${MARKER}\nbody` });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], "create");
+  const labelIndex = calls[0].indexOf("--label");
+  assert.equal(calls[0][labelIndex + 1], "tech-debt", "sentinels are created labeled for triage");
 });
 
 test("splitSentinels names the oldest canonical and the rest duplicates", () => {

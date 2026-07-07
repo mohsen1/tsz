@@ -18,8 +18,8 @@ import { runGh, runGhJson } from "./lib/gh.mjs";
 import {
   collectSentinelIssues,
   splitSentinels,
+  createSentinelIssue,
   closeDuplicateSentinels,
-  SENTINEL_LABEL,
 } from "./lib/sentinel-issues.mjs";
 
 const DEFAULT_MAX_RUNS = 60;
@@ -376,8 +376,7 @@ export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
       }
       return { action: "updated", number: existing.number, commented: headChanged, closedDuplicates: closeDupes() };
     }
-    const created = runCommand(["issue", "create", "--repo", repository,
-      "--title", ISSUE_TITLE, "--body", body, "--label", SENTINEL_LABEL]);
+    const created = createSentinelIssue(repository, runCommand, { title: ISSUE_TITLE, body });
     return { action: "created", detail: created.stdout || created.stderr };
   }
 

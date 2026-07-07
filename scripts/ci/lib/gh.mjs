@@ -12,10 +12,10 @@
 // exactly one place.
 import { spawnSync } from "node:child_process";
 
-export const GH_RETRY_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GH_RETRY_ATTEMPTS || "", 10) || 4);
-export const GH_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.GH_RETRY_BASE_MS || "", 10) || 500);
-export const GH_RETRY_MAX_MS = 8000;
-export const DEFAULT_GH_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
+const GH_RETRY_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GH_RETRY_ATTEMPTS || "", 10) || 4);
+const GH_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.GH_RETRY_BASE_MS || "", 10) || 500);
+const GH_RETRY_MAX_MS = 8000;
+const DEFAULT_GH_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const TRANSIENT_NET_CODES = new Set([
   "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "EPIPE", "ENETUNREACH",
 ]);
@@ -39,7 +39,7 @@ export function isTransientGhResult(result) {
     || /\b(?:Bad Gateway|Service Unavailable|Gateway Time-?out|Internal Server Error|Server Error)\b/i.test(text);
 }
 
-export function spawnGh(args, spawnOptions = {
+function spawnGh(args, spawnOptions = {
   encoding: "utf8",
   maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
   stdio: ["ignore", "pipe", "pipe"],

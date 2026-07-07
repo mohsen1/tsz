@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Shared dedup-sentinel issue lookup for the ci-health monitors
+// Shared dedup-sentinel issue lifecycle for the ci-health monitors
 // (`scripts/ci/check-main-red.mjs`, `scripts/bench/check-latest-freshness.mjs`).
 //
 // Each monitor tracks a standing condition (red `main`, frozen benchmark
@@ -13,8 +13,8 @@
 //    one of them: the other is never updated and never closed on recovery
 //    (#15532 duplicating #15401 is the concrete witness).
 //
-// This module makes the sentinel lookup self-healing:
-// - it collects ALL open matches, not the first;
+// This module makes the sentinel lifecycle self-healing:
+// - the lookup collects ALL open matches, not the first;
 // - it matches on the marker OR the exact bot-owned title, so a
 //   marker-stripped body edit cannot orphan the issue;
 // - it skips pull requests (the `/issues` endpoint interleaves them, and a PR
@@ -22,25 +22,37 @@
 // - `splitSentinels` names the oldest match canonical; callers close the rest
 //   as duplicates via `closeDuplicateSentinels`.
 
-// Every monitor creates its sentinel with this label; the lookup uses it as a
-// cheap server-side pre-filter before falling back to the exhaustive walk.
-export const SENTINEL_LABEL = "tech-debt";
+// Every monitor's sentinel is created with this label (via
+// `createSentinelIssue`) so humans can triage it; the lookup deliberately does
+// NOT rely on it — a re-labeled sentinel must still be found.
+const SENTINEL_LABEL = "tech-debt";
 
 export const SENTINEL_PER_PAGE = 100;
-// Caps the exhaustive walk on a pathological backlog (the `/issues` endpoint
-// interleaves open PRs, so the combined listing routinely exceeds one page)
-// without masking a reachable sentinel.
+// Caps the walk on a pathological backlog (the `/issues` endpoint interleaves
+// open PRs, so the combined listing routinely exceeds one page) without
+// masking a reachable sentinel.
 export const SENTINEL_MAX_PAGES = 20;
 
-function scanIssueListing(repository, fetchJson, { marker, title }, label) {
+/**
+ * Collect every open sentinel issue for a monitor, oldest first.
+ *
+ * A sentinel matches when its body carries `marker` or its title equals the
+ * bot-owned `title` exactly (the fallback that survives marker-stripping body
+ * edits). Pull requests are ignored. Returns `[]` when nothing matches or the
+ * issue listing is unavailable.
+ *
+ * @param {string} repository owner/repo
+ * @param {(args: string[]) => any} fetchJson gh JSON fetcher seam
+ * @param {{ marker: string, title: string }} keys
+ */
+export function collectSentinelIssues(repository, fetchJson, { marker, title }) {
   const matches = [];
-  const labelParam = label ? `&labels=${encodeURIComponent(label)}` : "";
   for (let page = 1; page <= SENTINEL_MAX_PAGES; page += 1) {
     const issues = fetchJson([
       "api",
       "-H",
       "Accept: application/vnd.github+json",
-      `repos/${repository}/issues?state=open&per_page=${SENTINEL_PER_PAGE}&page=${page}${labelParam}`,
+      `repos/${repository}/issues?state=open&per_page=${SENTINEL_PER_PAGE}&page=${page}`,
     ]);
     if (!Array.isArray(issues)) break;
     for (const item of issues) {
@@ -60,29 +72,6 @@ function scanIssueListing(repository, fetchJson, { marker, title }, label) {
 }
 
 /**
- * Collect every open sentinel issue for a monitor, oldest first.
- *
- * A sentinel matches when its body carries `marker` or its title equals the
- * bot-owned `title` exactly (the fallback that survives marker-stripping body
- * edits). Pull requests are ignored. Returns `[]` when nothing matches or the
- * issue listing is unavailable.
- *
- * The label-scoped listing usually answers in one API call; a de-labeled
- * sentinel is invisible to it, so an empty result falls through to the
- * exhaustive unlabeled walk rather than declaring "no sentinel" and letting
- * the reconciler file a duplicate.
- *
- * @param {string} repository owner/repo
- * @param {(args: string[]) => any} fetchJson gh JSON fetcher seam
- * @param {{ marker: string, title: string }} keys
- */
-export function collectSentinelIssues(repository, fetchJson, keys) {
-  const labeled = scanIssueListing(repository, fetchJson, keys, SENTINEL_LABEL);
-  if (labeled.length > 0) return labeled;
-  return scanIssueListing(repository, fetchJson, keys, null);
-}
-
-/**
  * Name the canonical sentinel among the open matches: the oldest (lowest
  * number) survives — it carries the original discussion — and every younger
  * match is a duplicate from a past lookup miss.
@@ -91,6 +80,28 @@ export function collectSentinelIssues(repository, fetchJson, keys) {
  */
 export function splitSentinels(matches) {
   return { canonical: matches[0] ?? null, duplicates: matches.slice(1) };
+}
+
+/**
+ * Create a monitor's sentinel issue, labeled `tech-debt`.
+ *
+ * @param {string} repository owner/repo
+ * @param {(args: string[]) => { status: number, stdout: string, stderr: string }} runCommand gh command seam
+ * @param {{ title: string, body: string }} content
+ */
+export function createSentinelIssue(repository, runCommand, { title, body }) {
+  return runCommand([
+    "issue",
+    "create",
+    "--repo",
+    repository,
+    "--title",
+    title,
+    "--body",
+    body,
+    "--label",
+    SENTINEL_LABEL,
+  ]);
 }
 
 /**

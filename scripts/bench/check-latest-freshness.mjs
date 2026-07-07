@@ -38,8 +38,8 @@ import { runGh, runGhJson } from "../ci/lib/gh.mjs";
 import {
   collectSentinelIssues,
   splitSentinels,
+  createSentinelIssue,
   closeDuplicateSentinels,
-  SENTINEL_LABEL,
 } from "../ci/lib/sentinel-issues.mjs";
 
 export const DEFAULT_LATEST_URL = "https://tsz.dev/benchmark-data/latest.json";
@@ -231,18 +231,7 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
       }
       return { action: "updated", number: existing.number, commented: changed, closedDuplicates: closeDupes() };
     }
-    const created = runCommand([
-      "issue",
-      "create",
-      "--repo",
-      repository,
-      "--title",
-      ISSUE_TITLE,
-      "--body",
-      body,
-      "--label",
-      SENTINEL_LABEL,
-    ]);
+    const created = createSentinelIssue(repository, runCommand, { title: ISSUE_TITLE, body });
     return { action: "created", detail: created.stdout || created.stderr };
   }
 
