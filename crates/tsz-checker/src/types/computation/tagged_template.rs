@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
 
             if needs_two_pass {
                 // === Round 1: Collect non-contextual substitution types ===
-                let placeholder = signature_construction::function_type_from_parts(
+                let placeholder = signature_construction::function_type_from_params_and_return(
                     self.ctx.types,
                     vec![],
                     TypeId::ANY,

@@ -64,6 +64,9 @@
 //! - `type_query_construction_boundary_scans`: const value/type-query callers
 //!   route literal/property/object/tuple construction through
 //!   `query_boundaries::type_query_construction`.
+//! - `type_checking_surface_construction_boundary_scans`: type-checking
+//!   helpers route temporary type surfaces and user type-parameter
+//!   construction through `query_boundaries::type_checking`.
 //! - `class_partial_constructor_construction_boundary_scans`: class
 //!   constructor-part helpers route partial static-constructor solver
 //!   construction through `query_boundaries::class_type`.
@@ -144,6 +147,8 @@ mod relation_routing_residual_arch_tests;
 mod spelling_suggestion_gateway_scans;
 #[path = "arch_source_scans/strict_bind_call_apply_construction_boundary_scans.rs"]
 mod strict_bind_call_apply_construction_boundary_scans;
+#[path = "arch_source_scans/type_checking_surface_construction_boundary_scans.rs"]
+mod type_checking_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
 #[path = "arch_source_scans/type_query_construction_boundary_scans.rs"]

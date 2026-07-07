@@ -562,8 +562,6 @@ impl<'a> CheckerState<'a> {
         if let Some(members_vec) = query::union_members(self.ctx.types, callee_type_for_call) {
             let members = members_vec;
             let orig_members = query::union_members(self.ctx.types, callee_type_orig);
-            let factory = self.ctx.types.factory();
-
             let mut has_function = false;
             let mut new_members = Vec::new();
 
@@ -583,24 +581,10 @@ impl<'a> CheckerState<'a> {
 
                 if is_func {
                     has_function = true;
-                    // Replace Function member with a synthetic callable returning any
-                    // Use a simple function: (...args: any[]) => any
-                    let rest_param = tsz_solver::ParamInfo {
-                        name: Some(self.ctx.types.intern_string("args")),
-                        type_id: TypeId::ANY,
-                        optional: false,
-                        rest: true,
-                    };
-                    let func_shape = tsz_solver::FunctionShape {
-                        params: vec![rest_param],
-                        this_type: None,
-                        return_type: TypeId::ANY,
-                        type_params: vec![],
-                        type_predicate: None,
-                        is_constructor: false,
-                        is_method: false,
-                    };
-                    let func_type = factory.function(func_shape);
+                    let func_type = query::global_function_fallback_type(
+                        self.ctx.types,
+                        self.ctx.types.intern_string("args"),
+                    );
                     new_members.push(func_type);
                 } else {
                     new_members.push(member);
@@ -608,7 +592,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if has_function {
-                return factory.union(new_members);
+                return query::type_checking_union(self.ctx.types, new_members);
             }
         }
 

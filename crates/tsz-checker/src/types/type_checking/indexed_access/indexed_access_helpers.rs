@@ -1,4 +1,5 @@
 use crate::query_boundaries::indexed_access_key_space as key_space_query;
+use crate::query_boundaries::type_checking as type_checking_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1188,11 +1189,11 @@ impl<'a> CheckerState<'a> {
         }
 
         // The resolved value is the tuple's element-value union (`base[number]`).
-        let element_union = self
-            .ctx
-            .types
-            .factory()
-            .index_access(base_value, TypeId::NUMBER);
+        let element_union = type_checking_query::type_checking_index_access(
+            self.ctx.types,
+            base_value,
+            TypeId::NUMBER,
+        );
         let element_union = self.evaluate_type_with_env(element_union);
         if matches!(element_union, TypeId::ERROR | TypeId::UNDEFINED) {
             return None;

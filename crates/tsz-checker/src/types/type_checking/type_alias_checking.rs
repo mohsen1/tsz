@@ -13,6 +13,7 @@
 mod type_query_flow;
 
 use super::alias_defid_visited_pool::with_alias_defid_visited;
+use crate::query_boundaries::type_checking as type_checking_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -213,7 +214,6 @@ impl<'a> CheckerState<'a> {
             self.check_type_parameters_for_missing_names(&alias.type_parameters);
         }
         if let Some(type_params) = &alias.type_parameters {
-            let factory = self.ctx.types.factory();
             for &param_idx in &type_params.nodes {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
                     continue;
@@ -244,13 +244,13 @@ impl<'a> CheckerState<'a> {
                     None
                 };
                 let atom = self.ctx.types.intern_string(&ident.escaped_text);
-                let constrained_param = factory.type_param(tsz_solver::TypeParamInfo {
-                    name: atom,
+                let constrained_param = type_checking_query::user_type_param(
+                    self.ctx.types,
+                    atom,
                     constraint,
                     default,
-                    is_const: false,
-                    origin: tsz_solver::TypeParamOrigin::User,
-                });
+                    false,
+                );
                 self.ctx
                     .type_parameter_scope
                     .insert(ident.escaped_text.clone(), constrained_param);
@@ -1128,17 +1128,11 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // Phase 3: intern provisional `TypeParameter`s and install them in scope.
-        let factory = self.ctx.types.factory();
         let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
         for (name, &constraint) in infer_names.iter().zip(infer_constraints.iter()) {
             let atom = self.ctx.types.intern_string(name);
-            let provisional = factory.type_param(tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            });
+            let provisional =
+                type_checking_query::user_type_param(self.ctx.types, atom, constraint, None, false);
             let previous = self
                 .ctx
                 .type_parameter_scope
@@ -1675,17 +1669,13 @@ impl<'a> CheckerState<'a> {
                                 constraint_type = resolved;
                             }
                         }
-                        let provisional =
-                            self.ctx
-                                .types
-                                .factory()
-                                .type_param(tsz_solver::TypeParamInfo {
-                                    name: atom,
-                                    constraint: Some(constraint_type),
-                                    default: None,
-                                    is_const: false,
-                                    origin: tsz_solver::TypeParamOrigin::User,
-                                });
+                        let provisional = type_checking_query::user_type_param(
+                            self.ctx.types,
+                            atom,
+                            Some(constraint_type),
+                            None,
+                            false,
+                        );
                         let previous = self
                             .ctx
                             .type_parameter_scope

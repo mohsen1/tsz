@@ -1,3 +1,4 @@
+use crate::query_boundaries::type_checking as type_checking_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -667,11 +668,11 @@ impl<'a> CheckerState<'a> {
             {
                 // Single-level `K[idx]`: the access base is itself a type
                 // parameter, so substitute its constraint and evaluate.
-                let constrained_access = self
-                    .ctx
-                    .types
-                    .factory()
-                    .index_access(base_constraint, access_index_type);
+                let constrained_access = type_checking_query::type_checking_index_access(
+                    self.ctx.types,
+                    base_constraint,
+                    access_index_type,
+                );
                 let evaluated_constrained_access =
                     self.evaluate_type_for_assignability(constrained_access);
                 if evaluated_constrained_access != TypeId::ERROR {
@@ -1192,10 +1193,11 @@ impl<'a> CheckerState<'a> {
                                 ..
                             } => type_id,
                             _ => self.evaluate_type_with_env(
-                                self.ctx
-                                    .types
-                                    .factory()
-                                    .index_access(constrained_base_type, nested_index_type),
+                                type_checking_query::type_checking_index_access(
+                                    self.ctx.types,
+                                    constrained_base_type,
+                                    nested_index_type,
+                                ),
                             ),
                         }
                     } else {
@@ -1208,10 +1210,11 @@ impl<'a> CheckerState<'a> {
                             sig.value_type
                         } else {
                             self.evaluate_type_with_env(
-                                self.ctx
-                                    .types
-                                    .factory()
-                                    .index_access(constrained_base_type, nested_index_type),
+                                type_checking_query::type_checking_index_access(
+                                    self.ctx.types,
+                                    constrained_base_type,
+                                    nested_index_type,
+                                ),
                             )
                         }
                     };
@@ -1669,7 +1672,11 @@ impl<'a> CheckerState<'a> {
                 if is_concrete {
                     let keyof_base = self.ctx.types.evaluate_keyof(eval_base);
                     let values_union = self.evaluate_type_with_env(
-                        self.ctx.types.factory().index_access(eval_base, keyof_base),
+                        crate::query_boundaries::type_checking::type_checking_index_access(
+                            self.ctx.types,
+                            eval_base,
+                            keyof_base,
+                        ),
                     );
                     if values_union != TypeId::ERROR
                         && values_union != TypeId::UNDEFINED

@@ -6,6 +6,7 @@
 //! `type_alias_checking.rs`.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_checking as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
