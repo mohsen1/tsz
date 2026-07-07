@@ -1,15 +1,14 @@
 //! Type node resolution: converting type annotation AST nodes into `TypeId`
 //! representations, plus expando property augmentation and globalThis resolution.
 
+use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
 use crate::types_domain::queries::core::GlobalReceiver;
 use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::Visibility;
-use tsz_solver::{CallSignature, CallableShape};
-use tsz_solver::{PropertyInfo, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
@@ -768,8 +767,6 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         base_type: TypeId,
     ) -> TypeId {
-        use tsz_solver::PropertyInfo;
-
         if !self.is_js_file() || !self.ctx.compiler_options.check_js {
             return base_type;
         }
@@ -798,22 +795,12 @@ impl<'a> CheckerState<'a> {
             let prop_type =
                 self.declared_expando_property_type_for_root(sym_id, root_name, &prop_name);
 
-            properties.push(PropertyInfo {
-                name: prop_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: Some(sym_id),
-                declaration_order: properties.len() as u32,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            properties.push(query::js_expando_property(
+                prop_atom,
+                prop_type,
+                sym_id,
+                properties.len() as u32,
+            ));
             changed = true;
         }
 
@@ -821,14 +808,7 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        self.ctx
-            .types
-            .factory()
-            .object_with_shape_metadata_and_symbol(
-                properties,
-                &shape,
-                shape.symbol.or(Some(sym_id)),
-            )
+        query::object_with_expando_properties(self.ctx.types, &shape, properties, sym_id)
     }
 
     pub(crate) fn get_global_this_type(&mut self, error_node: NodeIndex) -> TypeId {
@@ -871,18 +851,16 @@ impl<'a> CheckerState<'a> {
             }
 
             let prop_name = self.ctx.types.intern_string(&name);
-            let mut prop = PropertyInfo::new(prop_name, type_id);
-            prop.write_type = type_id;
-            prop.readonly = name == "globalThis";
-            prop.parent_id = self.resolve_global_value_symbol(&name);
-            prop.declaration_order = properties.len() as u32;
-            properties.push(prop);
+            properties.push(query::global_this_surface_property(
+                prop_name,
+                type_id,
+                self.resolve_global_value_symbol(&name),
+                name == "globalThis",
+                properties.len() as u32,
+            ));
         }
 
-        self.ctx
-            .types
-            .factory()
-            .global_this_surface_object(properties)
+        query::global_this_surface_object(self.ctx.types, properties)
     }
 
     fn is_global_this_surface_candidate(&self, name: &str) -> bool {
@@ -958,49 +936,15 @@ impl<'a> CheckerState<'a> {
         base_type: TypeId,
     ) -> TypeId {
         use rustc_hash::FxHashSet;
-        use tsz_solver::PropertyInfo;
 
         let expando_props = self.collect_expando_properties_for_root(root_name);
         if expando_props.is_empty() {
             return base_type;
         }
 
-        let (mut callable_shape, mut property_count) = if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, base_type)
-        {
-            ((*shape).clone(), shape.properties.len())
-        } else if let Some(function_shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, base_type)
-        {
-            let signature = CallSignature {
-                type_params: function_shape.type_params.clone(),
-                params: function_shape.params.clone(),
-                this_type: function_shape.this_type,
-                return_type: function_shape.return_type,
-                type_predicate: function_shape.type_predicate,
-                is_method: function_shape.is_method,
-            };
-            (
-                CallableShape {
-                    call_signatures: if function_shape.is_constructor {
-                        Vec::new()
-                    } else {
-                        vec![signature.clone()]
-                    },
-                    construct_signatures: if function_shape.is_constructor {
-                        vec![signature]
-                    } else {
-                        Vec::new()
-                    },
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: Some(sym_id),
-                    is_abstract: false,
-                },
-                0,
-            )
-        } else {
+        let Some((callable_shape, mut property_count)) =
+            query::callable_shape_for_expando_base(self.ctx.types, base_type, sym_id)
+        else {
             return base_type;
         };
 
@@ -1011,7 +955,7 @@ impl<'a> CheckerState<'a> {
         // listings in TS2739/TS2740 messages.
         let existing: FxHashSet<tsz_common::interner::Atom> =
             callable_shape.properties.iter().map(|p| p.name).collect();
-        let mut new_props: Vec<PropertyInfo> = Vec::new();
+        let mut new_props = Vec::new();
         let mut seen: FxHashSet<tsz_common::interner::Atom> = FxHashSet::default();
 
         for prop_name in expando_props {
@@ -1023,22 +967,12 @@ impl<'a> CheckerState<'a> {
             let prop_type =
                 self.declared_expando_property_type_for_root(sym_id, root_name, &prop_name);
 
-            new_props.push(PropertyInfo {
-                name: prop_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: Some(sym_id),
-                declaration_order: property_count as u32,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            new_props.push(query::js_expando_property(
+                prop_atom,
+                prop_type,
+                sym_id,
+                property_count,
+            ));
             property_count += 1;
         }
 
@@ -1046,8 +980,7 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        callable_shape.properties.extend(new_props);
-        self.ctx.types.factory().callable(callable_shape)
+        query::callable_with_appended_properties(self.ctx.types, callable_shape, new_props)
     }
 
     /// Resolve `name` to a lib-declared global value (`declare var`/`function`/

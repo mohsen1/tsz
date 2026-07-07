@@ -7,9 +7,8 @@ use rustc_hash::FxHashSet;
 use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_solver::MappedTypeId;
-use tsz_solver::TypeId;
-use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{MappedTypeId, PropertyInfo, TypeId};
 
 thread_local! {
     static ALLOW_CONCRETE_REMAPPED_KEY_FALLBACK: Cell<bool> = const { Cell::new(false) };
@@ -27,8 +26,6 @@ impl CheckerState<'_> {
     // Note: enum_symbol_from_type and enum_symbol_from_value_type are defined in type_checking.rs
 
     pub(crate) fn enum_object_type(&mut self, sym_id: SymbolId) -> Option<TypeId> {
-        use tsz_solver::PropertyInfo;
-
         let factory = self.ctx.types.factory();
         let symbol = self
             .get_cross_file_symbol(sym_id)
@@ -126,11 +123,11 @@ impl CheckerState<'_> {
                     continue;
                 }
 
-                props.push(PropertyInfo {
-                    readonly: true,
-                    declaration_order: props.len() as u32 + 1,
-                    ..PropertyInfo::new(name_atom, specific_member_type)
-                });
+                props.push(query::enum_namespace_member_property(
+                    name_atom,
+                    specific_member_type,
+                    props.len() as u32 + 1,
+                ));
             }
         }
 
@@ -539,13 +536,11 @@ impl CheckerState<'_> {
                 let mut subst =
                     TypeSubstitution::from_args(self.ctx.types, &type_params, &evaluated_args);
                 // Keep the mapped iteration variable intact while substituting outer params.
-                let k_unconstrained = self.ctx.types.type_param(tsz_solver::TypeParamInfo {
-                    name: mapped.type_param.name,
-                    constraint: None,
-                    default: None,
-                    is_const: false,
-                    origin: mapped.type_param.origin,
-                });
+                let k_unconstrained = query::unconstrained_type_environment_type_param(
+                    self.ctx.types,
+                    mapped.type_param.name,
+                    mapped.type_param.origin,
+                );
                 subst.insert(mapped.type_param.name, k_unconstrained);
 
                 let instantiated_source = instantiate_type(self.ctx.types, keyof_source, &subst);
@@ -711,23 +706,25 @@ impl CheckerState<'_> {
     ) -> TypeId {
         if let Some(shape_id) = query::callable_shape_id(self.ctx.types, body_type) {
             let shape = self.ctx.types.callable_shape(shape_id);
-            let new_call_sigs = self.instantiate_signatures(&shape.call_signatures, type_args);
-            let new_construct_sigs =
-                self.instantiate_signatures(&shape.construct_signatures, type_args);
+            let new_call_sigs = query::instantiate_type_environment_signatures(
+                self.ctx.types,
+                &shape.call_signatures,
+                type_args,
+            );
+            let new_construct_sigs = query::instantiate_type_environment_signatures(
+                self.ctx.types,
+                &shape.construct_signatures,
+                type_args,
+            );
             if new_call_sigs.is_none() && new_construct_sigs.is_none() {
                 return body_type;
             }
-            let new_shape = CallableShape {
-                call_signatures: new_call_sigs.unwrap_or_else(|| shape.call_signatures.clone()),
-                construct_signatures: new_construct_sigs
-                    .unwrap_or_else(|| shape.construct_signatures.clone()),
-                properties: shape.properties.clone(),
-                string_index: shape.string_index,
-                number_index: shape.number_index,
-                symbol: shape.symbol,
-                is_abstract: shape.is_abstract,
-            };
-            self.ctx.types.callable(new_shape)
+            query::callable_with_instantiated_signatures(
+                self.ctx.types,
+                &shape,
+                new_call_sigs,
+                new_construct_sigs,
+            )
         } else if let Some(members) = query::get_intersection_members(self.ctx.types, body_type) {
             let mut changed = false;
             let new_members: Vec<TypeId> = members
@@ -748,53 +745,6 @@ impl CheckerState<'_> {
         } else {
             body_type
         }
-    }
-
-    /// Instantiate call/construct signatures by replacing type parameters with args.
-    /// Returns `None` if no signatures were modified.
-    fn instantiate_signatures(
-        &mut self,
-        signatures: &[CallSignature],
-        type_args: &[TypeId],
-    ) -> Option<Vec<CallSignature>> {
-        use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-
-        let mut changed = false;
-        let new_sigs: Vec<CallSignature> = signatures
-            .iter()
-            .map(|sig| {
-                if sig.type_params.len() == type_args.len() && !sig.type_params.is_empty() {
-                    changed = true;
-                    let subst =
-                        TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
-                    let new_params: Vec<ParamInfo> = sig
-                        .params
-                        .iter()
-                        .map(|p| ParamInfo {
-                            name: p.name,
-                            type_id: instantiate_type(self.ctx.types, p.type_id, &subst),
-                            optional: p.optional,
-                            rest: p.rest,
-                        })
-                        .collect();
-                    let new_return = instantiate_type(self.ctx.types, sig.return_type, &subst);
-                    CallSignature {
-                        type_params: vec![], // Remove type params after substitution
-                        params: new_params,
-                        this_type: sig
-                            .this_type
-                            .map(|t| instantiate_type(self.ctx.types, t, &subst)),
-                        return_type: new_return,
-                        type_predicate: sig.type_predicate,
-                        is_method: sig.is_method,
-                    }
-                } else {
-                    sig.clone()
-                }
-            })
-            .collect();
-
-        if changed { Some(new_sigs) } else { None }
     }
 
     /// For a `keyof T` source in a homomorphic mapped type, check if the type
@@ -895,8 +845,6 @@ impl CheckerState<'_> {
         mapped_id: MappedTypeId,
     ) -> TypeId {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
-        use tsz_solver::PropertyInfo;
-        let factory = self.ctx.types.factory();
 
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
@@ -1059,17 +1007,18 @@ impl CheckerState<'_> {
                     query::compute_mapped_modifiers(&mapped, false, false, false);
 
                 for remapped_name in remapped_names {
-                    properties.push(PropertyInfo {
+                    properties.push(query::mapped_property(
+                        remapped_name,
+                        property_type,
                         optional,
                         readonly,
-                        ..PropertyInfo::new(remapped_name, property_type)
-                    });
+                    ));
                 }
             }
 
             if !properties.is_empty() {
                 query::merge_colliding_mapped_properties(self.ctx.types, &mut properties);
-                return factory.object(properties);
+                return query::mapped_result_object(self.ctx.types, properties);
             }
         }
         if string_keys.is_empty() {
@@ -1175,11 +1124,12 @@ impl CheckerState<'_> {
             );
 
             for remapped_name in remapped_names {
-                properties.push(PropertyInfo {
+                properties.push(query::mapped_property(
+                    remapped_name,
+                    property_type,
                     optional,
                     readonly,
-                    ..PropertyInfo::new(remapped_name, property_type)
-                });
+                ));
             }
         }
 
@@ -1197,7 +1147,7 @@ impl CheckerState<'_> {
             properties.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
         }
 
-        factory.object(properties)
+        query::mapped_result_object(self.ctx.types, properties)
     }
 
     /// Evaluate a mapped type constraint with symbol resolution.

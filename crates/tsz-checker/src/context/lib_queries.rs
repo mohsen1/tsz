@@ -3,6 +3,7 @@
 //! These methods check whether specific types (Promise, Symbol, etc.) are
 //! available in lib files or global scope.
 
+use crate::query_boundaries::state::type_environment as query;
 use std::sync::Arc;
 
 use tsz_binder::SymbolId;
@@ -99,7 +100,7 @@ impl<'a> CheckerContext<'a> {
     /// interning and the file-local cache, so it can be consulted from the
     /// `Fn`-typed `typeof` lowering overrides.
     pub(crate) fn global_this_surface_type(&self) -> TypeId {
-        use tsz_solver::{PropertyInfo, SymbolRef};
+        use tsz_solver::SymbolRef;
 
         let cache = &self.type_reference_validation_caches.type_node_surface;
         if let Some(cached) = cache.global_this_type.get() {
@@ -143,15 +144,16 @@ impl<'a> CheckerContext<'a> {
             };
 
             let prop_name = self.types.intern_string(&name);
-            let mut prop = PropertyInfo::new(prop_name, type_id);
-            prop.write_type = type_id;
-            prop.readonly = name == "globalThis";
-            prop.parent_id = parent_id;
-            prop.declaration_order = properties.len() as u32;
-            properties.push(prop);
+            properties.push(query::global_this_surface_property(
+                prop_name,
+                type_id,
+                parent_id,
+                name == "globalThis",
+                properties.len() as u32,
+            ));
         }
 
-        let global_this_type = self.types.factory().global_this_surface_object(properties);
+        let global_this_type = query::global_this_surface_object(self.types, properties);
         // Record the synthetic surface so diagnostics render it as
         // `typeof globalThis` rather than its full member body.
         self.types
