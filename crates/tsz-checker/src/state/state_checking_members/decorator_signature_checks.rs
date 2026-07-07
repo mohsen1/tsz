@@ -1,6 +1,7 @@
 //! Class-member decorator signature validation helpers.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::checkers::decorators as decorator_query;
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -171,7 +172,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_global_type_with_libs("Function", &lib_binders)?;
-        Some(self.ctx.create_lazy_type_ref(sym_id))
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(decorator_query::decorator_global_type_ref(
+            self.ctx.types,
+            def_id,
+        ))
     }
 
     /// Resolve `ClassAccessorDecoratorTarget<any, any>` from the lib globals.
@@ -185,13 +190,11 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_global_type_with_libs("ClassAccessorDecoratorTarget", &lib_binders)?;
-        let base = self.ctx.create_lazy_type_ref(sym_id);
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .application(base, vec![TypeId::ANY, TypeId::ANY]),
-        )
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(decorator_query::class_accessor_decorator_target_any(
+            self.ctx.types,
+            def_id,
+        ))
     }
 
     /// tsc's `getDecoratorArgumentCount` for ES (TC39 stage-3) member
@@ -449,8 +452,12 @@ impl<'a> CheckerState<'a> {
             .ctx
             .binder
             .get_global_type_with_libs(name, &lib_binders)?;
-        let base = self.ctx.create_lazy_type_ref(sym_id);
-        Some(self.ctx.types.factory().application(base, args))
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        Some(decorator_query::decorator_context_application(
+            self.ctx.types,
+            def_id,
+            args,
+        ))
     }
 
     fn method_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
@@ -467,20 +474,13 @@ impl<'a> CheckerState<'a> {
         };
         self.pop_type_parameters(type_param_updates);
 
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params,
-                    params,
-                    this_type,
-                    return_type,
-                    type_predicate: None,
-                    is_constructor: false,
-                    is_method: true,
-                }),
-        )
+        Some(decorator_query::method_decorator_value_type(
+            self.ctx.types,
+            type_params,
+            params,
+            this_type,
+            return_type,
+        ))
     }
 
     fn accessor_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
@@ -499,20 +499,12 @@ impl<'a> CheckerState<'a> {
             TypeId::VOID
         };
 
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params: Vec::new(),
-                    params,
-                    this_type,
-                    return_type,
-                    type_predicate: None,
-                    is_constructor: false,
-                    is_method: true,
-                }),
-        )
+        Some(decorator_query::accessor_decorator_value_type(
+            self.ctx.types,
+            params,
+            this_type,
+            return_type,
+        ))
     }
 
     fn accessor_value_type_argument(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
@@ -583,16 +575,17 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         if !experimental_decorators {
             let value_type = self.method_or_accessor_decorator_value_type(member_idx)?;
-            return Some(self.ctx.types.factory().union2(TypeId::VOID, value_type));
+            return Some(decorator_query::decorator_void_or_replacement_type(
+                self.ctx.types,
+                value_type,
+            ));
         }
 
         let descriptor_type = self.legacy_method_or_accessor_descriptor_type(member_idx)?;
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .union2(TypeId::VOID, descriptor_type),
-        )
+        Some(decorator_query::decorator_void_or_replacement_type(
+            self.ctx.types,
+            descriptor_type,
+        ))
     }
 
     fn method_or_accessor_decorator_value_type(&mut self, member_idx: NodeIndex) -> Option<TypeId> {
