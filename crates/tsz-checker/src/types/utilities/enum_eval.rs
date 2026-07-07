@@ -62,7 +62,7 @@ impl Drop for DepthGuard {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum EnumCompatValue {
+pub(crate) enum EnumMemberConstValue {
     Number(f64),
     String(String),
 }
@@ -107,7 +107,7 @@ impl<'a> CheckerState<'a> {
     fn enum_member_compat_map(
         &self,
         sym_id: SymbolId,
-    ) -> Option<FxHashMap<String, EnumCompatValue>> {
+    ) -> Option<FxHashMap<String, EnumMemberConstValue>> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut result = FxHashMap::default();
         let mut next_numeric_value = 0.0;
@@ -124,21 +124,16 @@ impl<'a> CheckerState<'a> {
                 let member = self.ctx.arena.get_enum_member(member_node)?;
                 let member_name = self.get_property_name(member.name)?;
 
-                let value = if member.initializer.is_some() {
-                    let init_node = self.ctx.arena.get(member.initializer)?;
-                    match init_node.kind {
-                        k if k == SyntaxKind::StringLiteral as u16 => {
-                            let lit = self.ctx.arena.get_literal(init_node)?;
-                            EnumCompatValue::String(lit.text.clone())
-                        }
-                        _ => {
-                            let value = self.evaluate_constant_expression(member.initializer)?;
+                let value = if let Some(initializer) = member.initializer.into_option() {
+                    match self.enum_member_initializer_const_value(initializer)? {
+                        EnumMemberConstValue::Number(value) => {
                             next_numeric_value = value + 1.0;
-                            EnumCompatValue::Number(value)
+                            EnumMemberConstValue::Number(value)
                         }
+                        EnumMemberConstValue::String(value) => EnumMemberConstValue::String(value),
                     }
                 } else {
-                    let value = EnumCompatValue::Number(next_numeric_value);
+                    let value = EnumMemberConstValue::Number(next_numeric_value);
                     next_numeric_value += 1.0;
                     value
                 };
@@ -164,34 +159,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        // Check if member has an explicit initializer
-        if member.initializer.is_some() {
-            let Some(init_node) = self.ctx.arena.get(member.initializer) else {
-                return TypeId::ERROR;
-            };
-
-            match init_node.kind {
-                k if k == SyntaxKind::StringLiteral as u16 => {
-                    // Get the string literal value
-                    if let Some(lit) = self.ctx.arena.get_literal(init_node) {
-                        return factory.literal_string(&lit.text);
-                    }
-                }
-                k if k == SyntaxKind::NumericLiteral as u16 => {
-                    if let Some(lit) = self.ctx.arena.get_literal(init_node)
-                        && let Some(value) = lit
-                            .value
-                            .or_else(|| tsz_common::numeric::parse_numeric_literal_value(&lit.text))
-                    {
-                        return factory.literal_number(value);
-                    }
-                }
-                _ => {
-                    // Try to evaluate constant expression
-                    if let Some(value) = self.evaluate_constant_expression(member.initializer) {
-                        return factory.literal_number(value);
-                    }
-                }
+        // Check if member has an explicit initializer.
+        if let Some(initializer) = member.initializer.into_option() {
+            match self.enum_member_initializer_const_value(initializer) {
+                Some(EnumMemberConstValue::String(value)) => return factory.literal_string(&value),
+                Some(EnumMemberConstValue::Number(value)) => return factory.literal_number(value),
+                None => {}
             }
         }
 
@@ -502,6 +475,63 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn enum_member_declared_const_value(
+        &self,
+        enum_sym_id: SymbolId,
+        target_member_decl: NodeIndex,
+    ) -> Option<EnumMemberConstValue> {
+        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
+
+        for &decl_idx in &enum_symbol.declarations {
+            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
+            let mut auto_value = 0.0;
+            for &member_idx in &enum_decl.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let member_data = self.ctx.arena.get_enum_member(member_node)?;
+
+                if member_idx == target_member_decl {
+                    return if let Some(initializer) = member_data.initializer.into_option() {
+                        self.enum_member_initializer_const_value(initializer)
+                    } else {
+                        Some(EnumMemberConstValue::Number(auto_value))
+                    };
+                }
+
+                if let Some(initializer) = member_data.initializer.into_option() {
+                    auto_value = self.next_numeric_enum_auto_value(initializer)?;
+                } else {
+                    auto_value += 1.0;
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn enum_member_initializer_const_value(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<EnumMemberConstValue> {
+        let init_node = self.ctx.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                let lit = self.ctx.arena.get_literal(init_node)?;
+                Some(EnumMemberConstValue::String(lit.text.clone()))
+            }
+            _ => self
+                .evaluate_constant_expression(initializer)
+                .map(EnumMemberConstValue::Number),
+        }
+    }
+
+    fn next_numeric_enum_auto_value(&self, initializer: NodeIndex) -> Option<f64> {
+        match self.enum_member_initializer_const_value(initializer)? {
+            EnumMemberConstValue::Number(value) => Some(value + 1.0),
+            EnumMemberConstValue::String(_) => None,
+        }
+    }
+
     /// Compute the auto-incremented value for an enum member without an initializer.
     /// Walks through all declarations of the parent enum up to the target member,
     /// tracking the auto-increment counter.
@@ -510,27 +540,9 @@ impl<'a> CheckerState<'a> {
         enum_sym_id: tsz_binder::SymbolId,
         target_member_decl: NodeIndex,
     ) -> Option<f64> {
-        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
-
-        for &decl_idx in &enum_symbol.declarations {
-            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
-            // Reset auto-increment at the start of each declaration block.
-            let mut auto_value: f64 = 0.0;
-            for &member_idx in &enum_decl.members.nodes {
-                if member_idx == target_member_decl {
-                    return Some(auto_value);
-                }
-                let member_node = self.ctx.arena.get(member_idx)?;
-                let member_data = self.ctx.arena.get_enum_member(member_node)?;
-                if member_data.initializer.is_some() {
-                    // Non-numeric initializer breaks auto-increment.
-                    let val = self.evaluate_constant_expression(member_data.initializer)?;
-                    auto_value = val + 1.0;
-                } else {
-                    auto_value += 1.0;
-                }
-            }
+        match self.enum_member_declared_const_value(enum_sym_id, target_member_decl)? {
+            EnumMemberConstValue::Number(value) => Some(value),
+            EnumMemberConstValue::String(_) => None,
         }
-        None
     }
 }
