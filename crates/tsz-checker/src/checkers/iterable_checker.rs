@@ -2,12 +2,15 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::checkers::iterable::{
-    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind,
-    async_iterable_protocol_lookup_type, call_signatures_for_type, classify_async_iterable_type,
-    classify_for_of_element_type, classify_full_iterable_type, function_shape_for_type,
+    AsyncIterableTypeKind, ForOfElementKind, FullIterableTypeKind, IterableProtocolMethodStatus,
+    IteratorReturnPropertyStatus, NumericIndexSignatureFact, async_iterable_protocol_lookup_type,
+    callable_accepts_no_required_args, callable_return_type, callable_type_is_callable,
+    classify_async_iterable_type, classify_for_of_element_type, classify_full_iterable_type,
+    evaluated_iterator_result_type, evaluated_iterator_result_value_types,
     intersection_element_type, is_array_type, is_string_literal_type, is_string_type, is_this_type,
-    is_tuple_type, iterator_info_yield_type, iterator_result_value_types, tuple_element_union_type,
-    union_element_type, union_members_for_type,
+    is_tuple_type, iterator_info_yield_type, iterator_method_status,
+    iterator_return_property_status, numeric_index_signature_fact, promise_like_awaited_type,
+    tuple_element_union_type, type_has_next_method, union_element_type, union_members_for_type,
 };
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
@@ -80,7 +83,7 @@ impl<'a> CheckerState<'a> {
                 // If not found (None), fall back to property access resolution for
                 // computed properties from lib types or inherited properties.
                 match self.object_has_iterator_method(shape_id) {
-                    Some(true) => {
+                    IterableProtocolMethodStatus::Valid => {
                         // [Symbol.iterator] exists and is callable. Verify the
                         // iterator protocol, but also accept cases where the return
                         // type is `undefined`/`void` — these occur when the method
@@ -89,8 +92,10 @@ impl<'a> CheckerState<'a> {
                         // returns `v`). TypeScript does not emit TS2488 in these cases.
                         self.type_has_symbol_iterator_via_property_access_lenient(type_id)
                     }
-                    Some(false) => false,
-                    None => self.type_has_symbol_iterator_via_property_access(type_id),
+                    IterableProtocolMethodStatus::Invalid => false,
+                    IterableProtocolMethodStatus::NeedsPropertyAccess => {
+                        self.type_has_symbol_iterator_via_property_access(type_id)
+                    }
                 }
             }
             FullIterableTypeKind::Application { .. } => {
@@ -152,40 +157,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(true)` if found and valid, `Some(false)` if found but invalid
     /// (optional or has required params), `None` if not found in the shape.
-    fn object_has_iterator_method(&self, shape_id: tsz_solver::ObjectShapeId) -> Option<bool> {
-        let shape = self.ctx.types.object_shape(shape_id);
-
-        // Check for [Symbol.iterator] method (iterable protocol)
-        for prop in &shape.properties {
-            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-            if prop_name.as_ref() == "[Symbol.iterator]" {
-                // Optional [Symbol.iterator] is not a valid iterable
-                if prop.optional {
-                    return Some(false);
-                }
-                if prop.is_method {
-                    // Must be callable with zero arguments
-                    return Some(self.is_callable_with_no_required_args(prop.type_id));
-                }
-                // Non-method properties: check if their type is callable.
-                // This handles `declare [Symbol.iterator]: this["entries"]`
-                // where the property type resolves to a callable function type.
-                // If the type is callable, return true. If not directly
-                // resolvable (e.g., complex type expression), return None
-                // to fall through to the full property access resolution.
-                if prop.type_id == TypeId::ANY {
-                    return Some(true);
-                }
-                if self.is_callable_with_no_required_args(prop.type_id) {
-                    return Some(true);
-                }
-                // Can't determine callability from the shape alone — let
-                // the full property access resolution handle it.
-                return None;
-            }
-        }
-
-        None
+    fn object_has_iterator_method(
+        &self,
+        shape_id: tsz_solver::ObjectShapeId,
+    ) -> IterableProtocolMethodStatus {
+        iterator_method_status(self.ctx.types, shape_id)
     }
 
     /// Check if a type has [Symbol.iterator] using the full property access resolution,
@@ -222,7 +198,7 @@ impl<'a> CheckerState<'a> {
                 type_id: iterator_fn_type,
                 ..
             } => {
-                let iterator_type = self.get_call_return_type(iterator_fn_type);
+                let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
                 // Accept undefined/void as they typically result from circular
                 // reference resolution where the type should really be `any`.
                 if iterator_type == TypeId::UNDEFINED || iterator_type == TypeId::VOID {
@@ -248,7 +224,7 @@ impl<'a> CheckerState<'a> {
         iterator_fn_type: TypeId,
     ) -> bool {
         // Get the return type of calling [Symbol.iterator]()
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
 
         // If the return type is any/unknown/error, accept it (don't flag)
         if iterator_type == TypeId::ANY
@@ -269,8 +245,9 @@ impl<'a> CheckerState<'a> {
         // Check if the iterator type has a `next` property by inspecting
         // the object shape directly, rather than using property access resolution
         // which may return `any` as a fallback for missing properties.
-        self.type_has_next_method(iterator_type)
-            || (iterator_type != iterable_type && self.type_has_next_method(iterable_type))
+        type_has_next_method(self.ctx.types, iterator_type)
+            || (iterator_type != iterable_type
+                && type_has_next_method(self.ctx.types, iterable_type))
     }
 
     /// Check if a type has a `next` method by examining its object shape directly.
@@ -278,65 +255,18 @@ impl<'a> CheckerState<'a> {
     /// This is more precise than `resolve_property_access_with_env` because it
     /// doesn't fall back to `any` for missing properties. Used to verify the
     /// iterator protocol: the return value of `[Symbol.iterator]()` must have `next()`.
-    fn type_has_next_method(&self, type_id: TypeId) -> bool {
-        // For any/unknown/error, accept
-        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
-            return true;
-        }
-
-        let kind = classify_full_iterable_type(self.ctx.types, type_id);
-        match kind {
-            FullIterableTypeKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.properties.iter().any(|prop| {
-                    let name = self.ctx.types.resolve_atom_ref(prop.name);
-                    name.as_ref() == "next"
-                })
-            }
-            FullIterableTypeKind::Union(members) => {
-                // All union members must have next()
-                members.iter().all(|&m| self.type_has_next_method(m))
-            }
-            FullIterableTypeKind::Intersection(members) => {
-                // At least one intersection member must have next()
-                members.iter().any(|&m| self.type_has_next_method(m))
-            }
-            FullIterableTypeKind::Readonly(inner) => self.type_has_next_method(inner),
-            FullIterableTypeKind::Application { .. }
-            | FullIterableTypeKind::TypeParameter { .. }
-            | FullIterableTypeKind::ComplexType
-            | FullIterableTypeKind::Array(_)
-            | FullIterableTypeKind::Tuple(_)
-            | FullIterableTypeKind::StringLiteral(_) => {
-                // Application types (IterableIterator<T>, etc.), type parameters,
-                // complex types, arrays, tuples, and string literals all have
-                // next() via their iterator protocol or resolve to lib types.
-                true
-            }
-            FullIterableTypeKind::FunctionOrCallable | FullIterableTypeKind::NotIterable => {
-                // Functions and NotIterable (Lazy/DefId types that couldn't be resolved,
-                // or truly non-iterable types) do NOT have next().
-                false
-            }
-        }
-    }
-
     /// Check if a type has a numeric index signature, making it "array-like".
     /// TypeScript allows array destructuring of array-like types without [Symbol.iterator]().
     pub(crate) fn has_numeric_index_signature(&mut self, type_id: TypeId) -> bool {
         // Resolve lazy types first
         let type_id = self.resolve_lazy_type(type_id);
-        match classify_full_iterable_type(self.ctx.types, type_id) {
-            FullIterableTypeKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                shape.number_index.is_some()
-            }
-            FullIterableTypeKind::Application { base } => self.has_numeric_index_signature(base),
-            FullIterableTypeKind::Readonly(inner) => self.has_numeric_index_signature(inner),
-            FullIterableTypeKind::Union(members) => members
+        match numeric_index_signature_fact(self.ctx.types, type_id) {
+            NumericIndexSignatureFact::Present => true,
+            NumericIndexSignatureFact::Recurse(inner) => self.has_numeric_index_signature(inner),
+            NumericIndexSignatureFact::Union(members) => members
                 .iter()
                 .all(|&m| self.is_iterable_type(m) || self.has_numeric_index_signature(m)),
-            _ => false,
+            NumericIndexSignatureFact::Absent => false,
         }
     }
 
@@ -379,8 +309,11 @@ impl<'a> CheckerState<'a> {
                 // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
                 // `{ [Symbol.asyncIterator]: generatorFn }` (callable value) are valid.
                 match self.object_has_async_iterator_method(shape_id) {
-                    Some(valid) => valid,
-                    None => self.type_has_symbol_async_iterator_via_property_access(type_id),
+                    IterableProtocolMethodStatus::Valid => true,
+                    IterableProtocolMethodStatus::Invalid => false,
+                    IterableProtocolMethodStatus::NeedsPropertyAccess => {
+                        self.type_has_symbol_async_iterator_via_property_access(type_id)
+                    }
                 }
             }
             AsyncIterableTypeKind::Readonly(inner) => {
@@ -398,18 +331,11 @@ impl<'a> CheckerState<'a> {
     fn object_has_async_iterator_method(
         &self,
         shape_id: tsz_solver::ObjectShapeId,
-    ) -> Option<bool> {
-        let shape = self.ctx.types.object_shape(shape_id);
-        for prop in &shape.properties {
-            let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-            if prop_name.as_ref() == "[Symbol.asyncIterator]" {
-                if prop.optional {
-                    return Some(false);
-                }
-                return Some(self.is_callable_with_no_required_args(prop.type_id));
-            }
-        }
-        None
+    ) -> IterableProtocolMethodStatus {
+        crate::query_boundaries::checkers::iterable::async_iterator_method_status(
+            self.ctx.types,
+            shape_id,
+        )
     }
 
     fn type_has_symbol_async_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
@@ -419,34 +345,9 @@ impl<'a> CheckerState<'a> {
             PropertyAccessResult::Success {
                 type_id: iterator_fn_type,
                 ..
-            } => self.is_callable_with_no_required_args(iterator_fn_type),
+            } => callable_accepts_no_required_args(self.ctx.types, iterator_fn_type),
             _ => false,
         }
-    }
-
-    /// Returns true when a callable type can be invoked with zero arguments.
-    ///
-    /// The async iterable protocol requires `[Symbol.asyncIterator]()` to be callable
-    /// without arguments. A required parameter (e.g. `(x: number) => ...`) is invalid.
-    fn is_callable_with_no_required_args(&self, callable_type: TypeId) -> bool {
-        if callable_type == TypeId::ANY
-            || callable_type == TypeId::UNKNOWN
-            || callable_type == TypeId::ERROR
-        {
-            return true;
-        }
-
-        if let Some(sig) = function_shape_for_type(self.ctx.types, callable_type) {
-            return sig.params.iter().all(|p| p.optional || p.rest);
-        }
-
-        if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, callable_type) {
-            return call_signatures
-                .iter()
-                .any(|sig| sig.params.iter().all(|p| p.optional || p.rest));
-        }
-
-        false
     }
 
     /// Returns true when an async iterator's `next()` result is thenable but not a
@@ -461,7 +362,7 @@ impl<'a> CheckerState<'a> {
             _ => return false,
         };
 
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
         let iterator_type =
             if iterator_type == TypeId::ANY || is_this_type(self.ctx.types, iterator_type) {
                 type_id
@@ -484,7 +385,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let next_return = self.get_call_return_type(next_fn_type);
+        let next_return = callable_return_type(self.ctx.types, next_fn_type);
         crate::query_boundaries::flow_analysis::is_promise_like_type(self.ctx.types, next_return)
             && self
                 .promise_like_return_type_argument(next_return)
@@ -607,7 +508,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Step 2: Call [Symbol.asyncIterator]() to get the AsyncIterator type.
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
         let iterator_type = if iterator_type == TypeId::ANY
             || crate::query_boundaries::common::is_this_type(self.ctx.types, iterator_type)
         {
@@ -625,7 +526,7 @@ impl<'a> CheckerState<'a> {
 
         // Step 4: Call next() to get Promise<IteratorResult<T>>, then await it
         // to get IteratorResult<T>, then extract the yield value type.
-        let next_return = self.get_call_return_type(next_fn_type);
+        let next_return = callable_return_type(self.ctx.types, next_fn_type);
         let awaited_next = self.apply_awaited(next_return);
 
         // Extract the yield type from the IteratorResult discriminated union by
@@ -638,11 +539,14 @@ impl<'a> CheckerState<'a> {
         // very case this method targets) actually expand into the
         // `IteratorResult` discriminated union before we look for `done:true`
         // branches. Skipping `evaluate_type` previously caused
-        // `extract_iterator_result_value_types` to fall through to its
+        // iterator-result extraction to fall through to its
         // ANY-ANY fallback for the common case.
-        let resolved_awaited_next = self.ctx.types.evaluate_type(awaited_next);
+        let resolved_awaited_next = evaluated_iterator_result_type(self.ctx.types, awaited_next);
         let (yield_type, _return_type) =
-            iterator_result_value_types(self.ctx.types, resolved_awaited_next);
+            crate::query_boundaries::checkers::iterable::iterator_result_value_types(
+                self.ctx.types,
+                resolved_awaited_next,
+            );
         // Treat ANY as extraction failure (the operation returns
         // `(ANY, ANY)` for unresolved shapes) so we fall through to the
         // `.value` access fallback below — matching the sync version's
@@ -732,67 +636,8 @@ impl<'a> CheckerState<'a> {
             return ty;
         }
         self.unwrap_promise_type(ty)
-            .or_else(|| self.get_awaited_type_of_promise_like(ty))
+            .or_else(|| promise_like_awaited_type(self.ctx.types, ty))
             .unwrap_or(ty)
-    }
-
-    /// Extract the fulfillment type from a promise-like type by following the
-    /// `then` method's onfulfilled callback parameter.
-    ///
-    /// For `Promise<T>` (resolved to an Object shape from lib files), the `then`
-    /// method signature is: `then(onfulfilled: (value: T) => ...) => ...`
-    /// This extracts `T` by reading the first parameter type of the first
-    /// call signature's first parameter.
-    fn get_awaited_type_of_promise_like(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::property_access::resolve_property_access;
-
-        let then_type = resolve_property_access(
-            self.ctx.types,
-            type_id,
-            self.ctx.types.intern_string("then"),
-        )
-        .success_type()?;
-
-        // Get call signatures of `then`
-        let sigs = call_signatures_for_type(self.ctx.types, then_type)?;
-        let first_sig = sigs.first()?;
-
-        // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
-        // It may be a union — extract the callable member from it.
-        let onfulfilled_type = first_sig.params.first().map(|p| p.type_id)?;
-
-        // Extract the first parameter of the onfulfilled callback.
-        // The callback may be:
-        //   - Callable type (has call_signatures)
-        //   - Function type (has params directly)
-        //   - Union member (fn | null | undefined)
-        self.extract_first_param_type(onfulfilled_type)
-    }
-
-    /// Extract the first parameter type from a callable/function type,
-    /// handling unions of `(fn | null | undefined)`.
-    fn extract_first_param_type(&self, type_id: TypeId) -> Option<TypeId> {
-        // Direct Callable
-        if let Some(sigs) = call_signatures_for_type(self.ctx.types, type_id) {
-            return sigs.first()?.params.first().map(|p| p.type_id);
-        }
-        // Direct Function
-        if let Some(shape) = function_shape_for_type(self.ctx.types, type_id) {
-            return shape.params.first().map(|p| p.type_id);
-        }
-        // Union: find first callable/function member
-        let members = union_members_for_type(self.ctx.types, type_id)?;
-        for member in &members {
-            if let Some(sigs) = call_signatures_for_type(self.ctx.types, *member)
-                && let Some(first) = sigs.first()
-            {
-                return first.params.first().map(|p| p.type_id);
-            }
-            if let Some(shape) = function_shape_for_type(self.ctx.types, *member) {
-                return shape.params.first().map(|p| p.type_id);
-            }
-        }
-        None
     }
 
     /// Resolve the element type of an iterable via the iterator protocol.
@@ -835,7 +680,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Step 2: Get the return type of the iterator function (call it)
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
 
         // If the iterator function returns `any` (e.g., `[Symbol.iterator]() { return this; }`
         // where `this` type inference fails), or `ThisType` (polymorphic `this` from
@@ -871,7 +716,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Step 4: Get the return type of next() — this is the IteratorResult type
-        let next_return = self.get_call_return_type(next_fn_type);
+        let next_return = callable_return_type(self.ctx.types, next_fn_type);
 
         // Step 5: Extract the yield type from IteratorResult.
         //
@@ -879,9 +724,8 @@ impl<'a> CheckerState<'a> {
         // For for-of loops, only the yield type T matters (from done:false branches).
         //
         // First try the solver's discriminant-aware extraction on the evaluated type.
-        let resolved_result = self.ctx.types.evaluate_type(next_return);
         let (yield_type, _return_type) =
-            iterator_result_value_types(self.ctx.types, resolved_result);
+            evaluated_iterator_result_value_types(self.ctx.types, next_return);
 
         if yield_type != TypeId::ANY {
             return yield_type;
@@ -906,23 +750,6 @@ impl<'a> CheckerState<'a> {
         }
 
         value_type
-    }
-
-    /// Get the return type of calling a function type.
-    /// Returns ANY if the type is not callable.
-    fn get_call_return_type(&self, fn_type: TypeId) -> TypeId {
-        if fn_type == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if let Some(sig) = function_shape_for_type(self.ctx.types, fn_type) {
-            return sig.return_type;
-        }
-        if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, fn_type) {
-            return call_signatures
-                .first()
-                .map_or(TypeId::ANY, |sig| sig.return_type);
-        }
-        TypeId::ANY
     }
 
     // =========================================================================
@@ -1461,7 +1288,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Step 2: Get the return type of calling [Symbol.iterator]()
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
         if iterator_type == TypeId::ANY
             || iterator_type == TypeId::UNKNOWN
             || iterator_type == TypeId::ERROR
@@ -1497,7 +1324,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Step 4: Get the return type of next()
-        let next_return = self.get_call_return_type(next_fn_type);
+        let next_return = callable_return_type(self.ctx.types, next_fn_type);
         if next_return == TypeId::ANY
             || next_return == TypeId::UNKNOWN
             || next_return == TypeId::ERROR
@@ -1584,7 +1411,7 @@ impl<'a> CheckerState<'a> {
             _ => return TypeId::ANY,
         };
 
-        let iterator_type = self.get_call_return_type(iterator_fn_type);
+        let iterator_type = callable_return_type(self.ctx.types, iterator_fn_type);
         if is_this_type(self.ctx.types, iterator_type) {
             iterable_type
         } else {
@@ -1600,48 +1427,18 @@ impl<'a> CheckerState<'a> {
         // where the return property is declared directly (e.g., `return = 0`).
         // Property access can return confusing results for built-in iterator types
         // where `return` is a valid method but not recognized as callable by our queries.
-        let kind = classify_full_iterable_type(self.ctx.types, type_id);
-        if let FullIterableTypeKind::Object(shape_id) = kind {
-            let return_atom = self.ctx.types.intern_string("return");
-            let shape = self.ctx.types.object_shape(shape_id);
-            for prop in &shape.properties {
-                if prop.name == return_atom {
-                    // Found `return` property in the shape
-                    if prop.is_method || prop.optional {
-                        return true; // It's a method or optional (from Iterator interface) - valid
-                    }
-                    // Check if the property type is callable
-                    if function_shape_for_type(self.ctx.types, prop.type_id).is_some() {
-                        return true; // Callable - valid
-                    }
-                    if let Some(sigs) = call_signatures_for_type(self.ctx.types, prop.type_id)
-                        && !sigs.is_empty()
-                    {
-                        return true; // Callable - valid
-                    }
-                    // Also check resolved type
-                    let resolved = self.resolve_lazy_type(prop.type_id);
-                    if resolved != prop.type_id {
-                        if function_shape_for_type(self.ctx.types, resolved).is_some() {
-                            return true;
-                        }
-                        if let Some(sigs) = call_signatures_for_type(self.ctx.types, resolved)
-                            && !sigs.is_empty()
-                        {
-                            return true;
-                        }
-                    }
-                    // `return` exists in the shape but is not callable - emit TS2767
-                    self.emit_ts2767_return_not_method(error_node);
+        match iterator_return_property_status(self.ctx.types, type_id) {
+            IteratorReturnPropertyStatus::Absent => false,
+            IteratorReturnPropertyStatus::Valid => true,
+            IteratorReturnPropertyStatus::NeedsResolvedCallability(prop_type) => {
+                let resolved = self.resolve_lazy_type(prop_type);
+                if resolved != prop_type && callable_type_is_callable(self.ctx.types, resolved) {
                     return true;
                 }
+                self.emit_ts2767_return_not_method(error_node);
+                true
             }
         }
-        // No `return` property found in the object shape — skip the check.
-        // Types without shapes (built-in iterators, generics) don't get TS2767
-        // because their `return` methods come from parameterized interfaces and
-        // are always valid methods.
-        false
     }
 
     /// Emit TS2767: "The 'return' property of an iterator must be a method."
