@@ -59,6 +59,7 @@ pub(crate) mod recursive_alias;
 pub(crate) mod relation_policy;
 pub(crate) mod relation_request;
 pub(crate) mod relation_types;
+pub(crate) mod signature_building;
 pub(crate) mod spread;
 pub(crate) mod state;
 pub(crate) mod type_checking;
