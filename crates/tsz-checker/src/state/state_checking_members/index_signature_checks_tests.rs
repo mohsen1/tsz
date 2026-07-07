@@ -131,6 +131,28 @@ interface I {
 }
 
 #[test]
+fn ts2411_inherited_symbol_property_checked_against_own_symbol_index() {
+    let diags = check_source_diagnostics(
+        r#"
+interface BaseWithSymbolMember {
+    [Symbol.iterator]: number;
+}
+
+interface DerivedWithSymbolIndex extends BaseWithSymbolMember {
+    [s: symbol]: string;
+}
+"#,
+    );
+    let matching: Vec<_> = diags.iter().filter(|d| d.code == 2411).collect();
+    assert_eq!(
+        matching.len(),
+        1,
+        "Expected inherited symbol property to be checked against own symbol index, got codes: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn ts2411_symbol_index_signature_compatible_no_error() {
     let diags = check_source_diagnostics(
         r#"

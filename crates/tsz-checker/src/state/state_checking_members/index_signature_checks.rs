@@ -176,8 +176,9 @@ impl<'a> CheckerState<'a> {
 
         // Fast path: if no index signatures exist, no members have index signature syntax,
         // and no computed members synthesize index signatures, skip the check.
-        let has_any_inherited_index =
-            index_info.string_index.is_some() || index_info.number_index.is_some();
+        let has_any_inherited_index = index_info.string_index.is_some()
+            || index_info.number_index.is_some()
+            || index_info.symbol_index.is_some();
         let has_any_own_index = has_any_inherited_index
             || members.iter().any(|&m| {
                 self.ctx
@@ -201,11 +202,10 @@ impl<'a> CheckerState<'a> {
         // vs from another merged body of the same interface.
         let has_extends_clause = self.container_has_extends_clause(container_node);
 
-        // The solver's ObjectShape only has string_index/number_index fields,
-        // so symbol index signatures get misclassified into string_index with
-        // key_type=SYMBOL.  Extract any inherited symbol index from string_index
-        // so we can check symbol-keyed properties against it.
-        let mut inherited_symbol_value_type: Option<TypeId> = None;
+        let mut inherited_symbol_value_type =
+            index_info.symbol_index.as_ref().map(|idx| idx.value_type);
+        // Keep accepting older encoded shapes that carried a `symbol` index in
+        // the string slot while callers migrate to `IndexInfo::symbol_index`.
         if let Some(ref si) = index_info.string_index
             && si.key_type == TypeId::SYMBOL
         {
@@ -517,8 +517,8 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        // Extract symbol index value types (tracked locally, not in IndexInfo).
-        // Own symbol index takes priority over inherited.
+        // Extract symbol index value types. Own symbol index takes priority over
+        // inherited `IndexInfo` data.
         let symbol_value_type = if !symbol_index_nodes.is_empty() {
             let node_idx = symbol_index_nodes[0];
             self.ctx
@@ -1092,18 +1092,24 @@ impl<'a> CheckerState<'a> {
         // If iface_type is lazy/unresolved, fall back to the evaluated type.
         // This handles interfaces that only inherit index sigs (no own sig) when
         // their TypeId is stored as Lazy(DefId) rather than ObjectWithIndex.
-        if index_info.string_index.is_none() && index_info.number_index.is_none() {
+        if index_info.string_index.is_none()
+            && index_info.number_index.is_none()
+            && index_info.symbol_index.is_none()
+        {
             let evaluated = self.evaluate_type_for_assignability(iface_type);
             let eval_info = self.ctx.types.get_index_signatures(evaluated);
-            if eval_info.string_index.is_some() || eval_info.number_index.is_some() {
+            if eval_info.string_index.is_some()
+                || eval_info.number_index.is_some()
+                || eval_info.symbol_index.is_some()
+            {
                 index_info = eval_info;
             }
         }
         let evaluated_type = self.evaluate_type_for_assignability(iface_type);
 
-        // The solver's IndexInfo may store a symbol index signature in the
-        // string_index slot with key_type=SYMBOL. Extract it so symbol-keyed
-        // inherited properties are checked against the correct index kind.
+        let symbol_value_type = index_info.symbol_index.as_ref().map(|idx| idx.value_type);
+        // Keep accepting older encoded shapes that carried a `symbol` index in
+        // the string slot while callers migrate to `IndexInfo::symbol_index`.
         let symbol_value_type = if let Some(ref si) = index_info.string_index
             && si.key_type == TypeId::SYMBOL
         {
@@ -1111,7 +1117,7 @@ impl<'a> CheckerState<'a> {
             index_info.string_index = None;
             Some(vt)
         } else {
-            None
+            symbol_value_type
         };
         let symbol_index_sig_node = string_index_sig_node;
 

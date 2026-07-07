@@ -61,6 +61,16 @@ pub(crate) fn number_index_signature(
         .number_index
 }
 
+/// Return the declared `symbol` index signature for `type_id`, if present.
+pub(crate) fn symbol_index_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<IndexSignature> {
+    IndexSignatureResolver::new(db)
+        .get_index_info(type_id)
+        .symbol_index
+}
+
 /// Return whether `type_id` exposes the requested index signature kind.
 pub(crate) fn has_index_signature(db: &dyn TypeDatabase, type_id: TypeId, kind: IndexKind) -> bool {
     IndexSignatureResolver::new(db).has_index_signature(type_id, kind)

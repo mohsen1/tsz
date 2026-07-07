@@ -1690,6 +1690,9 @@ impl<'a> CheckerState<'a> {
         if let Some(number_index) = index_info.number_index {
             candidate_types.push(number_index.value_type);
         }
+        if let Some(symbol_index) = index_info.symbol_index {
+            candidate_types.push(symbol_index.value_type);
+        }
     }
 
     /// Like `is_assignable_to`, but skips weak type checks (TS2559).

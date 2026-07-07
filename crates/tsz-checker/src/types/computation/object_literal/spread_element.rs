@@ -29,6 +29,7 @@ pub(super) struct ObjectLiteralSpreadState<'b> {
     pub(super) union_spread_branches: &'b mut Vec<FxHashMap<Atom, PropertyInfo>>,
     pub(super) spread_string_index_signatures: &'b mut Vec<IndexSignature>,
     pub(super) spread_number_index_signatures: &'b mut Vec<IndexSignature>,
+    pub(super) spread_symbol_index_signatures: &'b mut Vec<IndexSignature>,
     pub(super) generic_spread_types: &'b mut Vec<TypeId>,
     pub(super) has_spread: &'b mut bool,
     pub(super) has_any_spread: &'b mut bool,
@@ -55,6 +56,7 @@ impl<'a> CheckerState<'a> {
         let union_spread_branches = state.union_spread_branches;
         let spread_string_index_signatures = state.spread_string_index_signatures;
         let spread_number_index_signatures = state.spread_number_index_signatures;
+        let spread_symbol_index_signatures = state.spread_symbol_index_signatures;
         let generic_spread_types = state.generic_spread_types;
         let has_spread = state.has_spread;
         let has_any_spread = state.has_any_spread;
@@ -459,6 +461,26 @@ impl<'a> CheckerState<'a> {
                                 .or(fallback_number_index)
                             {
                                 spread_number_index_signatures.push(number_index);
+                            }
+                            let fallback_symbol_index =
+                                crate::query_boundaries::index_signature::resolve_symbol_index(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .map(|value_type| IndexSignature {
+                                    key_type: TypeId::SYMBOL,
+                                    value_type,
+                                    readonly: false,
+                                    param_name: None,
+                                });
+                            if let Some(symbol_index) =
+                                crate::query_boundaries::index_signature::symbol_index_signature(
+                                    self.ctx.types,
+                                    resolved_spread,
+                                )
+                                .or(fallback_symbol_index)
+                            {
+                                spread_symbol_index_signatures.push(symbol_index);
                             }
                         }
 

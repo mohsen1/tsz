@@ -1808,8 +1808,9 @@ impl QueryDatabase for TypeInterner {
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.object_shape(shape_id);
                 IndexInfo {
-                    string_index: shape.string_index,
+                    string_index: shape.string_index_signature().copied(),
                     number_index: shape.number_index,
+                    symbol_index: shape.symbol_index_signature().copied(),
                 }
             }
             Some(TypeData::Array(element)) => {
@@ -1822,6 +1823,7 @@ impl QueryDatabase for TypeInterner {
                         readonly: false,
                         param_name: None,
                     }),
+                    symbol_index: None,
                 }
             }
             Some(TypeData::Tuple(elements_id)) => {
@@ -1843,6 +1845,7 @@ impl QueryDatabase for TypeInterner {
                         readonly: false,
                         param_name: None,
                     }),
+                    symbol_index: None,
                 }
             }
             Some(TypeData::Union(members_id)) => {
@@ -1858,8 +1861,10 @@ impl QueryDatabase for TypeInterner {
                 let members = self.type_list(members_id);
                 let mut string_indices = Vec::with_capacity(members.len());
                 let mut number_indices = Vec::with_capacity(members.len());
+                let mut symbol_indices = Vec::with_capacity(members.len());
                 let mut all_have_string = !members.is_empty();
                 let mut all_have_number = !members.is_empty();
+                let mut all_have_symbol = !members.is_empty();
 
                 for &member in members.iter() {
                     let info = self.get_index_signatures(member);
@@ -1870,6 +1875,10 @@ impl QueryDatabase for TypeInterner {
                     match info.number_index {
                         Some(sig) => number_indices.push(sig),
                         None => all_have_number = false,
+                    }
+                    match info.symbol_index {
+                        Some(sig) => symbol_indices.push(sig),
+                        None => all_have_symbol = false,
                     }
                 }
 
@@ -1886,6 +1895,7 @@ impl QueryDatabase for TypeInterner {
                 IndexInfo {
                     string_index: merge(all_have_string, &string_indices, TypeId::STRING),
                     number_index: merge(all_have_number, &number_indices, TypeId::NUMBER),
+                    symbol_index: merge(all_have_symbol, &symbol_indices, TypeId::SYMBOL),
                 }
             }
             Some(TypeData::Intersection(members_id)) => {
@@ -1893,6 +1903,7 @@ impl QueryDatabase for TypeInterner {
                 let members = self.type_list(members_id);
                 let mut string_index = None;
                 let mut number_index = None;
+                let mut symbol_index = None;
 
                 for &member in members.iter() {
                     let info = self.get_index_signatures(member);
@@ -1902,11 +1913,15 @@ impl QueryDatabase for TypeInterner {
                     if let Some(sig) = info.number_index {
                         number_index = Some(sig);
                     }
+                    if let Some(sig) = info.symbol_index {
+                        symbol_index = Some(sig);
+                    }
                 }
 
                 IndexInfo {
                     string_index,
                     number_index,
+                    symbol_index,
                 }
             }
             _ => IndexInfo::default(),
