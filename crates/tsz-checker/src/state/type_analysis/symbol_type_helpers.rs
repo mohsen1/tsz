@@ -2,6 +2,9 @@
 //! type parameter identity checks, provisional function types, and numeric enum registration.
 
 use crate::query_boundaries::common::type_param_info;
+use crate::query_boundaries::construct_signatures::{
+    call_only_callable_type, function_type_from_call_signature,
+};
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -290,8 +293,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        use tsz_solver::{CallableShape, FunctionShape};
-
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::FUNCTION)
             || symbol.has_any_flags(symbol_flags::INTERFACE)
@@ -300,7 +301,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let declarations = symbol.declarations.clone();
-        let factory = self.ctx.types.factory();
         let mut overloads = Vec::new();
         let mut implementation_sig = None;
 
@@ -329,27 +329,11 @@ impl<'a> CheckerState<'a> {
         }
 
         if !overloads.is_empty() {
-            return Some(factory.callable(CallableShape {
-                call_signatures: overloads,
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            }));
+            return Some(call_only_callable_type(self.ctx.types, overloads));
         }
 
         let sig = implementation_sig?;
-        let func_type = factory.function(FunctionShape {
-            type_params: sig.type_params,
-            params: sig.params,
-            this_type: sig.this_type,
-            return_type: sig.return_type,
-            type_predicate: sig.type_predicate,
-            is_constructor: false,
-            is_method: false,
-        });
+        let func_type = function_type_from_call_signature(self.ctx.types, &sig, false);
         Some(func_type)
     }
 
@@ -372,8 +356,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        use tsz_solver::FunctionShape;
-
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         // Plain value variables only; entities with their own provisional /
         // lazy handling (functions, classes, interfaces, type aliases, enums,
@@ -413,15 +395,11 @@ impl<'a> CheckerState<'a> {
             }
 
             let sig = self.call_signature_from_function(func, init_idx);
-            return Some(self.ctx.types.factory().function(FunctionShape {
-                type_params: sig.type_params,
-                params: sig.params,
-                this_type: sig.this_type,
-                return_type: sig.return_type,
-                type_predicate: sig.type_predicate,
-                is_constructor: false,
-                is_method: false,
-            }));
+            return Some(function_type_from_call_signature(
+                self.ctx.types,
+                &sig,
+                false,
+            ));
         }
         None
     }

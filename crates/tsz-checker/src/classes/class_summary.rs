@@ -3,6 +3,7 @@ use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::query_boundaries::common::{
     TypeSubstitution, callable_shape_for_type, object_shape_for_type,
 };
+use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -97,7 +98,7 @@ pub(crate) struct ClassChainSummary {
     /// Externally-visible overload-method types per instance method name.
     /// An entry exists for each method that has multiple `METHOD_DECLARATION`
     /// nodes at the level of the chain that first declares it. The TypeId
-    /// is a `CallableShape` whose `call_signatures` are the externally
+    /// is a callable type whose `call_signatures` are the externally
     /// visible overload signatures (bodyless declarations if any, otherwise
     /// the single implementation signature). Types are substituted into the
     /// root class's type-parameter scope by the chain summary.
@@ -361,7 +362,7 @@ impl<'a> CheckerState<'a> {
     /// Build externally-visible overload-method types for a class, keyed by
     /// method name and partitioned by static-ness. An entry exists only for
     /// methods with multiple `METHOD_DECLARATION` nodes (overloaded methods).
-    /// The resulting `TypeId` is a `CallableShape` whose `call_signatures`
+    /// The resulting `TypeId` is a callable type whose `call_signatures`
     /// are the externally visible overload signatures: bodyless declarations
     /// if any exist on the class, otherwise the single implementation
     /// signature. Signatures are built with `is_method = true` for bivariant
@@ -370,8 +371,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> (FxHashMap<String, TypeId>, FxHashMap<String, TypeId>) {
-        use tsz_solver::CallableShape;
-
         // Single-pass groupby: walk members once and route each declaration
         // into `singletons` (only one observed) or `groups` (two or more
         // observed). Non-overloaded classes pay only N hashmap inserts and
@@ -434,11 +433,7 @@ impl<'a> CheckerState<'a> {
             if sigs.is_empty() {
                 continue;
             }
-            let factory = self.ctx.types.factory();
-            let type_id = factory.callable(CallableShape {
-                call_signatures: sigs,
-                ..CallableShape::default()
-            });
+            let type_id = call_only_callable_type(self.ctx.types, sigs);
             if is_static {
                 static_overloads.insert(name, type_id);
             } else {
