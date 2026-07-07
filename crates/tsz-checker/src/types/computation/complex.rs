@@ -111,12 +111,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let array_buffer = self.resolve_lib_type_by_name("ArrayBuffer")?;
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .application(base, vec![array_buffer]),
-        )
+        Some(query::typed_array_length_constructor_return_application(
+            self.ctx.types,
+            base,
+            array_buffer,
+        ))
     }
 
     fn lib_constructor_return_type_for_type_shadow(
@@ -1038,27 +1037,10 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // === Perform Round 1 Inference ===
-                    let evaluated_shape = {
-                        let new_params: Vec<_> = shape
-                            .params
-                            .iter()
-                            .map(|p| tsz_solver::ParamInfo {
-                                name: p.name,
-                                type_id: self.evaluate_type_with_env(p.type_id),
-                                optional: p.optional,
-                                rest: p.rest,
-                            })
-                            .collect();
-                        tsz_solver::FunctionShape {
-                            params: new_params,
-                            return_type: shape.return_type,
-                            this_type: shape.this_type,
-                            type_params: shape.type_params.clone(),
-                            type_predicate: shape.type_predicate,
-                            is_constructor: shape.is_constructor,
-                            is_method: shape.is_method,
-                        }
-                    };
+                    let evaluated_shape =
+                        query::constructor_shape_with_mapped_parameter_types(shape, |ty| {
+                            self.evaluate_type_with_env(ty)
+                        });
                     let mut substitution = {
                         // When the contextual type is a union containing a Promise member
                         // (e.g., `void | PromiseLike<void> | Promise<void>` from async
@@ -1079,11 +1061,12 @@ impl<'a> CheckerState<'a> {
                             {
                                 let promise_like_t = self.get_promise_like_type(inner);
                                 let promise_t = self.get_promise_type(inner);
-                                let mut members = vec![inner, promise_like_t];
-                                if let Some(pt) = promise_t {
-                                    members.push(pt);
-                                }
-                                Some(self.ctx.types.factory().union(members))
+                                Some(query::constructor_contextual_promise_union(
+                                    self.ctx.types,
+                                    inner,
+                                    promise_like_t,
+                                    promise_t,
+                                ))
                             } else {
                                 contextual_type
                             }
@@ -1240,11 +1223,12 @@ impl<'a> CheckerState<'a> {
                                         {
                                             let promise_like_inner =
                                                 self.get_promise_like_type(inner);
-                                            resolve_first.type_id = self
-                                                .ctx
-                                                .types
-                                                .factory()
-                                                .union2(inner, promise_like_inner);
+                                            resolve_first.type_id =
+                                                query::constructor_promise_resolve_value_union(
+                                                    self.ctx.types,
+                                                    inner,
+                                                    promise_like_inner,
+                                                );
                                             first_param.type_id = function_type_from_shape(
                                                 self.ctx.types,
                                                 resolve_shape,
@@ -1420,27 +1404,10 @@ impl<'a> CheckerState<'a> {
             && inferred_new_type_args.is_none()
             && let Some(shape) = constructor_shape.as_ref()
         {
-            let evaluated_shape = {
-                let new_params: Vec<_> = shape
-                    .params
-                    .iter()
-                    .map(|p| tsz_solver::ParamInfo {
-                        name: p.name,
-                        type_id: self.evaluate_type_with_env(p.type_id),
-                        optional: p.optional,
-                        rest: p.rest,
-                    })
-                    .collect();
-                tsz_solver::FunctionShape {
-                    params: new_params,
-                    return_type: shape.return_type,
-                    this_type: shape.this_type,
-                    type_params: shape.type_params.clone(),
-                    type_predicate: shape.type_predicate,
-                    is_constructor: shape.is_constructor,
-                    is_method: shape.is_method,
-                }
-            };
+            let evaluated_shape =
+                query::constructor_shape_with_mapped_parameter_types(shape, |ty| {
+                    self.evaluate_type_with_env(ty)
+                });
             let mut substitution = {
                 let env = self.ctx.type_env.borrow();
                 call_checker::compute_contextual_types_with_context(
@@ -1630,7 +1597,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(app) =
                         self.explicit_class_new_application(new_expr.expression, type_args.clone())
                 {
-                    self.ctx.types.store_display_alias(return_type, app);
+                    query::record_explicit_new_display_alias(self.ctx.types, return_type, app);
                 }
                 // When explicit type arguments were provided (e.g., `new D<string>()`),
                 // the checker pre-applied them to the construct signature, making
@@ -1654,9 +1621,11 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         return_type,
                     ) {
-                        let factory = self.ctx.types.factory();
-                        let app = factory.application(return_type, resolved_args);
-                        self.ctx.types.store_display_alias(return_type, app);
+                        query::record_synthetic_explicit_new_display_alias(
+                            self.ctx.types,
+                            return_type,
+                            resolved_args,
+                        );
                     }
                 }
                 return_type
@@ -1969,7 +1938,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if changed {
-            self.ctx.types.intersection(new_members)
+            query::evaluated_intersection_members(self.ctx.types, new_members)
         } else {
             type_id
         }

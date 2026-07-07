@@ -3,7 +3,7 @@ use tsz_common::Atom;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
-    CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeParamInfo, Visibility,
+    CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeParamInfo, Visibility,
 };
 
 pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
@@ -115,6 +115,82 @@ pub(crate) fn shallow_js_method_callable_type(
         symbol: None,
         is_abstract: false,
     })
+}
+
+pub(crate) fn constructor_shape_with_mapped_parameter_types(
+    shape: &FunctionShape,
+    mut map_type: impl FnMut(TypeId) -> TypeId,
+) -> FunctionShape {
+    let params = shape
+        .params
+        .iter()
+        .map(|param| ParamInfo {
+            type_id: map_type(param.type_id),
+            ..*param
+        })
+        .collect();
+    FunctionShape {
+        params,
+        return_type: shape.return_type,
+        this_type: shape.this_type,
+        type_params: shape.type_params.clone(),
+        type_predicate: shape.type_predicate,
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    }
+}
+
+pub(crate) fn constructor_contextual_promise_union(
+    db: &dyn TypeDatabase,
+    inner: TypeId,
+    promise_like: TypeId,
+    promise: Option<TypeId>,
+) -> TypeId {
+    let mut members = vec![inner, promise_like];
+    if let Some(promise) = promise {
+        members.push(promise);
+    }
+    db.union(members)
+}
+
+pub(crate) fn constructor_promise_resolve_value_union(
+    db: &dyn TypeDatabase,
+    inner: TypeId,
+    promise_like: TypeId,
+) -> TypeId {
+    db.union2(inner, promise_like)
+}
+
+pub(crate) fn typed_array_length_constructor_return_application(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    array_buffer: TypeId,
+) -> TypeId {
+    db.application(base, vec![array_buffer])
+}
+
+pub(crate) fn record_explicit_new_display_alias(
+    db: &dyn TypeDatabase,
+    return_type: TypeId,
+    application: TypeId,
+) {
+    db.store_display_alias(return_type, application);
+}
+
+pub(crate) fn record_synthetic_explicit_new_display_alias(
+    db: &dyn TypeDatabase,
+    return_type: TypeId,
+    type_args: Vec<TypeId>,
+) {
+    let application = db.application(return_type, type_args);
+    db.store_display_alias(return_type, application);
+}
+
+pub(crate) fn evaluated_intersection_members(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    db.intersection(members)
 }
 
 pub(crate) const fn js_surface_property(
