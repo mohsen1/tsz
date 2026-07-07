@@ -379,6 +379,34 @@ type AliasBaseAssignmentCache = RefCell<FxHashMap<AliasBaseAssignmentKey, bool>>
 type AliasPathAssignmentKey = (u32, u32, u32);
 type AliasPathAssignmentCache = RefCell<FxHashMap<AliasPathAssignmentKey, bool>>;
 
+#[must_use]
+pub(crate) fn alias_base_assignment_cache_entries(cache: &AliasBaseAssignmentCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn alias_base_assignment_cache_estimated_size_bytes(
+    cache: &AliasBaseAssignmentCache,
+) -> usize {
+    let cache = cache.borrow();
+    cache.capacity()
+        * (std::mem::size_of::<AliasBaseAssignmentKey>() + std::mem::size_of::<bool>() + 8)
+}
+
+#[must_use]
+pub(crate) fn alias_path_assignment_cache_entries(cache: &AliasPathAssignmentCache) -> usize {
+    cache.borrow().len()
+}
+
+#[must_use]
+pub(crate) fn alias_path_assignment_cache_estimated_size_bytes(
+    cache: &AliasPathAssignmentCache,
+) -> usize {
+    let cache = cache.borrow();
+    cache.capacity()
+        * (std::mem::size_of::<AliasPathAssignmentKey>() + std::mem::size_of::<bool>() + 8)
+}
+
 /// Flow analyzer for control flow-based type narrowing.
 ///
 /// Walks the control flow graph backwards from a reference point to determine

@@ -32,6 +32,7 @@
 
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
+use std::mem;
 use tsz_solver::TypeId;
 
 /// Maximum normalization-tree node visits per rendered type.
@@ -129,6 +130,9 @@ impl Drop for DisplayBudgetScope {
                         tracing::debug!(
                             visits_left = budget.visits,
                             eval_fuel_left = budget.eval_fuel,
+                            eval_memo_entries = budget.eval_memo.len(),
+                            eval_memo_estimated_size_bytes =
+                                eval_memo_estimated_size_bytes(&budget.eval_memo),
                             "display normalization budget exhausted; type rendered truncated"
                         );
                     }
@@ -221,6 +225,14 @@ pub(crate) fn record_eval(type_id: TypeId, result: TypeId) {
     });
 }
 
+fn eval_memo_estimated_size_bytes(cache: &FxHashMap<TypeId, TypeId>) -> usize {
+    cache.capacity().saturating_mul(
+        mem::size_of::<TypeId>()
+            .saturating_add(mem::size_of::<TypeId>())
+            .saturating_add(8),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +300,18 @@ mod tests {
         }
         let _scope = DisplayBudgetScope::enter();
         assert_eq!(cached_eval(TypeId::STRING), None);
+    }
+
+    #[test]
+    fn eval_memo_statistics_report_entries_and_size() {
+        let mut eval_memo = FxHashMap::default();
+        assert_eq!(eval_memo.len(), 0);
+        assert_eq!(eval_memo_estimated_size_bytes(&eval_memo), 0);
+
+        eval_memo.insert(TypeId::STRING, TypeId::NUMBER);
+
+        assert_eq!(eval_memo.len(), 1);
+        assert!(eval_memo_estimated_size_bytes(&eval_memo) > 0);
     }
 
     #[test]
