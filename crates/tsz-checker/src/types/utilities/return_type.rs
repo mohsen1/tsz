@@ -577,7 +577,7 @@ impl<'a> CheckerState<'a> {
         // returned, so enum members observe the same preservation rules. The widen
         // itself runs through `widen_enum_member_type` at each widenable site,
         // since the primitive literal widener leaves `TypeData::Enum` untouched.
-        self.is_fresh_literal_expression(expr_idx) || self.is_enum_member_type_for_widening(type_id)
+        self.is_widening_literal_source(expr_idx, type_id)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal

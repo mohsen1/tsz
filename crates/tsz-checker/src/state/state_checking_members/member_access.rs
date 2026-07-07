@@ -290,15 +290,15 @@ impl<'a> CheckerState<'a> {
                     }
                     // `tsc`'s `getFlowTypeInConstructor` widens the assigned value
                     // via `getWidenedType`, which only widens *fresh* literal-like
-                    // expressions. In `widen_fresh_only` mode keep declared literal
-                    // unions (`"A" | "B" | "C"`) intact so a value flowing in from a
-                    // typed source is not over-widened to its primitive base.
-                    let rhs_type =
-                        if !widen_fresh_only || self.is_fresh_literal_expression(bin.right) {
-                            self.widen_literal_type(rhs_type)
-                        } else {
-                            rhs_type
-                        };
+                    // expressions. In `widen_fresh_only` mode the freshness
+                    // boundary keeps declared literal unions (`"A" | "B" | "C"`)
+                    // intact so a value flowing in from a typed source is not
+                    // over-widened to its primitive base.
+                    let rhs_type = if widen_fresh_only {
+                        self.widen_expression_type_if_fresh(bin.right, rhs_type)
+                    } else {
+                        self.widen_literal_type(rhs_type)
+                    };
                     if rhs_type != TypeId::ERROR && rhs_type != TypeId::ANY {
                         assigned_types.push(rhs_type);
                     }

@@ -852,12 +852,10 @@ impl<'a> CheckerState<'a> {
         // Weak union violation for non-object-literal sources → emit TS2559
         // instead of the general TS2322/TS2345 error.
         if outcome.weak_union_violation {
-            // Recover the literal initializer type for display (e.g. `"A"` not
-            // `string`) when the source has been widened upstream. tsc keeps
-            // the literal in the TS2559 source slot.
-            let display_source = self
-                .literal_type_from_initializer(source_idx)
-                .unwrap_or(source);
+            // tsc keeps the literal (e.g. `"A"` not `string`) in the TS2559
+            // source slot even when the source has been widened upstream.
+            let display_source =
+                self.expression_display_type_preferring_literal(source_idx, source);
             self.error_no_common_properties(display_source, target, diag_idx);
             return false;
         }

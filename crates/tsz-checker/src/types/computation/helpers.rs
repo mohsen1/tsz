@@ -997,17 +997,13 @@ impl<'a> CheckerState<'a> {
             let init_type = self.get_type_of_node(var_decl.initializer);
 
             // Rule #10: Literal Widening (with freshness)
-            // For mutable bindings (let/var), widen literals to their primitive type
-            // ONLY when the initializer is a "fresh" literal expression (direct literal
-            // in source code). Types from variable references, narrowing, or computed
-            // expressions are "non-fresh" and should NOT be widened.
+            // For mutable bindings (let/var), the freshness boundary widens
+            // fresh literal (and enum member) initializers to their base;
+            // non-fresh sources keep their type.
             // For const bindings, preserve literal types (unless in array/object context)
             if !self.is_const_variable_declaration(idx) {
-                let widened = if self.is_fresh_literal_expression(var_decl.initializer) {
-                    self.widen_initializer_type_for_mutable_binding(init_type)
-                } else {
-                    init_type
-                };
+                let widened =
+                    self.widen_mutable_binding_initializer_type(var_decl.initializer, init_type);
                 // Route null/undefined widening through the flow observation boundary.
                 return flow_boundary::widen_null_undefined_to_any(
                     self.ctx.types,

@@ -74,8 +74,7 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
         target: TypeId,
     ) -> bool {
-        let ast_literal = self.literal_type_from_initializer(arg_idx);
-        let basis = ast_literal.unwrap_or(source);
+        let basis = self.expression_display_type_preferring_literal(arg_idx, source);
         let source_primitive = diagnostic_query::widen_literal_to_primitive(self.ctx.types, basis);
         // Basis isn't a literal type — this filter doesn't apply, so leave
         // the existing literal-preserving behaviour untouched.

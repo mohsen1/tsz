@@ -838,7 +838,6 @@ impl<'a> CheckerState<'a> {
         if has_default {
             let default_type = self
                 .literal_type_from_initializer(default_expr)
-                .or_else(|| self.numeric_literal_type_from_text(default_expr))
                 .unwrap_or_else(|| self.get_type_of_node(default_expr));
             if default_type != TypeId::ANY
                 && default_type != TypeId::ERROR
@@ -911,7 +910,6 @@ impl<'a> CheckerState<'a> {
             );
             let default_type = self
                 .literal_type_from_initializer(default_expr)
-                .or_else(|| self.numeric_literal_type_from_text(default_expr))
                 .unwrap_or_else(|| self.get_type_of_node(default_expr));
             let factory = self.ctx.types.factory();
             prop_type = if non_undefined == TypeId::NEVER {
@@ -988,7 +986,6 @@ impl<'a> CheckerState<'a> {
             };
             let source_type = self
                 .literal_type_from_initializer(prop.initializer)
-                .or_else(|| self.numeric_literal_type_from_text(prop.initializer))
                 .unwrap_or_else(|| self.get_type_of_node(prop.initializer));
             let Some(target_prop_type) =
                 self.resolve_property_type_for_destructuring(target_type, &name)
@@ -1095,16 +1092,6 @@ impl<'a> CheckerState<'a> {
             .arena
             .get_literal(name_node)
             .map(|lit| lit.text.clone())
-    }
-
-    fn numeric_literal_type_from_text(&self, idx: NodeIndex) -> Option<TypeId> {
-        let node = self.ctx.arena.get(idx)?;
-        if node.kind != SyntaxKind::NumericLiteral as u16 {
-            return None;
-        }
-        let lit = self.ctx.arena.get_literal(node)?;
-        tsz_common::numeric::parse_numeric_literal_value(&lit.text)
-            .map(|value| self.ctx.types.literal_number(value))
     }
 
     fn target_type_literal_property_anchor(

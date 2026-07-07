@@ -670,20 +670,18 @@ impl<'a> CheckerState<'a> {
                         {
                             inferred_type = self.ctx.types.factory().array(TypeId::ANY);
                         }
-                        // Literal Widening for mutable bindings (let/var):
-                        // Only widen when the initializer is a "fresh" literal expression
-                        // (direct literal in source code). Types from variable references,
-                        // narrowing, or computed expressions are "non-fresh" and NOT widened.
-                        // `let x = "div" as const` should have type "div", not string.
+                        // Literal Widening for mutable bindings (let/var): the
+                        // freshness boundary widens fresh literal (and enum
+                        // member) initializers; non-fresh sources keep their
+                        // type. `let x = "div" as const` should have type
+                        // "div", not string.
                         if !self.is_const_variable_declaration(resolved_value_decl)
                             && !self.is_const_assertion_initializer(var_decl.initializer)
                         {
-                            let widened_type =
-                                if self.is_fresh_literal_expression(var_decl.initializer) {
-                                    self.widen_initializer_type_for_mutable_binding(inferred_type)
-                                } else {
-                                    inferred_type
-                                };
+                            let widened_type = self.widen_mutable_binding_initializer_type(
+                                var_decl.initializer,
+                                inferred_type,
+                            );
                             // Route null/undefined widening through the flow observation boundary.
                             let final_type = flow_boundary::widen_null_undefined_to_any(
                                 self.ctx.types,

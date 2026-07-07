@@ -604,9 +604,7 @@ impl<'a> CheckerState<'a> {
             "symbol" => TypeId::SYMBOL,
             _ => return None,
         };
-        let source = self
-            .literal_type_from_initializer(arg_idx)
-            .unwrap_or(arg_type);
+        let source = self.expression_display_type_preferring_literal(arg_idx, arg_type);
         let source_base =
             crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source);
         if source_base == source || source_base == param_base {

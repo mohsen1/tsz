@@ -167,6 +167,9 @@ impl<'a> CheckerState<'a> {
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+                // This message renders the *widened* value type, so the raw
+                // literal recovery (not the literal-preferring display rule)
+                // feeds the widen below.
                 let source_type = self
                     .literal_type_from_initializer(prop_value_idx)
                     .unwrap_or(source_prop.type_id);
