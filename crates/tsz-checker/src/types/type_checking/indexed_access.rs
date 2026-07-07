@@ -733,11 +733,7 @@ impl<'a> CheckerState<'a> {
             {
                 return;
             }
-            let supports_string_index =
-                self.is_element_indexable(object_type_for_check, true, false);
-            let supports_number_index =
-                self.is_element_indexable(object_type_for_check, false, true);
-            if !supports_string_index && !supports_number_index {
+            if !self.is_element_indexable_by_any_key(object_type_for_check) {
                 // tsc keeps the index syntactically generic when the AST node
                 // is a bare type-parameter reference, even when our resolution
                 // evaluated the parameter to `any` (typically via a constraint

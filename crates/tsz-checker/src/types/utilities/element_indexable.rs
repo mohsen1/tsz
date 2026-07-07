@@ -3,6 +3,7 @@
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::mem;
 use tsz_solver::TypeId;
 
 /// Maximum union/intersection member-nesting depth walked by
@@ -12,13 +13,54 @@ use tsz_solver::TypeId;
 /// chain of *distinct* instantiations. Set well above any legitimate finite
 /// index-signature nesting so a real verdict is never masked.
 const MAX_ELEMENT_INDEXABLE_DEPTH: u32 = 1000;
+const HASH_MAP_ENTRY_OVERHEAD_ESTIMATE: usize = 8;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ElementIndexableMemoStats {
+    entries: usize,
+    estimated_size_bytes: usize,
+}
+
+#[derive(Debug, Default)]
+struct ElementIndexableMemo {
+    memo: FxHashMap<TypeId, bool>,
+}
+
+impl ElementIndexableMemo {
+    fn get(&self, type_id: TypeId) -> Option<bool> {
+        self.memo.get(&type_id).copied()
+    }
+
+    fn insert(&mut self, type_id: TypeId, result: bool) {
+        self.memo.insert(type_id, result);
+    }
+
+    fn entry_count(&self) -> usize {
+        self.memo.len()
+    }
+
+    fn estimated_size_bytes(&self) -> usize {
+        self.memo.capacity().saturating_mul(
+            mem::size_of::<TypeId>()
+                .saturating_add(mem::size_of::<bool>())
+                .saturating_add(HASH_MAP_ENTRY_OVERHEAD_ESTIMATE),
+        )
+    }
+
+    fn stats(&self) -> ElementIndexableMemoStats {
+        ElementIndexableMemoStats {
+            entries: self.entry_count(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+}
 
 struct ElementIndexableWalk<'state, 'ctx> {
     checker: &'state CheckerState<'ctx>,
     wants_string: bool,
     wants_number: bool,
     visiting: FxHashSet<TypeId>,
-    memo: FxHashMap<TypeId, bool>,
+    memo: ElementIndexableMemo,
 }
 
 impl<'state, 'ctx> ElementIndexableWalk<'state, 'ctx> {
@@ -55,7 +97,7 @@ impl<'state, 'ctx> ElementIndexableWalk<'state, 'ctx> {
     /// once and reuses — so caching it per `TypeId` is sound even when the cut
     /// value seeded a member along the way.
     fn classify(&mut self, object_type: TypeId, depth: u32) -> bool {
-        if let Some(&cached) = self.memo.get(&object_type) {
+        if let Some(cached) = self.memo.get(object_type) {
             return cached;
         }
         // Use the resolver-aware classifier so that `Application(Lazy(DefId), args)`
@@ -160,13 +202,75 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         // `wants_string` / `wants_number` are invariant across the whole descent,
         // so the per-call `memo` can key on `TypeId` alone.
-        ElementIndexableWalk {
+        let mut walk = ElementIndexableWalk {
             checker: self,
             wants_string,
             wants_number,
             visiting: FxHashSet::default(),
-            memo: FxHashMap::default(),
+            memo: ElementIndexableMemo::default(),
+        };
+        let result = walk.classify(object_type, 0);
+        if tracing::enabled!(tracing::Level::TRACE) {
+            let memo_stats = walk.memo.stats();
+            tracing::trace!(
+                object_type = object_type.0,
+                wants_string,
+                wants_number,
+                result,
+                memo_entries = memo_stats.entries,
+                memo_estimated_size_bytes = memo_stats.estimated_size_bytes,
+                "element_indexable_walk"
+            );
         }
-        .classify(object_type, 0)
+        result
+    }
+
+    /// Check whether a type supports either string or number indexing for an
+    /// `any` key. This is semantically equivalent to separate string/number
+    /// probes because string index signatures accept numeric keys, but it keeps
+    /// recursive union/intersection classification to one guarded walk.
+    pub(crate) fn is_element_indexable_by_any_key(&self, object_type: TypeId) -> bool {
+        self.is_element_indexable(object_type, true, true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn element_indexable_memo_records_entries_and_size() {
+        let mut memo = ElementIndexableMemo::default();
+
+        assert_eq!(
+            memo.stats(),
+            ElementIndexableMemoStats {
+                entries: 0,
+                estimated_size_bytes: 0,
+            }
+        );
+
+        assert_eq!(memo.get(TypeId::STRING), None);
+        memo.insert(TypeId::STRING, true);
+        assert_eq!(memo.get(TypeId::STRING), Some(true));
+
+        let stats = memo.stats();
+        assert_eq!(stats.entries, 1);
+        assert!(
+            stats.estimated_size_bytes >= mem::size_of::<TypeId>() + mem::size_of::<bool>(),
+            "estimated size should account for stored key/value bytes: {stats:?}"
+        );
+    }
+
+    #[test]
+    fn element_indexable_memo_overwrites_finished_result_without_entry_growth() {
+        let mut memo = ElementIndexableMemo::default();
+
+        memo.insert(TypeId::NUMBER, false);
+        memo.insert(TypeId::NUMBER, true);
+
+        assert_eq!(memo.get(TypeId::NUMBER), Some(true));
+        let stats = memo.stats();
+        assert_eq!(stats.entries, 1);
     }
 }

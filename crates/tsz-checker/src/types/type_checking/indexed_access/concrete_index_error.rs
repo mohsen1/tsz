@@ -116,9 +116,7 @@ impl CheckerState<'_> {
         }
 
         if index_type == TypeId::ANY {
-            if self.is_element_indexable(concrete_object_type, true, false)
-                || self.is_element_indexable(concrete_object_type, false, true)
-            {
+            if self.is_element_indexable_by_any_key(concrete_object_type) {
                 return false;
             }
             self.emit_index_type_not_usable(error_anchor, "any");
