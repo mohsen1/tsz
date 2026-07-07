@@ -1,17 +1,19 @@
-//! Non-const enum numeric initializer evaluation helpers.
+//! Enum initializer evaluation and classification helpers.
 //!
 //! These methods remain inherent methods on `CheckerState`; this module only
 //! owns the memo/depth state and expression walker used by regular enum member
-//! values. `const_enum_eval` stays separate because declaration checking calls
-//! it without a `CheckerState`.
+//! values plus declaration-time enum initializer classification.
+//! `const_enum_eval` stays separate because declaration checking calls it
+//! without a `CheckerState`.
 
+use crate::context::CheckerContext;
 use crate::state::{CheckerState, EnumKind};
 use rustc_hash::FxHashMap;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::numeric::{to_int32, to_uint32};
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{EnumData, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -65,6 +67,385 @@ impl Drop for DepthGuard {
 pub(crate) enum EnumMemberConstValue {
     Number(f64),
     String(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IsolatedEnumInitializerKind {
+    LiteralNumeric,
+    NonLiteralNumeric,
+    LiteralString,
+    NonLiteralString,
+    Other,
+}
+
+pub(crate) fn is_numeric_constant_enum_expr(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+    enum_data: &EnumData,
+) -> bool {
+    is_numeric_constant_enum_expr_inner(ctx, expr_idx, enum_data, 0)
+}
+
+pub(crate) fn classify_isolated_enum_initializer(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+    enum_data: &EnumData,
+) -> IsolatedEnumInitializerKind {
+    classify_isolated_enum_initializer_inner(ctx, expr_idx, enum_data, 0)
+}
+
+fn is_numeric_constant_enum_expr_inner(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+    enum_data: &EnumData,
+    depth: u32,
+) -> bool {
+    if depth > MAX_EVAL_DEPTH {
+        return false;
+    }
+    if expr_idx.is_none() {
+        return true;
+    }
+
+    let Some(node) = ctx.arena.get(expr_idx) else {
+        return false;
+    };
+
+    match node.kind {
+        k if k == SyntaxKind::NumericLiteral as u16 => true,
+        k if k == SyntaxKind::Identifier as u16 => {
+            if let Some(name_text) = ctx.arena.get_identifier_text(expr_idx) {
+                for &member_idx in &enum_data.members.nodes {
+                    if let Some(member_node) = ctx.arena.get(member_idx)
+                        && let Some(member_data) = ctx.arena.get_enum_member(member_node)
+                        && let Some(member_name_text) =
+                            ctx.arena.get_identifier_text(member_data.name)
+                        && member_name_text == name_text
+                    {
+                        if member_data.initializer.is_none() {
+                            return true;
+                        }
+                        return is_numeric_constant_enum_expr_inner(
+                            ctx,
+                            member_data.initializer,
+                            enum_data,
+                            depth + 1,
+                        );
+                    }
+                }
+                if matches!(name_text, "NaN" | "Infinity") {
+                    return true;
+                }
+            }
+            false
+        }
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+            ctx.arena.get_unary_expr(node).is_some_and(|unary| {
+                is_numeric_constant_enum_expr_inner(ctx, unary.operand, enum_data, depth + 1)
+            })
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            ctx.arena.get_binary_expr(node).is_some_and(|binary| {
+                is_numeric_constant_enum_expr_inner(ctx, binary.left, enum_data, depth + 1)
+                    && is_numeric_constant_enum_expr_inner(ctx, binary.right, enum_data, depth + 1)
+            })
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            ctx.arena.get_parenthesized(node).is_some_and(|paren| {
+                is_numeric_constant_enum_expr_inner(ctx, paren.expression, enum_data, depth + 1)
+            })
+        }
+        _ => false,
+    }
+}
+
+fn classify_isolated_enum_initializer_inner(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+    enum_data: &EnumData,
+    depth: u32,
+) -> IsolatedEnumInitializerKind {
+    if depth > MAX_EVAL_DEPTH || expr_idx.is_none() {
+        return IsolatedEnumInitializerKind::Other;
+    }
+
+    let Some(node) = ctx.arena.get(expr_idx) else {
+        return IsolatedEnumInitializerKind::Other;
+    };
+
+    if is_numeric_constant_enum_expr(ctx, expr_idx, enum_data) {
+        return IsolatedEnumInitializerKind::LiteralNumeric;
+    }
+
+    match node.kind {
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+        {
+            IsolatedEnumInitializerKind::LiteralString
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => ctx
+            .arena
+            .get_parenthesized(node)
+            .map_or(IsolatedEnumInitializerKind::Other, |paren| {
+                classify_isolated_enum_initializer_inner(
+                    ctx,
+                    paren.expression,
+                    enum_data,
+                    depth + 1,
+                )
+            }),
+        k if k == syntax_kind_ext::AS_EXPRESSION
+            || k == syntax_kind_ext::SATISFIES_EXPRESSION
+            || k == syntax_kind_ext::TYPE_ASSERTION =>
+        {
+            ctx.arena.get_type_assertion(node).map_or(
+                IsolatedEnumInitializerKind::Other,
+                |assertion| {
+                    classify_isolated_enum_initializer_inner(
+                        ctx,
+                        assertion.expression,
+                        enum_data,
+                        depth + 1,
+                    )
+                },
+            )
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            ctx.arena
+                .get_binary_expr(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |binary| {
+                    if binary.operator_token == SyntaxKind::PlusToken as u16
+                        && (is_syntactically_recognizable_string_initializer(
+                            ctx.arena,
+                            binary.left,
+                        ) || is_syntactically_recognizable_string_initializer(
+                            ctx.arena,
+                            binary.right,
+                        ))
+                    {
+                        IsolatedEnumInitializerKind::LiteralString
+                    } else {
+                        IsolatedEnumInitializerKind::Other
+                    }
+                })
+        }
+        k if k == SyntaxKind::Identifier as u16 => {
+            let resolved = resolve_identifier_like_symbol(ctx, expr_idx)
+                .and_then(|sym_id| resolve_imported_const_target(ctx, sym_id))
+                .or_else(|| resolve_identifier_like_symbol(ctx, expr_idx));
+            resolved.map_or(IsolatedEnumInitializerKind::Other, |sym_id| {
+                classify_symbol_backed_enum_initializer(ctx, sym_id, enum_data, depth + 1)
+            })
+        }
+        _ => IsolatedEnumInitializerKind::Other,
+    }
+}
+
+fn resolve_identifier_like_symbol(
+    ctx: &CheckerContext<'_>,
+    expr_idx: NodeIndex,
+) -> Option<SymbolId> {
+    ctx.binder
+        .get_node_symbol(expr_idx)
+        .or_else(|| ctx.binder.resolve_identifier(ctx.arena, expr_idx))
+}
+
+fn resolve_imported_const_target(ctx: &CheckerContext<'_>, sym_id: SymbolId) -> Option<SymbolId> {
+    let symbol = ctx.binder.get_symbol(sym_id)?;
+    if !symbol.has_any_flags(symbol_flags::ALIAS) {
+        return Some(sym_id);
+    }
+    let module_specifier = symbol.import_module()?;
+    let target_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
+    let source_file_idx = if symbol.decl_file_idx == u32::MAX {
+        ctx.current_file_idx
+    } else {
+        symbol.decl_file_idx as usize
+    };
+    if !ctx.has_symbol_file_index(sym_id) {
+        ctx.register_symbol_file_target(sym_id, source_file_idx);
+    }
+    ctx.resolve_alias_import_member(sym_id, module_specifier, target_name)
+}
+
+fn classify_symbol_backed_enum_initializer(
+    ctx: &CheckerContext<'_>,
+    sym_id: SymbolId,
+    enum_data: &EnumData,
+    depth: u32,
+) -> IsolatedEnumInitializerKind {
+    let cross_file_idx = ctx.resolve_symbol_file_index(sym_id);
+    let is_cross_file = cross_file_idx.is_some_and(|idx| idx != ctx.current_file_idx);
+    let (symbol, arena) = if let Some(file_idx) = cross_file_idx {
+        let Some(binder) = ctx.get_binder_for_file(file_idx) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        (symbol, ctx.get_arena_for_file(file_idx as u32))
+    } else {
+        let Some(symbol) = ctx.binder.get_symbol(sym_id) else {
+            return IsolatedEnumInitializerKind::Other;
+        };
+        (symbol, ctx.arena)
+    };
+
+    let decl_idx = if symbol.value_declaration.is_none() {
+        symbol
+            .declarations
+            .first()
+            .copied()
+            .unwrap_or(NodeIndex::NONE)
+    } else {
+        symbol.value_declaration
+    };
+    let Some(decl_node) = arena.get(decl_idx) else {
+        return IsolatedEnumInitializerKind::Other;
+    };
+    let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+        return IsolatedEnumInitializerKind::Other;
+    };
+    if var_decl.initializer.is_none() {
+        return declared_type_annotation_kind_in_arena(arena, var_decl.type_annotation)
+            .unwrap_or(IsolatedEnumInitializerKind::Other);
+    }
+    if is_cross_file {
+        match classify_initializer_kind_in_arena(arena, var_decl.initializer, depth) {
+            IsolatedEnumInitializerKind::LiteralNumeric
+            | IsolatedEnumInitializerKind::NonLiteralNumeric => {
+                IsolatedEnumInitializerKind::NonLiteralNumeric
+            }
+            IsolatedEnumInitializerKind::LiteralString
+            | IsolatedEnumInitializerKind::NonLiteralString => {
+                IsolatedEnumInitializerKind::NonLiteralString
+            }
+            IsolatedEnumInitializerKind::Other => IsolatedEnumInitializerKind::Other,
+        }
+    } else {
+        classify_isolated_enum_initializer_inner(ctx, var_decl.initializer, enum_data, depth)
+    }
+}
+
+fn classify_initializer_kind_in_arena(
+    arena: &NodeArena,
+    expr_idx: NodeIndex,
+    depth: u32,
+) -> IsolatedEnumInitializerKind {
+    if depth > MAX_EVAL_DEPTH || expr_idx.is_none() {
+        return IsolatedEnumInitializerKind::Other;
+    }
+
+    let Some(node) = arena.get(expr_idx) else {
+        return IsolatedEnumInitializerKind::Other;
+    };
+
+    match node.kind {
+        k if k == SyntaxKind::NumericLiteral as u16 => IsolatedEnumInitializerKind::LiteralNumeric,
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+        {
+            IsolatedEnumInitializerKind::LiteralString
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => arena
+            .get_parenthesized(node)
+            .map_or(IsolatedEnumInitializerKind::Other, |paren| {
+                classify_initializer_kind_in_arena(arena, paren.expression, depth + 1)
+            }),
+        k if k == syntax_kind_ext::AS_EXPRESSION
+            || k == syntax_kind_ext::SATISFIES_EXPRESSION
+            || k == syntax_kind_ext::TYPE_ASSERTION =>
+        {
+            arena
+                .get_type_assertion(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |assertion| {
+                    classify_initializer_kind_in_arena(arena, assertion.expression, depth + 1)
+                })
+        }
+        k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+            arena
+                .get_unary_expr(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |unary| {
+                    match classify_initializer_kind_in_arena(arena, unary.operand, depth + 1) {
+                        IsolatedEnumInitializerKind::LiteralNumeric
+                        | IsolatedEnumInitializerKind::NonLiteralNumeric => {
+                            IsolatedEnumInitializerKind::NonLiteralNumeric
+                        }
+                        _ => IsolatedEnumInitializerKind::Other,
+                    }
+                })
+        }
+        k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+            arena
+                .get_binary_expr(node)
+                .map_or(IsolatedEnumInitializerKind::Other, |binary| {
+                    if binary.operator_token == SyntaxKind::PlusToken as u16
+                        && (is_syntactically_recognizable_string_initializer(arena, binary.left)
+                            || is_syntactically_recognizable_string_initializer(
+                                arena,
+                                binary.right,
+                            ))
+                    {
+                        IsolatedEnumInitializerKind::LiteralString
+                    } else {
+                        match (
+                            classify_initializer_kind_in_arena(arena, binary.left, depth + 1),
+                            classify_initializer_kind_in_arena(arena, binary.right, depth + 1),
+                        ) {
+                            (
+                                IsolatedEnumInitializerKind::LiteralNumeric
+                                | IsolatedEnumInitializerKind::NonLiteralNumeric,
+                                IsolatedEnumInitializerKind::LiteralNumeric
+                                | IsolatedEnumInitializerKind::NonLiteralNumeric,
+                            ) => IsolatedEnumInitializerKind::NonLiteralNumeric,
+                            _ => IsolatedEnumInitializerKind::Other,
+                        }
+                    }
+                })
+        }
+        _ => IsolatedEnumInitializerKind::Other,
+    }
+}
+
+fn declared_type_annotation_kind_in_arena(
+    arena: &NodeArena,
+    type_annotation: NodeIndex,
+) -> Option<IsolatedEnumInitializerKind> {
+    let type_node = arena.get(type_annotation)?;
+    match type_node.kind {
+        k if k == SyntaxKind::StringKeyword as u16 => {
+            Some(IsolatedEnumInitializerKind::NonLiteralString)
+        }
+        k if k == SyntaxKind::NumberKeyword as u16 => {
+            Some(IsolatedEnumInitializerKind::NonLiteralNumeric)
+        }
+        _ => None,
+    }
+}
+
+fn is_syntactically_recognizable_string_initializer(
+    arena: &NodeArena,
+    expr_idx: NodeIndex,
+) -> bool {
+    let Some(node) = arena.get(expr_idx) else {
+        return false;
+    };
+    match node.kind {
+        k if k == SyntaxKind::StringLiteral as u16
+            || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || k == syntax_kind_ext::TEMPLATE_EXPRESSION =>
+        {
+            true
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+            arena.get_parenthesized(node).is_some_and(|paren| {
+                is_syntactically_recognizable_string_initializer(arena, paren.expression)
+            })
+        }
+        _ => false,
+    }
 }
 
 impl<'a> CheckerState<'a> {

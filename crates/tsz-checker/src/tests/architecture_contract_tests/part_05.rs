@@ -338,6 +338,15 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         "enum_eval should own declaration-order enum member value recovery"
     );
     assert!(
+        enum_eval_source.contains("enum IsolatedEnumInitializerKind"),
+        "enum_eval should own isolatedModules enum initializer classification"
+    );
+    assert!(
+        enum_eval_source.contains("fn classify_isolated_enum_initializer(")
+            && enum_eval_source.contains("fn is_numeric_constant_enum_expr("),
+        "enum_eval should expose declaration-time enum initializer classification helpers"
+    );
+    assert!(
         enum_eval_source.contains("fn enum_member_initializer_const_value("),
         "enum_eval should own enum member initializer value recovery"
     );
@@ -364,6 +373,30 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         assert!(
             !truthiness_source.contains(forbidden_helper),
             "callable truthiness should not own enum declaration fallback helper `{forbidden_helper}`"
+        );
+    }
+
+    let declarations_source = fs::read_to_string("src/declarations/declarations.rs")
+        .expect("failed to read declarations.rs");
+    assert!(
+        declarations_source.contains("classify_isolated_enum_initializer(")
+            && declarations_source.contains("is_numeric_constant_enum_expr(self.ctx,"),
+        "declaration checking should ask enum_eval for isolatedModules enum initializer facts"
+    );
+    assert!(
+        declarations_source.contains("self.ctx")
+            && declarations_source.contains("member_data.initializer"),
+        "declaration checking should pass checker context and enum initializer nodes into enum_eval"
+    );
+    for forbidden_helper in [
+        "fn classify_isolated_enum_initializer(",
+        "fn is_numeric_constant_enum_expr(",
+        "fn classify_symbol_backed_enum_initializer(",
+        "fn classify_initializer_kind_in_arena(",
+    ] {
+        assert!(
+            !declarations_source.contains(forbidden_helper),
+            "declaration checking should not own enum initializer classifier `{forbidden_helper}`"
         );
     }
 
