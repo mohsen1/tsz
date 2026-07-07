@@ -123,6 +123,43 @@ pub(crate) fn type_literal_object(
     db.object_with_flags_and_symbol(properties, flags, None)
 }
 
+/// Intern an intersection type produced from a type-node member list.
+pub(crate) fn type_node_intersection_or_single(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    tsz_solver::utils::intersection_or_single(db, members)
+}
+
+/// Intern and mark the plain object surface for a hand-written type literal.
+pub(crate) fn type_node_literal_object(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    let result = db.object(properties);
+    db.mark_literal_object_annotation(result);
+    result
+}
+
+/// Intern and mark the indexed object surface for a hand-written type literal.
+pub(crate) fn type_literal_object_with_indexes(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+) -> TypeId {
+    let result = db.object_with_index(ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol_index,
+        ..ObjectShape::default()
+    });
+    db.mark_literal_object_annotation(result);
+    result
+}
+
 /// Create a string intrinsic type from a validated lib intrinsic name.
 pub(crate) fn string_intrinsic_by_name(
     db: &dyn TypeDatabase,

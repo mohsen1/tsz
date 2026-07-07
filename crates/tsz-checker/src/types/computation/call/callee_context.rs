@@ -256,7 +256,7 @@ impl<'a> CheckerState<'a> {
             .collect();
         snap.rollback(&mut self.ctx.diagnostic_state());
 
-        Some(signature_construction::function_type_from_parts(
+        Some(signature_construction::function_type_from_params_and_return(
             self.ctx.types,
             params,
             ctx_type,
