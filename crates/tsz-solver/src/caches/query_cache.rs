@@ -9,8 +9,8 @@ use crate::caches::application_eval_index::{
 };
 use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache,
-    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePredicateCache,
-    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePruneUnionCache,
+    TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -45,6 +45,7 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+mod predicate_cache;
 mod resolver;
 
 // Element access (indexed access) of an optional property includes `undefined`
@@ -53,6 +54,7 @@ mod resolver;
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 type ConditionalBranchVerdictCacheKey = (TypeId, TypeId, bool, bool);
+type PermissiveFalseBranchCacheKey = (TypeId, TypeId, bool, bool);
 
 const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
 const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
@@ -241,6 +243,10 @@ pub struct QueryCache<'a> {
     /// that is dropped on every evaluator construction. Shares this cache's
     /// `clear()`/file lifecycle envelope.
     conditional_branch_verdict_cache: RefCell<FxHashMap<ConditionalBranchVerdictCacheKey, bool>>,
+    /// Persistent results for tsc's permissive-instantiation false-branch gate.
+    /// Writes are guarded by the conditional-branch verdict cache for the
+    /// instantiated permissive pair.
+    permissive_false_branch_cache: RefCell<FxHashMap<PermissiveFalseBranchCacheKey, bool>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     application_eval_dependency_index: ApplicationEvalDependencyIndex,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
@@ -345,6 +351,7 @@ impl<'a> QueryCache<'a> {
             closed_eval_cache: RefCell::new(FxHashMap::default()),
             closed_eval_dependency_index: RefCell::new(EvalDependencyIndexState::default()),
             conditional_branch_verdict_cache: RefCell::new(FxHashMap::default()),
+            permissive_false_branch_cache: RefCell::new(FxHashMap::default()),
             application_eval_cache: RefCell::new(FxHashMap::default()),
             application_eval_dependency_index: RefCell::new(
                 ApplicationEvalDependencyIndexState::default(),
@@ -408,6 +415,7 @@ impl<'a> QueryCache<'a> {
         self.closed_eval_cache.borrow_mut().clear();
         self.closed_eval_dependency_index.borrow_mut().clear();
         self.conditional_branch_verdict_cache.borrow_mut().clear();
+        self.permissive_false_branch_cache.borrow_mut().clear();
         self.element_access_cache.borrow_mut().clear();
         self.application_eval_cache.borrow_mut().clear();
         self.application_eval_dependency_index.borrow_mut().clear();
@@ -447,6 +455,10 @@ impl<'a> QueryCache<'a> {
             closed_eval_cache_entries: self.closed_eval_cache.borrow().len(),
             conditional_branch_verdict_cache_entries: self
                 .conditional_branch_verdict_cache
+                .borrow()
+                .len(),
+            permissive_false_branch_cache_entries: self
+                .permissive_false_branch_cache
                 .borrow()
                 .len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
@@ -669,179 +681,6 @@ impl<'a> QueryCache<'a> {
             query_trace::relation_end(query_id, trace_op, result, false);
         }
         result
-    }
-}
-
-impl TypePredicateCache for QueryCache<'_> {
-    fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_this_type_cached(type_id)
-    }
-
-    fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_this_type_cache(type_id, result);
-    }
-
-    fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_infer_types_cached(type_id)
-    }
-
-    fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_infer_types_cache(type_id, result);
-    }
-
-    fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_type_query_cached(type_id)
-    }
-
-    fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_type_query_cache(type_id, result);
-    }
-
-    fn contains_type_query_full_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_type_query_full_cached(type_id)
-    }
-
-    fn set_contains_type_query_full_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_type_query_full_cache(type_id, result);
-    }
-
-    fn contains_never_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_never_cached(type_id)
-    }
-
-    fn set_contains_never_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_contains_never_cache(type_id, result);
-    }
-
-    fn contains_free_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_free_type_params_cached(type_id)
-    }
-
-    fn set_contains_free_type_params_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_free_type_params_cache(type_id, result);
-    }
-
-    fn contains_extractable_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner
-            .contains_extractable_type_params_cached(type_id)
-    }
-
-    fn set_contains_extractable_type_params_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_extractable_type_params_cache(type_id, result);
-    }
-
-    fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_type_params_cached(type_id)
-    }
-
-    fn set_contains_type_params_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_type_params_cache(type_id, result);
-    }
-
-    fn contains_lazy_or_recursive_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_lazy_or_recursive_cached(type_id)
-    }
-
-    fn set_contains_lazy_or_recursive_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_lazy_or_recursive_cache(type_id, result);
-    }
-
-    fn contains_unresolved_application_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner
-            .contains_unresolved_application_cached(type_id)
-    }
-
-    fn set_contains_unresolved_application_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_unresolved_application_cache(type_id, result);
-    }
-
-    fn contains_resolver_dependent_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_resolver_dependent_cached(type_id)
-    }
-
-    fn set_contains_resolver_dependent_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_resolver_dependent_cache(type_id, result);
-    }
-
-    fn structurally_eval_inert_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.structurally_eval_inert_cached(type_id)
-    }
-
-    fn set_structurally_eval_inert_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_structurally_eval_inert_cache(type_id, result);
-    }
-
-    fn contains_conditional_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_conditional_cached(type_id)
-    }
-
-    fn set_contains_conditional_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_conditional_cache(type_id, result);
-    }
-
-    fn contains_param_or_infer_root_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_param_or_infer_root_cached(type_id)
-    }
-
-    fn set_contains_param_or_infer_root_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_param_or_infer_root_cache(type_id, result);
-    }
-
-    fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_generic_params_root_cached(type_id)
-    }
-
-    fn set_contains_generic_params_root_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_generic_params_root_cache(type_id, result);
-    }
-
-    fn is_generic_with_union_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner
-            .is_generic_with_union_constraint_cached(type_id)
-    }
-
-    fn set_is_generic_with_union_constraint_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_is_generic_with_union_constraint_cache(type_id, result);
-    }
-
-    fn is_generic_without_nullable_constraint_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner
-            .is_generic_without_nullable_constraint_cached(type_id)
-    }
-
-    fn set_is_generic_without_nullable_constraint_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_is_generic_without_nullable_constraint_cache(type_id, result);
-    }
-
-    fn eval_contains_infer_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.eval_contains_infer_cached(type_id)
-    }
-
-    fn set_eval_contains_infer_cache(&self, type_id: TypeId, result: bool) {
-        self.interner.set_eval_contains_infer_cache(type_id, result);
-    }
-
-    fn contains_file_relative_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.interner.contains_file_relative_cached(type_id)
-    }
-
-    fn set_contains_file_relative_cache(&self, type_id: TypeId, result: bool) {
-        self.interner
-            .set_contains_file_relative_cache(type_id, result);
     }
 }
 

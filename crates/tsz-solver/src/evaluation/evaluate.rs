@@ -124,6 +124,14 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// evaluator and keyed by the full relation configuration plus the
     /// simplifier-specific bypass/depth mode.
     compound_subtype_cache: FxHashMap<CompoundSubtypePairKey, bool>,
+    /// PERF: Cache tsc's permissive-instantiation false-branch probe for
+    /// conditional types. The helper substitutes every reachable type parameter
+    /// with `any`, evaluates both sides, then asks the conditional relation
+    /// gateway whether the false branch is definitive. That whole operation can
+    /// be requested several times while one conditional reduction is deciding
+    /// whether to defer. Entries are evaluator-local and published only when the
+    /// probe did not move the evaluator's limit/unresolved/request state.
+    permissive_false_branch_cache: FxHashMap<PermissiveFalseBranchKey, bool>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -282,6 +290,8 @@ pub struct TypeEvaluatorCacheStatistics {
     pub contains_infer_entries: usize,
     /// Entries in the compound simplification subtype memo.
     pub compound_subtype_entries: usize,
+    /// Entries in the permissive-instantiation false-branch probe memo.
+    pub permissive_false_branch_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -316,6 +326,25 @@ impl CompoundSubtypePairKey {
             max_depth: checker.max_depth,
         }
     }
+}
+
+/// Operation-local cache key for tsc's permissive-instantiation false-branch
+/// gate in conditional type evaluation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct PermissiveFalseBranchKey {
+    check_type: TypeId,
+    extends_type: TypeId,
+    no_unchecked_indexed_access: bool,
+    exact_optional_property_types: bool,
+}
+
+/// Snapshot of evaluator state that makes a probe result cacheable only when
+/// unchanged across the probe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct EvaluationProbeState {
+    limit_epoch: u32,
+    unresolved_def_epoch: u32,
+    request_termination_kind: Option<TerminationKind>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -361,6 +390,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
             compound_subtype_cache: FxHashMap::default(),
+            permissive_false_branch_cache: FxHashMap::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -390,6 +420,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let conditional_subtype_entries = self.conditional_subtype_cache.len();
         let contains_infer_entries = self.contains_infer_cache.len();
         let compound_subtype_entries = self.compound_subtype_cache.len();
+        let permissive_false_branch_entries = self.permissive_false_branch_cache.len();
         let type_evaluator_cache_estimated_size_bytes = conditional_subtype_entries
             .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
             .saturating_add(
@@ -398,12 +429,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .saturating_add(
                 compound_subtype_entries
                     .saturating_mul(std::mem::size_of::<(CompoundSubtypePairKey, bool)>()),
+            )
+            .saturating_add(
+                permissive_false_branch_entries
+                    .saturating_mul(std::mem::size_of::<(PermissiveFalseBranchKey, bool)>()),
             );
 
         TypeEvaluatorCacheStatistics {
             conditional_subtype_entries,
             contains_infer_entries,
             compound_subtype_entries,
+            permissive_false_branch_entries,
             estimated_size_bytes: type_evaluator_cache_estimated_size_bytes,
         }
     }
@@ -627,6 +663,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.cache.clear();
             self.tainted.clear();
             self.compound_subtype_cache.clear();
+            self.permissive_false_branch_cache.clear();
         }
         self.no_unchecked_indexed_access = enabled;
     }
@@ -636,6 +673,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.cache.clear();
             self.tainted.clear();
             self.compound_subtype_cache.clear();
+            self.permissive_false_branch_cache.clear();
         }
         self.exact_optional_property_types = enabled;
     }
@@ -669,6 +707,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.unresolved_def_seen = false;
         self.unresolved_def_epoch = 0;
         self.app_body_unresolved_def_epoch = 0;
+        self.permissive_false_branch_cache.clear();
         self.compound_subtype_cache.clear();
     }
 
@@ -818,6 +857,71 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
         self.contains_infer_cache.insert(type_id, result);
+    }
+
+    /// Build the option-sensitive cache key for tsc's permissive-instantiation
+    /// false-branch gate.
+    #[inline]
+    pub(crate) const fn permissive_false_branch_key(
+        &self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> PermissiveFalseBranchKey {
+        PermissiveFalseBranchKey {
+            check_type,
+            extends_type,
+            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
+            exact_optional_property_types: self.exact_optional_property_types,
+        }
+    }
+
+    /// Look up a cached permissive false-branch probe result.
+    #[inline]
+    pub(crate) fn cached_permissive_false_branch(
+        &self,
+        key: &PermissiveFalseBranchKey,
+    ) -> Option<bool> {
+        self.permissive_false_branch_cache.get(key).copied()
+    }
+
+    /// Cache a permissive false-branch probe result.
+    #[inline]
+    pub(crate) fn cache_permissive_false_branch(
+        &mut self,
+        key: PermissiveFalseBranchKey,
+        result: bool,
+    ) {
+        self.permissive_false_branch_cache.insert(key, result);
+    }
+
+    /// True when the shared permissive false-branch cache has the same
+    /// resolver-independent semantics as this evaluator.
+    ///
+    /// Resolver-backed and limited evaluators can evaluate the instantiated
+    /// permissive operands differently from the plain `NoopResolver` path, so
+    /// they keep using only the operation-local mirror.
+    #[inline]
+    pub(crate) fn permissive_false_branch_shared_cache_allowed(&self) -> bool {
+        self.persistent_memo_reads && !self.limited_resolver && self.resolver.is_noop()
+    }
+
+    /// Snapshot limit/unresolved/request state before an optional cache write.
+    #[inline]
+    pub(crate) const fn evaluation_probe_state(&self) -> EvaluationProbeState {
+        EvaluationProbeState {
+            limit_epoch: self.limit_epoch,
+            unresolved_def_epoch: self.unresolved_def_epoch,
+            request_termination_kind: self.request_termination_kind,
+        }
+    }
+
+    /// True when a probe did not observe a new unresolved body or budget/limit
+    /// event and therefore may publish an operation-local memo result.
+    #[inline]
+    pub(crate) fn evaluation_probe_state_is_unchanged(&self, state: EvaluationProbeState) -> bool {
+        self.limit_epoch == state.limit_epoch
+            && self.unresolved_def_epoch == state.unresolved_def_epoch
+            && self.request_termination_kind == state.request_termination_kind
     }
 
     /// PERF: Exact `TypeId` containment, memoized project-wide on the interner.
@@ -1493,7 +1597,8 @@ impl<R: TypeResolver> Drop for TypeEvaluator<'_, R> {
         tsz_common::perf_counters::record_eval_dropped_aux_entries(
             (self.conditional_subtype_cache.len()
                 + self.contains_infer_cache.len()
-                + self.compound_subtype_cache.len()) as u64,
+                + self.compound_subtype_cache.len()
+                + self.permissive_false_branch_cache.len()) as u64,
         );
     }
 }

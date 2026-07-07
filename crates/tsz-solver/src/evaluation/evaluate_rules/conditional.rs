@@ -7,6 +7,7 @@ mod application_infer;
 mod application_reduction;
 mod array_infer;
 mod object_infer;
+mod permissive;
 mod phases;
 
 use crate::instantiation::instantiate::{
@@ -28,6 +29,7 @@ use super::super::evaluate::TypeEvaluator;
 use super::infer_pattern::InferPatternVisited;
 use crate::evaluation::result::TerminationKind;
 use crate::type_queries::get_application_base;
+use permissive::PermissiveFalseBranchProbe;
 use phases::TailCallStep;
 pub(in crate::evaluation::evaluate_rules::conditional) use phases::{
     BranchRelation, classify_branch_relation,
@@ -193,6 +195,59 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         check_type: TypeId,
         extends_type: TypeId,
     ) -> bool {
+        let cache_key = self.permissive_false_branch_key(check_type, extends_type);
+        if let Some(cached) = self.cached_permissive_false_branch(&cache_key) {
+            return cached;
+        }
+        let shared_cache_allowed = self.permissive_false_branch_shared_cache_allowed();
+        if shared_cache_allowed
+            && let Some(cached) = self.interner().lookup_permissive_false_branch_verdict(
+                check_type,
+                extends_type,
+                self.no_unchecked_indexed_access(),
+                self.exact_optional_property_types(),
+            )
+        {
+            self.cache_permissive_false_branch(cache_key, cached);
+            return cached;
+        }
+
+        let probe_state = self.evaluation_probe_state();
+        let probe = self.permissive_false_branch_is_definitive_uncached(check_type, extends_type);
+        if probe.cacheable
+            && self.evaluation_probe_state_is_unchanged(probe_state)
+            && self.request_state_is_depth_agnostic_cache_stable()
+        {
+            self.cache_permissive_false_branch(cache_key, probe.definitive_false);
+            if shared_cache_allowed
+                && let Some((permissive_check, permissive_extends)) = probe.permissive_pair
+                && self
+                    .interner()
+                    .lookup_conditional_branch_verdict(
+                        permissive_check,
+                        permissive_extends,
+                        self.no_unchecked_indexed_access(),
+                        self.exact_optional_property_types(),
+                    )
+                    .is_some()
+            {
+                self.interner().insert_permissive_false_branch_verdict(
+                    check_type,
+                    extends_type,
+                    self.no_unchecked_indexed_access(),
+                    self.exact_optional_property_types(),
+                    probe.definitive_false,
+                );
+            }
+        }
+        probe.definitive_false
+    }
+
+    fn permissive_false_branch_is_definitive_uncached(
+        &mut self,
+        check_type: TypeId,
+        extends_type: TypeId,
+    ) -> PermissiveFalseBranchProbe {
         use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
         let mut params = self.extract_type_params_from_type(check_type).to_vec();
         for &param in self.extract_type_params_from_type(extends_type).iter() {
@@ -208,9 +263,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner().lookup(check_type),
                 Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_) | TypeData::Conditional(_))
             ) {
-                return false;
+                return PermissiveFalseBranchProbe::unshared(false);
             }
-            return true;
+            return PermissiveFalseBranchProbe::unshared(true);
         }
         let mut substitution = TypeSubstitution::new();
         for param in &params {
@@ -235,15 +290,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 permissive_extends,
             )
         {
-            return false;
+            return PermissiveFalseBranchProbe::unshared(false);
         }
         // Only a definitive `Fails` makes the false branch definitive. `Holds`
         // relates under the permissive form, and `Undetermined` consumed an
         // unregistered `Lazy` body — both keep the conditional deferred (#14238).
-        matches!(
-            self.conditional_subtype_relation(permissive_check, permissive_extends),
-            BranchRelation::Fails
-        )
+        match self.conditional_subtype_relation(permissive_check, permissive_extends) {
+            BranchRelation::Fails => PermissiveFalseBranchProbe::with_permissive_pair(
+                true,
+                permissive_check,
+                permissive_extends,
+            ),
+            BranchRelation::Holds => PermissiveFalseBranchProbe::with_permissive_pair(
+                false,
+                permissive_check,
+                permissive_extends,
+            ),
+            BranchRelation::Undetermined => PermissiveFalseBranchProbe::uncacheable(false),
+        }
     }
 
     fn generic_extends_can_use_permissive_false_branch(&self, extends_type: TypeId) -> bool {
