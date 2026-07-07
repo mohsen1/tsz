@@ -234,6 +234,55 @@ export function foo2(p = (ip = 10 as T, v: number): void => {}): void {}
 }
 
 #[test]
+fn test_isolated_declarations_enum_same_enum_references_do_not_report_ts9020() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+export enum Flags {
+    A = 1,
+    B = A,
+    C = Flags.B,
+    D = Flags["C"],
+    E = B + C,
+}
+"#,
+        CheckerOptions {
+            isolated_declarations: true,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 9020),
+        "Did not expect TS9020 for same-enum computable member references.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_isolated_declarations_enum_external_reference_reports_ts9020() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+const external = 1;
+export enum Flags {
+    A = external,
+}
+"#,
+        CheckerOptions {
+            isolated_declarations: true,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 9020),
+        "Expected TS9020 for enum initializer referencing an external symbol.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_computed_object_literal_argument_mismatch_reports_ts2345() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",

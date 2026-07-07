@@ -347,6 +347,11 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         "enum_eval should expose declaration-time enum initializer classification helpers"
     );
     assert!(
+        enum_eval_source.contains("fn isolated_decl_enum_initializer_is_computable(")
+            && enum_eval_source.contains("fn isolated_decl_enum_value_is_computable("),
+        "enum_eval should own isolatedDeclarations enum initializer computability"
+    );
+    assert!(
         enum_eval_source.contains("fn enum_member_initializer_const_value("),
         "enum_eval should own enum member initializer value recovery"
     );
@@ -397,6 +402,27 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         assert!(
             !declarations_source.contains(forbidden_helper),
             "declaration checking should not own enum initializer classifier `{forbidden_helper}`"
+        );
+    }
+
+    let isolated_decl_source =
+        fs::read_to_string("src/state/state_checking/isolated_declarations.rs")
+            .expect("failed to read isolated_declarations.rs");
+    assert!(
+        isolated_decl_source.contains("isolated_decl_enum_initializer_is_computable(")
+            && isolated_decl_source.contains("&self.ctx")
+            && isolated_decl_source.contains("member.initializer"),
+        "isolated declaration checking should ask enum_eval for enum initializer computability"
+    );
+    for forbidden_helper in [
+        "fn is_isolated_decl_enum_value(",
+        "fn is_same_enum_member_reference(",
+        "fn is_same_enum_member_named_computable(",
+        "fn is_same_enum_access(",
+    ] {
+        assert!(
+            !isolated_decl_source.contains(forbidden_helper),
+            "isolated declaration checking should not own enum computability helper `{forbidden_helper}`"
         );
     }
 
