@@ -1356,6 +1356,28 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // tsc's `elaborateElementwise` reports an unelaborated element
+                // mismatch with the *source tuple's* element type
+                // (`getTypeOfPropertyOfType(source, `${i}`)`), not a
+                // context-free retype of the element expression. For a nested
+                // array literal the context-free type is an open array, which
+                // mis-classifies the sub-reason (arity family instead of the
+                // positional chain), so recover the element type from the
+                // outer literal's computed tuple type. Only a hole/spread-free
+                // literal maps element index i to tuple slot i.
+                let relation_elem_type =
+                    if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                        crate::query_boundaries::common::tuple_elements(
+                            self.ctx.types,
+                            self.get_type_of_node(arg_idx),
+                        )
+                        .filter(|elements| elements.len() == arr.elements.nodes.len())
+                        .and_then(|elements| elements.get(index).map(|element| element.type_id))
+                        .filter(|&source_element| !source_element.is_any_unknown_or_error())
+                        .unwrap_or(elem_type)
+                    } else {
+                        elem_type
+                    };
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
                     elem_type,
@@ -1364,13 +1386,13 @@ impl<'a> CheckerState<'a> {
                 );
                 if widen_source_display {
                     self.error_type_not_assignable_at_with_widened_source_display(
-                        elem_type,
+                        relation_elem_type,
                         display_target_element_type,
                         elem_idx,
                     );
                 } else {
                     self.error_type_not_assignable_at_with_anchor(
-                        elem_type,
+                        relation_elem_type,
                         display_target_element_type,
                         elem_idx,
                     );
