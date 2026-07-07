@@ -250,7 +250,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "substitute_this_type",
     "substitute_this_type_at_return_position",
     "tuple_elements",
-    "tuple_leading_fixed_count_before_trailing",
+    "tuple_leading_fixed_drill_cap",
     "tuple_list_id",
     "type_application",
     "type_contains_string_literal",
