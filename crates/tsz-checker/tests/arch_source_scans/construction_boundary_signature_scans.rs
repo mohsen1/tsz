@@ -34,6 +34,10 @@ const SIGNATURE_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
 /// The designated checker-side `CallSignature` data assembler.
 const SIGNATURE_DATA_BUILDER: &str = "src/checkers/signature_builder.rs";
 const CALL_DISPLAY_MODULE: &str = "src/types/computation/call_display.rs";
+const CONTEXTUAL_FUNCTION_MATERIALIZATION_MODULES: &[&str] = &[
+    "src/types/computation/tagged_template.rs",
+    "src/types/function_type_helpers.rs",
+];
 
 /// Type literals assemble AST-derived signature/index/property facts, but the
 /// solver shape construction belongs to query boundaries.
@@ -164,6 +168,30 @@ fn call_display_routes_function_type_construction_through_boundary() {
     );
 }
 
+/// Contextual typing helpers may assemble `FunctionShape` request data, but
+/// interned function types must flow through `construct_signatures`.
+#[test]
+fn contextual_function_materialization_routes_interning_through_boundary() {
+    const PATTERNS: &[&str] = &[
+        ".factory().function(",
+        ".factory.function(",
+        ".types.function(",
+        ".ctx.types.function(",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    for module in CONTEXTUAL_FUNCTION_MATERIALIZATION_MODULES {
+        scan_for_patterns(module, PATTERNS, &mut violations);
+    }
+    assert!(
+        violations.is_empty(),
+        "contextual function helpers must intern temporary function types through \
+         query_boundaries::construct_signatures:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// `CallSignature` literals are signature *data* assembly and belong to the
 /// designated builder module (`checkers/signature_builder.rs`) or the
 /// boundary itself; the other issue #13022 modules round-trip through
@@ -280,6 +308,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "function_type_from_shape",
         "function_type_with_return_type",
         "function_type_from_parts",
+        "function_type_with_params_replaced",
         "function_type_from_call_signature",
         "function_type_from_call_signature_preserving_method",
         "method_function_type_from_call_signature",

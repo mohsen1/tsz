@@ -9,6 +9,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::common::instantiate_type;
+use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -224,12 +225,16 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| {
                     call_checker::get_contextual_signature(self.ctx.types, call_target_type)
                 })
-                .map(|shape| self.ctx.types.factory().function(shape))
+                .map(|shape| {
+                    signature_construction::function_type_from_shape(self.ctx.types, shape)
+                })
                 .unwrap_or(call_target_type)
         } else {
             callee_shape
                 .as_ref()
-                .map(|shape| self.ctx.types.factory().function(shape.clone()))
+                .map(|shape| {
+                    signature_construction::function_type_from_shape(self.ctx.types, shape.clone())
+                })
                 .unwrap_or(callee_type_for_context)
         };
         let selected_callee_type = if tagged.type_arguments.is_some() {
@@ -292,19 +297,11 @@ impl<'a> CheckerState<'a> {
 
             if needs_two_pass {
                 // === Round 1: Collect non-contextual substitution types ===
-                let factory = self.ctx.types.factory();
-                let placeholder = {
-                    let fshape = tsz_solver::FunctionShape {
-                        params: vec![],
-                        return_type: TypeId::ANY,
-                        this_type: None,
-                        type_params: vec![],
-                        type_predicate: None,
-                        is_constructor: false,
-                        is_method: false,
-                    };
-                    factory.function(fshape)
-                };
+                let placeholder = signature_construction::function_type_from_parts(
+                    self.ctx.types,
+                    vec![],
+                    TypeId::ANY,
+                );
 
                 // Build argument types for Round 1: TemplateStringsArray + substitutions
                 // Use ANY as stand-in for TemplateStringsArray since it's a fixed

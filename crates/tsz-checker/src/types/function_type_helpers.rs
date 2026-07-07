@@ -9,6 +9,7 @@ use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -230,7 +231,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     evaluated_type,
                 )
-                .map(|shape| self.ctx.types.factory().function(shape))
+                .map(|shape| {
+                    signature_construction::function_type_from_shape(self.ctx.types, shape)
+                })
                 .unwrap_or(evaluated_type)
             } else {
                 evaluated_type
@@ -1515,17 +1518,11 @@ impl<'a> CheckerState<'a> {
             .expect("new_params cloned from non-empty shape.params")
             .type_id = evaluated_rest;
 
-        let new_shape = tsz_solver::FunctionShape {
-            type_params: shape.type_params.clone(),
-            params: new_params,
-            this_type: shape.this_type,
-            return_type: shape.return_type,
-            type_predicate: shape.type_predicate,
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        };
-
-        self.ctx.types.function(new_shape)
+        signature_construction::function_type_with_params_replaced(
+            self.ctx.types,
+            &shape,
+            new_params,
+        )
     }
 
     /// TS2366/TS2355/TS7030: Check that all code paths return a value when required.
