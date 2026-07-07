@@ -353,6 +353,33 @@ pub(crate) fn class_member_object_with_indexes_type(
     })
 }
 
+pub(crate) fn final_class_instance_type(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+    has_late_bound_members: bool,
+    suppress_module_augmentation_lookup: bool,
+) -> TypeId {
+    let mut shape = ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol_index,
+        symbol,
+        ..ObjectShape::default()
+    };
+    if has_late_bound_members {
+        shape.mark_has_late_bound_members();
+    }
+    if suppress_module_augmentation_lookup {
+        shape.mark_no_module_augmentation_lookup();
+    }
+    db.object_with_index(shape)
+}
+
 pub(crate) fn class_member_partial_this_type(
     db: &dyn TypeDatabase,
     own_properties: Vec<PropertyInfo>,
@@ -481,6 +508,22 @@ pub(crate) fn class_constructor_callable_type(
         number_index,
         symbol,
         is_abstract,
+    })
+}
+
+pub(crate) fn class_constructor_callable_with_construct_signatures_replaced(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    construct_signatures: Vec<CallSignature>,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: base.call_signatures.clone(),
+        construct_signatures,
+        properties: base.properties.clone(),
+        string_index: base.string_index,
+        number_index: base.number_index,
+        symbol: base.symbol,
+        is_abstract: base.is_abstract,
     })
 }
 

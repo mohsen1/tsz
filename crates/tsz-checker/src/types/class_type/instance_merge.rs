@@ -11,13 +11,15 @@
 use super::helpers::{can_skip_base_instantiation, declaration_is_module_augmentation};
 use super::instance::ClassInstanceBuilder;
 use super::walk_state::ClassInstanceWalkState;
-use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
+use crate::query_boundaries::class_type::{
+    callable_shape_for_type, final_class_instance_type, object_shape_for_type,
+};
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl CheckerState<'_> {
     /// Merge base class instance properties (derived members take precedence).
@@ -669,7 +671,6 @@ impl CheckerState<'_> {
         walk_state: &mut ClassInstanceWalkState,
         b: ClassInstanceBuilder<'_>,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         let current_sym = b.current_sym;
         let did_insert_into_global_set = b.did_insert_into_global_set();
         // Capture before `b.properties` is moved out via `into_values()` below.
@@ -690,21 +691,16 @@ impl CheckerState<'_> {
         // via stable sort.
         let mut props: Vec<PropertyInfo> = b.properties.into_values().collect();
         props.sort_by_key(|p| p.declaration_order);
-        let mut shape = ObjectShape {
-            properties: props,
-            string_index: b.string_index,
-            number_index: b.number_index,
-            symbol_index: b.symbol_index,
-            symbol: current_sym,
-            ..ObjectShape::default()
-        };
-        if has_late_bound_members {
-            shape.mark_has_late_bound_members();
-        }
-        if !apply_module_augmentations {
-            shape.mark_no_module_augmentation_lookup();
-        }
-        let mut instance_type = factory.object_with_index(shape);
+        let mut instance_type = final_class_instance_type(
+            self.ctx.types,
+            props,
+            b.string_index,
+            b.number_index,
+            b.symbol_index,
+            current_sym,
+            has_late_bound_members,
+            !apply_module_augmentations,
+        );
 
         // Final interface merging pass
         if let Some(sym_id) = current_sym {

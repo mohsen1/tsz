@@ -1,6 +1,7 @@
 //! Recovery helpers for property access during class construction.
 
 use crate::classes_domain::class_summary::ClassChainSummary;
+use crate::query_boundaries::class_type as class_type_boundary;
 use crate::state::CheckerState;
 use std::rc::Rc;
 use tsz_parser::parser::NodeIndex;
@@ -395,7 +396,6 @@ impl<'a> CheckerState<'a> {
         property_name: &str,
     ) -> Option<TypeId> {
         let member_nodes = self.ctx.enclosing_class.as_ref()?.member_nodes.clone();
-        let factory = self.ctx.types.factory();
 
         for member_idx in member_nodes {
             if self.get_member_name(member_idx).as_deref() != Some(property_name) {
@@ -414,20 +414,15 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let signature = self.call_signature_from_method(method, member_idx);
-                    let method_type = factory.callable(tsz_solver::CallableShape {
-                        call_signatures: vec![signature],
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    });
-                    return Some(if method.question_token {
-                        factory.union2(method_type, TypeId::UNDEFINED)
-                    } else {
-                        method_type
-                    });
+                    let method_type = class_type_boundary::class_method_callable_type(
+                        self.ctx.types,
+                        vec![signature],
+                    );
+                    return Some(class_type_boundary::optional_class_member_type(
+                        self.ctx.types,
+                        method_type,
+                        method.question_token,
+                    ));
                 }
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                     let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {

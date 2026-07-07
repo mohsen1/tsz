@@ -112,6 +112,9 @@
 //! - `class_member_surface_construction_boundary_scans`: class instance and
 //!   constructor member/in-progress surfaces route through
 //!   `query_boundaries::class_type`.
+//! - `class_recovery_surface_construction_boundary_scans`: class recovery,
+//!   final instance merge, JSDoc class template, and constructor refresh
+//!   surfaces route through class/signature query boundaries.
 //! - `class_constructor_return_construction_boundary_scans`: class constructor
 //!   checking routes return/intersection/static-property construction through
 //!   `query_boundaries::checkers::constructor`.
@@ -186,6 +189,8 @@ mod class_instance_walk_state_scans;
 mod class_member_surface_construction_boundary_scans;
 #[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]
 mod class_partial_constructor_construction_boundary_scans;
+#[path = "arch_source_scans/class_recovery_surface_construction_boundary_scans.rs"]
+mod class_recovery_surface_construction_boundary_scans;
 #[path = "arch_source_scans/class_surface_construction_boundary_scans.rs"]
 mod class_surface_construction_boundary_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
