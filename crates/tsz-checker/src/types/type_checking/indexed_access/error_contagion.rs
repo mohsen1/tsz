@@ -283,7 +283,10 @@ impl CheckerState<'_> {
         // `keyof` over the union of the concrete branches already computes their
         // key-space intersection; use the checker resolver so named branches
         // contribute their resolved members.
-        let concrete_union = self.ctx.types.union(concrete);
+        let concrete_union = crate::query_boundaries::indexed_access_key_space::key_space_union(
+            self.ctx.types,
+            concrete,
+        );
         let keyof_concrete = self.indexed_access_keyof_with_env(concrete_union);
         if !self.indexed_access_key_space_is_resolved(keyof_concrete) {
             return None;

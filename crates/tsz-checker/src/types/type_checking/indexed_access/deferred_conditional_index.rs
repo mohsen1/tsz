@@ -2,6 +2,7 @@
 //! conditional type. Split out of `indexed_access.rs` to keep that file under
 //! the per-file LOC ceiling; behavior is unchanged.
 
+use crate::query_boundaries::indexed_access_key_space as key_space_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -147,12 +148,11 @@ impl<'a> CheckerState<'a> {
         // The inner key drives `apparent = base_constraint[inner_index]`. Evaluate
         // it; an apparent type that is still deferred (e.g. the inner key was
         // itself generic) gives no concrete key space, so bail.
-        let apparent = self.evaluate_type_with_env(
-            self.ctx
-                .types
-                .factory()
-                .index_access(base_constraint, inner_index),
-        );
+        let apparent = self.evaluate_type_with_env(key_space_query::indexed_access_type(
+            self.ctx.types,
+            base_constraint,
+            inner_index,
+        ));
         if apparent == TypeId::ERROR
             || apparent == TypeId::ANY
             || q::is_index_access_type(self.ctx.types, apparent)
