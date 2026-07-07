@@ -2,11 +2,33 @@
 
 use super::*;
 
+/// Per-member property-name set keyed by property-name atom, or `None` for
+/// members that contribute no object properties.
+type MemberPropertyNames = Option<FxHashSet<u32>>;
 /// Per-property `(optional, readonly)` modifier map keyed by property-name atom,
 /// or `None` for members that contribute no object properties. Used by
 /// intersection simplification to AND-merge modifiers when deciding whether a
 /// structurally subsumed member can be dropped.
 type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
+
+/// Structural facts about one compound simplification member.
+///
+/// These facts are computed without running relation or evaluation queries, so
+/// they can be reused across the simplifier's O(n^2) pair loop. The final
+/// decision still runs the relation probe and every veto in order.
+#[derive(Clone, Debug, Default)]
+struct CompoundMemberFacts {
+    property_names: MemberPropertyNames,
+    property_modifiers: MemberModifierMap,
+    carries_index_signature: bool,
+    is_empty_object_type: bool,
+    is_intrinsic: bool,
+    is_intrinsic_or_literal_type: bool,
+    is_literal_type: bool,
+    is_widening_primitive_intrinsic: bool,
+    is_opaque_under_bypass_eval: bool,
+    is_branded_primitive_intersection: bool,
+}
 
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
@@ -111,35 +133,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         checker.exact_optional_property_types = self.exact_optional_property_types;
 
-        // Pre-compute property name sets for all members once, avoiding O(N^2) FxHashSet
-        // allocations in the inner loop. Each entry is None for non-object types.
-        let prop_names: Vec<Option<FxHashSet<u32>>> = members
+        // Snapshot per-member veto facts before the pair loop. These facts are
+        // pure, per-call data, so relation probes can mutably borrow `self`
+        // without re-walking object/intersection shapes for every pair.
+        let needs_property_modifiers = matches!(direction, SubtypeDirection::OtherSubsumedBySource);
+        let member_facts: Vec<CompoundMemberFacts> = members
             .iter()
-            .map(|&id| {
-                let mut names = FxHashSet::default();
-                Self::collect_property_names(self.interner, id, &mut names);
-                if names.is_empty() { None } else { Some(names) }
-            })
+            .map(|&id| self.compound_member_facts(id, needs_property_modifiers))
             .collect();
-
-        // Pre-compute per-member property modifier maps once for the intersection
-        // direction, mirroring the `prop_names` precompute above. The modifier
-        // guard below then reduces to O(1) cached lookups instead of re-walking
-        // shapes on every candidate pair. Union simplification never consults
-        // these, so skip the work entirely in that direction.
-        let prop_mods: Vec<MemberModifierMap> =
-            if matches!(direction, SubtypeDirection::OtherSubsumedBySource) {
-                members
-                    .iter()
-                    .map(|&id| {
-                        let mut mods = FxHashMap::default();
-                        Self::collect_property_modifiers(self.interner, id, &mut mods);
-                        if mods.is_empty() { None } else { Some(mods) }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
 
         // Union subtype reduction only removes a member that is structured or
         // instantiable, or when the union contains an empty object type, any
@@ -154,9 +155,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // below and stay removable. `has_empty_object` is only consulted in the
         // union direction; intersection simplification keeps its own rules.
         let has_empty_object = matches!(direction, SubtypeDirection::SourceSubsumedByOther)
-            && members.iter().any(|&id| {
-                crate::visitors::visitor_predicates::is_empty_object_type(self.interner, id)
-            });
+            && member_facts.iter().any(|facts| facts.is_empty_object_type);
 
         // Use mark-and-compact instead of Vec::remove() which is O(N) per removal.
         // Since max size is 25 (from guard above), a u32 bitset avoids heap allocation.
@@ -174,11 +173,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // consult it, so the `matches!` short-circuits the helper away.
             let union_candidate_removable =
                 matches!(direction, SubtypeDirection::SourceSubsumedByOther)
-                    && Self::union_member_removable_as_subtype(
-                        self.interner,
-                        members[i],
-                        has_empty_object,
-                    );
+                    && Self::union_member_removable_as_subtype(&member_facts[i], has_empty_object);
             for j in 0..len {
                 if i == j || keep & (1u32 << j) == 0 {
                     continue;
@@ -189,21 +184,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 let is_subtype = match direction {
                     SubtypeDirection::SourceSubsumedByOther => {
-                        union_candidate_removable
-                            && self.compound_subtype_cached(&mut checker, members[i], members[j])
-                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
-                            && !Self::has_index_signature_not_in(
-                                self.interner,
-                                members[i],
-                                members[j],
+                        let candidate = &member_facts[i];
+                        let subsuming = &member_facts[j];
+                        let related =
+                            self.compound_subtype_cached(&mut checker, members[i], members[j]);
+                        related
+                            && union_candidate_removable
+                            && !Self::has_unique_properties_cached(
+                                &candidate.property_names,
+                                &subsuming.property_names,
                             )
-                            && !Self::is_literal_under_branded_primitive(
-                                self.interner,
-                                members[i],
-                                members[j],
-                            )
+                            && !Self::has_index_signature_not_in(candidate, subsuming)
+                            && !Self::is_literal_under_branded_primitive(candidate, subsuming)
                     }
                     SubtypeDirection::OtherSubsumedBySource => {
+                        let dropped = &member_facts[i];
+                        let kept = &member_facts[j];
                         // For intersections: member[j] <: member[i] means member[i] is
                         // a candidate for removal. But if member[i] contributes properties
                         // that member[j] doesn't have, it must be kept; removing it would
@@ -215,23 +211,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // sibling like `{path?: _}` would then trivially "subsume" it and
                         // get the Application dropped, even though the Application would
                         // contribute additional union/object members once expanded.
-                        !Self::is_opaque_under_bypass_eval(self.interner, members[i])
-                            && self.compound_subtype_cached(&mut checker, members[j], members[i])
-                            && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
+                        let related =
+                            self.compound_subtype_cached(&mut checker, members[j], members[i]);
+                        related
+                            && !dropped.is_opaque_under_bypass_eval
+                            && !Self::has_unique_properties_cached(
+                                &dropped.property_names,
+                                &kept.property_names,
+                            )
                             && !Self::intersection_drop_changes_modifiers(
-                                &prop_mods[i],
-                                &prop_mods[j],
+                                &dropped.property_modifiers,
+                                &kept.property_modifiers,
                             )
-                            && !Self::has_index_signature_not_in(
-                                self.interner,
-                                members[i],
-                                members[j],
-                            )
-                            && !Self::is_branded_primitive_pair(
-                                self.interner,
-                                members[i],
-                                members[j],
-                            )
+                            && !Self::has_index_signature_not_in(dropped, kept)
+                            && !Self::is_branded_primitive_pair(dropped, kept)
                     }
                 };
                 if is_subtype {
@@ -317,11 +310,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.compound_subtype_cache.insert(key, result);
     }
 
+    /// Compute the structural facts used by compound simplification vetoes for
+    /// one member. This is intentionally per-call state, not an evaluator cache:
+    /// the member list is small and the facts are only valid inside one type
+    /// database/request shape.
+    fn compound_member_facts(
+        &self,
+        type_id: TypeId,
+        include_property_modifiers: bool,
+    ) -> CompoundMemberFacts {
+        let mut names = FxHashSet::default();
+        Self::collect_property_names(self.interner, type_id, &mut names);
+        let property_names = if names.is_empty() { None } else { Some(names) };
+
+        let property_modifiers = if include_property_modifiers {
+            let mut mods = FxHashMap::default();
+            Self::collect_property_modifiers(self.interner, type_id, &mut mods);
+            if mods.is_empty() { None } else { Some(mods) }
+        } else {
+            None
+        };
+
+        CompoundMemberFacts {
+            property_names,
+            property_modifiers,
+            carries_index_signature: Self::carries_index_signature(self.interner, type_id),
+            is_empty_object_type: crate::visitors::visitor_predicates::is_empty_object_type(
+                self.interner,
+                type_id,
+            ),
+            is_intrinsic: type_id.is_intrinsic(),
+            is_intrinsic_or_literal_type:
+                crate::visitors::visitor_predicates::is_intrinsic_or_literal_type(
+                    self.interner,
+                    type_id,
+                ),
+            is_literal_type: crate::visitors::visitor_predicates::is_literal_type(
+                self.interner,
+                type_id,
+            ),
+            is_widening_primitive_intrinsic:
+                crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(
+                    self.interner,
+                    type_id,
+                ),
+            is_opaque_under_bypass_eval: Self::is_opaque_under_bypass_eval(self.interner, type_id),
+            is_branded_primitive_intersection: Self::is_branded_primitive_intersection(
+                self.interner,
+                type_id,
+            ),
+        }
+    }
+
     /// Check if `candidate` has any property names that `subsuming` doesn't have,
     /// using pre-computed property name sets to avoid repeated allocation.
     fn has_unique_properties_cached(
-        candidate_names: &Option<FxHashSet<u32>>,
-        subsuming_names: &Option<FxHashSet<u32>>,
+        candidate_names: &MemberPropertyNames,
+        subsuming_names: &MemberPropertyNames,
     ) -> bool {
         let Some(candidate) = candidate_names else {
             return false; // No properties -> can't contribute unique ones
@@ -346,37 +391,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///   The sole exception is `has_empty_object`: when the union literally
     ///   contains an empty object type, everything it subsumes is collapsed into
     ///   it (`boolean | {}` -> `{}`), matching tsc.
-    fn union_member_removable_as_subtype(
-        db: &dyn crate::caches::db::TypeDatabase,
-        member: TypeId,
+    const fn union_member_removable_as_subtype(
+        member: &CompoundMemberFacts,
         has_empty_object: bool,
     ) -> bool {
         if has_empty_object {
             return true;
         }
-        if crate::visitors::visitor_predicates::is_literal_type(db, member) {
+        if member.is_literal_type {
             return true;
         }
         // Reserved intrinsic TypeIds (`boolean`, `number`, `string`, `object`,
         // ...) are bare keyword types and stay protected. They are checked
         // explicitly because they do not always resolve through `lookup`.
-        if member.is_intrinsic() {
+        if member.is_intrinsic {
             return false;
         }
         // Bare intrinsic keyword types (non-literal) are protected from
         // object-subsumption removal; structured/instantiable members are not.
-        !crate::visitors::visitor_predicates::is_intrinsic_or_literal_type(db, member)
+        !member.is_intrinsic_or_literal_type
     }
 
     /// Check whether a (candidate, subsuming) pair forms the branded-primitive
     /// idiom `string & {}` (or `number & {}`, `boolean & {}`, ...).
-    fn is_branded_primitive_pair(
-        db: &dyn crate::caches::db::TypeDatabase,
-        candidate: TypeId,
-        subsuming: TypeId,
+    const fn is_branded_primitive_pair(
+        candidate: &CompoundMemberFacts,
+        subsuming: &CompoundMemberFacts,
     ) -> bool {
-        crate::visitors::visitor_predicates::is_empty_object_type(db, candidate)
-            && crate::visitors::visitor_predicates::is_widening_primitive_intrinsic(db, subsuming)
+        candidate.is_empty_object_type && subsuming.is_widening_primitive_intrinsic
     }
 
     /// Returns true when `type_id` is an unreduced `Application` or `Lazy`
@@ -394,15 +436,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Check whether a union member is a literal that's only "subsumed" by a
     /// branded-primitive intersection (`string & {}` and friends).
-    fn is_literal_under_branded_primitive(
-        db: &dyn crate::caches::db::TypeDatabase,
-        candidate: TypeId,
-        subsuming: TypeId,
+    const fn is_literal_under_branded_primitive(
+        candidate: &CompoundMemberFacts,
+        subsuming: &CompoundMemberFacts,
     ) -> bool {
-        if !crate::visitors::visitor_predicates::is_literal_type(db, candidate) {
-            return false;
-        }
-        let Some(TypeData::Intersection(list_id)) = db.lookup(subsuming) else {
+        candidate.is_literal_type && subsuming.is_branded_primitive_intersection
+    }
+
+    fn is_branded_primitive_intersection(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
             return false;
         };
         let members = db.type_list(list_id);
@@ -421,13 +466,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Check if `candidate` has an index signature that `subsuming` lacks.
-    fn has_index_signature_not_in(
-        db: &dyn crate::caches::db::TypeDatabase,
-        candidate: TypeId,
-        subsuming: TypeId,
+    const fn has_index_signature_not_in(
+        candidate: &CompoundMemberFacts,
+        subsuming: &CompoundMemberFacts,
     ) -> bool {
-        Self::carries_index_signature(db, candidate)
-            && !Self::carries_index_signature(db, subsuming)
+        candidate.carries_index_signature && !subsuming.carries_index_signature
     }
 
     fn carries_index_signature(db: &dyn crate::caches::db::TypeDatabase, type_id: TypeId) -> bool {
@@ -525,9 +568,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 mod tests {
     use super::*;
     use crate::construction::TypeInterner;
+    use crate::def::DefId;
     use crate::evaluation::session::EvaluationSession;
     use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
-    use crate::types::{PropertyInfo, TypeId};
+    use crate::types::{IndexSignature, ObjectShape, PropertyInfo, TupleElement, TypeId};
 
     fn exact_optional_probe_pair(interner: &TypeInterner) -> (TypeId, TypeId) {
         let prop = interner.intern_string("value");
@@ -545,6 +589,44 @@ mod tests {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.exact_optional_property_types = exact_optional_property_types;
         checker
+    }
+
+    fn seed_session_compound_probe(
+        session: &EvaluationSession,
+        checker: &SubtypeChecker<'_>,
+        source: TypeId,
+        target: TypeId,
+        result: bool,
+    ) {
+        session.compound_subtype_probe_put(
+            CompoundSubtypePairKey::from_checker(checker, source, target),
+            result,
+        );
+    }
+
+    fn object_with_string_index(
+        interner: &TypeInterner,
+        prop_name: tsz_common::interner::Atom,
+    ) -> TypeId {
+        interner.object_with_index(ObjectShape {
+            properties: vec![PropertyInfo::new(prop_name, TypeId::STRING)],
+            string_index: Some(IndexSignature {
+                key_type: TypeId::STRING,
+                value_type: TypeId::STRING,
+                readonly: false,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        })
+    }
+
+    fn tuple_elem(type_id: TypeId) -> TupleElement {
+        TupleElement {
+            type_id,
+            name: None,
+            optional: false,
+            rest: false,
+        }
     }
 
     #[test]
@@ -570,6 +652,183 @@ mod tests {
             exact_members,
             vec![present_undefined, optional_number],
             "exact optional mode must not reuse legacy optional-property subtyping",
+        );
+    }
+
+    #[test]
+    fn compound_member_facts_extract_object_array_opaque_and_brand_facts() {
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let indexed = object_with_string_index(&interner, value);
+        let tuple = interner.tuple(vec![tuple_elem(TypeId::STRING)]);
+        let array = interner.array(TypeId::NUMBER);
+        let lazy = interner.lazy(DefId(1001));
+        let application = interner.application(lazy, vec![TypeId::STRING]);
+        let branded = interner.intersect_types_raw2(TypeId::STRING, interner.object(Vec::new()));
+        let evaluator = TypeEvaluator::new(&interner);
+
+        let indexed_facts = evaluator.compound_member_facts(indexed, true);
+        assert!(indexed_facts.carries_index_signature);
+        assert!(
+            indexed_facts
+                .property_names
+                .as_ref()
+                .is_some_and(|names| names.contains(&value.0)),
+            "object facts include declared property names",
+        );
+
+        for member in [tuple, array] {
+            let facts = evaluator.compound_member_facts(member, false);
+            assert!(
+                facts
+                    .property_names
+                    .as_ref()
+                    .is_some_and(|names| names.contains(&u32::MAX)),
+                "array-like members carry the property-name sentinel used by uniqueness vetoes",
+            );
+        }
+
+        let application_facts = evaluator.compound_member_facts(application, false);
+        assert!(application_facts.is_opaque_under_bypass_eval);
+
+        let branded_facts = evaluator.compound_member_facts(branded, false);
+        assert!(branded_facts.is_branded_primitive_intersection);
+
+        let literal_facts =
+            evaluator.compound_member_facts(interner.literal_string("token"), false);
+        assert!(TypeEvaluator::<crate::relations::subtype::NoopResolver>::union_member_removable_as_subtype(
+            &literal_facts,
+            false,
+        ));
+
+        let primitive_facts = evaluator.compound_member_facts(TypeId::STRING, false);
+        assert!(
+            !TypeEvaluator::<crate::relations::subtype::NoopResolver>::union_member_removable_as_subtype(
+                &primitive_facts,
+                false,
+            ),
+            "bare primitive keywords stay protected without an empty-object member",
+        );
+        assert!(
+            TypeEvaluator::<crate::relations::subtype::NoopResolver>::union_member_removable_as_subtype(
+                &primitive_facts,
+                true,
+            ),
+            "the empty-object union case keeps tsc's primitive absorption exception",
+        );
+    }
+
+    #[test]
+    fn compound_member_facts_merge_modifiers_without_evaluator_cache_state() {
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let mut optional_readonly = PropertyInfo::opt(value, TypeId::STRING);
+        optional_readonly.readonly = true;
+        let required_readonly =
+            interner.object(vec![PropertyInfo::readonly(value, TypeId::STRING)]);
+        let optional_readonly = interner.object(vec![optional_readonly]);
+        let intersection = interner.intersect_types_raw2(required_readonly, optional_readonly);
+        let evaluator = TypeEvaluator::new(&interner);
+        let before = evaluator.cache_statistics();
+
+        let facts = evaluator.compound_member_facts(intersection, true);
+
+        assert_eq!(
+            evaluator.cache_statistics(),
+            before,
+            "per-call member facts must not mutate evaluator cache statistics",
+        );
+        assert_eq!(
+            facts
+                .property_modifiers
+                .as_ref()
+                .and_then(|mods| mods.get(&value.0).copied()),
+            Some((false, true)),
+            "intersection modifier facts use tsc's AND-merge semantics",
+        );
+
+        let union_facts = evaluator.compound_member_facts(intersection, false);
+        assert!(union_facts.property_modifiers.is_none());
+    }
+
+    #[test]
+    fn compound_member_facts_keep_index_signature_veto_after_session_subtype_hit() {
+        let interner = TypeInterner::new();
+        let prop = interner.intern_string("value");
+        let with_index = object_with_string_index(&interner, prop);
+        let without_index = interner.object(vec![PropertyInfo::new(prop, TypeId::STRING)]);
+        let checker = compound_probe_checker(&interner, false);
+        let session = EvaluationSession::new();
+        seed_session_compound_probe(&session, &checker, with_index, without_index, true);
+        seed_session_compound_probe(&session, &checker, without_index, with_index, true);
+
+        let mut members = vec![with_index, without_index];
+        let mut evaluator = TypeEvaluator::new(&interner).with_evaluation_session(&session);
+        evaluator.simplify_union_members(&mut members);
+
+        assert_eq!(
+            members,
+            vec![with_index],
+            "a session raw-subtype hit must still rerun the index-signature removal veto",
+        );
+        assert_eq!(
+            evaluator.cache_statistics().compound_subtype_entries,
+            0,
+            "session-backed subtype probes should not duplicate evaluator-local relation entries",
+        );
+    }
+
+    #[test]
+    fn compound_member_facts_keep_branded_literal_veto_after_session_subtype_hit() {
+        let interner = TypeInterner::new();
+        let literal = interner.literal_string("token");
+        let empty = interner.object(Vec::new());
+        let branded_string = interner.intersect_types_raw2(TypeId::STRING, empty);
+        let branded_number = interner.intersect_types_raw2(TypeId::NUMBER, empty);
+        let checker = compound_probe_checker(&interner, false);
+        let session = EvaluationSession::new();
+        for &brand in &[branded_string, branded_number] {
+            seed_session_compound_probe(&session, &checker, literal, brand, true);
+            seed_session_compound_probe(&session, &checker, brand, literal, false);
+        }
+        seed_session_compound_probe(&session, &checker, branded_string, branded_number, false);
+        seed_session_compound_probe(&session, &checker, branded_number, branded_string, false);
+
+        let mut members = vec![literal, branded_string, branded_number];
+        let mut evaluator = TypeEvaluator::new(&interner).with_evaluation_session(&session);
+        evaluator.simplify_union_members(&mut members);
+
+        assert_eq!(
+            members,
+            vec![literal, branded_string, branded_number],
+            "cached raw subtype hits must not let branded-primitive vetoes drop literal members",
+        );
+    }
+
+    #[test]
+    fn compound_member_facts_keep_opaque_intersection_veto_after_session_subtype_hit() {
+        let interner = TypeInterner::new();
+        let prop = interner.intern_string("path");
+        let opaque = interner.application(interner.lazy(DefId(2002)), vec![TypeId::STRING]);
+        let concrete = interner.object(vec![PropertyInfo::opt(prop, TypeId::STRING)]);
+        let checker = compound_probe_checker(&interner, false);
+        let session = EvaluationSession::new();
+        seed_session_compound_probe(&session, &checker, concrete, opaque, true);
+        seed_session_compound_probe(&session, &checker, opaque, concrete, false);
+
+        let mut members = vec![opaque, concrete];
+        let mut evaluator = TypeEvaluator::new(&interner).with_evaluation_session(&session);
+        evaluator.simplify_intersection_members(&mut members);
+
+        assert_eq!(
+            members,
+            vec![opaque, concrete],
+            "a cached raw-subtype hit must still let opaque Application/Lazy members veto removal",
+        );
+        assert_eq!(
+            evaluator.cache_statistics().compound_subtype_entries,
+            0,
+            "session-backed subtype probes should not duplicate evaluator-local relation entries",
         );
     }
 
