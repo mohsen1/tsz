@@ -6,15 +6,11 @@
 //! type checking operations.
 
 use crate::query_boundaries::common::TypeEnvironment;
-use crate::query_boundaries::construct_signatures::{
-    callable_with_abstract_flag, callable_with_construct_return_type,
-    callable_with_properties_replaced, function_type_with_return_type,
-};
 use crate::query_boundaries::{
     checkers::constructor::{
-        AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind,
-        InstanceTypeKind, classify_for_constructor_access, classify_for_constructor_return_merge,
-        classify_for_instance_type, construct_return_type_for_display, has_construct_signatures,
+        AbstractConstructorAnchor, ConstructorAccessKind, InstanceTypeKind,
+        classify_for_constructor_access, classify_for_instance_type,
+        construct_return_type_for_display, has_construct_signatures,
         resolve_abstract_constructor_anchor,
     },
     common,
@@ -148,8 +144,12 @@ impl<'a> CheckerState<'a> {
         let type_param_substitution =
             self.mixin_call_type_parameter_substitution(callee_type, arg_types);
 
-        let factory = self.ctx.types.factory();
-        let mut refined_return = factory.intersection2(return_type, base_arg_type);
+        let mut refined_return =
+            crate::query_boundaries::checkers::constructor::mixin_return_type_with_base_constructor(
+                self.ctx.types,
+                return_type,
+                base_arg_type,
+            );
 
         if let Some(mixin_instance_type) =
             self.mixin_instance_type_from_construct_returns(return_type, base_arg_type)
@@ -219,41 +219,19 @@ impl<'a> CheckerState<'a> {
             returns.push(base_instance);
         }
 
-        Some(tsz_solver::utils::intersection_or_single(
-            self.ctx.types,
-            returns,
-        ))
+        Some(
+            crate::query_boundaries::checkers::constructor::constructor_return_intersection_or_single(
+                self.ctx.types,
+                returns,
+            ),
+        )
     }
 
     fn clear_constructor_abstract_flag(&self, ctor_type: TypeId) -> TypeId {
-        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
-            ConstructorReturnMergeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                if !shape.is_abstract {
-                    return ctor_type;
-                }
-                callable_with_abstract_flag(self.ctx.types, &shape, false)
-            }
-            ConstructorReturnMergeKind::Intersection(members) => {
-                let mut updated_members = Vec::with_capacity(members.len());
-                let mut changed = false;
-                for member in members {
-                    let updated = self.clear_constructor_abstract_flag(member);
-                    if updated != member {
-                        changed = true;
-                    }
-                    updated_members.push(updated);
-                }
-                if changed {
-                    self.ctx.types.factory().intersection(updated_members)
-                } else {
-                    ctor_type
-                }
-            }
-            ConstructorReturnMergeKind::Function(_) | ConstructorReturnMergeKind::Other => {
-                ctor_type
-            }
-        }
+        crate::query_boundaries::checkers::constructor::constructor_type_without_abstract_flag(
+            self.ctx.types,
+            ctor_type,
+        )
     }
 
     fn mixin_call_type_parameter_substitution(
@@ -304,10 +282,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(
-            self.ctx
-                .types
-                .factory()
-                .intersection2(returned_instance, base_instance),
+            crate::query_boundaries::checkers::constructor::mixin_returned_class_instance_type(
+                self.ctx.types,
+                returned_instance,
+                base_instance,
+            ),
         )
     }
 
@@ -332,44 +311,21 @@ impl<'a> CheckerState<'a> {
         if returns.windows(2).all(|w| w[0] == w[1]) {
             return None;
         }
-        Some(tsz_solver::utils::intersection_or_single(
-            self.ctx.types,
-            returns,
-        ))
+        Some(
+            crate::query_boundaries::checkers::constructor::constructor_return_intersection_or_single(
+                self.ctx.types,
+                returns,
+            ),
+        )
     }
 
     /// Set all construct signature return types to the given type.
     fn set_all_construct_return_types(&self, ctor_type: TypeId, instance_type: TypeId) -> TypeId {
-        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
-            ConstructorReturnMergeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                callable_with_construct_return_type(self.ctx.types, &shape, instance_type)
-            }
-            ConstructorReturnMergeKind::Function(shape_id) => {
-                let shape = self.ctx.types.function_shape(shape_id);
-                if !shape.is_constructor {
-                    return ctor_type;
-                }
-                function_type_with_return_type(self.ctx.types, &shape, instance_type)
-            }
-            ConstructorReturnMergeKind::Intersection(members) => {
-                let mut updated_members = Vec::with_capacity(members.len());
-                let mut changed = false;
-                for member in members {
-                    let updated = self.set_all_construct_return_types(member, instance_type);
-                    if updated != member {
-                        changed = true;
-                    }
-                    updated_members.push(updated);
-                }
-                if changed {
-                    self.ctx.types.factory().intersection(updated_members)
-                } else {
-                    ctor_type
-                }
-            }
-            ConstructorReturnMergeKind::Other => ctor_type,
-        }
+        crate::query_boundaries::checkers::constructor::constructor_type_with_construct_return(
+            self.ctx.types,
+            ctor_type,
+            instance_type,
+        )
     }
 
     fn mixin_base_param_index(
@@ -965,7 +921,10 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
                     let instance_type =
-                        tsz_solver::utils::intersection_or_single(self.ctx.types, instance_types);
+                        crate::query_boundaries::checkers::constructor::constructor_instance_intersection_or_single(
+                            self.ctx.types,
+                            instance_types,
+                        );
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Union(members) => {
@@ -1043,39 +1002,11 @@ impl<'a> CheckerState<'a> {
                 ctor_type
             }
         };
-        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
-            ConstructorReturnMergeKind::Callable(_) | ConstructorReturnMergeKind::Function(_) => {
-                // Delegate to solver: intersect construct/function return types
-                // with the base instance type.
-                let result = crate::query_boundaries::common::intersect_constructor_returns(
-                    self.ctx.types,
-                    ctor_type,
-                    base_instance_type,
-                );
-                if result != ctor_type {
-                    return result;
-                }
-                ctor_type
-            }
-            ConstructorReturnMergeKind::Intersection(members) => {
-                let mut updated_members = Vec::with_capacity(members.len());
-                let mut changed = false;
-                for member in members {
-                    let updated = self
-                        .merge_base_instance_into_constructor_return(member, base_instance_type);
-                    if updated != member {
-                        changed = true;
-                    }
-                    updated_members.push(updated);
-                }
-                if changed {
-                    self.ctx.types.factory().intersection(updated_members)
-                } else {
-                    ctor_type
-                }
-            }
-            ConstructorReturnMergeKind::Other => ctor_type,
-        }
+        crate::query_boundaries::checkers::constructor::constructor_type_with_base_instance_return(
+            self.ctx.types,
+            ctor_type,
+            base_instance_type,
+        )
     }
 
     fn merge_base_constructor_properties_into_constructor_return(
@@ -1083,7 +1014,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         base_props: &rustc_hash::FxHashMap<Atom, tsz_solver::PropertyInfo>,
     ) -> TypeId {
-        use rustc_hash::FxHashMap;
         if base_props.is_empty() {
             return ctor_type;
         }
@@ -1097,45 +1027,11 @@ impl<'a> CheckerState<'a> {
                 ctor_type
             }
         };
-        match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
-            ConstructorReturnMergeKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-                let mut prop_map: FxHashMap<Atom, tsz_solver::PropertyInfo> = shape
-                    .properties
-                    .iter()
-                    .map(|prop| (prop.name, prop.clone()))
-                    .collect();
-                for (name, prop) in base_props {
-                    prop_map.entry(*name).or_insert_with(|| prop.clone());
-                }
-                callable_with_properties_replaced(
-                    self.ctx.types,
-                    &shape,
-                    prop_map.into_values().collect(),
-                )
-            }
-            ConstructorReturnMergeKind::Intersection(members) => {
-                let mut updated_members = Vec::with_capacity(members.len());
-                let mut changed = false;
-                for member in members {
-                    let updated = self.merge_base_constructor_properties_into_constructor_return(
-                        member, base_props,
-                    );
-                    if updated != member {
-                        changed = true;
-                    }
-                    updated_members.push(updated);
-                }
-                if changed {
-                    self.ctx.types.factory().intersection(updated_members)
-                } else {
-                    ctor_type
-                }
-            }
-            ConstructorReturnMergeKind::Function(_) | ConstructorReturnMergeKind::Other => {
-                ctor_type
-            }
-        }
+        crate::query_boundaries::checkers::constructor::constructor_type_with_base_properties(
+            self.ctx.types,
+            ctor_type,
+            base_props,
+        )
     }
 
     // =========================================================================

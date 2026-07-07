@@ -22,7 +22,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
-    CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeId, Visibility,
+    CallSignature, CallableShape, FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    Visibility,
 };
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
