@@ -307,11 +307,6 @@ impl EvaluationMemoResult {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) const fn evaluation_result(self) -> EvaluationResult {
-        self.result
-    }
-
     /// Whether the underlying evaluation walk was cut short by a guard
     /// ([`Termination::Incomplete`]), independent of the request-state taints
     /// that only affect memo publication.
