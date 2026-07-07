@@ -609,14 +609,13 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, callee_type)
             && self.call_return_is_lazy_lib_deferrable(shape.return_type)
         {
+            let mut inputs_probe_shape = (*shape).clone();
+            inputs_probe_shape.return_type = TypeId::UNKNOWN;
             let inputs_probe =
-                self.ctx
-                    .types
-                    .factory()
-                    .function(crate::query_boundaries::common::FunctionShape {
-                        return_type: TypeId::UNKNOWN,
-                        ..(*shape).clone()
-                    });
+                crate::query_boundaries::construct_signatures::function_type_from_shape(
+                    self.ctx.types,
+                    inputs_probe_shape,
+                );
             self.ensure_relation_input_ready(inputs_probe);
             return;
         }

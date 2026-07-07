@@ -19,7 +19,8 @@
 
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, ParamInfo, TypeId, TypePredicate,
+    CallSignature, CallableShape, CallableShapeId, FunctionShape, IndexSignature, ParamInfo,
+    PropertyInfo, TypeId, TypePredicate,
 };
 
 pub(crate) fn construct_signatures_for_type(
@@ -117,6 +118,20 @@ pub(crate) fn function_type_from_call_signature(
     db.function(function_shape_from_call_signature(sig, is_constructor))
 }
 
+/// Intern a method function type for a type-literal method signature.
+///
+/// Method-ness is represented on the `FunctionShape` for single-signature
+/// method properties; overload sets keep their method flag on each
+/// `CallSignature` inside the callable shape.
+pub(crate) fn method_function_type_from_call_signature(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+) -> TypeId {
+    let mut shape = function_shape_from_call_signature(sig, false);
+    shape.is_method = true;
+    db.function(shape)
+}
+
 /// Intern a bare callable carrying only call signatures.
 pub(crate) fn call_only_callable_type(
     db: &dyn TypeDatabase,
@@ -136,6 +151,33 @@ pub(crate) fn construct_only_callable_type(
     db.callable(CallableShape {
         construct_signatures,
         ..CallableShape::default()
+    })
+}
+
+/// Intern the callable/object hybrid produced by an inline type literal.
+///
+/// The checker assembles `CallSignature`, `PropertyInfo`, and `IndexSignature`
+/// facts from the AST; this boundary owns the solver shape convention for the
+/// resulting callable, including the single index slot where a symbol index is
+/// carried in `string_index` when no string index is present.
+pub(crate) fn type_literal_callable_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+    construct_signatures: Vec<CallSignature>,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+    is_abstract: bool,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures,
+        construct_signatures,
+        properties,
+        string_index: string_index.or(symbol_index),
+        number_index,
+        symbol: None,
+        is_abstract,
     })
 }
 

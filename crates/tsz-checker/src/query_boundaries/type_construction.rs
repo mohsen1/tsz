@@ -75,6 +75,54 @@ pub(crate) fn enum_namespace_object_with_number_reverse_map(
     })
 }
 
+/// Intern the indexed object produced by an inline type literal.
+pub(crate) fn type_literal_object_with_index(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+    has_late_bound_members: bool,
+) -> TypeId {
+    let mut shape = ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol_index,
+        ..ObjectShape::default()
+    };
+    if has_late_bound_members {
+        shape.mark_has_late_bound_members();
+    }
+    db.object_with_index(shape)
+}
+
+/// Intern the extra number-index object intersected into a type literal when
+/// multiple number index signatures must be preserved.
+pub(crate) fn type_literal_extra_number_index_object(
+    db: &dyn TypeDatabase,
+    number_index: IndexSignature,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        number_index: Some(number_index),
+        ..ObjectShape::default()
+    })
+}
+
+/// Intern the plain object produced by an inline type literal.
+pub(crate) fn type_literal_object(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    has_late_bound_members: bool,
+) -> TypeId {
+    let flags = if has_late_bound_members {
+        ObjectFlags::HAS_LATE_BOUND_MEMBERS
+    } else {
+        ObjectFlags::empty()
+    };
+    db.object_with_flags_and_symbol(properties, flags, None)
+}
+
 /// Create a string intrinsic type from a validated lib intrinsic name.
 pub(crate) fn string_intrinsic_by_name(
     db: &dyn TypeDatabase,
