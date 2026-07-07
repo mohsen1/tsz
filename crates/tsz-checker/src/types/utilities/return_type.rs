@@ -5,7 +5,6 @@
 //! and checking for explicit `any` assertion returns.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::function_returns as return_type_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

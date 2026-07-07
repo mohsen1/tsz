@@ -2,7 +2,6 @@
 //! for `CheckerState`.
 
 use super::heritage_walk_state::HeritageSymbolWalkState;
-use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;

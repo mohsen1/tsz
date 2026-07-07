@@ -11,6 +11,7 @@
 
 use crate::evaluation::request::EvaluationCacheKey;
 use crate::evaluation::result::EvaluationResult;
+use crate::types::RelationCacheKey;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 
@@ -67,6 +68,44 @@ impl EvaluationSessionLimitState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InferMatchExpansionDepthState {
     LimitExceeded,
+}
+
+/// Per-query cache key for raw subtype probes issued by compound
+/// union/intersection simplification.
+///
+/// The embedded [`RelationCacheKey`] owns relation mode, ordered source/target,
+/// `this`, `any`, and compiler-option partitions. The extra fields prevent
+/// cross-arena or cross-resolver reuse of arena-local `TypeId` answers, and
+/// separate the simplifier's local bypass/depth configuration from ordinary
+/// relation cache entries.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct CompoundSubtypePairKey {
+    relation: RelationCacheKey,
+    type_database_identity: usize,
+    resolver_identity: usize,
+    resolver_generation: u64,
+    bypass_evaluation: bool,
+    max_depth: u32,
+}
+
+impl CompoundSubtypePairKey {
+    pub(crate) const fn new(
+        relation: RelationCacheKey,
+        type_database_identity: usize,
+        resolver_identity: usize,
+        resolver_generation: u64,
+        bypass_evaluation: bool,
+        max_depth: u32,
+    ) -> Self {
+        Self {
+            relation,
+            type_database_identity,
+            resolver_identity,
+            resolver_generation,
+            bypass_evaluation,
+            max_depth,
+        }
+    }
 }
 
 /// RAII entry for one checker env-evaluation expansion.
@@ -175,6 +214,11 @@ pub struct EvaluationSession {
     /// carries its termination verdict back out on a hit and never leaks into a
     /// durable cache as if it were converged.
     query_memo: RefCell<FxHashMap<EvaluationCacheKey, EvaluationResult>>,
+    /// Per-top-level-query memo for definitive compound simplification subtype
+    /// probes. Final union/intersection removal vetoes are deliberately not
+    /// cached here; each simplification reruns them after reading the raw
+    /// subtype answer.
+    compound_subtype_probe_cache: RefCell<FxHashMap<CompoundSubtypePairKey, bool>>,
 }
 
 /// RAII entry for one conditional-subtype relation probe in an
@@ -272,6 +316,7 @@ impl EvaluationSession {
             type_reference_resolution_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
+            compound_subtype_probe_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -586,10 +631,51 @@ impl EvaluationSession {
         self.query_memo.borrow_mut().insert(key, result);
     }
 
+    /// Look up a stable compound simplification subtype probe for this query.
+    #[inline]
+    pub(crate) fn compound_subtype_probe_get(&self, key: CompoundSubtypePairKey) -> Option<bool> {
+        self.compound_subtype_probe_cache
+            .borrow()
+            .get(&key)
+            .copied()
+    }
+
+    /// Record a stable compound simplification subtype probe for this query.
+    #[inline]
+    pub(crate) fn compound_subtype_probe_put(&self, key: CompoundSubtypePairKey, result: bool) {
+        self.compound_subtype_probe_cache
+            .borrow_mut()
+            .insert(key, result);
+    }
+
+    /// Clear the compound simplification subtype probe memo.
+    #[inline]
+    pub(crate) fn reset_compound_subtype_probe_cache(&self) {
+        self.compound_subtype_probe_cache.borrow_mut().clear();
+    }
+
+    /// Number of cached compound simplification subtype probes in this query.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn compound_subtype_probe_cache_entries(&self) -> usize {
+        self.compound_subtype_probe_cache.borrow().len()
+    }
+
+    /// Estimated heap bytes owned by the compound simplification probe memo.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn compound_subtype_probe_cache_estimated_size_bytes(&self) -> usize {
+        self.compound_subtype_probe_cache
+            .borrow()
+            .len()
+            .saturating_mul(std::mem::size_of::<(CompoundSubtypePairKey, bool)>())
+    }
+
     /// Clear the per-query fresh-evaluator memo.
     #[inline]
     pub(crate) fn reset_query_memo(&self) {
         self.query_memo.borrow_mut().clear();
+        self.reset_compound_subtype_probe_cache();
     }
 }
 
@@ -844,6 +930,48 @@ mod tests {
         assert_eq!(session.query_memo_get(no_unchecked_key), None);
         assert_eq!(session.query_memo_get(exact_optional_key), None);
         assert_eq!(session.query_memo_get(resolver_key), None);
+    }
+
+    #[test]
+    fn compound_subtype_probe_cache_keys_context_and_resets_with_query_memo() {
+        let session = EvaluationSession::new();
+        let relation = RelationCacheKey::for_subtype(TypeId(1), TypeId(2), Default::default());
+        let key = CompoundSubtypePairKey::new(relation, 10, 20, 30, true, 40);
+        let different_arena = CompoundSubtypePairKey::new(relation, 11, 20, 30, true, 40);
+        let different_resolver = CompoundSubtypePairKey::new(relation, 10, 21, 30, true, 40);
+        let different_generation = CompoundSubtypePairKey::new(relation, 10, 20, 31, true, 40);
+        let different_bypass = CompoundSubtypePairKey::new(relation, 10, 20, 30, false, 40);
+        let different_depth = CompoundSubtypePairKey::new(relation, 10, 20, 30, true, 41);
+
+        session.compound_subtype_probe_put(key, true);
+
+        assert_eq!(session.compound_subtype_probe_get(key), Some(true));
+        assert_eq!(session.compound_subtype_probe_get(different_arena), None);
+        assert_eq!(session.compound_subtype_probe_get(different_resolver), None);
+        assert_eq!(
+            session.compound_subtype_probe_get(different_generation),
+            None
+        );
+        assert_eq!(session.compound_subtype_probe_get(different_bypass), None);
+        assert_eq!(session.compound_subtype_probe_get(different_depth), None);
+        assert_eq!(session.compound_subtype_probe_cache_entries(), 1);
+        assert!(
+            session.compound_subtype_probe_cache_estimated_size_bytes() > 0,
+            "the compound probe memo should report size visibility when populated",
+        );
+
+        session.query_memo_put(
+            EvaluationCacheKey::new(TypeId(9), false, false),
+            EvaluationResult::complete(TypeId(10)),
+        );
+        session.reset_query_memo();
+
+        assert_eq!(session.compound_subtype_probe_get(key), None);
+        assert_eq!(session.compound_subtype_probe_cache_entries(), 0);
+        assert_eq!(
+            session.query_memo_get(EvaluationCacheKey::new(TypeId(9), false, false)),
+            None
+        );
     }
 
     #[test]
