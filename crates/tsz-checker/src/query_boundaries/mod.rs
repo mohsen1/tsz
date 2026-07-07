@@ -17,6 +17,7 @@ pub(crate) mod application_keyof;
 pub(crate) mod assignability;
 pub(crate) mod assignability_alias_display;
 pub(crate) mod assignability_suppression;
+pub(crate) mod binding_patterns;
 pub(crate) mod capabilities;
 pub(crate) mod checkers;
 pub(crate) mod class;
