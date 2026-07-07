@@ -399,17 +399,21 @@ const sink_yg: 0 = probe_yg;
 }
 
 #[test]
-fn generic_conditional_application_to_union_keeps_alias_name() {
-    // A single application reducing to a *union* keeps its alias name: tsc orders
-    // union members by global creation order, which tsz does not reproduce, so
-    // expanding here would trade an alias surface for a member-order divergence.
+fn generic_distributive_application_renders_distributed_branches() {
+    // A *distributive* conditional over a concrete union renders the
+    // distributed branch union — tsc resolves each branch and the conditional
+    // never stamps the alias onto the result (`{ v: 2; } | { v: 1; }` in tsc).
+    // tsz renders the same branch set in check-arg source order; tsc's member
+    // order for position-less synthesized branches follows its global type
+    // creation order, which tsz does not reproduce (branches with source
+    // positions — the discriminated-union case — match tsc's order exactly).
     assert_source_display(
         r#"
 type Spread_Zh<T> = T extends unknown ? { v: T } : never;
 declare const probe_zh: Spread_Zh<1 | 2>;
 const sink_zh: 0 = probe_zh;
 "#,
-        "Spread_Zh<1 | 2>",
+        "{ v: 1; } | { v: 2; }",
     );
 }
 

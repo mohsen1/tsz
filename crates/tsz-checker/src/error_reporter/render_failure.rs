@@ -786,9 +786,27 @@ impl<'a> CheckerState<'a> {
             reason,
             SubtypeFailureReason::MissingProperty { .. }
                 | SubtypeFailureReason::MissingProperties { .. }
-        ) {
+        ) && let Some(member) =
             self.single_non_nullish_union_member(target)
-                .unwrap_or(target)
+        {
+            // The rebind is skipped when the target carries a type-alias
+            // surface (`UnionAlias<{ u: string }>`, `type NullableObj = T |
+            // undefined`): tsc's `reportErrorResults` restores the original
+            // target whenever it carried an `aliasSymbol`, so the alias-named
+            // union renders whole. The annotation AST is authoritative when
+            // present — a structurally identical anonymous annotation interns
+            // to the same `TypeId` as the alias body, so only the syntax can
+            // tell the two references apart.
+            let restores_alias = self
+                .assignment_target_annotation_alias_reference_verdict(idx)
+                .unwrap_or_else(|| {
+                    crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        target,
+                    )
+                });
+            if restores_alias { target } else { member }
         } else {
             target
         };

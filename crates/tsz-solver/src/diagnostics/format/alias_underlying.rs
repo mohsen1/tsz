@@ -204,7 +204,7 @@ fn alias_application_underlying(
 ///   cases (`Extract<"a" | "b" | 1, string>` shows `string`, not `"a" | "b"`),
 ///   which is a separate display behavior. Keeping those on the application
 ///   surface avoids substituting one divergence for another.
-pub(crate) fn application_reduces_to_displayable_shape(
+pub fn application_reduces_to_displayable_shape(
     interner: &dyn TypeDatabase,
     evaluated: TypeId,
 ) -> bool {

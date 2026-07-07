@@ -1,5 +1,6 @@
 //! Diagnostic source/target expression analysis and formatting.
 
+mod assignment_annotation_text;
 mod assignment_formatting;
 mod assignment_source_preservation;
 mod assignment_widening;

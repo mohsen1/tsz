@@ -147,21 +147,39 @@ pub(crate) fn application_base_is_mapped_type<R: TypeResolver>(
     tsz_solver::type_queries::application_base_is_mapped_type_db(db, resolver, type_id)
 }
 
+/// See [`tsz_solver::application_reduces_to_displayable_shape`]: the evaluated
+/// shapes a reduced alias application renders structurally (tsc drops the
+/// alias symbol), with the non-converged-recursion carve-out.
+pub(crate) fn application_reduces_to_displayable_shape(
+    db: &dyn TypeDatabase,
+    evaluated: TypeId,
+) -> bool {
+    tsz_solver::application_reduces_to_displayable_shape(db, evaluated)
+}
+
+/// See [`tsz_solver::type_queries::application_distributes_over_union_check_arg`].
+pub(crate) fn application_distributes_over_union_check_arg(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::application_distributes_over_union_check_arg(db, definitions, type_id)
+}
+
 pub(crate) fn alias_application_body_reduces_through_conditional_or_indexed(
     db: &dyn TypeDatabase,
     definitions: &DefinitionStore,
     type_id: TypeId,
 ) -> bool {
-    let Some(def_id) = super::common::get_application_lazy_def_id(db, type_id) else {
-        return false;
-    };
-    let Some(def) = definitions.get(def_id) else {
-        return false;
-    };
-    def.kind == DefKind::TypeAlias
-        && def.body.is_some_and(|body| {
-            alias_body_reduces_through_conditional_or_indexed(db, definitions, body, 0)
-        })
+    use tsz_solver::type_queries::ReducingAliasBodyKind;
+    matches!(
+        tsz_solver::type_queries::application_base_reducing_alias_body_kind(
+            db,
+            definitions,
+            type_id
+        ),
+        Some(ReducingAliasBodyKind::Conditional | ReducingAliasBodyKind::IndexAccess)
+    )
 }
 
 pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
@@ -181,6 +199,15 @@ pub(crate) fn generic_deferred_source_keeps_spelling_against_generic_target(
             ))
 }
 
+/// See [`tsz_solver::type_queries::type_carries_alias_symbol_surface`].
+pub(crate) fn type_keeps_alias_symbol_surface(
+    db: &dyn TypeDatabase,
+    definitions: &DefinitionStore,
+    ty: TypeId,
+) -> bool {
+    tsz_solver::type_queries::type_carries_alias_symbol_surface(db, definitions, ty)
+}
+
 pub(crate) fn evaluated_alias_application_has_concrete_display(
     db: &dyn TypeDatabase,
     candidate: TypeId,
@@ -195,39 +222,6 @@ pub(crate) fn evaluated_alias_application_has_concrete_display(
 
 pub(crate) fn is_object_or_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_or_mapped_type(db, type_id)
-}
-
-fn alias_body_reduces_through_conditional_or_indexed(
-    db: &dyn TypeDatabase,
-    definitions: &DefinitionStore,
-    type_id: TypeId,
-    depth: usize,
-) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    if super::common::is_index_access_type(db, type_id)
-        || super::common::is_conditional_type(db, type_id)
-    {
-        return true;
-    }
-    if let Some(app) = super::common::type_application(db, type_id)
-        && let Some(def_id) = super::common::lazy_def_id(db, app.base)
-        && let Some(def) = definitions.get(def_id)
-        && def.kind == DefKind::TypeAlias
-        && let Some(body) = def.body
-        && alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1)
-    {
-        return true;
-    }
-    if let Some(def_id) = super::common::lazy_def_id(db, type_id)
-        && let Some(def) = definitions.get(def_id)
-        && def.kind == DefKind::TypeAlias
-        && let Some(body) = def.body
-    {
-        return alias_body_reduces_through_conditional_or_indexed(db, definitions, body, depth + 1);
-    }
-    false
 }
 
 pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

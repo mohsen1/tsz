@@ -1187,8 +1187,33 @@ impl<'a> CheckerState<'a> {
             // cascade because the printer flattens every nested Application
             // when alias names are skipped. tsc keeps the alias annotation
             // (`T2<U>`) in this case; preserve it here too.
+            //
+            // A recursive alias whose instantiation *converges* is different:
+            // `Flatten<string[][]>` (`Flatten<T> = T extends readonly (infer
+            // U)[] ? Flatten<U> : T`) fully reduces to `string`, and tsc
+            // renders the reduced type — the conditional resolved away and
+            // never stamped the alias onto the result. Only a non-converged
+            // recursion (the evaluation stays deferred or still mentions the
+            // cycle) keeps the annotation surface.
             if self.is_recursive_type_alias_application_for_display(target) {
-                return self.format_annotation_like_type(&display);
+                let evaluated = self.evaluate_type_for_assignability(display_target);
+                let converges =
+                    crate::query_boundaries::diagnostics::evaluated_alias_application_has_concrete_display(
+                        self.ctx.types.as_type_database(),
+                        display_target,
+                        evaluated,
+                    ) && crate::query_boundaries::diagnostics::application_reduces_to_displayable_shape(
+                        self.ctx.types.as_type_database(),
+                        evaluated,
+                    ) && !crate::query_boundaries::recursive_alias::evaluated_recursion_still_reaches_alias(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        target,
+                        evaluated,
+                    );
+                if !converges {
+                    return self.format_annotation_like_type(&display);
+                }
             }
             let preserve_tuple_alias_display = !display_trimmed.starts_with('{')
                 && !display_trimmed.starts_with('(')
@@ -1316,105 +1341,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn direct_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
-        let mut current = anchor_idx;
-        let mut guard = 0;
-        let source_is_return = self.assignment_source_is_return_expression(anchor_idx);
-
-        while current.is_some() {
-            guard += 1;
-            if guard > 256 {
-                break;
-            }
-
-            let Some(node) = self.ctx.arena.get(current) else {
-                break;
-            };
-            if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
-                && var_decl.type_annotation.is_some()
-            {
-                return self.node_text(var_decl.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-            if let Some(param) = self.ctx.arena.get_parameter(node)
-                && param.type_annotation.is_some()
-            {
-                return self.node_text(param.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-            if source_is_return
-                && let Some(function) = self.ctx.arena.get_function(node)
-                && function.type_annotation.is_some()
-            {
-                return self.node_text(function.type_annotation).and_then(|text| {
-                    self.sanitize_type_annotation_text_for_diagnostic(text, true)
-                });
-            }
-
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            current = ext.parent;
+    /// Whether the assignment target's declared annotation is a reference to
+    /// a type alias (`x: MaybeBox`, `x: OrMissing<{ u: string }>`). tsc's
+    /// `reportErrorResults` restores the original target whenever it carried
+    /// an `aliasSymbol`; tsz's eager annotation resolution can lose the
+    /// reference surface (a bare union alias resolves to the interned union).
+    ///
+    /// Returns `None` when no declared annotation node governs the anchor —
+    /// the caller falls back to type-level provenance. When an annotation
+    /// exists, its AST is *authoritative* (`Some(bool)`): a structurally
+    /// identical anonymous annotation interns to the same `TypeId` as the
+    /// alias body, so type-level signals (display aliases, reverse def
+    /// lookups) cannot tell the two references apart, but the syntax can.
+    pub(in crate::error_reporter) fn assignment_target_annotation_alias_reference_verdict(
+        &mut self,
+        anchor_idx: NodeIndex,
+    ) -> Option<bool> {
+        let annotation_idx = self.direct_assignment_target_annotation_node(anchor_idx)?;
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return Some(false);
         }
-
-        self.source_assignment_target_annotation_text(anchor_idx)
-    }
-
-    fn source_assignment_target_annotation_text(&self, anchor_idx: NodeIndex) -> Option<String> {
-        let (start, end) = self.get_node_span(anchor_idx)?;
-        let source = self.ctx.arena.source_files.first()?.text.as_ref();
-        let start = start as usize;
-        let end = end as usize;
-        if start >= end || end > source.len() {
-            return None;
-        }
-        let line_end = source[end..]
-            .find('\n')
-            .map_or(source.len(), |offset| end + offset);
-        if let Some(text) = self.annotation_text_from_colon_fragment(&source[end..line_end]) {
-            return Some(text);
-        }
-
-        let anchor_text = source[start..end].trim_start();
-        if !anchor_text.starts_with("return") {
-            return None;
-        }
-        let body_start = source[..start].rfind('{')?;
-        let close_paren = source[..body_start].rfind(')')?;
-        self.annotation_text_from_colon_fragment(&source[close_paren + 1..body_start])
-    }
-
-    fn annotation_text_from_colon_fragment(&self, fragment: &str) -> Option<String> {
-        let colon = fragment.find(':')?;
-        if !fragment[..colon].trim().is_empty() {
-            return None;
-        }
-        let type_fragment = &fragment[colon + 1..];
-        let type_start = type_fragment
-            .char_indices()
-            .find_map(|(idx, ch)| (!ch.is_whitespace()).then_some(idx))?;
-        let mut depth = 0u32;
-        let mut end = type_fragment.len();
-        for (idx, ch) in type_fragment[type_start..].char_indices() {
-            let absolute_idx = type_start + idx;
-            if depth == 0 && absolute_idx > type_start && matches!(ch, '=' | ';' | ',' | ')' | '{')
-            {
-                end = absolute_idx;
-                break;
-            }
-            match ch {
-                '<' | '(' | '[' | '{' => depth = depth.saturating_add(1),
-                '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-        }
-        let text = type_fragment[type_start..end].trim().to_string();
-        self.sanitize_type_annotation_text_for_diagnostic(text, true)
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return Some(false);
+        };
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return Some(false);
+        };
+        Some(
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)),
+        )
     }
 
     fn tuple_target_has_application_display_alias(&self, target: TypeId) -> bool {

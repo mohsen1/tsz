@@ -123,6 +123,32 @@ pub(crate) fn is_recursive_tuple_type_alias_application(
             && tsz_solver::type_queries::is_tuple_like_type(db, evaluated))
 }
 
+/// True when the `evaluated` display candidate of the recursive alias
+/// application `type_id` still reaches a reference to the same alias
+/// definition — the recursion did not resolve away, so the annotation surface
+/// must be kept. `Flatten<string[][]>` evaluates to `string` (no
+/// self-reference: converged); a self-referential unroll like
+/// `Box<number | Box<number | Box2>>` still mentions its alias (not
+/// converged).
+pub(crate) fn evaluated_recursion_still_reaches_alias(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    evaluated: TypeId,
+) -> bool {
+    let Some(def_id) = tsz_solver::type_queries::get_application_lazy_def_id(db, type_id) else {
+        return false;
+    };
+    if !def_store
+        .get(def_id)
+        .is_some_and(|def| def.kind == DefKind::TypeAlias)
+    {
+        return false;
+    }
+    let mut visited: FxHashSet<TypeId> = FxHashSet::default();
+    type_reaches_alias_def(db, evaluated, def_id, &mut visited)
+}
+
 fn type_reaches_alias_def(
     db: &dyn TypeDatabase,
     type_id: TypeId,
