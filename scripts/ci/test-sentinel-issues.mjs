@@ -2,7 +2,9 @@
 import assert from "node:assert/strict";
 import {
   collectSentinelIssues,
+  splitSentinels,
   closeDuplicateSentinels,
+  SENTINEL_LABEL,
   SENTINEL_PER_PAGE,
 } from "./lib/sentinel-issues.mjs";
 
@@ -73,6 +75,45 @@ test("collects ALL matches across pages, oldest (lowest number) first", () => {
   });
   assert.deepEqual(seenPages, [1, 2], "pages until a short page ends the walk");
   assert.deepEqual(matches.map((m) => m.number), [42, 900], "all matches, oldest first");
+});
+
+test("answers from the label-scoped listing in one call when the sentinel is labeled", () => {
+  const urls = [];
+  const matches = collectSentinelIssues(
+    REPO,
+    (args) => {
+      const url = String(args[args.length - 1]);
+      urls.push(url);
+      return url.includes(`labels=${SENTINEL_LABEL}`) ? [{ number: 5, title: TITLE, body: MARKER }] : [];
+    },
+    { marker: MARKER, title: TITLE },
+  );
+  assert.deepEqual(matches.map((m) => m.number), [5]);
+  assert.equal(urls.length, 1, "label-scoped listing answers without the exhaustive walk");
+  assert.match(urls[0], new RegExp(`labels=${SENTINEL_LABEL}`));
+});
+
+test("a de-labeled sentinel is still found by the exhaustive fallback walk", () => {
+  const urls = [];
+  const matches = collectSentinelIssues(
+    REPO,
+    (args) => {
+      const url = String(args[args.length - 1]);
+      urls.push(url);
+      // The sentinel lost its label, so the label-scoped listing misses it.
+      return url.includes("labels=") ? [] : [{ number: 6, title: "renamed", body: MARKER }];
+    },
+    { marker: MARKER, title: TITLE },
+  );
+  assert.deepEqual(matches.map((m) => m.number), [6], "fallback walk finds the de-labeled sentinel");
+  assert.ok(urls.some((u) => !u.includes("labels=")), "falls through to the unlabeled listing");
+});
+
+test("splitSentinels names the oldest canonical and the rest duplicates", () => {
+  assert.deepEqual(splitSentinels([]), { canonical: null, duplicates: [] });
+  const a = { number: 10 };
+  const b = { number: 20 };
+  assert.deepEqual(splitSentinels([a, b]), { canonical: a, duplicates: [b] });
 });
 
 test("returns [] on an empty or non-array listing", () => {

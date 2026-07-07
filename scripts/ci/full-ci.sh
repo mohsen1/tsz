@@ -393,6 +393,7 @@ run_lint() {
   node scripts/ci/test-check-ci-job-timing.mjs || return $?
   node scripts/ci/test-check-main-red.mjs || return $?
   node scripts/ci/test-sentinel-issues.mjs || return $?
+  node scripts/ci/test-gh.mjs || return $?
   node scripts/ci/test-known-failures-check.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?

@@ -32,12 +32,14 @@
 
 import fs from "node:fs";
 import https from "node:https";
-import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import { runGh, runGhJson } from "../ci/lib/gh.mjs";
 import {
   collectSentinelIssues,
+  splitSentinels,
   closeDuplicateSentinels,
+  SENTINEL_LABEL,
 } from "../ci/lib/sentinel-issues.mjs";
 
 export const DEFAULT_LATEST_URL = "https://tsz.dev/benchmark-data/latest.json";
@@ -186,61 +188,12 @@ export function formatIssueBody(verdict, ctx, nowIso) {
   ].join("\n");
 }
 
-// ---- gh I/O (kept behind injectable seams so main() stays testable) ----------
-
-const GH_RETRY_ATTEMPTS = 3;
-const GH_RETRY_BASE_MS = 750;
-const GH_RETRY_MAX_MS = 6000;
-const TRANSIENT_NET_CODES = new Set(["ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENETUNREACH"]);
-
-function sleepSync(ms) {
-  if (!(ms > 0)) return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function isTransientGhResult(result) {
-  if (result.error) return TRANSIENT_NET_CODES.has(result.error.code);
-  if ((result.status ?? 0) === 0) return false;
-  const text = `${result.stdout || ""}\n${result.stderr || ""}`;
-  return /\bHTTP\s+(?:408|425|429|5\d\d)\b/i.test(text) || /secondary rate limit/i.test(text);
-}
-
-function spawnGh(args) {
-  let result;
-  for (let attempt = 1; attempt <= GH_RETRY_ATTEMPTS; attempt += 1) {
-    result = spawnSync("gh", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
-    if (attempt === GH_RETRY_ATTEMPTS || !isTransientGhResult(result)) break;
-    sleepSync(Math.min(GH_RETRY_BASE_MS * 2 ** (attempt - 1), GH_RETRY_MAX_MS));
-  }
-  return result;
-}
-
-function runGhJson(args) {
-  const result = spawnGh(args);
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`gh ${args.join(" ")} failed: ${result.stderr?.trim() || result.stdout?.trim()}`);
-  }
-  return JSON.parse(result.stdout);
-}
-
-function runGh(args) {
-  const result = spawnGh(args);
-  if (result.error) return { status: 1, stdout: "", stderr: result.error.message };
-  return { status: result.status ?? 1, stdout: (result.stdout || "").trim(), stderr: (result.stderr || "").trim() };
-}
-
 const TRACKED_GENERATED_RE = /generated_at:\s*`([^`]+)`/;
 
 /**
- * Open / update / close the single dedup tracking issue.
- *
- * The lookup (shared with `check-main-red.mjs`) returns every open sentinel —
- * marker match or exact-title fallback, oldest first. The oldest is canonical:
- * it is the one updated (re-stamping the marker if a body edit stripped it) or
- * closed on recovery; any younger matches are duplicates from a past lookup
- * miss and are closed pointing at the canonical issue, so a duplicated
- * sentinel heals itself on the next firing instead of splitting forever.
+ * Open / update / close the single dedup tracking issue. The oldest open
+ * sentinel is canonical; younger matches from a past lookup miss are closed as
+ * duplicates (see `../ci/lib/sentinel-issues.mjs` for the healing rules).
  *
  * @param {ReturnType<typeof classifyFreshness>} verdict
  */
@@ -252,8 +205,9 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
     marker: ISSUE_MARKER,
     title: ISSUE_TITLE,
   });
-  const existing = matches[0] ?? null;
-  const duplicates = matches.slice(1);
+  const { canonical: existing, duplicates } = splitSentinels(matches);
+  const closeDupes = () =>
+    closeDuplicateSentinels(duplicates, existing.number, repository, runCommand, nowIso);
 
   if (verdict.alert) {
     const body = formatIssueBody(verdict, ctx, nowIso);
@@ -275,14 +229,7 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
           `Still stale as of ${nowIso}: generated_at \`${current}\` (${verdict.reason}).`,
         ]);
       }
-      const closedDuplicates = closeDuplicateSentinels(
-        duplicates,
-        existing.number,
-        repository,
-        runCommand,
-        nowIso,
-      );
-      return { action: "updated", number: existing.number, commented: changed, closedDuplicates };
+      return { action: "updated", number: existing.number, commented: changed, closedDuplicates: closeDupes() };
     }
     const created = runCommand([
       "issue",
@@ -294,7 +241,7 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
       "--body",
       body,
       "--label",
-      "tech-debt",
+      SENTINEL_LABEL,
     ]);
     return { action: "created", detail: created.stdout || created.stderr };
   }
@@ -310,14 +257,7 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
       `✅ Published benchmark data is fresh again as of ${nowIso} (${verdict.reason}). Closing.`,
     ]);
     runCommand(["issue", "close", String(existing.number), "--repo", repository, "--reason", "completed"]);
-    const closedDuplicates = closeDuplicateSentinels(
-      duplicates,
-      existing.number,
-      repository,
-      runCommand,
-      nowIso,
-    );
-    return { action: "closed", number: existing.number, closedDuplicates };
+    return { action: "closed", number: existing.number, closedDuplicates: closeDupes() };
   }
   return { action: "noop" };
 }
