@@ -9,7 +9,7 @@
 
 use super::types::JsdocParamTagInfo;
 use crate::query_boundaries::jsdoc_construction::{
-    jsdoc_array_type, jsdoc_object_type, jsdoc_union_pair_type,
+    jsdoc_array_type, jsdoc_object_type, jsdoc_property_info, jsdoc_union_pair_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -592,22 +592,14 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 let name_atom = self.ctx.types.intern_string(prop_name);
-                properties.push(tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: prop_type_id,
-                    write_type: prop_type_id,
-                    optional: is_optional,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: (properties.len() + 1) as u32,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                properties.push(jsdoc_property_info(
+                    name_atom,
+                    prop_type_id,
+                    is_optional,
+                    false,
+                    false,
+                    (properties.len() + 1) as u32,
+                ));
             }
         }
         if properties.is_empty() {
