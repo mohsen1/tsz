@@ -7,7 +7,6 @@ use rustc_hash::FxHashSet;
 use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::{MappedTypeId, PropertyInfo, TypeId};
 
 thread_local! {

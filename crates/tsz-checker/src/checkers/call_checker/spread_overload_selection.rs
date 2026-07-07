@@ -7,9 +7,9 @@
 //! binds to a reachable rest overload (tsc's `hasEffectiveRestParameter`
 //! precondition in `chooseOverload`).
 
-use super::candidate_collection::type_param_variadic_tuple_spread;
 use crate::query_boundaries::checkers::call::{
     array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
+    type_param_variadic_tuple_spread,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

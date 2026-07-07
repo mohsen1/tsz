@@ -121,6 +121,10 @@
 //! - `await_promise_construction_boundary_scans`: await checking routes
 //!   contextual promise operand and `Awaited<T>` join construction through
 //!   `query_boundaries::checkers::promise`.
+//! - `call_candidate_spread_surface_construction_boundary_scans`: call
+//!   candidate collection routes spread markers, sensitive placeholders, tuple
+//!   optionality, and callable rest-shape reads through
+//!   `query_boundaries::checkers::call`.
 //! - `call_inference_construction_boundary_scans`: call inference routes
 //!   partial object/function/tuple inference construction through
 //!   `query_boundaries::checkers::call`.
@@ -188,6 +192,8 @@ mod assignability_surface_construction_boundary_scans;
 mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
+#[path = "arch_source_scans/call_candidate_spread_surface_construction_boundary_scans.rs"]
+mod call_candidate_spread_surface_construction_boundary_scans;
 #[path = "arch_source_scans/call_diagnostic_surface_construction_boundary_scans.rs"]
 mod call_diagnostic_surface_construction_boundary_scans;
 #[path = "arch_source_scans/call_inference_construction_boundary_scans.rs"]

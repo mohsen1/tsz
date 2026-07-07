@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let getter_type =
             self.define_property_descriptor_accessor_type(object_literal_idx, elements, "get")?;
-        let setter_context = signature_construction::function_type_from_parts(
+        let setter_context = signature_construction::function_type_from_params_and_return(
             self.ctx.types,
             vec![signature_building_boundary::param_info(
                 None,

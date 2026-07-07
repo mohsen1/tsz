@@ -13,6 +13,9 @@ pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
 
+const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
+const SENSITIVE_ARGUMENT_PLACEHOLDER_NAME: &str = "__sensitive_arg__";
+
 /// Positional offset of the first variable-length rest element in a tuple
 /// spread, or `None` for a fully fixed-length tuple (or non-tuple). See
 /// `tsz_solver::type_queries::tuple_variable_rest_offset`.
@@ -27,6 +30,124 @@ pub(crate) fn tuple_slice_variable_rest_offset(
     elements: &[TupleElement],
 ) -> Option<usize> {
     tsz_solver::type_queries::tuple_slice_variable_rest_offset(db, elements)
+}
+
+pub(crate) fn type_param_variadic_tuple_spread(
+    db: &dyn TypeDatabase,
+    spread_type: TypeId,
+    elems: &[TupleElement],
+) -> bool {
+    is_type_parameter_type(db, spread_type) && elems.iter().any(|elem| elem.rest)
+}
+
+pub(crate) fn expanded_tuple_spread_len(db: &dyn TypeDatabase, elems: &[TupleElement]) -> usize {
+    let mut count = 0;
+    for elem in elems {
+        if elem.rest
+            && let Some(sub_elems) = tuple_elements_for_type(db, elem.type_id)
+        {
+            count += expanded_tuple_spread_len(db, &sub_elems);
+        } else {
+            count += 1;
+        }
+    }
+    count
+}
+
+pub(crate) fn optional_tuple_element_argument_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    optional: bool,
+) -> TypeId {
+    if optional {
+        db.union2(type_id, TypeId::UNDEFINED)
+    } else {
+        type_id
+    }
+}
+
+pub(crate) fn sensitive_argument_placeholder_type(db: &dyn TypeDatabase) -> TypeId {
+    let placeholder_param_name = db.intern_string(SENSITIVE_ARGUMENT_PLACEHOLDER_NAME);
+    db.function(FunctionShape {
+        params: vec![ParamInfo {
+            name: Some(placeholder_param_name),
+            type_id: TypeId::ANY,
+            optional: true,
+            rest: false,
+        }],
+        return_type: TypeId::ANY,
+        this_type: None,
+        type_params: vec![],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    })
+}
+
+pub(crate) fn spread_argument_marker_type(db: &dyn TypeDatabase, spread_type: TypeId) -> TypeId {
+    let marker_name = db.intern_string(SPREAD_ARGUMENT_MARKER_NAME);
+    spread_marker_type(db, spread_type, Some(marker_name))
+}
+
+pub(crate) fn generic_type_parameter_spread_marker_type(
+    db: &dyn TypeDatabase,
+    spread_type: TypeId,
+) -> TypeId {
+    spread_marker_type(db, spread_type, None)
+}
+
+fn spread_marker_type(db: &dyn TypeDatabase, spread_type: TypeId, name: Option<Atom>) -> TypeId {
+    db.tuple(vec![TupleElement {
+        type_id: spread_type,
+        name,
+        optional: false,
+        rest: true,
+    }])
+}
+
+pub(crate) fn open_spread_tail_needs_marker(
+    db: &dyn TypeDatabase,
+    callable_type: Option<TypeId>,
+) -> bool {
+    let Some(rest_type) = unwrapped_callable_rest_parameter_type(db, callable_type) else {
+        return false;
+    };
+    let is_plain_array = array_element_type_for_type(db, rest_type).is_some()
+        && tuple_elements_for_type(db, rest_type).is_none()
+        && !is_type_parameter_type(db, rest_type);
+    !is_plain_array
+}
+
+pub(crate) fn array_spread_rest_param_is_bare_type_param(
+    db: &dyn TypeDatabase,
+    callable_type: Option<TypeId>,
+) -> bool {
+    unwrapped_callable_rest_parameter_type(db, callable_type)
+        .is_some_and(|rest_type| is_type_parameter_type(db, rest_type))
+}
+
+fn unwrapped_callable_rest_parameter_type(
+    db: &dyn TypeDatabase,
+    callable_type: Option<TypeId>,
+) -> Option<TypeId> {
+    let rest_type = callable_rest_parameter_type(db, callable_type?)?;
+    Some(super::super::common::unwrap_readonly_or_noinfer(db, rest_type).unwrap_or(rest_type))
+}
+
+fn callable_rest_parameter_type(db: &dyn TypeDatabase, callable_type: TypeId) -> Option<TypeId> {
+    let last_param = if let Some(shape) =
+        super::super::common::function_shape_for_type(db, callable_type)
+    {
+        shape.params.last().copied()
+    } else if let Some(shape) = super::super::common::callable_shape_for_type(db, callable_type) {
+        shape
+            .call_signatures
+            .last()
+            .and_then(|sig| sig.params.last().copied())
+    } else {
+        None
+    }?;
+    last_param.rest.then_some(last_param.type_id)
 }
 
 pub(crate) fn rest_array_element_type_for_type(
