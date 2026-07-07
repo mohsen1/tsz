@@ -5,6 +5,41 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Expression whose syntax backs an array-literal tuple source display.
+    ///
+    /// Element-level elaboration anchors a diagnostic on the mismatching
+    /// element itself. When that anchor is an array literal nested inside
+    /// another array literal, the anchor's own elements are what pair with the
+    /// (element-level) target type; walking up to the enclosing assignment RHS
+    /// would pair the *outer* literal with the inner target slot and
+    /// mis-render the source (e.g. `[(string | number)[]]` instead of
+    /// `[number, string]`). Ordinary assignment diagnostics anchor on a
+    /// non-expression node (the binder name) or on the RHS itself, so they
+    /// keep the enclosing-assignment walk.
+    pub(in crate::error_reporter) fn tuple_display_source_expression(
+        &self,
+        anchor_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let expr_idx = self.ctx.arena.skip_parenthesized(anchor_idx);
+        let is_array_literal = |idx: NodeIndex| {
+            self.ctx
+                .arena
+                .get(self.ctx.arena.skip_parenthesized(idx))
+                .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+        };
+        if is_array_literal(expr_idx)
+            && self
+                .ctx
+                .arena
+                .get_extended(expr_idx)
+                .map(|ext| ext.parent)
+                .is_some_and(|parent| parent.is_some() && is_array_literal(parent))
+        {
+            return Some(expr_idx);
+        }
+        self.assignment_source_expression(anchor_idx)
+    }
+
     pub(crate) fn array_literal_tuple_source_type_display(
         &mut self,
         expr_idx: NodeIndex,
