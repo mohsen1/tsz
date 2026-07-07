@@ -296,9 +296,8 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            let expected_type = match failure.args.as_slice() {
-                [_, tsz_solver::DiagnosticArg::Type(expected_type)] => *expected_type,
-                _ => return false,
+            let Some((_, expected_type)) = failure.type_pair() else {
+                return false;
             };
             if matches!(expected_type, TypeId::ERROR | TypeId::UNKNOWN) {
                 continue;

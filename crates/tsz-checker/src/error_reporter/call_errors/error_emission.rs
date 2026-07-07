@@ -897,15 +897,11 @@ impl<'a> CheckerState<'a> {
             let mut first_name = None;
             let mut all_same = true;
             for failure in &argument_failures {
-                let Some(tsz_solver::DiagnosticArg::Type(arg_type)) = failure.args.first() else {
+                let Some((arg_type, param_type)) = failure.type_pair() else {
                     all_same = false;
                     break;
                 };
-                let Some(tsz_solver::DiagnosticArg::Type(param_type)) = failure.args.get(1) else {
-                    all_same = false;
-                    break;
-                };
-                let analysis = self.analyze_assignability_failure(*arg_type, *param_type);
+                let analysis = self.analyze_assignability_failure(arg_type, param_type);
                 let Some(tsz_solver::SubtypeFailureReason::ExcessProperty {
                     property_name, ..
                 }) = analysis.failure_reason
@@ -937,9 +933,15 @@ impl<'a> CheckerState<'a> {
         let argument_anchor_is_callback = raw_argument_anchor
             .is_some_and(|anchor_idx| self.is_callback_expression_argument(anchor_idx));
         let callback_overloads_are_callable_only = argument_failures.iter().all(|failure| {
-            matches!(failure.args.get(1), Some(tsz_solver::DiagnosticArg::Type(param_ty))
-                if crate::query_boundaries::common::function_shape_for_type(self.ctx.types, *param_ty).is_some()
-                    || crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, *param_ty).is_some())
+            failure.type_pair().is_some_and(|(_, param_ty)| {
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, param_ty)
+                    .is_some()
+                    || crate::query_boundaries::common::callable_shape_for_type(
+                        self.ctx.types,
+                        param_ty,
+                    )
+                    .is_some()
+            })
         });
         let callback_argument_has_prior_diagnostics =
             raw_argument_anchor.is_some_and(|anchor_idx| {
@@ -1058,26 +1060,10 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
-        let mut related = Vec::new();
-        let mut formatter = self.ctx.create_type_formatter();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
 
         tracing::debug!("File name: {}", self.ctx.file_name);
-
-        // One elaboration line at `span_of` with the given message/code/depth.
-        let related_line =
-            |span_of: &tsz_solver::SourceSpan, message_text: String, code: u32, depth: u8| {
-                DiagnosticRelatedInformation {
-                    file: span_of.file.to_string(),
-                    start: span_of.start,
-                    length: span_of.length,
-                    message_text,
-                    category: DiagnosticCategory::Message,
-                    code,
-                    depth,
-                }
-            };
 
         // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
         // gave the following error.` (TS2772) chain per candidate — in
@@ -1093,9 +1079,40 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .all(|failure| failure.overload_signature.is_some());
 
+        // Per-candidate relation reason chains (#15387), computed before the
+        // type formatter takes its borrow of the checker context (failure
+        // analysis needs `&mut self`).
+        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = if wrap_overloads {
+            failures
+                .iter()
+                .map(|failure| {
+                    self.overload_candidate_reason_chain(failure, anchor.node_idx, &span)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut related = Vec::new();
+        let mut formatter = self.ctx.create_type_formatter();
+
+        // One elaboration line at `span_of` with the given message/code/depth.
+        let related_line =
+            |span_of: &tsz_solver::SourceSpan, message_text: String, code: u32, depth: u8| {
+                DiagnosticRelatedInformation {
+                    file: span_of.file.to_string(),
+                    start: span_of.start,
+                    length: span_of.length,
+                    message_text,
+                    category: DiagnosticCategory::Message,
+                    code,
+                    depth,
+                }
+            };
+
         let related_policy = if wrap_overloads {
             let total = failures.len();
-            for (ordinal, failure) in failures.iter().enumerate() {
+            for (ordinal, (failure, chain)) in failures.iter().zip(candidate_chains).enumerate() {
                 let signature = failure
                     .overload_signature
                     .expect("wrap_overloads requires every failure to carry a signature");
@@ -1131,6 +1148,11 @@ impl<'a> CheckerState<'a> {
                         nested.depth.saturating_add(2),
                     ));
                 }
+                // The reason chain nests under the applicability error.
+                for mut line in chain {
+                    line.depth = line.depth.saturating_add(2);
+                    related.push(line);
+                }
             }
             RelatedInformationPolicy::OVERLOAD_CHAINS
         } else {
@@ -1156,6 +1178,47 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Build the relation failure-reason elaboration chain for one overload
+    /// candidate's argument mismatch (#15387).
+    ///
+    /// tsc nests the same reason chain under each candidate's `TS2772` header
+    /// that the single-signature path renders under a plain `TS2345`
+    /// (`getSignatureApplicabilityError` reuses
+    /// `checkTypeRelatedToAndOptionallyElaborate`). Reuse the shared
+    /// relation → reason → diagnostic gateway (`analyze_assignability_failure`,
+    /// whose captured pass is memoized) and the single elaboration owner
+    /// (`related_from_failure_reason`), then re-anchor every line onto the
+    /// shared `TS2769` span: chain lines are message-chain text, not
+    /// cross-location pointers. Candidates whose pending diagnostic already
+    /// carries a related payload keep it (the caller renders it); arity and
+    /// `this` failures carry no chain, matching tsc.
+    fn overload_candidate_reason_chain(
+        &mut self,
+        failure: &tsz_solver::PendingDiagnostic,
+        anchor_idx: NodeIndex,
+        span: &tsz_solver::SourceSpan,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        if !failure.related.is_empty()
+            || failure.code
+                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+        {
+            return Vec::new();
+        }
+        let Some((source, target)) = failure.type_pair() else {
+            return Vec::new();
+        };
+        let Some(reason) = self
+            .analyze_assignability_failure(source, target)
+            .failure_reason
+        else {
+            return Vec::new();
+        };
+        let chain = self
+            .related_from_failure_reason(&reason, source, target, anchor_idx)
+            .unwrap_or_default();
+        Self::reanchor_chain_lines(chain, span.start, span.length)
+    }
+
     /// Build the per-overload failure diagnostic anchored at the shared
     /// `TS2769` span, applying tsc's `reportRelationError` source
     /// generalization: a fresh literal source (`true`, `1`) is widened to its
@@ -1173,12 +1236,8 @@ impl<'a> CheckerState<'a> {
             ..failure.clone()
         };
         if pending.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-            && let (
-                Some(tsz_solver::DiagnosticArg::Type(source)),
-                Some(tsz_solver::DiagnosticArg::Type(target)),
-            ) = (pending.args.first(), pending.args.get(1))
+            && let Some((source, target)) = pending.type_pair()
         {
-            let (source, target) = (*source, *target);
             let display_source =
                 crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
                     self.ctx.types,

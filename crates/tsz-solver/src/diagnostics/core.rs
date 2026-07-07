@@ -595,6 +595,18 @@ impl PendingDiagnostic {
         self
     }
 
+    /// The `(source, target)` pair of a two-type diagnostic (e.g. `TS2345`
+    /// argument-not-assignable), when the first two message args are types.
+    /// Owns the positional arg encoding so consumers do not.
+    pub fn type_pair(&self) -> Option<(TypeId, TypeId)> {
+        match (self.args.first(), self.args.get(1)) {
+            (Some(DiagnosticArg::Type(source)), Some(DiagnosticArg::Type(target))) => {
+                Some((*source, *target))
+            }
+            _ => None,
+        }
+    }
+
     /// Attach a source span to this diagnostic.
     pub fn with_span(mut self, span: SourceSpan) -> Self {
         self.span = Some(span);

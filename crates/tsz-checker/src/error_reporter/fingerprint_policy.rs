@@ -837,8 +837,24 @@ impl<'a> CheckerState<'a> {
         start: u32,
         length: u32,
     ) -> Vec<DiagnosticRelatedInformation> {
-        self.render_failure_reason(reason, source, target, anchor_idx, 0)
-            .related_information
+        Self::reanchor_chain_lines(
+            self.render_failure_reason(reason, source, target, anchor_idx, 0)
+                .related_information,
+            start,
+            length,
+        )
+    }
+
+    /// Re-anchor elaboration chain lines onto a primary diagnostic surface:
+    /// category reset to `Message`, anchor rewritten to (`start`, `length`).
+    /// Chain lines are message-chain text, not cross-location pointers, so
+    /// they always carry the primary diagnostic's position.
+    pub(crate) fn reanchor_chain_lines(
+        lines: Vec<DiagnosticRelatedInformation>,
+        start: u32,
+        length: u32,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        lines
             .into_iter()
             .map(|mut rel| {
                 rel.category = DiagnosticCategory::Message;
