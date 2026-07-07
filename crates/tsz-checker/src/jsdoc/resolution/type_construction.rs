@@ -13,13 +13,16 @@
 //! - Typedef/callback type construction (`type_from_jsdoc_typedef`, `type_from_jsdoc_callback`)
 
 use super::super::types::{JsdocCallbackInfo, JsdocTypedefInfo};
+use crate::query_boundaries::jsdoc_construction::{
+    JsdocObjectIndexFact, JsdocObjectIndexKind, jsdoc_empty_object_type, jsdoc_function_type,
+    jsdoc_object_index_fact, jsdoc_object_type,
+};
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{
-    FunctionShape, IndexSignature, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId,
-    TypePredicate, TypePredicateTarget, Visibility,
+    ParamInfo, PropertyInfo, TupleElement, TypeId, TypePredicate, TypePredicateTarget, Visibility,
 };
 impl<'a> CheckerState<'a> {
     pub(crate) fn jsdoc_enum_annotation_type_for_symbol_decl(
@@ -903,15 +906,15 @@ impl<'a> CheckerState<'a> {
             return Some(mapped);
         }
 
-        let factory = self.ctx.types.factory();
         let inner = type_expr[1..type_expr.len() - 1].trim();
         if inner.is_empty() {
-            return Some(factory.object(Vec::new()));
+            return Some(jsdoc_empty_object_type(self.ctx.types));
         }
         // Split properties by ',' or ';' at top level
         let prop_strs = Self::split_object_properties(inner);
         let mut properties = Vec::new();
-        let mut object_shape = ObjectShape::default();
+        let mut string_index: Option<JsdocObjectIndexFact> = None;
+        let mut number_index: Option<JsdocObjectIndexFact> = None;
         for prop_str in &prop_strs {
             let prop_str = prop_str.trim();
             if prop_str.is_empty() {
@@ -943,16 +946,13 @@ impl<'a> CheckerState<'a> {
                 };
                 if raw_name.starts_with('[')
                     && raw_name.ends_with(']')
-                    && let Some(mut index_sig) =
+                    && let Some((index_kind, mut index_fact)) =
                         self.parse_jsdoc_object_literal_index_signature(raw_name, type_str)
                 {
-                    index_sig.readonly |= readonly;
-                    match index_sig.key_type {
-                        TypeId::STRING | TypeId::SYMBOL => {
-                            object_shape.string_index = Some(index_sig);
-                        }
-                        TypeId::NUMBER => object_shape.number_index = Some(index_sig),
-                        _ => {}
+                    index_fact.readonly |= readonly;
+                    match index_kind {
+                        JsdocObjectIndexKind::String => string_index = Some(index_fact),
+                        JsdocObjectIndexKind::Number => number_index = Some(index_fact),
                     }
                     continue;
                 }
@@ -983,25 +983,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        if properties.is_empty()
-            && object_shape.string_index.is_none()
-            && object_shape.number_index.is_none()
-        {
-            return None;
-        }
-        if object_shape.string_index.is_some() || object_shape.number_index.is_some() {
-            object_shape.properties = properties;
-            Some(factory.object_with_index(object_shape))
-        } else {
-            Some(factory.object(properties))
-        }
+        jsdoc_object_type(self.ctx.types, properties, string_index, number_index)
     }
 
     fn parse_jsdoc_object_literal_index_signature(
         &mut self,
         raw_name: &str,
         type_str: &str,
-    ) -> Option<IndexSignature> {
+    ) -> Option<(JsdocObjectIndexKind, JsdocObjectIndexFact)> {
         let (raw_name, readonly) = if let Some(rest) = Self::strip_jsdoc_readonly_modifier(raw_name)
         {
             (rest, true)
@@ -1039,12 +1028,12 @@ impl<'a> CheckerState<'a> {
         };
 
         let value_type = self.resolve_jsdoc_type_str(type_str).unwrap_or(TypeId::ANY);
-        Some(IndexSignature {
+        jsdoc_object_index_fact(
             key_type,
             value_type,
             readonly,
-            param_name: (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
-        })
+            (!param_name.is_empty()).then(|| self.ctx.types.intern_string(param_name)),
+        )
     }
 
     fn emit_jsdoc_index_signature_diagnostic_once(
@@ -1268,7 +1257,6 @@ impl<'a> CheckerState<'a> {
     /// Parse a named method signature from a JSDoc object property string.
     /// Parse a call signature `(params): RetType` and return a function TypeId.
     fn parse_jsdoc_call_signature(&mut self, prop_str: &str) -> Option<TypeId> {
-        use tsz_solver::{FunctionShape, ParamInfo};
         let after_open = &prop_str[1..];
         let mut depth = 1u32;
         let mut close_idx = None;
@@ -1316,16 +1304,16 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
-        let shape = FunctionShape {
-            type_params: Vec::new(),
+        Some(jsdoc_function_type(
+            self.ctx.types,
+            Vec::new(),
             params,
-            this_type: None,
+            None,
             return_type,
-            type_predicate: None,
-            is_constructor: false,
-            is_method: false,
-        };
-        Some(self.ctx.types.factory().function(shape))
+            None,
+            false,
+            false,
+        ))
     }
     fn parse_jsdoc_method_signature(
         &mut self,
@@ -1333,7 +1321,6 @@ impl<'a> CheckerState<'a> {
         paren_idx: usize,
         existing_props: &[PropertyInfo],
     ) -> Option<PropertyInfo> {
-        use tsz_solver::{FunctionShape, ParamInfo};
         let method_name = prop_str[..paren_idx].trim();
         if method_name.is_empty() {
             return None;
@@ -1395,16 +1382,16 @@ impl<'a> CheckerState<'a> {
                 });
             }
         }
-        let shape = FunctionShape {
-            type_params: Vec::new(),
+        let method_type = jsdoc_function_type(
+            self.ctx.types,
+            Vec::new(),
             params,
-            this_type: None,
+            None,
             return_type,
-            type_predicate: None,
-            is_constructor: false,
-            is_method: true,
-        };
-        let method_type = self.ctx.types.factory().function(shape);
+            None,
+            false,
+            true,
+        );
         let name_atom = self.ctx.types.intern_string(method_name);
         Some(PropertyInfo {
             name: name_atom,
@@ -1807,15 +1794,16 @@ impl<'a> CheckerState<'a> {
         // `type B<T> = () => T`, not `<T>() => T`. Keeping those parameters on
         // the function body makes alias instantiation shadow them, so `B<string>`
         // still formats and behaves like the uninstantiated `B`.
-        Some(factory.function(FunctionShape {
-            type_params: Vec::new(),
+        Some(jsdoc_function_type(
+            self.ctx.types,
+            Vec::new(),
             params,
             this_type,
             return_type,
             type_predicate,
-            is_constructor: false,
-            is_method: false,
-        }))
+            false,
+            false,
+        ))
     }
 
     fn type_from_jsdoc_object_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
@@ -1888,11 +1876,7 @@ impl<'a> CheckerState<'a> {
                 non_widening: false,
             });
         }
-        let object_type = if !prop_infos.is_empty() {
-            Some(factory.object(prop_infos))
-        } else {
-            None
-        };
+        let object_type = jsdoc_object_type(self.ctx.types, prop_infos, None, None);
         match (object_type, base_type) {
             (Some(obj), Some(base)) => Some(factory.intersection2(obj, base)),
             (Some(obj), None) => Some(obj),

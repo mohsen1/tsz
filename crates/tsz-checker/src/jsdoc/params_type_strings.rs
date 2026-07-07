@@ -8,6 +8,7 @@
 //! - `JsdocParamTagInfo` assembly helpers
 
 use super::types::JsdocParamTagInfo;
+use crate::query_boundaries::jsdoc_construction::jsdoc_object_type;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
@@ -611,7 +612,7 @@ impl<'a> CheckerState<'a> {
         if properties.is_empty() {
             return None;
         }
-        let obj_type = self.ctx.types.factory().object(properties);
+        let obj_type = jsdoc_object_type(self.ctx.types, properties, None, None)?;
         if is_array {
             Some(self.ctx.types.factory().array(obj_type))
         } else {
