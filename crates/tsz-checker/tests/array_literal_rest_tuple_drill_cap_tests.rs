@@ -65,15 +65,21 @@ fn assert_single_leaf(source: &str, expected: &str) {
     assert_eq!(diagnostic.message_text, expected);
 }
 
-/// Assert the source produces exactly one TS2322 carrying the whole-tuple
-/// positional frame `expected_frame` in its related information.
-fn assert_single_chain(source: &str, expected_frame: &str) {
-    let diagnostic = single(source, 2322);
+/// Assert the source produces exactly one diagnostic with `code` carrying the
+/// whole-tuple positional frame `expected_frame` in its related information.
+fn assert_single_chain_with_code(source: &str, code: u32, expected_frame: &str) {
+    let diagnostic = single(source, code);
     assert!(
         has_related(&diagnostic, expected_frame),
         "missing the whole-tuple position frame; related = {:#?}",
         related_lines(&diagnostic)
     );
+}
+
+/// Assert the source produces exactly one TS2322 carrying the whole-tuple
+/// positional frame `expected_frame` in its related information.
+fn assert_single_chain(source: &str, expected_frame: &str) {
+    assert_single_chain_with_code(source, 2322, expected_frame);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,17 +191,10 @@ fn rest_covered_failure_after_optional_fixed_slot_chains() {
 /// with the whole-tuple frame, not a drilled element leaf.
 #[test]
 fn call_argument_rest_covered_failure_reports_ts2345_chain() {
-    let diagnostic = single(
+    assert_single_chain_with_code(
         "function take(row: [number, ...boolean[]]) {}\ntake([1, \"no\"]);",
         2345,
-    );
-    assert!(
-        has_related(
-            &diagnostic,
-            "Type at position 1 in source is not compatible with type at position 1 in target."
-        ),
-        "missing the whole-tuple position frame; related = {:#?}",
-        related_lines(&diagnostic)
+        "Type at position 1 in source is not compatible with type at position 1 in target.",
     );
 }
 
@@ -206,6 +205,17 @@ fn call_argument_rest_covered_failure_reports_ts2345_chain() {
 fn nested_array_literal_inner_rest_tuple_chains() {
     assert_single_chain(
         "const bad: [[number, ...boolean[]]] = [[1, \"no\"]];",
+        "Type at position 1 in source is not compatible with type at position 1 in target.",
+    );
+}
+
+/// A parenthesized nested array literal takes the same path: the element gate
+/// and the display anchor both see through parens, so the inner rest-tuple
+/// failure still renders the whole-tuple chain.
+#[test]
+fn parenthesized_nested_array_literal_inner_rest_tuple_chains() {
+    assert_single_chain(
+        "const bad: [[number, ...boolean[]]] = [([1, \"no\"])];",
         "Type at position 1 in source is not compatible with type at position 1 in target.",
     );
 }

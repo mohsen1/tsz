@@ -1368,12 +1368,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // For a nested array literal the context-free retype is an
-                // open array, which mis-classifies the sub-reason (arity
-                // family instead of the positional chain), so use the source
-                // tuple's slot type recovered above. Only a fixed slot maps
-                // back to this element position (a rest slot from a source
-                // spread would hand the relation the whole array type).
+                // For a nested (possibly parenthesized) array literal the
+                // context-free retype is an open array, which mis-classifies
+                // the sub-reason (arity family instead of the positional
+                // chain), so use the source tuple's slot type recovered above.
+                // tsc applies the slot-type rule to *every* reported element;
+                // gating on array literals is conservative staging — other
+                // element kinds keep the display baselines tuned to
+                // `elem_type` until their parity witnesses surface.
                 let elem_is_array_literal = self
                     .ctx
                     .arena
