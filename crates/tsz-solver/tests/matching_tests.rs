@@ -5,11 +5,14 @@
 //! arguments by walking type structures in parallel.
 
 use super::*;
+use crate::construction::TypeDatabase;
+use crate::def::DefId;
 use crate::inference::infer::InferenceContext;
 use crate::intern::TypeInterner;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, InferencePriority, ParamInfo, PropertyInfo,
-    TupleElement, TypeData, TypeParamInfo,
+    SymbolRef, TupleElement, TypeData, TypeParamInfo,
 };
 
 // =============================================================================
@@ -26,6 +29,30 @@ fn make_type_param(interner: &TypeInterner, name: &str) -> (tsz_common::interner
         origin: crate::types::TypeParamOrigin::User,
     }));
     (atom, ty)
+}
+
+struct CanonicalApplicationResolver {
+    left: DefId,
+    right: DefId,
+    canonical: DefId,
+}
+
+impl TypeResolver for CanonicalApplicationResolver {
+    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        None
+    }
+
+    fn canonical_def_id(&self, def_id: DefId) -> DefId {
+        if def_id == self.left || def_id == self.right {
+            self.canonical
+        } else {
+            def_id
+        }
+    }
+
+    fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
+        a == b
+    }
 }
 
 // =============================================================================
@@ -989,6 +1016,124 @@ fn test_match_intersection_target() {
 
     assert_eq!(ctx.resolve_with_constraints(var_t).unwrap(), TypeId::STRING);
     assert_eq!(ctx.resolve_with_constraints(var_u).unwrap(), TypeId::NUMBER);
+}
+
+// =============================================================================
+// TypeApplication Matching
+// =============================================================================
+
+#[test]
+fn test_match_equivalent_application_bases_infers_args() {
+    let interner = TypeInterner::new();
+    let source_def = DefId(143_510);
+    let target_def = DefId(143_511);
+    let resolver = CanonicalApplicationResolver {
+        left: source_def,
+        right: target_def,
+        canonical: DefId(143_512),
+    };
+    let mut ctx = InferenceContext::new(&interner);
+    ctx.resolver = Some(&resolver);
+
+    let (payload_name, payload_type) = make_type_param(&interner, "Payload");
+    let var_payload = ctx.fresh_type_param(payload_name, false);
+
+    let source = interner.application(interner.lazy(source_def), vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(target_def), vec![payload_type]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_eq!(
+        ctx.resolve_with_constraints(var_payload).unwrap(),
+        TypeId::NUMBER
+    );
+}
+
+#[test]
+fn test_union_target_prefers_equivalent_application_arm() {
+    let interner = TypeInterner::new();
+    let source_def = DefId(143_520);
+    let target_def = DefId(143_521);
+    let resolver = CanonicalApplicationResolver {
+        left: source_def,
+        right: target_def,
+        canonical: DefId(143_522),
+    };
+    let mut ctx = InferenceContext::new(&interner);
+    ctx.resolver = Some(&resolver);
+
+    let (payload_name, payload_type) = make_type_param(&interner, "Slot");
+    let (fallback_name, fallback_type) = make_type_param(&interner, "Fallback");
+    let var_payload = ctx.fresh_type_param(payload_name, false);
+    let var_fallback = ctx.fresh_type_param(fallback_name, false);
+
+    let source = interner.application(interner.lazy(source_def), vec![TypeId::STRING]);
+    let structured_target = interner.application(interner.lazy(target_def), vec![payload_type]);
+    let target = interner.union(vec![structured_target, fallback_type]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_eq!(
+        ctx.resolve_with_constraints(var_payload).unwrap(),
+        TypeId::STRING
+    );
+    assert!(!ctx.var_has_candidates(var_fallback));
+}
+
+#[test]
+fn test_nested_equivalent_application_bases_infer_through_object_property() {
+    let interner = TypeInterner::new();
+    let source_def = DefId(143_530);
+    let target_def = DefId(143_531);
+    let resolver = CanonicalApplicationResolver {
+        left: source_def,
+        right: target_def,
+        canonical: DefId(143_532),
+    };
+    let mut ctx = InferenceContext::new(&interner);
+    ctx.resolver = Some(&resolver);
+
+    let (item_name, item_type) = make_type_param(&interner, "Item");
+    let var_item = ctx.fresh_type_param(item_name, false);
+    let value_atom = interner.intern_string("value");
+
+    let source_app = interner.application(interner.lazy(source_def), vec![TypeId::BOOLEAN]);
+    let target_app = interner.application(interner.lazy(target_def), vec![item_type]);
+    let source = interner.object(vec![PropertyInfo::new(value_atom, source_app)]);
+    let target = interner.object(vec![PropertyInfo::new(value_atom, target_app)]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_eq!(
+        ctx.resolve_with_constraints(var_item).unwrap(),
+        TypeId::BOOLEAN
+    );
+}
+
+#[test]
+fn test_unrelated_application_bases_do_not_infer_args_by_arity() {
+    let interner = TypeInterner::new();
+    let resolver = CanonicalApplicationResolver {
+        left: DefId(143_540),
+        right: DefId(143_541),
+        canonical: DefId(143_542),
+    };
+    let mut ctx = InferenceContext::new(&interner);
+    ctx.resolver = Some(&resolver);
+
+    let (payload_name, payload_type) = make_type_param(&interner, "Payload");
+    let var_payload = ctx.fresh_type_param(payload_name, false);
+
+    let source = interner.application(interner.lazy(DefId(143_543)), vec![TypeId::NUMBER]);
+    let target = interner.application(interner.lazy(DefId(143_544)), vec![payload_type]);
+
+    ctx.infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert!(!ctx.var_has_candidates(var_payload));
 }
 
 // =============================================================================

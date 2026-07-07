@@ -966,7 +966,7 @@ impl<'a> InferenceContext<'a> {
         compute_type_param_variances_with_resolver(self.interner, resolver, def_id)
     }
 
-    fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
+    pub(super) fn application_base_def_id(&self, base: TypeId) -> Option<DefId> {
         if base.is_intrinsic() {
             return None;
         }
@@ -974,11 +974,15 @@ impl<'a> InferenceContext<'a> {
         match self.interner.lookup(base)? {
             TypeData::Lazy(def_id) => Some(def_id),
             TypeData::TypeQuery(sym_ref) => resolver.symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner.resolve_atom(atom);
+                resolver.resolve_unresolved_type_name(&name)
+            }
             _ => None,
         }
     }
 
-    fn shared_application_base_def_id(
+    pub(super) fn shared_application_base_def_id(
         &self,
         source_base: TypeId,
         target_base: TypeId,
@@ -986,9 +990,22 @@ impl<'a> InferenceContext<'a> {
         let resolver = self.resolver?;
         let source_def = self.application_base_def_id(source_base)?;
         let target_def = self.application_base_def_id(target_base)?;
+        let source_def = resolver.canonical_def_id(source_def);
+        let target_def = resolver.canonical_def_id(target_def);
         resolver
             .defs_are_equivalent(source_def, target_def)
             .then_some(source_def)
+    }
+
+    pub(super) fn application_bases_share_declaration(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> bool {
+        source_base == target_base
+            || self
+                .shared_application_base_def_id(source_base, target_base)
+                .is_some()
     }
 
     /// Infer from function types, handling variance correctly

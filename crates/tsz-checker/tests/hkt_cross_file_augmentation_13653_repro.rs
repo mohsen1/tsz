@@ -229,6 +229,57 @@ export const wrong: Registry<number>["Widget"] = ["x"];
     );
 }
 
+/// Generic call inference through an augmented HKT registry: once the tag fixes
+/// the registry key, the indexed-access value type must infer the payload from
+/// the argument before callback contextual typing observes it.
+#[test]
+fn cross_file_augmented_kind_value_infers_payload_for_generic_call() {
+    let diags = diagnostics(&[
+        (
+            "registry.ts",
+            r#"
+export interface Slots<Payload> {}
+export type Tags = keyof Slots<unknown>;
+export type Apply<Tag extends Tags, Payload> =
+    Tag extends Tags ? Slots<Payload>[Tag] : never;
+"#,
+        ),
+        (
+            "box.ts",
+            r#"
+import { Apply, Slots } from "./registry";
+declare module "./registry" {
+    interface Slots<Payload> {
+        readonly Boxed: { readonly item: Payload };
+    }
+}
+declare function fold<Tag extends keyof Slots<unknown>, Payload, Result>(
+    tag: Tag,
+    value: Apply<Tag, Payload>,
+    map: (payload: Payload) => Result,
+): Result;
+const result = fold("Boxed", { item: 1 }, piece => {
+    const exact: number = piece;
+    return piece;
+});
+const ok: number = result;
+const bad: string = result;
+"#,
+        ),
+    ]);
+
+    assert_eq!(
+        count_code(&diags, 2344) + count_code(&diags, 2345) + count_code(&diags, 18046),
+        0,
+        "augmented HKT call should infer the payload before diagnostics; got {diags:#?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2322),
+        1,
+        "only the final `string` assignment should fail after inferring `Payload = number`; got {diags:#?}"
+    );
+}
+
 /// Assignability alias probes can inspect a `Lazy(DefId)` body directly before
 /// relation fallback. With body publication enabled, that probe must see the
 /// augmented registry body so the missing augmented member is still required.

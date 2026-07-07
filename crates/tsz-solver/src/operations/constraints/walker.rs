@@ -272,13 +272,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let _ = ctx.infer_from_types(source, target, priority);
             }
             (Some(TypeData::IndexAccess(s_obj, s_idx)), _) => {
-                let evaluated = self.reduce_index_access_for_inference(source, s_obj, s_idx);
+                let evaluated =
+                    self.reduce_index_access_for_inference(ctx, var_map, source, s_obj, s_idx);
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
             }
             (_, Some(TypeData::IndexAccess(t_obj, t_idx))) => {
-                let evaluated = self.reduce_index_access_for_inference(target, t_obj, t_idx);
+                let evaluated =
+                    self.reduce_index_access_for_inference(ctx, var_map, target, t_obj, t_idx);
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }

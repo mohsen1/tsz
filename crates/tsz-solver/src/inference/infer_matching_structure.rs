@@ -45,13 +45,12 @@ impl<'a> InferenceContext<'a> {
                 }
             }?;
             let app = self.interner.type_application(app_id);
-            let lazy_def = crate::type_queries::get_lazy_def_id(self.interner, app.base);
-            Some((app.base, lazy_def))
+            Some(app.base)
         };
 
-        if let (Some((source_base, source_def)), Some((target_base, target_def))) =
+        if let (Some(source_base), Some(target_base)) =
             (application_outer(source), application_outer(target))
-            && (source_base == target_base || (source_def.is_some() && source_def == target_def))
+            && self.application_bases_share_declaration(source_base, target_base)
         {
             return true;
         }
@@ -66,7 +65,7 @@ impl<'a> InferenceContext<'a> {
             (TypeData::Application(s_app_id), TypeData::Application(t_app_id)) => {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                s_app.base == t_app.base
+                self.application_bases_share_declaration(s_app.base, t_app.base)
             }
             // Both share the same structural kind
             (TypeData::Object(_), TypeData::Object(_))
