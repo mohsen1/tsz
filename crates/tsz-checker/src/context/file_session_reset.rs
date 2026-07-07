@@ -67,7 +67,7 @@ impl<'a> CheckerContext<'a> {
     ///   non-zero depth at file boundary would suppress legitimate
     ///   recursion in the next file or trip TS2589-like behaviour.
     /// - **Module thread-local memoisations** in
-    ///   `types::utilities::{cycle_guard, enum_utils, const_enum_eval}`:
+    ///   `types::utilities::{cycle_guard, enum_eval, const_enum_eval}`:
     ///   each is keyed by `NodeIndex` and must be cleared when
     ///   reusing a worker across files.
     ///
