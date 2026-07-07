@@ -830,6 +830,15 @@ impl<'a> CheckerState<'a> {
         let mut preserve_tuple_spread_literals = false;
         let mut saw_array_element_for_bct = false;
         let mut all_array_elements_const_asserted = true;
+        // Whether an optional elision (hole) has been seen earlier in the
+        // literal. `tsc` keeps a present element Required only until the first
+        // hole; a present element that follows an elision becomes Optional. So
+        // `[42, , , ,]` is `[number, never?, never?, never?]` (`42` before any
+        // hole stays Required), but `[, , true]` is `[never?, never?, true?]`
+        // (`true` follows two holes, so it is optional). Only tracked for the
+        // `exactOptionalPropertyTypes` tuple path, where holes are themselves
+        // optional `never` slots.
+        let mut saw_optional_elision = false;
         // Total element count for tuple contextual typing. Elided slots count toward
         // the position of subsequent elements (e.g. `[42,,true]` has length 3 with
         // an undefined slot at index 1), matching tsc's `elementCount = elements.length`.
@@ -876,6 +885,7 @@ impl<'a> CheckerState<'a> {
                         optional: hole_optional,
                         rest: false,
                     });
+                    saw_optional_elision |= hole_optional;
                 } else {
                     saw_array_element_for_bct = true;
                     all_array_elements_const_asserted = false;
@@ -1129,22 +1139,29 @@ impl<'a> CheckerState<'a> {
                 elem_type = self.get_type_of_node_with_request(binary.right, &elem_request);
             }
 
-            if tuple_context.is_some() || self.ctx.in_const_assertion {
-                let optional = match tuple_context.as_ref().and_then(|tc| tc.get(index)) {
-                    Some(el) => el.optional,
-                    None => false,
-                };
+            if tuple_context.is_some()
+                || self.ctx.in_const_assertion
+                || force_tuple_for_union_context
+            {
+                // A physically-present array-literal element is Required unless an
+                // optional elision preceded it. tsc types `[1, "x", true]` as
+                // `[number, string, boolean]` (minLength 3) regardless of the
+                // contextual target's optional slots; an Optional *target* slot is
+                // satisfied by widening the Required source element in tuple
+                // subtyping (see the elision / `undefinedWideningType` handling
+                // above), not by copying the target's optionality onto the present
+                // source element. Mirroring it understated the source's minimum
+                // length and mis-reported tuple arity diagnostics (e.g. `[1,"x",true]`
+                // vs `[number, string?]` rendered TS2621 "…source may have more"
+                // instead of tsc's TS2619 "Source has 3 element(s) but target
+                // allows only 2"). But once a hole makes the literal sparse, a
+                // following present element inherits the elision's optionality:
+                // `[, , true]` is `[never?, never?, true?]`, not
+                // `[never?, never?, true]` (see `saw_optional_elision`).
                 tuple_elements.push(TupleElement {
                     type_id: elem_type,
                     name: None,
-                    optional,
-                    rest: false,
-                });
-            } else if force_tuple_for_union_context {
-                tuple_elements.push(TupleElement {
-                    type_id: elem_type,
-                    name: None,
-                    optional: false,
+                    optional: saw_optional_elision,
                     rest: false,
                 });
             } else {
