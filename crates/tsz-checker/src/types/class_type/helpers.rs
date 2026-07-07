@@ -1,6 +1,6 @@
 //! Helper routines for class instance type construction.
 
-use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
+use crate::query_boundaries::class_type::{self, callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::is_plain_object_type;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
@@ -8,8 +8,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, TypeId, TypeParamInfo,
-    TypeParamOrigin, Visibility,
+    CallSignature, IndexSignature, TypeId, TypeParamInfo, TypeParamOrigin, Visibility,
 };
 
 /// Bookkeeping record for a single type parameter pushed into
@@ -311,8 +310,6 @@ impl<'a> CheckerState<'a> {
         instance_type: TypeId,
         interface_type: TypeId,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
-
         let mut properties = FxHashMap::default();
         let mut call_signatures = Vec::new();
         let mut construct_signatures = Vec::new();
@@ -371,36 +368,23 @@ impl<'a> CheckerState<'a> {
         merge_shape(instance_type, true);
         merge_shape(interface_type, false);
 
-        if result_is_callable {
-            return factory.callable(CallableShape {
+        class_type::merged_class_instance_interface_type(
+            self.ctx.types,
+            class_type::MergedClassInstanceInterfaceSurface::new(
+                result_is_callable,
                 call_signatures,
                 construct_signatures,
-                properties: properties.into_values().collect(),
+                properties.into_values().collect(),
                 string_index,
                 number_index,
+                symbol_index,
                 symbol,
-                is_abstract: false,
-            });
-        }
-
-        let shape = ObjectShape {
-            properties: properties.into_values().collect(),
-            string_index,
-            number_index,
-            symbol_index,
-            symbol,
-            ..ObjectShape::default()
-        };
-
-        if is_plain_object_type(self.ctx.types, instance_type)
-            && string_index.is_none()
-            && number_index.is_none()
-            && symbol_index.is_none()
-        {
-            factory.object(shape.properties)
-        } else {
-            factory.object_with_index(shape)
-        }
+                is_plain_object_type(self.ctx.types, instance_type)
+                    && string_index.is_none()
+                    && number_index.is_none()
+                    && symbol_index.is_none(),
+            ),
+        )
     }
 
     pub(super) fn merge_union_index_signature(
@@ -410,11 +394,11 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(existing) = target.as_mut() {
             if existing.value_type != incoming.value_type {
-                existing.value_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(existing.value_type, incoming.value_type);
+                existing.value_type = class_type::merged_static_late_bound_index_value_type(
+                    self.ctx.types,
+                    existing.value_type,
+                    incoming.value_type,
+                );
             }
             existing.readonly &= incoming.readonly;
         } else {
@@ -448,23 +432,13 @@ impl<'a> CheckerState<'a> {
             if wants_string {
                 self.merge_union_index_signature(
                     string_index,
-                    IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    },
+                    class_type::static_late_bound_index_signature(TypeId::STRING, value_type),
                 );
             }
             if wants_number {
                 self.merge_union_index_signature(
                     number_index,
-                    IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    },
+                    class_type::static_late_bound_index_signature(TypeId::NUMBER, value_type),
                 );
             }
         }

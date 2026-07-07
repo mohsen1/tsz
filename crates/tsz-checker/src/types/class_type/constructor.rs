@@ -1,7 +1,9 @@
 //! Class constructor type resolution (static members, construct signatures, inheritance).
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::class_type::{callable_shape_for_type, construct_signatures_for_type};
+use crate::query_boundaries::class_type::{
+    self, callable_shape_for_type, construct_signatures_for_type,
+};
 use crate::query_boundaries::common::{ContextualTypeContext, TypeSubstitution, instantiate_type};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1846,25 +1848,25 @@ impl<'a> CheckerState<'a> {
                     construct_signatures = sigs;
                 } else {
                     // No base class or base class has no explicit constructor - use default
-                    construct_signatures.push(CallSignature {
-                        type_params: class_type_params,
-                        params: Vec::new(),
-                        this_type: None,
-                        return_type: instance_type,
-                        type_predicate: None,
-                        is_method: false,
-                    });
+                    construct_signatures.push(class_type::class_construct_signature(
+                        class_type_params,
+                        Vec::new(),
+                        None,
+                        instance_type,
+                        None,
+                        false,
+                    ));
                 }
             } else {
                 // No base class or base class has no explicit constructor - use default
-                construct_signatures.push(CallSignature {
-                    type_params: class_type_params,
-                    params: Vec::new(),
-                    this_type: None,
-                    return_type: instance_type,
-                    type_predicate: None,
-                    is_method: false,
-                });
+                construct_signatures.push(class_type::class_construct_signature(
+                    class_type_params,
+                    Vec::new(),
+                    None,
+                    instance_type,
+                    None,
+                    false,
+                ));
             }
         }
 
@@ -1879,27 +1881,29 @@ impl<'a> CheckerState<'a> {
         // tsc treats the constructor type as implicitly string-indexable to suppress TS7053.
         let effective_string_index = if let Some(mut static_index) = static_string_index {
             if has_static_late_bound_members {
-                static_index.value_type = factory.union2(static_index.value_type, instance_type);
+                static_index.value_type = class_type::merged_static_late_bound_index_value_type(
+                    self.ctx.types,
+                    static_index.value_type,
+                    instance_type,
+                );
             }
             Some(static_index)
         } else {
-            has_static_late_bound_members.then_some(IndexSignature {
-                key_type: TypeId::STRING,
-                value_type: TypeId::ANY,
-                readonly: false,
-                param_name: None,
-            })
+            has_static_late_bound_members.then_some(class_type::static_late_bound_index_signature(
+                TypeId::STRING,
+                TypeId::ANY,
+            ))
         };
 
-        let constructor_type = factory.callable(CallableShape {
-            call_signatures: Vec::new(),
-            construct_signatures,
+        let constructor_type = class_type::class_constructor_callable_type(
+            self.ctx.types,
+            class_symbol,
             properties,
-            string_index: effective_string_index,
-            number_index: static_number_index,
-            symbol: class_symbol,
-            is_abstract: is_abstract_class,
-        });
+            construct_signatures,
+            effective_string_index,
+            static_number_index,
+            is_abstract_class,
+        );
         // Track constructor accessibility
         if let Some(level) = constructor_access {
             match level {
@@ -1930,7 +1934,11 @@ impl<'a> CheckerState<'a> {
         // to T. This makes `T & ConstructorType <: T` succeed via the
         // intersection rule in the subtype checker.
         if let Some(base_tp) = base_type_param {
-            return factory.intersection2(base_tp, constructor_type);
+            return class_type::class_constructor_mixin_intersection(
+                self.ctx.types,
+                base_tp,
+                constructor_type,
+            );
         }
 
         constructor_type
