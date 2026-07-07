@@ -143,6 +143,9 @@
 //! - `object_literal_result_construction_boundary_scans`: object-literal
 //!   result construction routes final object/index/union/intersection/mapped
 //!   surfaces through `query_boundaries::type_computation::object_literals`.
+//! - `object_literal_member_surface_construction_boundary_scans`: object
+//!   literal real member, synthetic-this, and descriptor function member
+//!   surfaces route through query boundaries.
 //! - `module_type_analysis_surface_construction_boundary_scans`: module and
 //!   namespace type-analysis surfaces route through
 //!   `query_boundaries::state::type_analysis`.
@@ -251,6 +254,8 @@ mod object_flags_boundary_scans;
 mod object_literal_annotation_walker_scans;
 #[path = "arch_source_scans/object_literal_context_construction_boundary_scans.rs"]
 mod object_literal_context_construction_boundary_scans;
+#[path = "arch_source_scans/object_literal_member_surface_construction_boundary_scans.rs"]
+mod object_literal_member_surface_construction_boundary_scans;
 #[path = "arch_source_scans/object_literal_result_construction_boundary_scans.rs"]
 mod object_literal_result_construction_boundary_scans;
 #[path = "arch_source_scans/property_access_result_construction_boundary_scans.rs"]

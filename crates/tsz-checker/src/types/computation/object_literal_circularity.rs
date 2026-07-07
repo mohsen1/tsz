@@ -1,4 +1,5 @@
 use crate::query_boundaries::object_literal_context as object_context_query;
+use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -6,7 +7,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, Visibility};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Whether an object-literal member, when its body is checked, binds the
@@ -131,22 +132,14 @@ impl<'a> CheckerState<'a> {
             };
             result.insert(
                 name_atom,
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
+                object_context_query::synthetic_this_property(
+                    name_atom,
                     type_id,
-                    write_type: type_id,
-                    optional: false,
-                    readonly: readonly || in_const,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: (pos + 1) as u32,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                    type_id,
+                    readonly || in_const,
+                    false,
+                    (pos + 1) as u32,
+                ),
             );
         }
         result
@@ -213,12 +206,12 @@ impl<'a> CheckerState<'a> {
         }
         let name = self.get_property_name_resolved(prop.name)?;
         let name_atom = self.ctx.types.intern_string(&name);
-        // A literal initializer has a statically known type; an object-literal
-        // data property widens it (e.g. `v: 1` → `number`). Anything else stays
-        // `any` (member exists, no spurious error). `as const` / type-assertion
-        // initializers are non-widening, but `literal_type_from_initializer`
-        // does not descend into assertion nodes, so those fall through to `any`.
+        // A literal initializer has a statically known type; a regular
+        // object-literal data property widens it (e.g. `v: 1` -> `number`),
+        // while an enclosing `as const` keeps the literal for synthetic `this`.
+        // Anything else stays `any` (member exists, no spurious error).
         let type_id = match self.literal_type_from_initializer(prop.initializer) {
+            Some(literal) if self.ctx.in_const_assertion => literal,
             Some(literal) => self.widen_literal_type(literal),
             None => TypeId::ANY,
         };
@@ -693,21 +686,20 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.arena.get(param_idx).and_then(|param_node| {
                                     self.ctx.arena.get_parameter(param_node)
                                 })?;
-                            Some(tsz_solver::ParamInfo {
-                                name: self
-                                    .ctx
+                            Some(signature_building_boundary::param_info(
+                                self.ctx
                                     .arena
                                     .get(param.name)
                                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                                     .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
-                                type_id: if param.type_annotation.is_some() {
+                                if param.type_annotation.is_some() {
                                     self.get_type_from_type_node(param.type_annotation)
                                 } else {
                                     TypeId::ANY
                                 },
-                                optional: param.question_token || param.initializer.is_some(),
-                                rest: param.dot_dot_dot_token,
-                            })
+                                param.question_token || param.initializer.is_some(),
+                                param.dot_dot_dot_token,
+                            ))
                         })
                         .collect();
                     let placeholder = object_context_query::synthetic_this_method_callable(
@@ -741,9 +733,8 @@ impl<'a> CheckerState<'a> {
                                 {
                                     return None;
                                 }
-                                Some(tsz_solver::ParamInfo {
-                                    name: self
-                                        .ctx
+                                Some(signature_building_boundary::param_info(
+                                    self.ctx
                                         .arena
                                         .get(param.name)
                                         .and_then(|name_node| {
@@ -752,14 +743,14 @@ impl<'a> CheckerState<'a> {
                                         .map(|ident| {
                                             self.ctx.types.intern_string(&ident.escaped_text)
                                         }),
-                                    type_id: if param.type_annotation.is_some() {
+                                    if param.type_annotation.is_some() {
                                         self.get_type_from_type_node(param.type_annotation)
                                     } else {
                                         TypeId::ANY
                                     },
-                                    optional: param.question_token || param.initializer.is_some(),
-                                    rest: param.dot_dot_dot_token,
-                                })
+                                    param.question_token || param.initializer.is_some(),
+                                    param.dot_dot_dot_token,
+                                ))
                             })
                             .collect();
                         let return_type = if other_method.type_annotation.is_some() {
@@ -771,12 +762,12 @@ impl<'a> CheckerState<'a> {
                     })
                     .unwrap_or_else(|| {
                         (
-                            vec![tsz_solver::ParamInfo {
-                                name: None,
-                                type_id: TypeId::ANY,
-                                optional: false,
-                                rest: true,
-                            }],
+                            vec![signature_building_boundary::param_info(
+                                None,
+                                TypeId::ANY,
+                                false,
+                                true,
+                            )],
                             TypeId::ANY,
                         )
                     });
@@ -857,21 +848,20 @@ impl<'a> CheckerState<'a> {
                             {
                                 return None;
                             }
-                            Some(tsz_solver::ParamInfo {
-                                name: self
-                                    .ctx
+                            Some(signature_building_boundary::param_info(
+                                self.ctx
                                     .arena
                                     .get(param.name)
                                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                                     .map(|ident| self.ctx.types.intern_string(&ident.escaped_text)),
-                                type_id: if param.type_annotation.is_some() {
+                                if param.type_annotation.is_some() {
                                     self.get_type_from_type_node(param.type_annotation)
                                 } else {
                                     TypeId::ANY
                                 },
-                                optional: param.question_token || param.initializer.is_some(),
-                                rest: param.dot_dot_dot_token,
-                            })
+                                param.question_token || param.initializer.is_some(),
+                                param.dot_dot_dot_token,
+                            ))
                         })
                         .collect();
                     let return_type = if other_method.type_annotation.is_some() {
@@ -883,12 +873,12 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_else(|| {
                     (
-                        vec![tsz_solver::ParamInfo {
-                            name: None,
-                            type_id: TypeId::ANY,
-                            optional: false,
-                            rest: true,
-                        }],
+                        vec![signature_building_boundary::param_info(
+                            None,
+                            TypeId::ANY,
+                            false,
+                            true,
+                        )],
                         TypeId::ANY,
                     )
                 });
