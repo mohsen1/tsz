@@ -1,14 +1,16 @@
 //! CommonJS resolution export-surface construction boundary scans.
 //!
-//! `exports_resolution.rs` owns CommonJS AST recognition, symbol lookup, and
-//! module-resolution policy. Solver construction for descriptor properties,
-//! object overlays, callable constructor upgrades, and imported module value
-//! surfaces belongs in `query_boundaries::js_exports`.
+//! `exports_resolution.rs` and `exports_collection.rs` own CommonJS AST
+//! recognition, symbol lookup, RHS inference, and module-resolution policy.
+//! Solver construction for descriptor properties, object overlays, expando
+//! members, callable constructor upgrades, and imported module value surfaces
+//! belongs in `query_boundaries::js_exports`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const EXPORTS_RESOLUTION: &str = "src/state/type_analysis/computed_commonjs/exports_resolution.rs";
+const EXPORTS_COLLECTION: &str = "src/state/type_analysis/computed_commonjs/exports_collection.rs";
 const JS_EXPORTS_BOUNDARY: &str = "src/query_boundaries/js_exports.rs";
 
 fn checker_path(relative: &str) -> PathBuf {
@@ -33,10 +35,6 @@ fn defines_fn(source: &str, name: &str) -> bool {
 
 #[test]
 fn commonjs_resolution_export_surface_construction_routes_through_boundary() {
-    let source = fs::read_to_string(checker_path(EXPORTS_RESOLUTION))
-        .expect("failed to read computed_commonjs/exports_resolution.rs");
-    let source = production_source_without_comments(&source);
-    let compact_source = compact(&source);
     let forbidden = [
         "PropertyInfo {",
         "Visibility::Public",
@@ -54,9 +52,16 @@ fn commonjs_resolution_export_surface_construction_routes_through_boundary() {
     ];
 
     let mut violations = Vec::new();
-    for pattern in forbidden {
-        if source.contains(pattern) || compact_source.contains(&compact(pattern)) {
-            violations.push(pattern);
+    for path in [EXPORTS_RESOLUTION, EXPORTS_COLLECTION] {
+        let source = fs::read_to_string(checker_path(path))
+            .unwrap_or_else(|err| panic!("failed to read {path}: {err}"));
+        let source = production_source_without_comments(&source);
+        let compact_source = compact(&source);
+
+        for pattern in forbidden {
+            if source.contains(pattern) || compact_source.contains(&compact(pattern)) {
+                violations.push(format!("{path} contains `{pattern}`"));
+            }
         }
     }
 
@@ -81,12 +86,21 @@ fn js_exports_boundary_owns_commonjs_resolution_surface_helpers() {
         "commonjs_export_constructor_type_with_instance",
         "commonjs_export_surface_type_with_display_name",
         "commonjs_imported_module_value_type",
+        "commonjs_expando_property",
+        "commonjs_export_type_with_expando_members",
+        "commonjs_export_object_type_with_expando_members",
+        "commonjs_export_callable_type_with_expando_members",
     ] {
         assert!(
             defines_fn(&source, helper),
             "query_boundaries::js_exports must own `{helper}`"
         );
     }
+
+    assert!(
+        source.contains("struct CommonJsExpandoMember"),
+        "query_boundaries::js_exports must own `CommonJsExpandoMember`"
+    );
 
     for construction_pattern in [
         "PropertyInfo {",

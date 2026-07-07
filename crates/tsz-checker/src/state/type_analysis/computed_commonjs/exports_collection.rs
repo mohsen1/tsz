@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::TypeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommonJsExportTargetRoot {
@@ -294,16 +294,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
             ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
-            ty = self.augment_commonjs_export_object_type_with_expandos(
-                target_file_idx,
-                expando_root,
-                ty,
-            );
-            ty = self.augment_commonjs_export_callable_type_with_expandos(
-                target_file_idx,
-                expando_root,
-                ty,
-            );
+            ty = self.augment_commonjs_export_type_with_expandos(target_file_idx, expando_root, ty);
             ty = self.widen_fresh_object_literal_properties_for_display(ty);
             return crate::query_boundaries::common::widen_freshness(self.ctx.types, ty);
         }
@@ -314,12 +305,7 @@ impl<'a> CheckerState<'a> {
                 .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
             ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
-            ty = checker.augment_commonjs_export_object_type_with_expandos(
-                target_file_idx,
-                expando_root,
-                ty,
-            );
-            ty = checker.augment_commonjs_export_callable_type_with_expandos(
+            ty = checker.augment_commonjs_export_type_with_expandos(
                 target_file_idx,
                 expando_root,
                 ty,
@@ -514,197 +500,33 @@ impl<'a> CheckerState<'a> {
             .then_some(literal)
     }
 
-    fn augment_commonjs_export_object_type_with_expandos(
+    fn augment_commonjs_export_type_with_expandos(
         &mut self,
         target_file_idx: usize,
         expando_root: Option<&str>,
         base_type: TypeId,
     ) -> TypeId {
-        use rustc_hash::FxHashMap;
-        use tsz_solver::ObjectShape;
-
         let Some(root_name) = expando_root else {
             return base_type;
         };
-        let expando_props =
+        let expando_members =
             self.collect_commonjs_expando_property_types_for_root(target_file_idx, root_name);
-        if expando_props.is_empty() {
+        if expando_members.is_empty() {
             return base_type;
         }
 
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
-        else {
-            return base_type;
-        };
-
-        let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = shape
-            .properties
-            .iter()
-            .map(|prop| (prop.name, prop.clone()))
-            .collect();
-        let mut changed = false;
-
-        for (prop_name, prop_type) in expando_props {
-            let prop_type =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
-            let prop_atom = self.ctx.types.intern_string(&prop_name);
-            if properties.contains_key(&prop_atom) {
-                continue;
-            }
-
-            properties.insert(
-                prop_atom,
-                PropertyInfo {
-                    name: prop_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: properties.len() as u32,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
-            );
-            changed = true;
-        }
-
-        if !changed {
-            return base_type;
-        }
-
-        self.ctx.types.factory().object_with_index(ObjectShape {
-            flags: shape.flags,
-            properties: properties.into_values().collect(),
-            string_index: shape.string_index,
-            number_index: shape.number_index,
-            symbol_index: shape.symbol_index,
-            symbol: shape.symbol,
-        })
-    }
-
-    fn augment_commonjs_export_callable_type_with_expandos(
-        &mut self,
-        target_file_idx: usize,
-        expando_root: Option<&str>,
-        base_type: TypeId,
-    ) -> TypeId {
-        use rustc_hash::FxHashMap;
-        use tsz_solver::{CallableShape, PropertyInfo};
-
-        let Some(root_name) = expando_root else {
-            return base_type;
-        };
-        let expando_props =
-            self.collect_commonjs_expando_property_types_for_root(target_file_idx, root_name);
-        if expando_props.is_empty() {
-            return base_type;
-        }
-
-        let (mut callable_shape, mut property_count) = if let Some(shape) =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, base_type)
-        {
-            ((*shape).clone(), shape.properties.len())
-        } else if let Some(function_shape) =
-            crate::query_boundaries::type_computation::complex::function_shape_for_type(
-                self.ctx.types,
-                base_type,
-            )
-        {
-            let signature = tsz_solver::CallSignature {
-                type_params: function_shape.type_params.clone(),
-                params: function_shape.params.clone(),
-                this_type: function_shape.this_type,
-                return_type: function_shape.return_type,
-                type_predicate: function_shape.type_predicate,
-                is_method: function_shape.is_method,
-            };
-            (
-                CallableShape {
-                    call_signatures: if function_shape.is_constructor {
-                        Vec::new()
-                    } else {
-                        vec![signature.clone()]
-                    },
-                    construct_signatures: if function_shape.is_constructor {
-                        vec![signature]
-                    } else {
-                        Vec::new()
-                    },
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol: None,
-                    is_abstract: false,
-                },
-                0,
-            )
-        } else {
-            return base_type;
-        };
-
-        let mut properties: FxHashMap<tsz_common::interner::Atom, PropertyInfo> = callable_shape
-            .properties
-            .iter()
-            .map(|prop| (prop.name, prop.clone()))
-            .collect();
-        let mut changed = false;
-
-        for (prop_name, prop_type) in expando_props {
-            let prop_type =
-                crate::query_boundaries::common::widen_literal_type(self.ctx.types, prop_type);
-            let prop_atom = self.ctx.types.intern_string(&prop_name);
-            if let Some(existing) = properties.get_mut(&prop_atom) {
-                let existing_is_placeholder = existing.type_id.is_any_unknown_or_error();
-                if existing_is_placeholder && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN) {
-                    existing.type_id = prop_type;
-                    existing.write_type = prop_type;
-                    changed = true;
-                }
-                continue;
-            }
-            properties.insert(
-                prop_atom,
-                PropertyInfo {
-                    name: prop_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: property_count as u32,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
-            );
-            property_count += 1;
-            changed = true;
-        }
-
-        if !changed {
-            return base_type;
-        }
-
-        callable_shape.properties = properties.into_values().collect();
-        self.ctx.types.factory().callable(callable_shape)
+        crate::query_boundaries::js_exports::commonjs_export_type_with_expando_members(
+            self.ctx.types,
+            base_type,
+            &expando_members,
+        )
     }
 
     fn collect_commonjs_expando_property_types_for_root(
         &mut self,
         target_file_idx: usize,
         root_name: &str,
-    ) -> Vec<(String, TypeId)> {
+    ) -> Vec<crate::query_boundaries::js_exports::CommonJsExpandoMember> {
         use rustc_hash::FxHashMap;
 
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32).clone();
@@ -723,7 +545,15 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        props.into_iter().collect()
+        props
+            .into_iter()
+            .map(
+                |(name, type_id)| crate::query_boundaries::js_exports::CommonJsExpandoMember {
+                    name,
+                    type_id,
+                },
+            )
+            .collect()
     }
 
     fn collect_commonjs_expando_property_types_from_node(

@@ -62,8 +62,9 @@
 //!   and current-file CommonJS namespace surfaces route solver construction
 //!   through `query_boundaries::js_exports`.
 //! - `commonjs_resolution_export_surface_construction_boundary_scans`: CommonJS
-//!   resolution routes descriptor, overlay, constructor, and imported module
-//!   value-surface construction through `query_boundaries::js_exports`.
+//!   resolution/collection routes descriptor, overlay, expando, constructor,
+//!   and imported module value-surface construction through
+//!   `query_boundaries::js_exports`.
 //! - `binding_pattern_construction_boundary_scans`: binding/destructuring
 //!   pattern callers route contextual tuple/object/property/union construction
 //!   through `query_boundaries::binding_patterns`.
