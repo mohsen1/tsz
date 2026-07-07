@@ -1,4 +1,4 @@
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{FunctionShape, TypeId};
 
 pub(crate) use super::super::common::{
@@ -41,6 +41,33 @@ pub(crate) fn function_shape_for_type(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<FunctionShape>> {
     tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
+pub(crate) fn iterator_info_yield_type(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    is_async: bool,
+) -> Option<TypeId> {
+    tsz_solver::operations::get_iterator_info(db, type_id, is_async).map(|info| info.yield_type)
+}
+
+pub(crate) fn iterator_result_value_types(
+    db: &dyn QueryDatabase,
+    result_type: TypeId,
+) -> (TypeId, TypeId) {
+    tsz_solver::operations::extract_iterator_result_value_types(db, result_type)
+}
+
+pub(crate) fn tuple_element_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    tsz_solver::utils::union_or_single(db, members)
+}
+
+pub(crate) fn union_element_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn intersection_element_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.intersection(members)
 }
 
 pub(crate) fn is_array_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

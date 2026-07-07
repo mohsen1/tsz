@@ -159,6 +159,9 @@
 //! - `interface_merge_surface_construction_boundary_scans`: interface merge
 //!   reconstruction routes final callable/object/index/intersection surfaces
 //!   through `query_boundaries::interface_merge`.
+//! - `iterable_surface_construction_boundary_scans`: iterable checking routes
+//!   iterator-info queries and element union/intersection surfaces through
+//!   `query_boundaries::checkers::iterable`.
 //! - `js_constructor_surface_construction_boundary_scans`: checked-JS
 //!   constructor/prototype instance surfaces route through
 //!   `query_boundaries::type_computation::complex`.
@@ -234,6 +237,8 @@ mod indexed_access_key_space_construction_boundary_scans;
 mod interface_merge_surface_construction_boundary_scans;
 #[path = "arch_source_scans/interface_type_literal_surface_construction_boundary_scans.rs"]
 mod interface_type_literal_surface_construction_boundary_scans;
+#[path = "arch_source_scans/iterable_surface_construction_boundary_scans.rs"]
+mod iterable_surface_construction_boundary_scans;
 #[path = "arch_source_scans/js_class_property_construction_boundary_scans.rs"]
 mod js_class_property_construction_boundary_scans;
 #[path = "arch_source_scans/js_constructor_surface_construction_boundary_scans.rs"]
