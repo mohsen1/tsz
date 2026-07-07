@@ -408,6 +408,7 @@ run_lint() {
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
+  python3 scripts/ci/test_full_ci_unit_rc.py || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
@@ -527,7 +528,11 @@ checker_integration_test_names() {
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args
+  # Accumulate rc across every batch. `timed` disables `set -e` around this
+  # function so a failing non-final batch does not abort; without aggregation
+  # the function would return only the last command's status and a red run
+  # would report green. See issue #15404.
+  local package package_names checker_selected general_pkg_args rc=0
   # Bash 3.2 (macOS system `/bin/bash`) has no `mapfile`; use the portable shim.
   portable_read_lines package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
@@ -548,21 +553,25 @@ run_unit_tests() {
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
       --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
-      "${general_pkg_args[@]}"
+      "${general_pkg_args[@]}" || rc="$?"
   fi
 
   if (( checker_selected )); then
     if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
       echo "info: skipping checker integration tests in unit job"
-      return 0
+      return "$rc"
     fi
-    run_checker_integration_tests
+    run_checker_integration_tests || rc="$?"
   fi
+
+  return "$rc"
 }
 
 run_checker_integration_tests() {
   ci_section "Checker integration nextest suites"
-  local checker_batch_size checker_batch_names checker_batch_args
+  # Aggregate rc across every batch so a failing non-final batch is not masked
+  # by a green final batch. See issue #15404.
+  local checker_batch_size checker_batch_names checker_batch_args rc=0
   # The checker lib-test binary is larger than the 32 GiB CI runners can link
   # reliably. Keep checker integration tests in unit CI while avoiding that
   # monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
@@ -586,7 +595,7 @@ run_checker_integration_tests() {
         echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
         cargo nextest run --profile ci --cargo-profile ci-unit \
           --build-jobs "$CARGO_BUILD_JOBS" \
-          -p tsz-checker "${checker_batch_args[@]}"
+          -p tsz-checker "${checker_batch_args[@]}" || rc="$?"
         checker_batch_names=()
       fi
     done < <(checker_integration_test_names)
@@ -599,8 +608,10 @@ run_checker_integration_tests() {
       echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
       cargo nextest run --profile ci --cargo-profile ci-unit \
         --build-jobs "$CARGO_BUILD_JOBS" \
-        -p tsz-checker "${checker_batch_args[@]}"
+        -p tsz-checker "${checker_batch_args[@]}" || rc="$?"
     fi
+
+    return "$rc"
 }
 
 build_unit_test_archive() {
