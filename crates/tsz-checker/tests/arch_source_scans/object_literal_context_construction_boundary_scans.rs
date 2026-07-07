@@ -1,14 +1,17 @@
 //! Object-literal contextual construction boundary scans.
 //!
 //! Object-literal contextual typing owns member selection, fallback policy,
-//! callable classification, and property lookup. Solver construction for
-//! contextual union/intersection rebuilds belongs in
+//! callable classification, property lookup, and synthetic `this` member
+//! discovery. Solver construction for contextual union/intersection rebuilds
+//! and synthetic receiver surfaces belongs in
 //! `query_boundaries::object_literal_context`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const OBJECT_LITERAL_CONTEXT: &str = "src/types/computation/object_literal_context.rs";
+const OBJECT_LITERAL_CIRCULARITY: &str = "src/types/computation/object_literal_circularity.rs";
+const OBJECT_LITERAL_ACCESSOR: &str = "src/types/computation/object_literal/accessor_element.rs";
 const OBJECT_LITERAL_CONTEXT_BOUNDARY: &str = "src/query_boundaries/object_literal_context.rs";
 
 fn checker_path(relative: &str) -> PathBuf {
@@ -118,6 +121,43 @@ fn object_literal_context_routes_contextual_rebuilds_through_boundary() {
         &forbidden,
         &mut violations,
     );
+    scan_slice_for_patterns(
+        OBJECT_LITERAL_CIRCULARITY,
+        "pub(super) fn build_object_literal_method_synthetic_this_type(",
+        "/// Build a synthetic `this` type for a function expression",
+        &[
+            ".factory().callable(",
+            ".factory().object(",
+            "CallableShape {",
+            "CallSignature {",
+            "tsz_solver::PropertyInfo {",
+        ],
+        &mut violations,
+    );
+    scan_slice_for_patterns(
+        OBJECT_LITERAL_CIRCULARITY,
+        "pub(super) fn build_object_literal_fn_property_synthetic_this_type(",
+        "/// Name of the variable binding",
+        &[
+            ".factory().callable(",
+            ".factory().object(",
+            "CallableShape {",
+            "CallSignature {",
+            "tsz_solver::PropertyInfo {",
+        ],
+        &mut violations,
+    );
+    scan_slice_for_patterns(
+        OBJECT_LITERAL_ACCESSOR,
+        "if marker_this_type.is_none() {",
+        "pushed_synthetic_this = true;",
+        &[
+            ".factory().object(",
+            "PropertyInfo {",
+            "tsz_solver::PropertyInfo {",
+        ],
+        &mut violations,
+    );
 
     assert!(
         violations.is_empty(),
@@ -137,6 +177,10 @@ fn object_literal_context_boundary_owns_contextual_rebuild_helpers() {
         "contextual_intersection",
         "mapped_contextual_property_number_key_type",
         "mapped_contextual_property_string_key_type",
+        "synthetic_this_method_callable",
+        "synthetic_this_method_property",
+        "synthetic_this_property",
+        "synthetic_this_object",
     ] {
         assert!(
             defines_fn(&source, helper),
@@ -149,6 +193,11 @@ fn object_literal_context_boundary_owns_contextual_rebuild_helpers() {
         "db.intersection(",
         "db.literal_number(",
         "db.literal_string(",
+        "db.callable(",
+        "db.object(",
+        "CallableShape {",
+        "CallSignature {",
+        "PropertyInfo {",
     ] {
         assert!(
             source.contains(construction_pattern),
