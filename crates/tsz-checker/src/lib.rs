@@ -993,11 +993,11 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
+#[path = "tests/fresh_object_literal_array_like_union_drill_gate_tests.rs"]
+mod fresh_object_literal_array_like_union_drill_gate_tests;
 #[cfg(test)]
 #[path = "../tests/fresh_object_literal_union_array_member_drill_in_tests.rs"]
 mod fresh_object_literal_union_array_member_drill_in_tests;
-#[path = "tests/fresh_object_literal_array_like_union_drill_gate_tests.rs"]
-mod fresh_object_literal_array_like_union_drill_gate_tests;
 #[cfg(test)]
 #[path = "tests/fresh_object_literal_union_literal_kind_display_tests.rs"]
 mod fresh_object_literal_union_literal_kind_display_tests;
