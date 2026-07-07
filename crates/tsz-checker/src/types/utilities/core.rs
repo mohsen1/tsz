@@ -721,7 +721,12 @@ impl<'a> CheckerState<'a> {
                 .node_types
                 .get(&idx.0)
                 .copied()
-                .is_none_or(|t| self.is_enum_member_type_for_widening(t))
+                .is_none_or(|t| {
+                    crate::query_boundaries::enum_analysis::is_enum_member_for_widening(
+                        &self.ctx,
+                        t,
+                    )
+                })
             && self
                 .resolve_qualified_symbol(idx)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))

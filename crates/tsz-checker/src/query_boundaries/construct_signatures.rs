@@ -83,6 +83,17 @@ pub(crate) fn function_shape_from_call_signature(
     }
 }
 
+/// Convert a `CallSignature` to a `FunctionShape` while preserving the
+/// signature's method variance bit.
+pub(crate) fn function_shape_from_call_signature_preserving_method(
+    sig: &CallSignature,
+    is_constructor: bool,
+) -> FunctionShape {
+    let mut shape = function_shape_from_call_signature(sig, is_constructor);
+    shape.is_method = sig.is_method;
+    shape
+}
+
 /// Collapse a `FunctionShape` back into a `CallSignature`.
 ///
 /// Constructor-ness is positional in a `CallableShape` (which signature list
@@ -105,6 +116,17 @@ pub(crate) fn call_signature_from_function_shape(
 
 /// Intern a function type from an explicit, helper-built shape.
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
+    db.function(shape)
+}
+
+/// Re-intern `base` with a replacement return type.
+pub(crate) fn function_type_with_return_type(
+    db: &dyn TypeDatabase,
+    base: &FunctionShape,
+    return_type: TypeId,
+) -> TypeId {
+    let mut shape = base.clone();
+    shape.return_type = return_type;
     db.function(shape)
 }
 
@@ -138,6 +160,19 @@ pub(crate) fn function_type_from_call_signature(
     is_constructor: bool,
 ) -> TypeId {
     db.function(function_shape_from_call_signature(sig, is_constructor))
+}
+
+/// Intern a function type from a signature while preserving the signature's
+/// method variance bit.
+pub(crate) fn function_type_from_call_signature_preserving_method(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    is_constructor: bool,
+) -> TypeId {
+    db.function(function_shape_from_call_signature_preserving_method(
+        sig,
+        is_constructor,
+    ))
 }
 
 /// Intern a method function type for a type-literal method signature.
@@ -215,6 +250,55 @@ pub(crate) fn callable_with_signatures_replaced(
         call_signatures,
         construct_signatures,
         properties: base.properties.clone(),
+        string_index: base.string_index,
+        number_index: base.number_index,
+        symbol: base.symbol,
+        is_abstract: base.is_abstract,
+    })
+}
+
+/// Re-intern `base` with a replacement abstractness bit, preserving every
+/// other callable-shape field.
+pub(crate) fn callable_with_abstract_flag(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    is_abstract: bool,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: base.call_signatures.clone(),
+        construct_signatures: base.construct_signatures.clone(),
+        properties: base.properties.clone(),
+        string_index: base.string_index,
+        number_index: base.number_index,
+        symbol: base.symbol,
+        is_abstract,
+    })
+}
+
+/// Re-intern `base` with all construct signature returns replaced.
+pub(crate) fn callable_with_construct_return_type(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    return_type: TypeId,
+) -> TypeId {
+    let mut construct_signatures = base.construct_signatures.clone();
+    for sig in &mut construct_signatures {
+        sig.return_type = return_type;
+    }
+    callable_with_signatures_replaced(db, base, base.call_signatures.clone(), construct_signatures)
+}
+
+/// Re-intern `base` with replacement properties, preserving callable metadata
+/// and signatures.
+pub(crate) fn callable_with_properties_replaced(
+    db: &dyn TypeDatabase,
+    base: &CallableShape,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: base.call_signatures.clone(),
+        construct_signatures: base.construct_signatures.clone(),
+        properties,
         string_index: base.string_index,
         number_index: base.number_index,
         symbol: base.symbol,

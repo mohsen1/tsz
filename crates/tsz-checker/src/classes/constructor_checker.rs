@@ -6,6 +6,10 @@
 //! type checking operations.
 
 use crate::query_boundaries::common::TypeEnvironment;
+use crate::query_boundaries::construct_signatures::{
+    callable_with_abstract_flag, callable_with_construct_return_type,
+    callable_with_properties_replaced, function_type_with_return_type,
+};
 use crate::query_boundaries::{
     checkers::constructor::{
         AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind,
@@ -228,9 +232,7 @@ impl<'a> CheckerState<'a> {
                 if !shape.is_abstract {
                     return ctor_type;
                 }
-                let mut new_shape = (*shape).clone();
-                new_shape.is_abstract = false;
-                self.ctx.types.factory().callable(new_shape)
+                callable_with_abstract_flag(self.ctx.types, &shape, false)
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());
@@ -341,20 +343,14 @@ impl<'a> CheckerState<'a> {
         match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
             ConstructorReturnMergeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
-                let mut new_shape = (*shape).clone();
-                for sig in &mut new_shape.construct_signatures {
-                    sig.return_type = instance_type;
-                }
-                self.ctx.types.factory().callable(new_shape)
+                callable_with_construct_return_type(self.ctx.types, &shape, instance_type)
             }
             ConstructorReturnMergeKind::Function(shape_id) => {
                 let shape = self.ctx.types.function_shape(shape_id);
                 if !shape.is_constructor {
                     return ctor_type;
                 }
-                let mut new_shape = (*shape).clone();
-                new_shape.return_type = instance_type;
-                self.ctx.types.factory().function(new_shape)
+                function_type_with_return_type(self.ctx.types, &shape, instance_type)
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());
@@ -1112,9 +1108,11 @@ impl<'a> CheckerState<'a> {
                 for (name, prop) in base_props {
                     prop_map.entry(*name).or_insert_with(|| prop.clone());
                 }
-                let mut new_shape = (*shape).clone();
-                new_shape.properties = prop_map.into_values().collect();
-                self.ctx.types.factory().callable(new_shape)
+                callable_with_properties_replaced(
+                    self.ctx.types,
+                    &shape,
+                    prop_map.into_values().collect(),
+                )
             }
             ConstructorReturnMergeKind::Intersection(members) => {
                 let mut updated_members = Vec::with_capacity(members.len());

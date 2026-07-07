@@ -49,6 +49,17 @@ const DECLARATION_FUNCTION_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
     "src/state/type_analysis/symbol_type_helpers.rs",
 ];
 
+/// Constructor/call-resolution paths may choose candidate signatures and
+/// contextual inputs, but solver function/callable shape construction stays
+/// behind the construction boundary.
+const CONSTRUCTOR_CALL_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
+    "src/checkers/call_checker/candidate_collection.rs",
+    "src/checkers/call_checker/overload_resolution/contextual_retry.rs",
+    "src/checkers/call_checker/overload_resolution/resolve_signatures.rs",
+    "src/checkers/call_checker/overload_resolution/return_context.rs",
+    "src/classes/constructor_checker.rs",
+];
+
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
 }
@@ -205,6 +216,32 @@ fn declaration_function_paths_route_shape_construction_through_boundaries() {
     );
 }
 
+/// Constructor/call-resolution paths can build contextual and candidate
+/// signature inputs, but direct function/callable shape interning belongs to
+/// `query_boundaries::construct_signatures`.
+#[test]
+fn constructor_call_paths_route_shape_construction_through_boundaries() {
+    const FORBIDDEN_PATTERNS: &[&str] = &[
+        ".function(",
+        ".callable(",
+        "CallableShape {",
+        "CallableShape::default()",
+        "FunctionShape {",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    for module in CONSTRUCTOR_CALL_CONSTRUCTION_CLEAN_MODULES {
+        scan_for_patterns(module, FORBIDDEN_PATTERNS, &mut violations);
+    }
+    assert!(
+        violations.is_empty(),
+        "constructor/call-resolution paths must route function/callable solver \
+         shape construction through query_boundaries::construct_signatures:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// The boundary helpers this campaign introduced must keep their definitions
 /// in `query_boundaries/construct_signatures.rs` (not drift back into
 /// `common.rs` or call sites).
@@ -214,15 +251,21 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         .expect("failed to read query_boundaries/construct_signatures.rs");
     for helper in [
         "function_shape_from_call_signature",
+        "function_shape_from_call_signature_preserving_method",
         "call_signature_from_function_shape",
         "function_type_from_shape",
+        "function_type_with_return_type",
         "function_type_from_parts",
         "function_type_from_call_signature",
+        "function_type_from_call_signature_preserving_method",
         "method_function_type_from_call_signature",
         "call_only_callable_type",
         "construct_only_callable_type",
         "type_literal_callable_type",
         "callable_with_signatures_replaced",
+        "callable_with_abstract_flag",
+        "callable_with_construct_return_type",
+        "callable_with_properties_replaced",
         "callable_with_call_signatures_and_erased_metadata",
         "instantiated_callable_from_base",
         "map_function_shape_types",
@@ -240,6 +283,9 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "construct_only_callable_type",
         "type_literal_callable_type",
         "callable_with_signatures_replaced",
+        "callable_with_abstract_flag",
+        "callable_with_construct_return_type",
+        "callable_with_properties_replaced",
         "callable_with_call_signatures_and_erased_metadata",
         "instantiated_callable_from_base",
         "map_function_shape_types",

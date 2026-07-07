@@ -1,4 +1,5 @@
-use crate::query_boundaries::common::{FunctionShape, TypeSubstitution, instantiate_type};
+use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::construct_signatures::function_shape_from_call_signature_preserving_method;
 use crate::state::CheckerState;
 use std::fmt::Write;
 use tsz_solver::{CallSignature, ParamInfo, TypeId, TypeParamInfo};
@@ -329,15 +330,7 @@ impl<'a> CheckerState<'a> {
             return fallback_return_type;
         }
 
-        let sig_shape = FunctionShape {
-            params: sig.params.clone(),
-            return_type: sig.return_type,
-            this_type: sig.this_type,
-            type_params: sig.type_params.clone(),
-            type_predicate: sig.type_predicate,
-            is_constructor: false,
-            is_method: sig.is_method,
-        };
+        let sig_shape = function_shape_from_call_signature_preserving_method(sig, false);
         let return_substitution =
             self.compute_return_context_substitution_from_shape(&sig_shape, contextual_type);
         if return_substitution.is_empty() {
