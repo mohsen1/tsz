@@ -1294,19 +1294,11 @@ impl<'a> CheckerState<'a> {
                             ..*value_param
                         })
                         .collect();
-                    let merged = self
-                        .ctx
-                        .types
-                        .factory()
-                        .function(tsz_solver::FunctionShape {
-                            type_params: value_shape.type_params.clone(),
-                            params: merged_params,
-                            this_type: value_shape.this_type,
-                            return_type: value_shape.return_type,
-                            type_predicate: value_shape.type_predicate,
-                            is_constructor: value_shape.is_constructor,
-                            is_method: value_shape.is_method,
-                        });
+                    let merged = diagnostic_query::function_type_with_params_replaced(
+                        self.ctx.types,
+                        &value_shape,
+                        merged_params,
+                    );
                     Some(merged)
                 })
                 .unwrap_or(value_type);

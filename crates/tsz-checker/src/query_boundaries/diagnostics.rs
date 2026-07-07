@@ -66,6 +66,69 @@ pub(crate) fn object_type_preserving_display_properties(
     new_ty
 }
 
+pub(crate) fn shallow_object_property_literals_widened_for_call_parameter_display(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(shape) = object_shape_for_type(db, type_id) else {
+        return type_id;
+    };
+    let mut widened_shape = shape.as_ref().clone();
+    let mut changed = false;
+    for prop in &mut widened_shape.properties {
+        let widened_read = super::common::widen_literal_type(db, prop.type_id);
+        let widened_write = super::common::widen_literal_type(db, prop.write_type);
+        changed |= widened_read != prop.type_id || widened_write != prop.write_type;
+        prop.type_id = widened_read;
+        prop.write_type = widened_write;
+    }
+    if changed {
+        object_type_from_shape(db, widened_shape)
+    } else {
+        type_id
+    }
+}
+
+pub(crate) fn object_type_with_unknown_display_members(
+    db: &dyn TypeDatabase,
+    shape: &ObjectShape,
+) -> Option<TypeId> {
+    if shape.properties.is_empty() && shape.string_index.is_none() && shape.number_index.is_none() {
+        return None;
+    }
+
+    let properties = shape
+        .properties
+        .iter()
+        .map(|prop| {
+            let mut unknown_prop = PropertyInfo::new(prop.name, TypeId::UNKNOWN);
+            unknown_prop.optional = prop.optional;
+            unknown_prop.readonly = prop.readonly;
+            unknown_prop
+        })
+        .collect();
+
+    if shape.string_index.is_some() || shape.number_index.is_some() {
+        Some(object_type_from_shape(
+            db,
+            ObjectShape {
+                properties,
+                string_index: shape.string_index.map(|sig| tsz_solver::IndexSignature {
+                    value_type: TypeId::UNKNOWN,
+                    ..sig
+                }),
+                number_index: shape.number_index.map(|sig| tsz_solver::IndexSignature {
+                    value_type: TypeId::UNKNOWN,
+                    ..sig
+                }),
+                ..Default::default()
+            },
+        ))
+    } else {
+        Some(object_type_from_properties(db, properties))
+    }
+}
+
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
     crate::query_boundaries::construct_signatures::function_type_from_shape(db, shape)
 }

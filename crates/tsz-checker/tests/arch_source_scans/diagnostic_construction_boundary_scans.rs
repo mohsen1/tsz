@@ -11,10 +11,13 @@ const DIAGNOSTICS_BOUNDARY: &str = "src/query_boundaries/diagnostics.rs";
 const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/error_reporter/core/type_display.rs",
     "src/error_reporter/core/excess_display.rs",
+    "src/error_reporter/core/diagnostic_source.rs",
     "src/error_reporter/core/diagnostic_source/static_schema.rs",
     "src/error_reporter/generics.rs",
     "src/error_reporter/properties.rs",
+    "src/error_reporter/call_errors/display_formatting.rs",
     "src/error_reporter/call_errors/display_formatting_parameters.rs",
+    "src/error_reporter/call_errors/elaboration.rs",
     "src/state/type_environment/formatting.rs",
 ];
 const DIAGNOSTIC_FUNCTION_CONSTRUCTION_MODULES: &[&str] = &["src/error_reporter/render_failure.rs"];
@@ -104,6 +107,8 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "object_type_from_properties",
         "object_type_from_shape",
         "object_type_preserving_display_properties",
+        "shallow_object_property_literals_widened_for_call_parameter_display",
+        "object_type_with_unknown_display_members",
         "function_type_from_shape",
         "function_type_with_params_replaced",
         "function_type_with_return_replaced",
