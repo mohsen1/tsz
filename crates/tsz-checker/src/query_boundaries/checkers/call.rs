@@ -258,6 +258,74 @@ pub(crate) fn base_constraint_is_array_or_tuple(db: &dyn TypeDatabase, type_id: 
     tsz_solver::type_queries::base_constraint_is_array_or_tuple(db, type_id)
 }
 
+pub(crate) fn spread_type_parameter_constraint_is_array_or_tuple_like_for_call(
+    db: &dyn TypeDatabase,
+    spread_type: TypeId,
+    evaluate_with_env: impl FnMut(TypeId) -> TypeId,
+) -> bool {
+    if !is_type_parameter_type(db, spread_type) {
+        return false;
+    }
+    let Some(constraint) = super::super::common::type_parameter_constraint(db, spread_type) else {
+        return false;
+    };
+    spread_constraint_is_array_or_tuple_like_for_call(db, constraint, evaluate_with_env)
+}
+
+pub(crate) fn spread_constraint_is_array_or_tuple_like_for_call(
+    db: &dyn TypeDatabase,
+    constraint: TypeId,
+    mut evaluate_with_env: impl FnMut(TypeId) -> TypeId,
+) -> bool {
+    if direct_spread_constraint_is_array_or_tuple_like_for_call(db, constraint) {
+        return true;
+    }
+
+    let evaluated = evaluate_with_env(constraint);
+    if evaluated != constraint
+        && direct_spread_constraint_is_array_or_tuple_like_for_call(db, evaluated)
+    {
+        return true;
+    }
+    if base_constraint_is_array_or_tuple(db, evaluated) {
+        return true;
+    }
+
+    if let Some(substituted) =
+        crate::query_boundaries::conditional::check_type_substituted_constraint(db, evaluated)
+    {
+        let resolved = evaluate_with_env(substituted);
+        if resolved != TypeId::NEVER
+            && (direct_spread_constraint_is_array_or_tuple_like_for_call(db, resolved)
+                || base_constraint_is_array_or_tuple(db, resolved))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn direct_spread_constraint_is_array_or_tuple_like_for_call(
+    db: &dyn TypeDatabase,
+    constraint: TypeId,
+) -> bool {
+    let is_array_or_tuple = |ty: TypeId| {
+        array_element_type_for_type(db, ty).is_some() || tuple_elements_for_type(db, ty).is_some()
+    };
+    if is_array_or_tuple(constraint) {
+        return true;
+    }
+
+    let evaluated = super::super::common::evaluate_type(db, constraint);
+    if evaluated != constraint && is_array_or_tuple(evaluated) {
+        return true;
+    }
+
+    crate::query_boundaries::conditional_constraints::conditional_default_constraint(db, evaluated)
+        .is_some_and(is_array_or_tuple)
+}
+
 pub(crate) fn contains_generic_indexed_access_surface_for_call(
     db: &dyn TypeDatabase,
     type_id: TypeId,

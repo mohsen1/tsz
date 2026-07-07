@@ -1,7 +1,6 @@
 //! Argument type collection with contextual typing and spread expansion.
 
 use super::CallableContext;
-use super::spread_constraints::constraint_is_array_or_tuple_like;
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
@@ -12,7 +11,8 @@ use crate::query_boundaries::checkers::call::{
     contains_index_access_with_variadic_tuple_object, expanded_tuple_spread_len,
     generic_type_parameter_spread_marker_type, is_type_parameter_type,
     open_spread_tail_needs_marker, optional_tuple_element_argument_type,
-    sensitive_argument_placeholder_type, spread_argument_marker_type, tuple_elements_for_type,
+    sensitive_argument_placeholder_type, spread_argument_marker_type,
+    spread_type_parameter_constraint_is_array_or_tuple_like_for_call, tuple_elements_for_type,
     tuple_slice_variable_rest_offset, type_param_variadic_tuple_spread,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
@@ -685,14 +685,13 @@ impl<'a> CheckerState<'a> {
                     // array type (e.g., A extends any[]), treat it like a rest parameter
                     // spread. TypeScript does NOT emit TS2556 for such spreads because
                     // the runtime value is guaranteed to be array-like.
-                    if is_type_parameter_type(self.ctx.types, spread_type)
-                        && let Some(constraint) =
-                            crate::query_boundaries::common::type_parameter_constraint(
-                                self.ctx.types,
-                                spread_type,
-                            )
-                        && self.spread_constraint_is_array_or_tuple_like(constraint)
-                    {
+                    let spread_constraint_is_array_or_tuple_like =
+                        spread_type_parameter_constraint_is_array_or_tuple_like_for_call(
+                            self.ctx.types,
+                            spread_type,
+                            |ty| self.evaluate_type_with_env(ty),
+                        );
+                    if spread_constraint_is_array_or_tuple_like {
                         // Wrap the spread type parameter in a variadic tuple
                         // marker [...U] so the solver can distinguish `f(...u)`
                         // (spread) from `f(u)` (non-spread).  Without this,
@@ -1613,61 +1612,6 @@ impl<'a> CheckerState<'a> {
             *effective_index += 1;
         }
         // else: unknown rest type — skip (no args pushed)
-    }
-
-    /// Whether a spread type parameter's `constraint` is array/tuple-like, so
-    /// `f(...p)` (with `p: P`, `P extends constraint`) lands on a rest parameter
-    /// and is wrapped as a variadic `[...P]` marker rather than materialized into
-    /// a single representative element.
-    ///
-    /// A *direct* array/tuple constraint (`P extends any[]`, `P extends [a, b]`)
-    /// is recognized structurally. A constraint written through a generic alias
-    /// or deferred conditional — `P extends Parameters<F>`, where the alias body
-    /// is `F extends (...a: infer Q) => any ? Q : never` — is opaque until the
-    /// alias is instantiated, so it is expanded through the env-aware evaluator
-    /// first and then classified by its *base constraint* (tsc reads array-likeness
-    /// of such a reference through `getBaseConstraintOfType`, and the rest-position
-    /// `infer Q` carries the implicit `unknown[]` constraint that makes it land).
-    pub(crate) fn spread_constraint_is_array_or_tuple_like(&mut self, constraint: TypeId) -> bool {
-        if constraint_is_array_or_tuple_like(self.ctx.types, constraint) {
-            return true;
-        }
-        // The constraint may be a generic-alias `Application` (e.g.
-        // `Parameters<F>`) that only reveals its deferred-conditional body once
-        // instantiated. Use the resolver-backed environment path so imported
-        // aliases reduce before the structural probes.
-        let evaluated = self.evaluate_type_with_env(constraint);
-        if evaluated != constraint && constraint_is_array_or_tuple_like(self.ctx.types, evaluated) {
-            return true;
-        }
-        if crate::query_boundaries::checkers::call::base_constraint_is_array_or_tuple(
-            self.ctx.types,
-            evaluated,
-        ) {
-            return true;
-        }
-        // tsc's `getConstraintFromConditionalType`: substitute a deferred
-        // conditional's type-parameter check type with its own constraint, then
-        // re-evaluate. This lets `Parameters<F>` expose the array base carried by
-        // the rest-position `infer`.
-        if let Some(substituted) =
-            crate::query_boundaries::conditional::check_type_substituted_constraint(
-                self.ctx.types,
-                evaluated,
-            )
-        {
-            let resolved = self.evaluate_type_with_env(substituted);
-            if resolved != TypeId::NEVER
-                && (constraint_is_array_or_tuple_like(self.ctx.types, resolved)
-                    || crate::query_boundaries::checkers::call::base_constraint_is_array_or_tuple(
-                        self.ctx.types,
-                        resolved,
-                    ))
-            {
-                return true;
-            }
-        }
-        false
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(

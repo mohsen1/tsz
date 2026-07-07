@@ -131,6 +131,9 @@
 //! - `call_result_construction_boundary_scans`: call result handling routes
 //!   correlated unions, optional-chain returns, and recursive fallback result
 //!   construction through `query_boundaries::checkers::call`.
+//! - `call_spread_constraint_classification_boundary_scans`: call spread
+//!   constraint classification routes array/tuple-like structural probes
+//!   through `query_boundaries::checkers::call`.
 //! - `call_diagnostic_surface_construction_boundary_scans`: call diagnostic
 //!   result/display surfaces route object, tuple, and function construction
 //!   through `query_boundaries::checkers::call` and
@@ -200,6 +203,8 @@ mod call_diagnostic_surface_construction_boundary_scans;
 mod call_inference_construction_boundary_scans;
 #[path = "arch_source_scans/call_result_construction_boundary_scans.rs"]
 mod call_result_construction_boundary_scans;
+#[path = "arch_source_scans/call_spread_constraint_classification_boundary_scans.rs"]
+mod call_spread_constraint_classification_boundary_scans;
 #[path = "arch_source_scans/class_constructor_return_construction_boundary_scans.rs"]
 mod class_constructor_return_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]

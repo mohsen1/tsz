@@ -8,8 +8,8 @@
 //! precondition in `chooseOverload`).
 
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
-    type_param_variadic_tuple_spread,
+    array_element_type_for_type, spread_type_parameter_constraint_is_array_or_tuple_like_for_call,
+    tuple_elements_for_type, type_param_variadic_tuple_spread,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -59,14 +59,11 @@ impl<'a> CheckerState<'a> {
             }
             // Type-parameter spread whose constraint is array/tuple-like binds
             // as a single positional unit, not an open-ended overflow.
-            if is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    spread_type,
-                )
-                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
-                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
-            {
+            if spread_type_parameter_constraint_is_array_or_tuple_like_for_call(
+                self.ctx.types,
+                spread_type,
+                |ty| self.evaluate_type_with_env(ty),
+            ) {
                 continue;
             }
             let is_open_ended_spread = array_element_type_for_type(self.ctx.types, spread_type)
@@ -124,14 +121,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Type-parameter spread with array/tuple-like constraint occupies one slot.
-            if is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    spread_type,
-                )
-                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
-                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
-            {
+            if spread_type_parameter_constraint_is_array_or_tuple_like_for_call(
+                self.ctx.types,
+                spread_type,
+                |ty| self.evaluate_type_with_env(ty),
+            ) {
                 effective_index += 1;
                 continue;
             }

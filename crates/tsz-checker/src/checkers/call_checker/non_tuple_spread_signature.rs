@@ -1,8 +1,8 @@
 //! Non-tuple spread validation against selected call signatures.
 
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, is_type_parameter_type, tuple_elements_for_type,
-    type_param_variadic_tuple_spread,
+    array_element_type_for_type, spread_type_parameter_constraint_is_array_or_tuple_like_for_call,
+    tuple_elements_for_type, type_param_variadic_tuple_spread,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -85,14 +85,11 @@ impl<'a> CheckerState<'a> {
                 effective_index += literal.elements.nodes.len();
                 continue;
             }
-            if is_type_parameter_type(self.ctx.types, spread_type)
-                && let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    spread_type,
-                )
-                && (array_element_type_for_type(self.ctx.types, constraint).is_some()
-                    || tuple_elements_for_type(self.ctx.types, constraint).is_some())
-            {
+            if spread_type_parameter_constraint_is_array_or_tuple_like_for_call(
+                self.ctx.types,
+                spread_type,
+                |ty| self.evaluate_type_with_env(ty),
+            ) {
                 effective_index += 1;
                 continue;
             }
