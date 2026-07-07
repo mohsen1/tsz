@@ -569,6 +569,143 @@ fn evaluate_application_caches_converging_alias_result() {
     }
 }
 
+#[test]
+fn evaluate_application_finalization_defers_seeded_fifth_identity_without_cache_write() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(143_517);
+    let t_param = unconstrained_param(&interner, "Source");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let value_name = interner.intern_string("value");
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        def_id,
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
+    let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::STRING)]);
+
+    let qc = QueryCache::new(&interner);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 4);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(
+        result, app,
+        "fifth same-root application finalization should preserve the deferred Application"
+    );
+    assert_ne!(
+        result, expected,
+        "identity cutoff must prevent another eager structural application expansion"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "application identity bailout must mark the request partial"
+    );
+    assert_eq!(
+        qc.lookup_application_eval_cache(def_id, &[TypeId::STRING], false),
+        None,
+        "a recursion-identity bailout must not enter the application-eval cache"
+    );
+}
+
+#[test]
+fn evaluate_application_finalization_allows_seeded_fourth_identity_and_caches() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(143_518);
+    let t_param = unconstrained_param(&interner, "Element");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let value_name = interner.intern_string("payload");
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        def_id,
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![TypeId::NUMBER],
+    );
+    let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::NUMBER)]);
+
+    let qc = QueryCache::new(&interner);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 3);
+    let result = evaluator.evaluate(app);
+
+    assert_eq!(result, expected);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff application finalization must not mark the request partial"
+    );
+    assert_eq!(
+        qc.lookup_application_eval_cache(def_id, &[TypeId::NUMBER], false),
+        Some(expected),
+        "below-cutoff application finalization should still populate the cache"
+    );
+}
+
+#[test]
+fn evaluate_application_finalization_preserves_direct_same_application_growth_path_without_cache_write()
+ {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    let interner = TypeInterner::new();
+    let def_id = DefId(143_519);
+    let t_param = unconstrained_param(&interner, "Node");
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let grown_arg = interner.array(t_type);
+    let body = interner.application(interner.lazy(def_id), vec![grown_arg]);
+
+    let mut env = TypeEnvironment::new();
+    let app = alias_application(
+        &interner,
+        &mut env,
+        def_id,
+        DefKind::TypeAlias,
+        body,
+        vec![t_param],
+        vec![TypeId::STRING],
+    );
+
+    let qc = QueryCache::new(&interner);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env).with_query_db(&qc);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 4);
+    let result = evaluator.evaluate_request_result(EvaluationRequest::new(app));
+
+    assert_eq!(
+        result.into_type_id(),
+        TypeId::ERROR,
+        "direct same-alias argument growth must keep using the depth/divergence path"
+    );
+    assert_eq!(
+        result.termination(),
+        Termination::Incomplete {
+            kind: TerminationKind::DepthExceeded,
+            partial: TypeId::ERROR,
+        }
+    );
+    assert_eq!(
+        qc.lookup_application_eval_cache(def_id, &[TypeId::STRING], false),
+        None,
+        "direct same-alias argument growth bails must not be cached"
+    );
+}
+
 /// Phase 5 — a depth-bounded (divergent) alias application must NOT poison the
 /// per-file `application_eval_cache`.
 ///

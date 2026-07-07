@@ -1,9 +1,11 @@
 use super::*;
 use crate::caches::db::TypeApplicationEvalCache;
 use crate::caches::query_cache::QueryCache;
+use crate::def::{DefId, DefKind};
 use crate::evaluation::result::TerminationKind;
 use crate::intern::TypeInterner;
-use crate::types::{PropertyInfo, TypeId};
+use crate::relations::subtype::TypeEnvironment;
+use crate::types::{ConditionalType, PropertyInfo, SymbolRef, TypeId, TypeParamInfo};
 
 #[test]
 fn test_is_primitive_vs_function_intrinsic() {
@@ -99,6 +101,188 @@ fn test_is_primitive_vs_function_structural() {
             TypeId::STRING,
             non_fn
         )
+    );
+}
+
+fn application_alias_with_object_body(
+    interner: &TypeInterner,
+    env: &mut TypeEnvironment,
+    def_id: DefId,
+) -> (TypeId, TypeId) {
+    let value_name = interner.intern_string("value");
+    let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+    let t_type = interner.type_param(t_param);
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+    env.insert_def_with_params(def_id, body, vec![t_param]);
+    env.insert_def_kind(def_id, DefKind::TypeAlias);
+
+    let app = interner.application(interner.lazy(def_id), vec![TypeId::STRING]);
+    let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::STRING)]);
+    (app, expected)
+}
+
+#[test]
+fn conditional_application_operand_expansion_defers_seeded_fifth_identity() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let (app, expected) = application_alias_with_object_body(&interner, &mut env, DefId(143_515));
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 4);
+    let result = evaluator.try_expand_application_for_conditional_check(app);
+
+    assert_eq!(
+        result,
+        Some(app),
+        "fifth same-root conditional Application expansion should stay deferred"
+    );
+    assert_ne!(
+        result,
+        Some(expected),
+        "identity cutoff must prevent another eager structural expansion"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "seeded application expansion bailout must mark the request partial"
+    );
+}
+
+#[test]
+fn conditional_application_operand_expansion_allows_seeded_fourth_identity_and_pops() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+    let (app, expected) = application_alias_with_object_body(&interner, &mut env, DefId(143_516));
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 3);
+    assert_eq!(
+        evaluator.try_expand_application_for_conditional_check(app),
+        Some(expected)
+    );
+    assert_eq!(
+        evaluator.try_expand_application_for_conditional_check(app),
+        Some(expected),
+        "below-cutoff helper calls must pop their stack entry"
+    );
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff application expansion must not mark the request partial"
+    );
+}
+
+#[test]
+fn conditional_typequery_application_operand_fallback_defers_seeded_fifth_identity() {
+    struct RefOnlyTypeQueryResolver {
+        sym: SymbolRef,
+        body: TypeId,
+        params: Vec<TypeParamInfo>,
+    }
+
+    impl crate::relations::subtype::TypeResolver for RefOnlyTypeQueryResolver {
+        fn resolve_ref(
+            &self,
+            symbol: SymbolRef,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            (symbol == self.sym).then_some(self.body)
+        }
+
+        fn resolve_type_query(
+            &self,
+            _symbol: SymbolRef,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
+            (symbol == self.sym).then(|| self.params.clone())
+        }
+    }
+
+    let interner = TypeInterner::new();
+    let sym = SymbolRef(143_520);
+    let value_name = interner.intern_string("value");
+    let t_param = TypeParamInfo::simple(interner.intern_string("Payload"));
+    let t_type = interner.type_param(t_param);
+    let body = interner.object(vec![PropertyInfo::new(value_name, t_type)]);
+    let resolver = RefOnlyTypeQueryResolver {
+        sym,
+        body,
+        params: vec![t_param],
+    };
+
+    let app = interner.application(interner.type_query(sym), vec![TypeId::STRING]);
+    let expected = interner.object(vec![PropertyInfo::new(value_name, TypeId::STRING)]);
+    let cond = ConditionalType {
+        check_type: app,
+        extends_type: TypeId::UNKNOWN,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    };
+
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &resolver);
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 4);
+    let operands = evaluator.resolve_operands(&cond);
+
+    assert_eq!(
+        operands.check_type, app,
+        "seeded TypeQuery application operand fallback should preserve the deferred Application"
+    );
+    assert_ne!(
+        operands.check_type, expected,
+        "identity cutoff must prevent the fallback from eagerly instantiating the body"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "seeded TypeQuery application operand bailout must mark the request partial"
+    );
+}
+
+#[test]
+fn application_infer_alias_reduction_defers_seeded_fifth_conditional_check_eval() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let box_def = DefId(143_521);
+    let box_param = TypeParamInfo::simple(interner.intern_string("Element"));
+    let box_param_type = interner.type_param(box_param);
+    let value_name = interner.intern_string("value");
+    let box_body = interner.object(vec![PropertyInfo::new(value_name, box_param_type)]);
+    env.insert_def_with_params(box_def, box_body, vec![box_param]);
+    env.insert_def_kind(box_def, DefKind::TypeAlias);
+
+    let unwrap_def = DefId(143_522);
+    let source_param = TypeParamInfo::simple(interner.intern_string("Source"));
+    let source_type = interner.type_param(source_param);
+    let infer_param = TypeParamInfo::simple(interner.intern_string("Inner"));
+    let infer_type = interner.infer(infer_param);
+    let box_infer = interner.application(interner.lazy(box_def), vec![infer_type]);
+    let unwrap_body = interner.conditional(ConditionalType {
+        check_type: source_type,
+        extends_type: box_infer,
+        true_type: box_infer,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+    env.insert_def_with_params(unwrap_def, unwrap_body, vec![source_param]);
+    env.insert_def_kind(unwrap_def, DefKind::TypeAlias);
+
+    let boxed_string = interner.application(interner.lazy(box_def), vec![TypeId::STRING]);
+    let app = interner.application(interner.lazy(unwrap_def), vec![boxed_string]);
+    let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(app, 4);
+    let reduced = evaluator.reduce_alias_body_to_application_form(app);
+
+    assert_eq!(
+        reduced, None,
+        "seeded alias-infer reduction should not eagerly simulate the conditional check"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "seeded alias-infer reduction bailout must mark the request partial"
     );
 }
 

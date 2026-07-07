@@ -509,7 +509,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         properties: &[PropertyInfo],
         prop_name: Atom,
         receiver: TypeId,
-        _optional: bool,
+        pattern_optional: bool,
     ) -> Option<InferPropertyResolution> {
         // When the pattern property is PRESENT in the source, the inference
         // candidate is the source property's declared type. The optionality of
@@ -529,6 +529,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .iter()
             .find(|prop| prop.name == prop_name)
             .map(|prop| {
+                if prop.optional && !pattern_optional {
+                    return InferPropertyResolution::NoMatch;
+                }
                 InferPropertyResolution::Candidate(self.bind_member_this(prop.type_id, receiver))
             })
     }

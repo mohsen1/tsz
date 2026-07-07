@@ -1273,6 +1273,8 @@ fn test_conditional_infer_optional_property_present_distributive() {
     let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends { a?: infer R } ? R : never, with T = { a?: string } | { a?: number }.
+    // A present optional property contributes its declared type to `infer` here;
+    // the optional marker only controls the absent-property case.
     let extends_obj = interner.object(vec![PropertyInfo::opt(
         interner.intern_string("a"),
         infer_r,
@@ -1299,9 +1301,41 @@ fn test_conditional_infer_optional_property_present_distributive() {
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
-    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED]);
+    let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     assert_eq!(result, expected);
+}
+
+#[test]
+fn test_conditional_infer_required_property_rejects_optional_source() {
+    let interner = TypeInterner::new();
+
+    let (t_name, t_param) = test_type_param(&interner, "T");
+
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
+
+    let extends_obj =
+        interner.object(vec![PropertyInfo::new(interner.intern_string("a"), infer_r)]);
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_obj,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    let obj_string = interner.object(vec![PropertyInfo::opt(
+        interner.intern_string("a"),
+        TypeId::STRING,
+    )]);
+    subst.insert(t_name, obj_string);
+
+    let instantiated = instantiate_type(&interner, cond_type, &subst);
+    let result = evaluate_type(&interner, instantiated);
+
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]

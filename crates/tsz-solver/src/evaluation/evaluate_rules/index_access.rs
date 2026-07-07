@@ -1599,15 +1599,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         index_type: TypeId,
     ) -> TypeId {
         let index_access = self.interner().index_access(object_type, index_type);
-        self.with_meta_rereduce_recursion_identity(index_access, index_access, |evaluator| {
-            evaluator.evaluate(index_access)
-        })
+        self.evaluate(index_access)
     }
 
     /// Evaluate an index access type: T[K]
     ///
     /// This resolves property access on object types.
     pub fn evaluate_index_access(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        let index_access = self.interner().index_access(object_type, index_type);
+        self.with_meta_rereduce_recursion_identity(index_access, index_access, |evaluator| {
+            evaluator.evaluate_index_access_inner(object_type, index_type)
+        })
+    }
+
+    fn evaluate_index_access_inner(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
         if literal_number(self.interner(), index_type).is_some() {
             let tuple_object =
                 crate::type_queries::data::unwrap_readonly(self.interner(), object_type);

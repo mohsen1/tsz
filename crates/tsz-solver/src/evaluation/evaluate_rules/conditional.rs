@@ -26,6 +26,7 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 use super::infer_pattern::InferPatternVisited;
+use crate::evaluation::result::TerminationKind;
 use crate::type_queries::get_application_base;
 use phases::TailCallStep;
 pub(in crate::evaluation::evaluate_rules::conditional) use phases::{
@@ -286,6 +287,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .is_none()
     }
 
+    /// Helper to recursively evaluate a conditional while respecting
+    /// recursion-identity containment.
+    pub(crate) fn recurse_conditional(&mut self, conditional: TypeId) -> TypeId {
+        self.with_meta_rereduce_recursion_identity(conditional, conditional, |evaluator| {
+            evaluator.evaluate(conditional)
+        })
+    }
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -302,6 +311,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// iterations instead of being limited by `MAX_EVALUATE_DEPTH`.
     pub fn evaluate_conditional(&mut self, initial_cond: &ConditionalType) -> TypeId {
         // Setup loop state for tail-recursion elimination
+        let mut current_cond_type = self.interner().conditional(*initial_cond);
         let mut current_cond = *initial_cond;
         let mut tail_recursion_count = 0;
         // PERF: Pre-allocate bindings and visited sets outside the tail-recursion
@@ -316,6 +326,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // same conditional). Without this, libraries like ts-toolbelt that have
         // deeply nested conditional types can cause infinite loops.
         let mut tail_seen: FxHashSet<(TypeId, TypeId, TypeId, TypeId)> = FxHashSet::default();
+        let mut tail_identity_seen: Vec<TypeId> = Vec::new();
 
         loop {
             // Clear any apparent branch signal from the previous iteration so stale
@@ -344,6 +355,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.mark_depth_exceeded_for_request();
                 return TypeId::ERROR;
             }
+
+            if tail_recursion_count > 0
+                && self.meta_rereduce_recursion_identity_would_exceed_with_seen(
+                    current_cond_type,
+                    &tail_identity_seen,
+                )
+            {
+                self.record_request_limit_event(TerminationKind::IterationExceeded);
+                return current_cond_type;
+            }
+            tail_identity_seen.push(current_cond_type);
 
             // Pre-evaluation Application-level infer matching.
             // When both check and extends are Applications (e.g., Promise<string> vs
@@ -756,6 +778,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && !self.type_contains_infer(cond.extends_type)
                 && !self.type_is_compound_generic(cond.extends_type)
             {
+                if let Some(TypeData::Conditional(next_cond_id)) =
+                    self.interner().lookup(cond.true_type)
+                {
+                    current_cond_type = cond.true_type;
+                    current_cond = self.interner().get_conditional(next_cond_id);
+                    tail_recursion_count += 1;
+                    continue;
+                }
                 return self.evaluate_preserving_intersection_branch_alias(cond.true_type);
             }
 
@@ -923,8 +953,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut tail_application_branch,
                         tail_recursion_count,
                     ) {
-                        TailCallStep::Continue(next) => {
-                            current_cond = next;
+                        TailCallStep::Continue { type_id, cond } => {
+                            current_cond_type = type_id;
+                            current_cond = cond;
                             tail_recursion_count += 1;
                             continue;
                         }
@@ -1120,8 +1151,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &mut tail_application_branch,
                     tail_recursion_count,
                 ) {
-                    TailCallStep::Continue(next) => {
-                        current_cond = next;
+                    TailCallStep::Continue { type_id, cond } => {
+                        current_cond_type = type_id;
+                        current_cond = cond;
                         tail_recursion_count += 1;
                         continue;
                     }
@@ -1260,8 +1292,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 &mut tail_application_branch,
                 tail_recursion_count,
             ) {
-                TailCallStep::Continue(next) => {
-                    current_cond = next;
+                TailCallStep::Continue { type_id, cond } => {
+                    current_cond_type = type_id;
+                    current_cond = cond;
                     tail_recursion_count += 1;
                     continue;
                 }
@@ -1402,6 +1435,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     fn try_expand_application_for_conditional_check(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.with_optional_meta_rereduce_recursion_identity(type_id, type_id, |evaluator| {
+            evaluator.try_expand_application_for_conditional_check_inner(type_id)
+        })
+    }
+
+    fn try_expand_application_for_conditional_check_inner(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
         let Some(TypeData::Application(app_id)) = self.interner().lookup(type_id) else {
             return None;
         };
@@ -1883,9 +1925,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 is_distributive: false,
             };
 
-            // Recursively evaluate via evaluate() to respect depth limits
+            // Recursively evaluate while preserving depth and recursion-identity limits.
             let cond_type = self.interner().conditional(member_cond);
-            let result = self.evaluate(cond_type);
+            let result = self.recurse_conditional(cond_type);
             // Check if evaluation hit depth limit
             if result == TypeId::ERROR && self.is_depth_exceeded() {
                 return TypeId::ERROR;

@@ -150,7 +150,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return constraint;
             }
             Some(TypeData::KeyOf(operand)) => {
-                return self.evaluate_keyof(operand);
+                return self.recurse_keyof(operand);
             }
             Some(TypeData::Union(members)) => Some(members),
             _ => None,

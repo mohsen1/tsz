@@ -20,6 +20,51 @@ fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
     evaluator.keyof_constraint_guard.leave(constraint);
 }
 
+fn single_property_object(interner: &TypeInterner, name: &str) -> TypeId {
+    interner.object(vec![PropertyInfo::new(
+        interner.intern_string(name),
+        TypeId::STRING,
+    )])
+}
+
+#[test]
+fn evaluate_keyof_or_constraint_defers_seeded_fifth_keyof_identity() {
+    let interner = TypeInterner::new();
+    let object = single_property_object(&interner, "seeded");
+    let constraint = interner.keyof(object);
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 4);
+    let result = evaluator.evaluate_keyof_or_constraint(constraint);
+
+    assert_eq!(
+        result, constraint,
+        "mapped keyof-constraint reduction should preserve the deferred KeyOf at the fifth same-identity hit"
+    );
+    assert!(
+        evaluator.has_incomplete_request_verdict(),
+        "mapped keyof-constraint identity bailout must mark the request incomplete"
+    );
+}
+
+#[test]
+fn evaluate_keyof_or_constraint_allows_seeded_fourth_keyof_identity_and_pops() {
+    let interner = TypeInterner::new();
+    let object = single_property_object(&interner, "finite");
+    let constraint = interner.keyof(object);
+    let expected = interner.literal_string("finite");
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(object, 3);
+
+    assert_eq!(evaluator.evaluate_keyof_or_constraint(constraint), expected);
+    assert_eq!(evaluator.evaluate_keyof_or_constraint(constraint), expected);
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "below-cutoff mapped keyof-constraint reductions must pop their temporary identity entry"
+    );
+}
+
 /// Build the post-instantiation form of
 /// `type M<T> = { [<iter_name> in keyof T]: <template> }`
 /// with `T` substituted by `concrete_source`. The iteration variable's

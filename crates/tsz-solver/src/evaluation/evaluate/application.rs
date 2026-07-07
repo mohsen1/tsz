@@ -1296,6 +1296,57 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 original_type_id,
             );
         }
+
+        if self.instantiation_directly_grows_same_application(def_id, expanded_args, instantiated) {
+            return self.finish_instantiated_application(
+                original_type_id,
+                ApplicationFinalizeContext {
+                    original_args,
+                    expanded_args,
+                    body: instantiated,
+                    type_params,
+                    prefer_application_display_alias,
+                    record_structural_back_reference,
+                    no_unchecked_indexed_access,
+                },
+            );
+        }
+
+        self.with_meta_rereduce_recursion_identity(
+            original_type_id,
+            original_type_id,
+            |evaluator| {
+                evaluator.finish_instantiated_application(
+                    original_type_id,
+                    ApplicationFinalizeContext {
+                        original_args,
+                        expanded_args,
+                        body: instantiated,
+                        type_params,
+                        prefer_application_display_alias,
+                        record_structural_back_reference,
+                        no_unchecked_indexed_access,
+                    },
+                )
+            },
+        )
+    }
+
+    fn finish_instantiated_application(
+        &mut self,
+        original_type_id: TypeId,
+        context: ApplicationFinalizeContext<'_>,
+    ) -> TypeId {
+        let ApplicationFinalizeContext {
+            original_args,
+            expanded_args,
+            body: instantiated,
+            type_params: _,
+            prefer_application_display_alias,
+            record_structural_back_reference,
+            no_unchecked_indexed_access,
+        } = context;
+
         // Preserve discriminated object intersections after instantiation.
         // Re-evaluating them here distributes impossible branches again,
         // which breaks both fresh EPC and `keyof` on generic applications.
@@ -1317,13 +1368,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else if record_structural_back_reference {
             self.store_parametric_structural_back_reference(evaluated, original_type_id);
         }
-        self.insert_application_eval_cache_if_some(
-            def_id,
-            expanded_args,
-            no_unchecked_indexed_access,
-            evaluated,
-        );
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(original_type_id) {
+            let app = self.interner.type_application(app_id);
+            if let Some(def_id) = self.resolve_application_def_id(app.base) {
+                self.insert_application_eval_cache_if_some(
+                    def_id,
+                    expanded_args,
+                    no_unchecked_indexed_access,
+                    evaluated,
+                );
+            }
+        }
         evaluated
+    }
+
+    fn instantiation_directly_grows_same_application(
+        &self,
+        def_id: DefId,
+        expanded_args: &[TypeId],
+        instantiated: TypeId,
+    ) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(instantiated) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(next_def_id) = self.resolve_application_def_id(app.base) else {
+            return false;
+        };
+        let same_def = def_id == next_def_id
+            || self.resolver.canonical_def_id(def_id)
+                == self.resolver.canonical_def_id(next_def_id)
+            || self.resolver.defs_are_equivalent(def_id, next_def_id);
+        same_def && self.application_args_extend_prior(expanded_args, &app.args)
+    }
+
+    fn application_args_extend_prior(&self, prior: &[TypeId], next: &[TypeId]) -> bool {
+        next != prior
+            && next.iter().any(|&next_arg| {
+                prior.iter().any(|&prior_arg| {
+                    next_arg == prior_arg || self.cached_contains_type_by_id(next_arg, prior_arg)
+                })
+            })
     }
 
     /// Record display-alias provenance after a successful application

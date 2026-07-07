@@ -179,7 +179,10 @@ pub(super) struct ConditionalOperands {
 /// Result from tail-call dispatch in conditional evaluation.
 pub(super) enum TailCallStep {
     /// Continue the loop with this conditional (direct or via `Application`).
-    Continue(ConditionalType),
+    Continue {
+        type_id: TypeId,
+        cond: ConditionalType,
+    },
     /// An `Application` expanded to a non-conditional type; caller emits alias.
     InstantiatedApp { original: TypeId, resolved: TypeId },
     /// Branch is a bare `Application` (inside limit, not expandable to conditional).
@@ -464,8 +467,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &type_params,
                     expanded_args.as_ref(),
                 );
-                let resolved = self.evaluate(instantiated);
-                if resolved != check_type {
+                if let Some(resolved) = self.with_optional_meta_rereduce_recursion_identity(
+                    check_type,
+                    check_type,
+                    |evaluator| Some(evaluator.evaluate(instantiated)),
+                ) && resolved != check_type
+                {
                     check_type = resolved;
                 }
             }
@@ -981,16 +988,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         match self.interner().lookup(branch) {
-            Some(TypeData::Conditional(next_cond_id)) => {
-                TailCallStep::Continue(self.interner().get_conditional(next_cond_id))
-            }
+            Some(TypeData::Conditional(next_cond_id)) => TailCallStep::Continue {
+                type_id: branch,
+                cond: self.interner().get_conditional(next_cond_id),
+            },
             Some(TypeData::Application(_)) => {
                 if let Some(instantiated) = self.try_instantiate_application_for_tail_call(branch) {
                     if let Some(TypeData::Conditional(next_cond_id)) =
                         self.interner().lookup(instantiated)
                     {
                         tail_application_branch.get_or_insert(branch);
-                        TailCallStep::Continue(self.interner().get_conditional(next_cond_id))
+                        TailCallStep::Continue {
+                            type_id: instantiated,
+                            cond: self.interner().get_conditional(next_cond_id),
+                        }
                     } else {
                         TailCallStep::InstantiatedApp {
                             original: branch,
