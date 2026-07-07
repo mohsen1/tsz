@@ -2,7 +2,6 @@
 
 use crate::query_boundaries::checkers::promise as query;
 use crate::query_boundaries::common::is_definitely_nullish;
-use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -119,35 +118,24 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn builtin_promise_like_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
-        let query::PromiseTypeKind::Application { base, args, .. } =
-            query::classify_promise_type(self.ctx.types, type_id)
-        else {
-            return None;
-        };
-        let is_builtin = match query::classify_promise_type(self.ctx.types, base) {
-            query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => self
-                .ctx
-                .sym_id_is_lib_promise_or_promise_like(symbol_ref_to_symbol_id(sym_ref)),
-            _ => false,
-        };
-        is_builtin.then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
+        let app = query::promise_application_parts(self.ctx.types, type_id)?;
+        let is_builtin = query::promise_base_matches(
+            self.ctx.types,
+            app.base(),
+            |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id),
+        );
+        is_builtin.then(|| app.first_arg_or_unknown())
     }
 
     pub(crate) fn promise_branch_alias_body_from_application(
         &self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        let query::PromiseTypeKind::Application { base, args, .. } =
-            query::classify_promise_type(self.ctx.types, type_id)
-        else {
-            return None;
-        };
-        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
-            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
-            query::PromiseTypeKind::TypeQuery(sym_ref) => symbol_ref_to_symbol_id(sym_ref),
-            _ => return None,
-        };
+        let app = query::promise_application_parts(self.ctx.types, type_id)?;
+        let sym_id = query::promise_base_symbol_id(self.ctx.types, app.base(), |def_id| {
+            self.ctx.def_to_symbol_id(def_id)
+        })?;
         let (symbol, decl_file_idx) = self.promise_symbol_and_decl_file(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return None;
@@ -164,15 +152,15 @@ impl<'a> CheckerState<'a> {
 
         let mut bindings = Vec::new();
         if let Some(params) = &type_alias.type_parameters {
-            if params.nodes.len() != args.len() {
+            if params.nodes.len() != app.args().len() {
                 return None;
             }
-            for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
+            for (&param_idx, &arg) in params.nodes.iter().zip(app.args().iter()) {
                 let param = arena.get_type_parameter_at(param_idx)?;
                 let ident = arena.get_identifier_at(param.name)?;
                 bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
             }
-        } else if !args.is_empty() {
+        } else if !app.args().is_empty() {
             return None;
         }
         Some(self.lower_type_with_bindings_from_arena(arena, type_alias.type_node, bindings))
@@ -205,18 +193,43 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        match query::classify_promise_type(self.ctx.types, base) {
-            query::PromiseTypeKind::Lazy(def_id) => {
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                {
-                    return symbol.escaped_name.as_str() == "Awaited"
-                        && self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
-                }
-                false
-            }
-            _ => false,
+        if let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, base)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        {
+            return symbol.escaped_name.as_str() == "Awaited"
+                && self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
         }
+        false
+    }
+
+    fn promise_base_is_global_or_alias_to_global(&self, base: TypeId) -> bool {
+        if query::promise_reference_matches(
+            self.ctx.types,
+            base,
+            |def_id| self.def_is_lib_promise(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise(sym_id),
+        ) {
+            return true;
+        }
+
+        if let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, base)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+        {
+            // Type aliases like `type MyPromise<T> = Promise<T>` must be
+            // chased through the alias body.
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+            {
+                return self.type_alias_resolves_to_promise(sym_id, symbol);
+            }
+        }
+
+        if let Some(inner) = query::promise_application_parts(self.ctx.types, base) {
+            return self.is_global_promise_type(inner.base());
+        }
+
+        false
     }
 
     pub(crate) fn is_standard_or_conditional_awaited_alias(
@@ -283,41 +296,15 @@ impl<'a> CheckerState<'a> {
     /// not for `PromiseLike`, user subclasses, or type aliases unless the alias body
     /// ultimately references the lib `Promise` symbol.
     pub fn is_global_promise_type(&self, type_id: TypeId) -> bool {
-        match query::classify_promise_type(self.ctx.types, type_id) {
-            query::PromiseTypeKind::Application { base, .. } => {
-                match query::classify_promise_type(self.ctx.types, base) {
-                    query::PromiseTypeKind::Lazy(def_id) => {
-                        if self.def_is_lib_promise(def_id) {
-                            return true;
-                        }
-                        if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) {
-                            // Type aliases like `type MyPromise<T> = Promise<T>` must be
-                            // chased through the alias body.
-                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                                && symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
-                            {
-                                return self.type_alias_resolves_to_promise(sym_id, symbol);
-                            }
-                        }
-                        false
-                    }
-                    query::PromiseTypeKind::TypeQuery(sym_ref) => self
-                        .ctx
-                        .sym_id_is_lib_promise(symbol_ref_to_symbol_id(sym_ref)),
-                    query::PromiseTypeKind::Application {
-                        base: inner_base, ..
-                    } => self.is_global_promise_type(inner_base),
-                    _ => false,
-                }
-            }
-            query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => self
-                .ctx
-                .sym_id_is_lib_promise(symbol_ref_to_symbol_id(sym_ref)),
-            query::PromiseTypeKind::Object(_)
-            | query::PromiseTypeKind::Union(_)
-            | query::PromiseTypeKind::NotPromise => false,
+        if let Some(app) = query::promise_application_parts(self.ctx.types, type_id) {
+            return self.promise_base_is_global_or_alias_to_global(app.base());
         }
+        query::promise_reference_matches(
+            self.ctx.types,
+            type_id,
+            |def_id| self.def_is_lib_promise(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise(sym_id),
+        )
     }
 
     /// Check if a type reference is a Promise or Promise-like type.
@@ -325,22 +312,13 @@ impl<'a> CheckerState<'a> {
     /// Object types from lib files are treated as Promise-like without name resolution —
     /// a conservative assumption to avoid false positives for `Promise<void>` return types.
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
-        match query::classify_promise_type(self.ctx.types, type_id) {
-            query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                let sym_id = symbol_ref_to_symbol_id(sym_ref);
-                self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
-            }
-            query::PromiseTypeKind::Application { base, .. } => self.type_ref_is_promise_like(base),
-            query::PromiseTypeKind::Object(_) => {
-                // For Object types (interfaces from lib files), we conservatively assume
-                // they might be Promise-like. This avoids false positives for Promise<void>
-                // return types from lib files where we can't easily determine the interface name.
-                // A more precise check would require tracking the original type reference.
-                true
-            }
-            query::PromiseTypeKind::Union(_) | query::PromiseTypeKind::NotPromise => false,
-        }
+        query::promise_type_matches_through_applications(
+            self.ctx.types,
+            type_id,
+            |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id),
+            true,
+        )
     }
 
     /// Strict check — only returns true for the standard-library `Promise` or
@@ -348,31 +326,13 @@ impl<'a> CheckerState<'a> {
     /// whose name happens to contain "Promise". Object types and unions are not
     /// considered Promise-like here.
     pub fn is_promise_type(&self, type_id: TypeId) -> bool {
-        match query::classify_promise_type(self.ctx.types, type_id) {
-            query::PromiseTypeKind::Application { base, .. } => {
-                match query::classify_promise_type(self.ctx.types, base) {
-                    query::PromiseTypeKind::Lazy(def_id) => {
-                        self.def_is_lib_promise_or_promise_like(def_id)
-                    }
-                    query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                        let sym_id = symbol_ref_to_symbol_id(sym_ref);
-                        self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
-                    }
-                    query::PromiseTypeKind::Application {
-                        base: inner_base, ..
-                    } => self.is_promise_type(inner_base),
-                    _ => false,
-                }
-            }
-            query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => {
-                let sym_id = symbol_ref_to_symbol_id(sym_ref);
-                self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id)
-            }
-            query::PromiseTypeKind::Object(_)
-            | query::PromiseTypeKind::Union(_)
-            | query::PromiseTypeKind::NotPromise => false,
-        }
+        query::promise_type_matches_through_applications(
+            self.ctx.types,
+            type_id,
+            |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id),
+            false,
+        )
     }
 
     fn object_type_symbol_is_promise_like(&self, type_id: TypeId) -> bool {
@@ -438,9 +398,7 @@ impl<'a> CheckerState<'a> {
     /// Generic class instances are `Application` types handled by the Application
     /// branch's own structural extraction.
     fn awaited_operand_is_class_instance(&self, type_id: TypeId) -> bool {
-        let query::PromiseTypeKind::Lazy(def_id) =
-            query::classify_promise_type(self.ctx.types, type_id)
-        else {
+        let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, type_id) else {
             return false;
         };
         self.ctx
@@ -458,43 +416,35 @@ impl<'a> CheckerState<'a> {
     /// - Type aliases that expand to Promise<T>
     /// - Classes that extend Promise<T>
     pub fn promise_like_return_type_argument(&mut self, return_type: TypeId) -> Option<TypeId> {
-        if let query::PromiseTypeKind::Application { base, args, .. } =
-            query::classify_promise_type(self.ctx.types, return_type)
-        {
-            let first_arg = args.first().copied();
+        if let Some(app) = query::promise_application_parts(self.ctx.types, return_type) {
+            let first_arg = app.first_arg();
 
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
-            if base == TypeId::PROMISE_BASE
+            if app.base() == TypeId::PROMISE_BASE
                 && let Some(first_arg) = first_arg
             {
                 return Some(first_arg);
             }
 
             // Fast path: direct lib Promise/PromiseLike application — identity check.
-            if let query::PromiseTypeKind::Lazy(def_id) =
-                query::classify_promise_type(self.ctx.types, base)
-                && self.def_is_lib_promise_or_promise_like(def_id)
-            {
-                return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
-            }
-
-            // Handle TypeQuery(SymbolRef) base — the return type annotation stores
-            // Promise<T> as Application(TypeQuery(Promise_SymbolRef), [T]) when the
-            // base reference is a `typeof` value symbol rather than a Lazy(DefId).
-            if let query::PromiseTypeKind::TypeQuery(sym_ref) =
-                query::classify_promise_type(self.ctx.types, base)
-            {
-                let sym_id = symbol_ref_to_symbol_id(sym_ref);
-                if self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id) {
-                    return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
-                }
+            //
+            // TypeQuery(SymbolRef) bases are included: return type annotations can store
+            // Promise<T> as Application(TypeQuery(Promise_SymbolRef), [T]) when the base
+            // reference is a `typeof` value symbol rather than a Lazy(DefId).
+            if query::promise_base_matches(
+                self.ctx.types,
+                app.base(),
+                |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+                |sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id),
+            ) {
+                return Some(app.first_arg_or_unknown());
             }
 
             // Try to get the type argument from the base symbol
             if let Some(result) = self.promise_like_type_argument_from_base(
-                base,
-                &args,
+                app.base(),
+                app.args(),
                 &mut AliasCycleTracker::new(),
             ) {
                 return Some(result);
@@ -503,11 +453,13 @@ impl<'a> CheckerState<'a> {
             // Fallback: if the base Lazy DefId resolves to a lib Promise/PromiseLike
             // and promise_like_type_argument_from_base failed for other reasons, return
             // the first type argument.
-            if let query::PromiseTypeKind::Lazy(def_id) =
-                query::classify_promise_type(self.ctx.types, base)
-                && self.def_is_lib_promise_or_promise_like(def_id)
-            {
-                return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
+            if query::promise_base_matches(
+                self.ctx.types,
+                app.base(),
+                |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+                |_| false,
+            ) {
+                return Some(app.first_arg_or_unknown());
             }
 
             if let Some(awaited) = self.extract_awaited_type_from_thenable(return_type) {
@@ -534,11 +486,9 @@ impl<'a> CheckerState<'a> {
         // so neither is admitted. `extract_awaited_type_from_thenable` still
         // validates the `then` signature, so a class with no callable `then`
         // returns `None` and is left unchanged.
-        let operand_is_structural_thenable_shape = matches!(
-            query::classify_promise_type(self.ctx.types, return_type),
-            query::PromiseTypeKind::Object(_)
-        ) || self
-            .awaited_operand_is_class_instance(return_type);
+        let operand_is_structural_thenable_shape =
+            query::promise_type_is_object(self.ctx.types, return_type)
+                || self.awaited_operand_is_class_instance(return_type);
         if operand_is_structural_thenable_shape
             && let Some(awaited) = self.extract_awaited_type_from_thenable(return_type)
         {
@@ -688,23 +638,16 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<TypeId> {
-        let base_is_builtin_promise_like = match query::classify_promise_type(self.ctx.types, base)
-        {
-            query::PromiseTypeKind::Lazy(def_id) => self.def_is_lib_promise_or_promise_like(def_id),
-            query::PromiseTypeKind::TypeQuery(sym_ref) => self
-                .ctx
-                .sym_id_is_lib_promise_or_promise_like(symbol_ref_to_symbol_id(sym_ref)),
-            _ => false,
-        };
+        let base_is_builtin_promise_like = query::promise_base_matches(
+            self.ctx.types,
+            base,
+            |def_id| self.def_is_lib_promise_or_promise_like(def_id),
+            |sym_id| self.ctx.sym_id_is_lib_promise_or_promise_like(sym_id),
+        );
         // Handle Lazy variant properly
-        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
-            query::PromiseTypeKind::Lazy(def_id) => {
-                // Use DefId -> SymbolId bridge
-                self.ctx.def_to_symbol_id(def_id)?
-            }
-            query::PromiseTypeKind::TypeQuery(sym_ref) => symbol_ref_to_symbol_id(sym_ref),
-            _ => return None,
-        };
+        let sym_id = query::promise_base_symbol_id(self.ctx.types, base, |def_id| {
+            self.ctx.def_to_symbol_id(def_id)
+        })?;
 
         let sym_id = self
             .resolve_alias_symbol(sym_id, visited_aliases)
@@ -831,15 +774,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let lowered = self.lower_type_with_bindings(type_alias.type_node, bindings);
-        if let query::PromiseTypeKind::Application {
-            base: lowered_base,
-            args: lowered_args,
-            ..
-        } = query::classify_promise_type(self.ctx.types, lowered)
-        {
+        if let Some(lowered_app) = query::promise_application_parts(self.ctx.types, lowered) {
             return self.promise_like_type_argument_from_base(
-                lowered_base,
-                &lowered_args,
+                lowered_app.base(),
+                lowered_app.args(),
                 visited_aliases,
             );
         }
@@ -1208,33 +1146,30 @@ impl<'a> CheckerState<'a> {
     /// - The base is a type alias (aliases like `type P<T> = Promise<T>` resolve to Promise)
     /// - The base cannot be resolved to a symbol
     pub fn is_non_promise_application_type(&self, type_id: TypeId) -> bool {
-        if let query::PromiseTypeKind::Application { base, .. } =
-            query::classify_promise_type(self.ctx.types, type_id)
-        {
-            if self.is_global_promise_type(type_id) {
-                return false;
-            }
-            // Check if the base is a type alias — aliases may resolve to Promise
-            // (e.g., `type PromiseAlias<T> = Promise<T>`). In that case, we can't
-            // definitively say it's not Promise, so return false to let the syntactic
-            // check handle it.
-            match query::classify_promise_type(self.ctx.types, base) {
-                query::PromiseTypeKind::Lazy(def_id) => {
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
-                        if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
-                            return false; // Type alias — uncertain, use syntactic fallback
-                        }
-                        return true; // Class/interface — definitively not Promise
-                    }
-                    false // Can't resolve — uncertain
-                }
-                _ => true, // Non-Lazy base — definitively not global Promise
-            }
-        } else {
-            false
+        let Some(app) = query::promise_application_parts(self.ctx.types, type_id) else {
+            return false;
+        };
+
+        if self.is_global_promise_type(type_id) {
+            return false;
         }
+        // Check if the base is a type alias — aliases may resolve to Promise
+        // (e.g., `type PromiseAlias<T> = Promise<T>`). In that case, we can't
+        // definitively say it's not Promise, so return false to let the syntactic
+        // check handle it.
+        if let Some(def_id) = query::promise_lazy_def_id(self.ctx.types, app.base()) {
+            if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            {
+                if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+                    return false; // Type alias — uncertain, use syntactic fallback
+                }
+                return true; // Class/interface — definitively not Promise
+            }
+            return false; // Can't resolve — uncertain
+        }
+
+        true // Non-Lazy base — definitively not global Promise
     }
 
     /// Check if a type alias ultimately resolves to the global Promise type.
