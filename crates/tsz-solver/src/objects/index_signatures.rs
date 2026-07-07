@@ -31,7 +31,7 @@ use crate::TypeId;
 use crate::construction::TypeDatabase;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{
-    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeData,
+    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeData, TypeListId,
 };
 use crate::utils;
 use crate::visitor::TypeVisitor;
@@ -43,6 +43,50 @@ pub enum IndexKind {
     String,
     /// Numeric index signature: `{ [key: number]: T }`
     Number,
+}
+
+fn merge_union_index_signatures(
+    db: &dyn TypeDatabase,
+    member_count: usize,
+    signatures: &[IndexSignature],
+    key_type: TypeId,
+) -> Option<IndexSignature> {
+    (member_count != 0 && signatures.len() == member_count).then(|| IndexSignature {
+        key_type,
+        value_type: db.union(signatures.iter().map(|sig| sig.value_type).collect()),
+        readonly: signatures.iter().all(|sig| sig.readonly),
+        param_name: None,
+    })
+}
+
+fn merge_intersection_index_signature(
+    db: &dyn TypeDatabase,
+    slot: &mut Option<IndexSignature>,
+    incoming: Option<IndexSignature>,
+) {
+    let Some(index) = incoming else { return };
+    if let Some(existing) = slot {
+        existing.value_type = db.intersect_types_raw2(existing.value_type, index.value_type);
+        existing.readonly &= index.readonly;
+        existing.param_name = None;
+    } else {
+        *slot = Some(IndexSignature {
+            param_name: None,
+            ..index
+        });
+    }
+}
+
+fn merge_intersection_index_value(
+    db: &dyn TypeDatabase,
+    slot: &mut Option<TypeId>,
+    incoming: Option<TypeId>,
+) {
+    let Some(value_type) = incoming else { return };
+    *slot = Some(match *slot {
+        Some(existing) => db.intersect_types_raw2(existing, value_type),
+        None => value_type,
+    });
 }
 
 // =============================================================================
@@ -95,14 +139,26 @@ impl<R: TypeResolver> TypeVisitor for StringIndexResolver<'_, R> {
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        types.iter().find_map(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        if types.is_empty() {
+            return None;
+        }
+
+        let mut values = Vec::with_capacity(types.len());
+        for &ty in types.iter() {
+            values.push(self.visit_type(self.db, ty)?);
+        }
+        Some(self.db.union(values))
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        // For intersection, return the first one found
-        types.first().and_then(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut value_type = None;
+        for &ty in types.iter() {
+            let incoming = self.visit_type(self.db, ty);
+            merge_intersection_index_value(self.db, &mut value_type, incoming);
+        }
+        value_type
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
@@ -204,13 +260,26 @@ impl<R: TypeResolver> TypeVisitor for SymbolIndexResolver<'_, R> {
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        types.iter().find_map(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        if types.is_empty() {
+            return None;
+        }
+
+        let mut values = Vec::with_capacity(types.len());
+        for &ty in types.iter() {
+            values.push(self.visit_type(self.db, ty)?);
+        }
+        Some(self.db.union(values))
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        types.iter().find_map(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut value_type = None;
+        for &ty in types.iter() {
+            let incoming = self.visit_type(self.db, ty);
+            merge_intersection_index_value(self.db, &mut value_type, incoming);
+        }
+        value_type
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
@@ -293,18 +362,37 @@ impl<R: TypeResolver> TypeVisitor for NumberIndexResolver<'_, R> {
         Some(element_type)
     }
 
-    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
-        Some(TypeId::UNKNOWN)
+    fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
+        let elements = self.db.tuple_list(crate::types::TupleListId(list_id));
+        let element_types: Vec<TypeId> = elements.iter().map(|element| element.type_id).collect();
+        Some(match element_types.as_slice() {
+            [] => TypeId::UNDEFINED,
+            [single] => *single,
+            _ => self.db.union(element_types),
+        })
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        types.iter().find_map(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        if types.is_empty() {
+            return None;
+        }
+
+        let mut values = Vec::with_capacity(types.len());
+        for &ty in types.iter() {
+            values.push(self.visit_type(self.db, ty)?);
+        }
+        Some(self.db.union(values))
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        types.first().and_then(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut value_type = None;
+        for &ty in types.iter() {
+            let incoming = self.visit_type(self.db, ty);
+            merge_intersection_index_value(self.db, &mut value_type, incoming);
+        }
+        value_type
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
@@ -350,34 +438,32 @@ struct ReadonlyChecker<'a> {
 }
 
 impl<'a> TypeVisitor for ReadonlyChecker<'a> {
-    type Output = bool;
+    type Output = Option<bool>;
 
     fn visit_intrinsic(&mut self, kind: crate::types::IntrinsicKind) -> Self::Output {
         // The `string` primitive has an implicit readonly number index signature
         // (you cannot assign to individual characters: `s[0] = "x"` is an error).
-        kind == crate::types::IntrinsicKind::String && matches!(self.kind, IndexKind::Number)
+        (kind == crate::types::IntrinsicKind::String && matches!(self.kind, IndexKind::Number))
+            .then_some(true)
     }
 
     fn visit_literal(&mut self, _value: &crate::LiteralValue) -> Self::Output {
-        false
+        None
     }
 
     fn visit_array(&mut self, _element_type: TypeId) -> Self::Output {
-        false // Arrays are mutable by default
+        matches!(self.kind, IndexKind::Number).then_some(false)
     }
 
     fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
-        false // Tuples are mutable by default
+        matches!(self.kind, IndexKind::Number).then_some(false)
     }
 
     fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
         match self.kind {
-            IndexKind::String => shape
-                .string_index
-                .as_ref()
-                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL && idx.readonly),
-            IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
+            IndexKind::String => shape.string_index_signature().map(|idx| idx.readonly),
+            IndexKind::Number => shape.number_index.as_ref().map(|idx| idx.readonly),
         }
     }
 
@@ -387,39 +473,38 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
             IndexKind::String => shape
                 .string_index
                 .as_ref()
-                .is_some_and(|idx| idx.key_type != TypeId::SYMBOL && idx.readonly),
-            IndexKind::Number => shape.number_index.as_ref().is_some_and(|idx| idx.readonly),
+                .filter(|idx| idx.key_type != TypeId::SYMBOL)
+                .map(|idx| idx.readonly),
+            IndexKind::Number => shape.number_index.as_ref().map(|idx| idx.readonly),
         }
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        // Union: any member being readonly makes it readonly
-        types.iter().any(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        if types.is_empty() {
+            return None;
+        }
+
+        let mut all_readonly = true;
+        for &ty in types.iter() {
+            all_readonly &= self.visit_type(self.db, ty)?;
+        }
+        Some(all_readonly)
     }
 
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
-        let types = self.db.type_list(crate::types::TypeListId(list_id));
-        // Intersection: all must be readonly
-        types.iter().all(|&t| self.visit_type(self.db, t))
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut readonly = None;
+        for &ty in types.iter() {
+            if let Some(incoming) = self.visit_type(self.db, ty) {
+                readonly = Some(readonly.unwrap_or(true) && incoming);
+            }
+        }
+        readonly
     }
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
-        // ReadonlyType makes all index signatures of the inner type readonly.
-        // For arrays and tuples (which have implicit number index signatures),
-        // ReadonlyType(Array|Tuple) has a readonly number index signature.
-        let has_index_sig = match self.db.lookup(inner_type) {
-            Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
-                matches!(self.kind, IndexKind::Number)
-            }
-            _ => false,
-        };
-        if has_index_sig {
-            return true;
-        }
-        // For other types (objects, callables), delegate to check their
-        // explicit index signature readonly flags.
-        self.visit_type(self.db, inner_type)
+        self.visit_type(self.db, inner_type).map(|_| true)
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
@@ -429,7 +514,7 @@ impl<'a> TypeVisitor for ReadonlyChecker<'a> {
     }
 
     fn default_output() -> Self::Output {
-        false
+        None
     }
 }
 
@@ -492,12 +577,19 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         }
     }
 
-    fn visit_tuple(&mut self, _list_id: u32) -> Self::Output {
+    fn visit_tuple(&mut self, list_id: u32) -> Self::Output {
+        let elements = self.db.tuple_list(crate::types::TupleListId(list_id));
+        let element_types: Vec<TypeId> = elements.iter().map(|element| element.type_id).collect();
+        let value_type = match element_types.as_slice() {
+            [] => TypeId::UNDEFINED,
+            [single] => *single,
+            _ => self.db.union(element_types),
+        };
         IndexInfo {
             string_index: None,
             number_index: Some(IndexSignature {
                 key_type: TypeId::NUMBER,
-                value_type: TypeId::UNKNOWN,
+                value_type,
                 readonly: false,
                 param_name: None,
             }),
@@ -520,21 +612,71 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
         info
     }
 
-    fn visit_union(&mut self, _list_id: u32) -> Self::Output {
-        // Complex logic, return empty for now
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut string_indices = Vec::with_capacity(types.len());
+        let mut number_indices = Vec::with_capacity(types.len());
+        let mut symbol_indices = Vec::with_capacity(types.len());
+
+        for &ty in types.iter() {
+            let info = self.visit_type(self.db, ty);
+            if let Some(sig) = info.string_index {
+                string_indices.push(sig);
+            }
+            if let Some(sig) = info.number_index {
+                number_indices.push(sig);
+            }
+            if let Some(sig) = info.symbol_index {
+                symbol_indices.push(sig);
+            }
+        }
+
         IndexInfo {
-            string_index: None,
-            number_index: None,
-            symbol_index: None,
+            string_index: merge_union_index_signatures(
+                self.db,
+                types.len(),
+                &string_indices,
+                TypeId::STRING,
+            ),
+            number_index: merge_union_index_signatures(
+                self.db,
+                types.len(),
+                &number_indices,
+                TypeId::NUMBER,
+            ),
+            symbol_index: merge_union_index_signatures(
+                self.db,
+                types.len(),
+                &symbol_indices,
+                TypeId::SYMBOL,
+            ),
         }
     }
 
-    fn visit_intersection(&mut self, _list_id: u32) -> Self::Output {
-        IndexInfo {
-            string_index: None,
-            number_index: None,
-            symbol_index: None,
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        let types = self.db.type_list(TypeListId(list_id));
+        let mut info = IndexInfo::default();
+
+        for &ty in types.iter() {
+            let member = self.visit_type(self.db, ty);
+            merge_intersection_index_signature(
+                self.db,
+                &mut info.string_index,
+                member.string_index,
+            );
+            merge_intersection_index_signature(
+                self.db,
+                &mut info.number_index,
+                member.number_index,
+            );
+            merge_intersection_index_signature(
+                self.db,
+                &mut info.symbol_index,
+                member.symbol_index,
+            );
         }
+
+        info
     }
 
     fn visit_lazy(&mut self, def_id: u32) -> Self::Output {
@@ -673,7 +815,7 @@ impl<'a, R: TypeResolver> IndexSignatureResolver<'a, R> {
     /// - `{ [x: string]: string }` with `IndexKind::String` → `false`
     pub fn is_readonly(&self, obj: TypeId, kind: IndexKind) -> bool {
         let mut visitor = ReadonlyChecker { db: self.db, kind };
-        visitor.visit_type(self.db, obj)
+        visitor.visit_type(self.db, obj).unwrap_or(false)
     }
 
     /// Get all index signatures from a type.

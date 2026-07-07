@@ -1,5 +1,6 @@
 use super::*;
 use crate::DefId;
+use crate::caches::db::QueryDatabase;
 use crate::intern::TypeInterner;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -191,6 +192,50 @@ fn mapped_record(db: &TypeInterner, key_type: TypeId, value_type: TypeId) -> Typ
         readonly_modifier: None,
         optional_modifier: None,
     })
+}
+
+fn object_with_index_slots(
+    db: &TypeInterner,
+    string_index: Option<(TypeId, bool)>,
+    number_index: Option<(TypeId, bool)>,
+    symbol_index: Option<(TypeId, bool)>,
+) -> TypeId {
+    let index_signature = |key_type, (value_type, readonly)| IndexSignature {
+        key_type,
+        value_type,
+        readonly,
+        param_name: None,
+    };
+
+    db.object_with_index(ObjectShape {
+        symbol_index: symbol_index.map(|slot| index_signature(TypeId::SYMBOL, slot)),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: string_index.map(|slot| index_signature(TypeId::STRING, slot)),
+        number_index: number_index.map(|slot| index_signature(TypeId::NUMBER, slot)),
+    })
+}
+
+fn assert_index_info_matches(actual: &IndexInfo, expected: &IndexInfo) {
+    fn assert_signature_matches(actual: Option<IndexSignature>, expected: Option<IndexSignature>) {
+        match (actual, expected) {
+            (Some(actual), Some(expected)) => {
+                assert_eq!(actual.key_type, expected.key_type);
+                assert_eq!(actual.value_type, expected.value_type);
+                assert_eq!(actual.readonly, expected.readonly);
+                assert_eq!(actual.param_name, expected.param_name);
+            }
+            (None, None) => {}
+            (actual, expected) => {
+                panic!("index signature mismatch: actual {actual:?}, expected {expected:?}")
+            }
+        }
+    }
+
+    assert_signature_matches(actual.string_index, expected.string_index);
+    assert_signature_matches(actual.number_index, expected.number_index);
+    assert_signature_matches(actual.symbol_index, expected.symbol_index);
 }
 
 #[test]
@@ -665,6 +710,151 @@ fn test_object_index_info_collection_includes_symbol_index() {
     assert_eq!(symbol_index.value_type, TypeId::BOOLEAN);
     assert_eq!(symbol_index.key_type, TypeId::SYMBOL);
     assert!(symbol_index.readonly);
+}
+
+#[test]
+fn test_union_index_info_requires_every_member_and_unions_values() {
+    let db = TypeInterner::new();
+    let left = object_with_index_slots(
+        &db,
+        Some((TypeId::NUMBER, false)),
+        Some((TypeId::STRING, true)),
+        Some((TypeId::BOOLEAN, false)),
+    );
+    let right = object_with_index_slots(
+        &db,
+        Some((TypeId::STRING, true)),
+        Some((TypeId::BOOLEAN, true)),
+        Some((TypeId::NUMBER, true)),
+    );
+    let union = db.union(vec![left, right]);
+    let expected_string = db.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    let expected_number = db.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
+    let expected_symbol = db.union(vec![TypeId::BOOLEAN, TypeId::NUMBER]);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_string_index(union), Some(expected_string));
+    assert_eq!(resolver.resolve_number_index(union), Some(expected_number));
+    assert_eq!(resolver.resolve_symbol_index(union), Some(expected_symbol));
+    assert!(resolver.has_index_signature(union, IndexKind::String));
+    assert!(resolver.has_index_signature(union, IndexKind::Number));
+    assert!(
+        !resolver.is_readonly(union, IndexKind::String),
+        "a union index signature is readonly only when every contributor is readonly"
+    );
+    assert!(resolver.is_readonly(union, IndexKind::Number));
+
+    let info = resolver.get_index_info(union);
+    let string_index = info.string_index.expect("string index should be present");
+    let number_index = info.number_index.expect("number index should be present");
+    let symbol_index = info.symbol_index.expect("symbol index should be present");
+    assert_eq!(string_index.value_type, expected_string);
+    assert_eq!(number_index.value_type, expected_number);
+    assert_eq!(symbol_index.value_type, expected_symbol);
+    assert_eq!(symbol_index.key_type, TypeId::SYMBOL);
+    assert!(!string_index.readonly);
+    assert!(number_index.readonly);
+    assert!(!symbol_index.readonly);
+}
+
+#[test]
+fn test_union_index_info_drops_slots_missing_from_any_member() {
+    let db = TypeInterner::new();
+    let indexed = object_with_index_slots(
+        &db,
+        Some((TypeId::NUMBER, false)),
+        None,
+        Some((TypeId::BOOLEAN, false)),
+    );
+    let plain = db.object(vec![]);
+    let union = db.union(vec![indexed, plain]);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_string_index(union), None);
+    assert_eq!(resolver.resolve_number_index(union), None);
+    assert_eq!(resolver.resolve_symbol_index(union), None);
+    assert!(!resolver.has_index_signature(union, IndexKind::String));
+    assert!(!resolver.has_index_signature(union, IndexKind::Number));
+    assert!(!resolver.is_readonly(union, IndexKind::String));
+
+    let info = resolver.get_index_info(union);
+    assert_eq!(info, IndexInfo::default());
+}
+
+#[test]
+fn test_intersection_index_info_intersects_values_per_key() {
+    let db = TypeInterner::new();
+    let left = object_with_index_slots(
+        &db,
+        Some((TypeId::NUMBER, false)),
+        Some((TypeId::STRING, false)),
+        None,
+    );
+    let middle = db.object(vec![]);
+    let right = object_with_index_slots(
+        &db,
+        Some((TypeId::BOOLEAN, true)),
+        None,
+        Some((TypeId::NUMBER, true)),
+    );
+    let intersection = db.intersect_types_raw(vec![left, middle, right]);
+    let expected_string = db.intersect_types_raw2(TypeId::NUMBER, TypeId::BOOLEAN);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(
+        resolver.resolve_string_index(intersection),
+        Some(expected_string)
+    );
+    assert_eq!(
+        resolver.resolve_number_index(intersection),
+        Some(TypeId::STRING)
+    );
+    assert_eq!(
+        resolver.resolve_symbol_index(intersection),
+        Some(TypeId::NUMBER)
+    );
+    assert!(!resolver.is_readonly(intersection, IndexKind::String));
+    assert!(!resolver.is_readonly(intersection, IndexKind::Number));
+
+    let info = resolver.get_index_info(intersection);
+    let string_index = info.string_index.expect("string index should be present");
+    let number_index = info.number_index.expect("number index should be present");
+    let symbol_index = info.symbol_index.expect("symbol index should be present");
+    assert_eq!(string_index.value_type, expected_string);
+    assert_eq!(number_index.value_type, TypeId::STRING);
+    assert_eq!(symbol_index.value_type, TypeId::NUMBER);
+    assert!(!string_index.readonly);
+    assert!(!number_index.readonly);
+    assert!(symbol_index.readonly);
+}
+
+#[test]
+fn test_resolver_get_index_info_matches_type_database_for_composites() {
+    let db = TypeInterner::new();
+    let first = object_with_index_slots(
+        &db,
+        Some((TypeId::NUMBER, false)),
+        Some((TypeId::STRING, true)),
+        Some((TypeId::BOOLEAN, true)),
+    );
+    let second = object_with_index_slots(
+        &db,
+        Some((TypeId::STRING, true)),
+        Some((TypeId::BOOLEAN, true)),
+        Some((TypeId::NUMBER, false)),
+    );
+    let plain = db.object(vec![]);
+    let union = db.union(vec![first, second]);
+    let partial_union = db.union(vec![first, plain]);
+    let intersection = db.intersect_types_raw(vec![first, plain, second]);
+    let resolver = IndexSignatureResolver::new(&db);
+
+    for composite in [union, partial_union, intersection] {
+        assert_index_info_matches(
+            &resolver.get_index_info(composite),
+            &db.get_index_signatures(composite),
+        );
+    }
 }
 
 /// ReadonlyType(Tuple) should have a readonly number index signature.
