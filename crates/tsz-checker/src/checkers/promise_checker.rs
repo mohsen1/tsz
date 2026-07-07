@@ -629,20 +629,13 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         check_this_context: bool,
     ) -> ThenableAwaitInfo {
-        use crate::query_boundaries::property_access::resolve_property_access;
-
         let resolved_type = self.evaluate_type_with_env(type_id);
         let receiver_type = if resolved_type == TypeId::ERROR || resolved_type == TypeId::ANY {
             type_id
         } else {
             resolved_type
         };
-        let Some(then_type) = resolve_property_access(
-            self.ctx.types,
-            receiver_type,
-            self.ctx.types.intern_string("then"),
-        )
-        .success_type() else {
+        let Some(then_type) = query::thenable_property_type(self.ctx.types, receiver_type) else {
             return ThenableAwaitInfo::default();
         };
 
@@ -666,15 +659,10 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        // Call signatures of `then`. A `then` declared as a *method* (the
-        // object-literal and `type`-alias thenable forms) lowers to a bare
-        // `Function` shape rather than a `Callable`, which `get_call_signatures`
-        // alone misses; `member_call_signatures` recovers either form so a
-        // structural thenable unwraps regardless of how `then` was declared —
-        // mirroring tsc's `getAwaitedType`, which inspects `then`/`onfulfilled`
-        // structurally, not by declaration form.
-        let sigs =
-            crate::query_boundaries::class::member_call_signatures(self.ctx.types, then_type);
+        // Call signatures of `then`. The promise boundary recovers both
+        // callable and bare-function method forms, mirroring tsc's
+        // structural `then`/`onfulfilled` probe.
+        let sigs = query::thenable_signature_surfaces(self.ctx.types, then_type);
         if sigs.is_empty() {
             return ThenableAwaitInfo::default();
         }
@@ -682,7 +670,7 @@ impl<'a> CheckerState<'a> {
         let mut callback_value_types = Vec::new();
         let mut rejected_this_type = None;
         for sig in &sigs {
-            if let Some(expected_this) = sig.this_type
+            if let Some(expected_this) = sig.this_type()
                 && expected_this != TypeId::VOID
                 && !self
                     .call_arg_relation_outcome(type_id, expected_this)
@@ -693,8 +681,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
-            if let Some(onfulfilled_type) = sig.params.first().map(|p| p.type_id)
-                && let Some(value_type) = self.extract_first_param_from_callback(onfulfilled_type)
+            if let Some(onfulfilled_type) = sig.onfulfilled_type()
+                && let Some(value_type) =
+                    query::thenable_callback_value_type(self.ctx.types, onfulfilled_type)
             {
                 callback_value_types.push(value_type);
             }
@@ -708,33 +697,6 @@ impl<'a> CheckerState<'a> {
             rejected_this_type,
             has_callable_then: true,
         }
-    }
-
-    /// Extract the first parameter type from a callable/function type,
-    /// handling unions of `(fn | null | undefined)`.
-    fn extract_first_param_from_callback(&self, type_id: TypeId) -> Option<TypeId> {
-        // Direct Callable
-        if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, type_id) {
-            return sigs.first()?.params.first().map(|p| p.type_id);
-        }
-        // Direct Function
-        if let Some(shape) = query::function_shape_for_type(self.ctx.types, type_id) {
-            return shape.params.first().map(|p| p.type_id);
-        }
-        // Union: find first callable/function member
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            for member in &members {
-                if let Some(sigs) = query::call_signatures_for_type(self.ctx.types, *member)
-                    && let Some(first) = sigs.first()
-                {
-                    return first.params.first().map(|p| p.type_id);
-                }
-                if let Some(shape) = query::function_shape_for_type(self.ctx.types, *member) {
-                    return shape.params.first().map(|p| p.type_id);
-                }
-            }
-        }
-        None
     }
 
     /// Extract type argument from a Promise-like base type.

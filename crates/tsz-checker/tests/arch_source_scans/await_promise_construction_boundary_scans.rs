@@ -104,7 +104,7 @@ fn promise_checker_routes_await_union_construction_through_boundary() {
     scan_slice_for_patterns(
         PROMISE_CHECKER,
         "fn extract_awaited_type_from_valid_thenable(",
-        "/// Extract the first parameter type from a callable/function type,",
+        "pub(crate) fn promise_like_type_argument_from_base(",
         FORBIDDEN_PATTERNS,
         &mut violations,
     );

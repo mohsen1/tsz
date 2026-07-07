@@ -124,6 +124,9 @@
 //! - `awaited_assignability_normalization_boundary_scans`: `Awaited<T>`
 //!   assignability normalization routes solver shape reads and rebuilt shells
 //!   through `query_boundaries::checkers::promise`.
+//! - `thenable_surface_boundary_scans`: structural thenable extraction routes
+//!   `then` property, signature, and callback payload reads through
+//!   `query_boundaries::checkers::promise`.
 //! - `call_candidate_spread_surface_construction_boundary_scans`: call
 //!   candidate collection routes spread markers, sensitive placeholders, tuple
 //!   optionality, and callable rest-shape reads through
@@ -304,6 +307,8 @@ mod signature_builder_surface_boundary_scans;
 mod spelling_suggestion_gateway_scans;
 #[path = "arch_source_scans/strict_bind_call_apply_construction_boundary_scans.rs"]
 mod strict_bind_call_apply_construction_boundary_scans;
+#[path = "arch_source_scans/thenable_surface_boundary_scans.rs"]
+mod thenable_surface_boundary_scans;
 #[path = "arch_source_scans/type_checking_surface_construction_boundary_scans.rs"]
 mod type_checking_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_environment_surface_construction_boundary_scans.rs"]
