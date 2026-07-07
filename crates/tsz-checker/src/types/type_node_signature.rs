@@ -1,6 +1,8 @@
 //! Signature helpers for `TypeNodeChecker`.
 
 use super::type_node::TypeNodeChecker;
+use crate::query_boundaries::signature_building as signature_building_boundary;
+use crate::query_boundaries::type_construction;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -11,9 +13,7 @@ impl TypeNodeChecker<'_, '_> {
         &mut self,
         sig: &tsz_parser::parser::node::SignatureData,
     ) -> (Vec<tsz_solver::ParamInfo>, Option<TypeId>) {
-        use tsz_solver::ParamInfo;
-
-        let mut params: Vec<ParamInfo> = Vec::new();
+        let mut params: Vec<tsz_solver::ParamInfo> = Vec::new();
         let mut this_type = None;
 
         if let Some(ref param_list) = sig.parameters {
@@ -64,16 +64,19 @@ impl TypeNodeChecker<'_, '_> {
                         self.ctx.types,
                         type_id,
                     ) {
-                    self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
+                    type_construction::type_node_union(
+                        self.ctx.types,
+                        vec![type_id, TypeId::UNDEFINED],
+                    )
                 } else {
                     type_id
                 };
-                params.push(ParamInfo {
-                    name: Some(self.ctx.types.intern_string(&name)),
-                    type_id: sig_type_id,
+                params.push(signature_building_boundary::param_info(
+                    Some(self.ctx.types.intern_string(&name)),
+                    sig_type_id,
                     optional,
                     rest,
-                });
+                ));
             }
         }
 

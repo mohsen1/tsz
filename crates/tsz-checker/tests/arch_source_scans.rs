@@ -267,6 +267,8 @@ mod type_guard_walk_state;
 mod type_node_annotation_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_node_fallback_construction_boundary_scans.rs"]
 mod type_node_fallback_construction_boundary_scans;
+#[path = "arch_source_scans/type_node_signature_helper_surface_construction_boundary_scans.rs"]
+mod type_node_signature_helper_surface_construction_boundary_scans;
 #[path = "arch_source_scans/type_query_construction_boundary_scans.rs"]
 mod type_query_construction_boundary_scans;
 #[path = "arch_source_scans/type_reference_depth_session_scans.rs"]
