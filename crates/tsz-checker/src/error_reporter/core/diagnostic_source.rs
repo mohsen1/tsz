@@ -1289,9 +1289,11 @@ impl<'a> CheckerState<'a> {
                         .params
                         .iter()
                         .zip(target_shape.params.iter())
-                        .map(|(value_param, target_param)| tsz_solver::ParamInfo {
-                            type_id: target_param.type_id,
-                            ..*value_param
+                        .map(|(value_param, target_param)| {
+                            diagnostic_query::display_param_with_type(
+                                value_param,
+                                target_param.type_id,
+                            )
                         })
                         .collect();
                     let merged = diagnostic_query::function_type_with_params_replaced(

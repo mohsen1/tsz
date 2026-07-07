@@ -137,20 +137,13 @@ impl<'a> CheckerState<'a> {
         ty: TypeId,
     ) -> Option<tsz_solver::CallSignature> {
         let ty = self.callable_type_after_display_evaluation(ty)?;
-        if let Some(shape) =
-            crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
-        {
-            return Some(tsz_solver::CallSignature {
-                type_params: shape.type_params.clone(),
-                params: shape.params.clone(),
-                this_type: shape.this_type,
-                return_type: shape.return_type,
-                type_predicate: shape.type_predicate,
-                is_method: shape.is_method,
-            });
+        if let Some(shape) = diagnostic_query::function_shape(self.ctx.types, ty) {
+            return Some(
+                diagnostic_query::call_signature_from_function_shape_for_display(shape.as_ref()),
+            );
         }
 
-        let shape = crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)?;
+        let shape = diagnostic_query::callable_shape_for_type(self.ctx.types, ty)?;
         if shape.construct_signatures.is_empty() && shape.call_signatures.len() == 1 {
             Some(shape.call_signatures[0].clone())
         } else {

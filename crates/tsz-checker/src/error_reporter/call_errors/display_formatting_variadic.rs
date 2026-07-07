@@ -1,8 +1,8 @@
 //! Variadic tuple display helpers for call diagnostics.
 
-use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::{common as query_common, diagnostics as diagnostic_query};
 use crate::state::CheckerState;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Structural display for an *effective rest slice*: a tuple whose first
@@ -154,19 +154,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let display_elements: Vec<_> = elements
-            .iter()
-            .map(|element| TupleElement {
-                type_id: if element.rest {
-                    element.type_id
-                } else {
-                    TypeId::UNKNOWN
-                },
-                name: element.name,
-                optional: element.optional,
-                rest: element.rest,
-            })
-            .collect();
+        let display_elements =
+            diagnostic_query::tuple_elements_with_unknown_fixed_display(&elements);
         Some(self.format_tuple_element_display(&display_elements, false))
     }
 }

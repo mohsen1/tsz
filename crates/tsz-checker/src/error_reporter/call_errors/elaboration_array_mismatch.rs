@@ -230,18 +230,10 @@ impl<'a> CheckerState<'a> {
                         })
                 };
 
-                if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(
-                    self.ctx.types,
-                    callee_type,
-                ) {
-                    let sig = tsz_solver::CallSignature {
-                        type_params: shape.type_params.clone(),
-                        params: shape.params.clone(),
-                        this_type: shape.this_type,
-                        return_type: shape.return_type,
-                        type_predicate: shape.type_predicate,
-                        is_method: shape.is_method,
-                    };
+                if let Some(shape) = diagnostic_query::function_shape(self.ctx.types, callee_type) {
+                    let sig = diagnostic_query::call_signature_from_function_shape_for_display(
+                        shape.as_ref(),
+                    );
                     if raw_param_contains_type_params(&sig) {
                         return true;
                     }
