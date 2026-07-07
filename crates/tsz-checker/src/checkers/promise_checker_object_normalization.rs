@@ -139,12 +139,13 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .types
                 .factory()
-                .object_with_index(tsz_solver::ObjectShape {
-                    properties: evaluated_properties,
-                    string_index: evaluated_string_index,
-                    number_index: evaluated_number_index,
-                    ..(*shape).clone()
-                })
+                .object_with_shape_metadata_and_index_signatures(
+                    evaluated_properties,
+                    &shape,
+                    evaluated_string_index,
+                    evaluated_number_index,
+                    shape.symbol_index,
+                )
         })
     }
     pub(crate) fn evaluate_awaited_application_for_assignability(

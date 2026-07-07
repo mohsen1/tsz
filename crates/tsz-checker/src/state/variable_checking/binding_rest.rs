@@ -331,18 +331,10 @@ impl<'a> CheckerState<'a> {
         // Preserve index signatures and object flags for object-rest types.
         // Rest results are structural copies, so they must not retain the
         // source type's nominal symbol (e.g. class identity).
-        if shape.string_index.is_some() || shape.number_index.is_some() {
-            let mut rest_shape = shape.as_ref().clone();
-            rest_shape.properties = remaining_props;
-            rest_shape.symbol = None;
-            self.ctx.types.factory().object_with_index(rest_shape)
-        } else {
-            self.ctx.types.factory().object_with_flags_and_symbol(
-                remaining_props,
-                shape.flags,
-                None,
-            )
-        }
+        self.ctx
+            .types
+            .factory()
+            .structural_object_with_shape_metadata(remaining_props, &shape)
     }
 
     /// Rest bindings from tuple members should produce an array type.

@@ -5,7 +5,7 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
     fn infer_descriptor_parameter_type_in_current_checker(
@@ -646,7 +646,7 @@ impl<'a> CheckerState<'a> {
                         .map(|shape| shape.as_ref().clone())
                 });
         if let Some(shape) = base_shape {
-            let mut merged_props = shape.properties;
+            let mut merged_props = shape.properties.clone();
             for prop in props {
                 if let Some(existing) = merged_props
                     .iter_mut()
@@ -658,25 +658,11 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if shape.string_index.is_some()
-                || shape.number_index.is_some()
-                || shape.symbol_index.is_some()
-            {
-                return self.ctx.types.factory().object_with_index(ObjectShape {
-                    flags: shape.flags,
-                    properties: merged_props,
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol_index: shape.symbol_index,
-                    symbol: shape.symbol,
-                });
-            }
-
-            return self.ctx.types.factory().object_with_flags_and_symbol(
-                merged_props,
-                shape.flags,
-                shape.symbol,
-            );
+            return self
+                .ctx
+                .types
+                .factory()
+                .object_with_shape_metadata(merged_props, &shape);
         }
 
         let define_property_type = self.ctx.types.factory().object(props);

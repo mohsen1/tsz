@@ -19,7 +19,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallableShape, ObjectShape, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{CallableShape, PropertyInfo, TypeId, Visibility};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
     types: &dyn tsz_solver::construction::TypeDatabase,
@@ -197,28 +197,12 @@ impl JsExportSurface {
             merged_props.extend(overlay_by_name.into_values());
             Self::normalize_property_declaration_order(&mut merged_props);
 
-            let merged_shape = ObjectShape {
-                flags: shape.flags,
-                properties: merged_props,
-                string_index: shape.string_index,
-                number_index: shape.number_index,
-                symbol_index: shape.symbol_index,
-                symbol: shape.symbol,
-            };
-
             return Some(
-                if shape.string_index.is_some()
-                    || shape.number_index.is_some()
-                    || shape.symbol_index.is_some()
-                {
-                    checker.ctx.types.factory().object_with_index(merged_shape)
-                } else {
-                    checker.ctx.types.factory().object_with_flags_and_symbol(
-                        merged_shape.properties,
-                        merged_shape.flags,
-                        merged_shape.symbol,
-                    )
-                },
+                checker
+                    .ctx
+                    .types
+                    .factory()
+                    .object_with_shape_metadata(merged_props, &shape),
             );
         }
 

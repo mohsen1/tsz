@@ -14,6 +14,8 @@ const OBJECT_FLAG_BOUNDARIES: &[&str] = &[
     "src/query_boundaries/lib_augmentations.rs",
 ];
 
+const OBJECT_FLAG_FACTORY_BOUNDARIES: &[&str] = &["src/query_boundaries/type_construction.rs"];
+
 const RAW_OBJECT_FLAG_PATTERNS: &[&str] = &[
     "ObjectFlags::",
     "tsz_solver::ObjectFlags",
@@ -21,8 +23,53 @@ const RAW_OBJECT_FLAG_PATTERNS: &[&str] = &[
     "query_boundaries::common::ObjectFlags",
 ];
 
+const RAW_OBJECT_FLAG_FACTORY_PATTERNS: &[&str] = &["object_with_flags_and_symbol("];
+
 fn checker_src_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+#[test]
+fn production_object_shape_rebuilds_avoid_raw_flag_factory() {
+    let src_root = checker_src_root();
+    let mut violations = Vec::new();
+
+    for path in rust_sources_under(&src_root) {
+        let relative_path = format!(
+            "src/{}",
+            path.strip_prefix(&src_root)
+                .expect("scanned path is under the src root")
+                .to_string_lossy()
+                .replace('\\', "/")
+        );
+        if OBJECT_FLAG_FACTORY_BOUNDARIES.contains(&relative_path.as_str()) {
+            continue;
+        }
+
+        let source = fs::read_to_string(&path).expect("failed to read Rust source");
+        for (line_index, line) in source.lines().enumerate() {
+            if is_comment_or_doc_line(line) {
+                continue;
+            }
+            for pattern in RAW_OBJECT_FLAG_FACTORY_PATTERNS {
+                if line.contains(pattern) {
+                    violations.push(format!(
+                        "{}:{} calls raw object flag factory `{}`",
+                        relative_path,
+                        line_index + 1,
+                        pattern
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "checker production code should rebuild object metadata through named \
+         factory/query-boundary helpers instead of passing raw flags:\n{}",
+        violations.join("\n")
+    );
 }
 
 fn rust_sources_under(dir: &Path) -> Vec<PathBuf> {
