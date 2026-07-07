@@ -280,7 +280,12 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn type_alias_type_node(&self, sym_id: SymbolId) -> Option<NodeIndex> {
+    /// The body type-node of the type alias declared by `sym_id`, if any.
+    ///
+    /// Returns `None` when the symbol is not a type alias. Shared with
+    /// diagnostic rendering (`error_reporter`), which recovers a mapped type's
+    /// key constraint from the alias declaration.
+    pub(crate) fn type_alias_type_node(&self, sym_id: SymbolId) -> Option<NodeIndex> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return None;

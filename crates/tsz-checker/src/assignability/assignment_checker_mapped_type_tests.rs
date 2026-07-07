@@ -400,3 +400,48 @@ function test<T, K extends keyof T>(
         "non-nullish narrowed indexed access should remain assignable to its indexed-access target; got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn mapped_enum_key_member_display_survives_wrapper_alias() {
+    // Adjacent case: a wrapper alias (`type N = M`) over the enum mapped type
+    // must still recover the `[E.B]` member reference. The wrapper resolves to
+    // the same eagerly-instantiated object, so the enum origin is recovered
+    // from the underlying mapped alias declaration.
+    let diagnostics = super::diagnostics_for(
+        r#"
+enum E { A = "a", B = "b" }
+type M = { [K in E]: number };
+type N = M;
+const bad: N = { a: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text.contains("Property '[E.B]' is missing"),
+        "wrapper alias over an enum mapped type still renders the member reference, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_enum_key_member_display_for_inline_anonymous_mapped_type() {
+    // Adjacent case: an inline (un-aliased) mapped type stays deferred as a
+    // `Mapped` type, so the enum key constraint is recovered directly from the
+    // type — the member reference must render identically to the aliased form.
+    let diagnostics = super::diagnostics_for(
+        r#"
+enum E { A = "a", B = "b" }
+const bad: { [K in E]: number } = { a: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text.contains("Property '[E.B]' is missing"),
+        "inline anonymous enum mapped type renders the member reference, got: {diag:?}"
+    );
+}
