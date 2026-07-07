@@ -132,6 +132,55 @@ const r: string = h((x) => { const s: string = x; return x })
     );
 }
 
+/// A direct deferred indexed-access source must match the indexed-access arm of
+/// a union target before the naked fallback can capture it. This is the generic
+/// form of tsc's `inferFromTypes` indexed-access arm: infer pairwise from object
+/// and index (`Source` -> `Obj`, `Prop` -> `Key`) even when the parameter type
+/// is `Obj[Key] | Fallback`.
+#[test]
+fn issue_14261_union_target_prefers_indexed_access_arm_for_generic_source() {
+    let c = codes(
+        r#"
+declare function capture<Obj, Key extends keyof Obj, Fallback>(
+  value: Obj[Key] | Fallback
+): Obj[Key]
+
+function use<Source, Prop extends keyof Source>(
+  value: Source[Prop],
+): Source[Prop] {
+  return capture(value)
+}
+"#,
+    );
+    assert!(
+        c.is_empty(),
+        "deferred indexed-access arm must infer `Obj = Source` and `Key = Prop`; got {c:?}"
+    );
+}
+
+/// Sibling `keyof` form: a deferred `keyof Source` source should match a
+/// `keyof Obj` union arm before the naked fallback.
+#[test]
+fn issue_14261_union_target_prefers_keyof_arm_for_generic_source() {
+    let c = codes(
+        r#"
+declare function capture<Obj, Fallback>(
+  value: keyof Obj | Fallback
+): keyof Obj
+
+function use<Source>(
+  value: keyof Source,
+): keyof Source {
+  return capture(value)
+}
+"#,
+    );
+    assert!(
+        c.is_empty(),
+        "deferred keyof arm must infer `Obj = Source` before fallback; got {c:?}"
+    );
+}
+
 /// A direct function parameter (no indexed access) already worked; pin it so the
 /// fix does not perturb the baseline path.
 #[test]
