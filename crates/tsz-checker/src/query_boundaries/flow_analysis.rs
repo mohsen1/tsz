@@ -1,8 +1,8 @@
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
-use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
+use tsz_solver::{CallSignature, PropertyInfo, TypeId};
 
 use super::{
     assignability::{RelationFlags, RelationOutcome},
@@ -37,6 +37,20 @@ pub(crate) fn array_type(db: &dyn QueryDatabase, element: TypeId) -> TypeId {
 
 pub(crate) fn empty_object_type(db: &dyn QueryDatabase) -> TypeId {
     db.object(Vec::new())
+}
+
+pub(crate) fn object_type_from_properties(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn call_only_callable_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+) -> TypeId {
+    super::construct_signatures::call_only_callable_type(db, call_signatures)
 }
 
 pub(crate) fn tuple_type(
