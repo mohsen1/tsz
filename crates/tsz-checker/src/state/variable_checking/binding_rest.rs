@@ -3,6 +3,7 @@
 //! Handles `{ a, ...rest } = obj` and `[a, ...rest] = arr` patterns,
 //! computing the rest type by omitting named sibling properties.
 
+use crate::query_boundaries::binding_patterns as binding_construction;
 use crate::query_boundaries::state::checking as query;
 use crate::query_boundaries::type_checking_utilities;
 use crate::state::CheckerState;
@@ -118,18 +119,13 @@ impl<'a> CheckerState<'a> {
             if (!string_keys.is_empty() || !computed_key_type_ids.is_empty())
                 && let Some(omit_type) = omit_type
             {
-                let factory = self.ctx.types.factory();
-                let mut key_args: Vec<TypeId> = string_keys
-                    .iter()
-                    .map(|n| factory.literal_string(n))
-                    .collect();
-                key_args.extend_from_slice(&computed_key_type_ids);
-                let key_arg = if key_args.len() == 1 {
-                    key_args[0]
-                } else {
-                    factory.union(key_args)
-                };
-                return factory.application(omit_type, vec![parent_type, key_arg]);
+                return binding_construction::binding_rest_omit_application(
+                    self.ctx.types,
+                    omit_type,
+                    parent_type,
+                    &string_keys,
+                    &computed_key_type_ids,
+                );
             }
             return parent_type;
         }
@@ -149,7 +145,7 @@ impl<'a> CheckerState<'a> {
             return if rest_types.len() == 1 {
                 rest_types[0]
             } else {
-                self.ctx.types.factory().union(rest_types)
+                binding_construction::binding_pattern_member_union_type(self.ctx.types, rest_types)
             };
         }
 
@@ -322,7 +318,7 @@ impl<'a> CheckerState<'a> {
             return if !remaining_props.is_empty()
                 || query::is_object_like_type(self.ctx.types, type_id)
             {
-                self.ctx.types.factory().object(remaining_props)
+                binding_construction::binding_pattern_object_type(self.ctx.types, remaining_props)
             } else {
                 type_id
             };
@@ -345,7 +341,7 @@ impl<'a> CheckerState<'a> {
         if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
             tuple_member_type
         } else {
-            self.ctx.types.factory().array(tuple_member_type)
+            binding_construction::binding_rest_array_type(self.ctx.types, tuple_member_type)
         }
     }
 
@@ -374,13 +370,13 @@ impl<'a> CheckerState<'a> {
             return if let Some(pos) = rest_pos {
                 self.rest_binding_array_type(elements[pos].type_id)
             } else {
-                self.ctx.types.factory().tuple(Vec::new())
+                binding_construction::binding_pattern_tuple_type(self.ctx.types, Vec::new())
             };
         }
-        self.ctx
-            .types
-            .factory()
-            .tuple(elements[rest_index..].to_vec())
+        binding_construction::binding_pattern_tuple_type(
+            self.ctx.types,
+            elements[rest_index..].to_vec(),
+        )
     }
 
     /// Compute the `...rest` binding type when the destructured source is a
@@ -422,7 +418,7 @@ impl<'a> CheckerState<'a> {
             return if slices.len() == 1 {
                 slices[0]
             } else {
-                self.ctx.types.factory().union(slices)
+                binding_construction::binding_pattern_member_union_type(self.ctx.types, slices)
             };
         }
         // All-array-like members distribute numeric indexed access; a
@@ -433,10 +429,10 @@ impl<'a> CheckerState<'a> {
         if saw_non_array_like {
             let iterated = self.for_of_element_type(parent_type, false);
             if iterated != TypeId::ANY && iterated != TypeId::ERROR {
-                return self.ctx.types.factory().array(iterated);
+                return binding_construction::binding_rest_array_type(self.ctx.types, iterated);
             }
         }
         let element_type = self.get_element_access_type(parent_type, TypeId::NUMBER, None);
-        self.ctx.types.factory().array(element_type)
+        binding_construction::binding_rest_array_type(self.ctx.types, element_type)
     }
 }

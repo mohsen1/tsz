@@ -957,6 +957,31 @@ function f(obj: Obj) {
 }
 
 #[test]
+fn test_object_rest_preserves_string_index_signature() {
+    let source = r#"
+interface Bag {
+    keep: number;
+    label: string;
+    [key: string]: string | number;
+}
+declare const bag: Bag;
+const { keep, ...rest } = bag;
+const value: string | number = rest["dynamic"];
+const wrong: boolean = rest["dynamic"];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        has_diagnostic_where(&diagnostics, |d| {
+            d.code == 2322
+                && d.message_text.contains("string | number")
+                && d.message_text.contains("boolean")
+        }),
+        "Expected object-rest copy to preserve the string index signature, got diagnostics: {:?}",
+        diagnostic_code_messages(&diagnostics)
+    );
+}
+
+#[test]
 fn test_generic_rest_spread_preserves_type_parameter() {
     // When a generic function destructures `{ a, ...rest } = obj` where `obj: T`,
     // and returns `{ ...rest, b: a }`, the return type must preserve T's identity
