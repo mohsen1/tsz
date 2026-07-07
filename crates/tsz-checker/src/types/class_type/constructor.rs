@@ -11,7 +11,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, IndexSignature, PropertyInfo, TypeId};
+use tsz_solver::{CallSignature, IndexSignature, PropertyInfo, TypeId};
 
 use super::can_skip_base_instantiation;
 
@@ -268,7 +268,6 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
         apply_module_augmentations: bool,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
         let (mut class_type_params, mut type_param_updates) =
             self.push_type_parameters(&class.type_parameters);
@@ -421,13 +420,13 @@ impl<'a> CheckerState<'a> {
                         if !inst_prop_names.insert(name_atom) {
                             continue;
                         }
-                        inst_props.push(PropertyInfo {
-                            optional: prop.question_token,
-                            readonly: self.has_readonly_modifier(&prop.modifiers),
-                            visibility: self.get_member_visibility(&prop.modifiers, prop.name),
-                            parent_id: current_sym,
-                            ..PropertyInfo::new(name_atom, type_id)
-                        });
+                        inst_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, type_id)
+                                .optional(prop.question_token)
+                                .readonly(self.has_readonly_modifier(&prop.modifiers))
+                                .visibility(self.get_member_visibility(&prop.modifiers, prop.name))
+                                .parent(current_sym),
+                        ));
                     }
                     k if k == syntax_kind_ext::CONSTRUCTOR => {
                         let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
@@ -460,13 +459,15 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 TypeId::ANY
                             };
-                            inst_props.push(PropertyInfo {
-                                optional: param.question_token,
-                                readonly: self.has_readonly_modifier(&param.modifiers),
-                                visibility: self.get_visibility_from_modifiers(&param.modifiers),
-                                parent_id: current_sym,
-                                ..PropertyInfo::new(name_atom, type_id)
-                            });
+                            inst_props.push(class_type::class_member_property(
+                                class_type::ClassMemberProperty::new(name_atom, type_id)
+                                    .optional(param.question_token)
+                                    .readonly(self.has_readonly_modifier(&param.modifiers))
+                                    .visibility(
+                                        self.get_visibility_from_modifiers(&param.modifiers),
+                                    )
+                                    .parent(current_sym),
+                            ));
                         }
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -494,29 +495,25 @@ impl<'a> CheckerState<'a> {
                         );
                         let (return_type, type_predicate) = ret_pred;
                         self.pop_type_parameters(type_param_updates);
-                        let callable_type = factory.callable(CallableShape {
-                            call_signatures: vec![CallSignature {
+                        let callable_type = class_type::class_method_callable_type(
+                            self.ctx.types,
+                            vec![class_type::class_method_call_signature(
                                 type_params,
                                 params,
                                 this_type,
                                 return_type,
                                 type_predicate,
-                                is_method: true,
-                            }],
-                            construct_signatures: Vec::new(),
-                            properties: Vec::new(),
-                            string_index: None,
-                            number_index: None,
-                            symbol: None,
-                            is_abstract: false,
-                        });
-                        inst_props.push(PropertyInfo {
-                            optional: method.question_token,
-                            is_method: true,
-                            visibility: self.get_member_visibility(&method.modifiers, method.name),
-                            parent_id: current_sym,
-                            ..PropertyInfo::new(name_atom, callable_type)
-                        });
+                            )],
+                        );
+                        inst_props.push(class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, callable_type)
+                                .optional(method.question_token)
+                                .method(false)
+                                .visibility(
+                                    self.get_member_visibility(&method.modifiers, method.name),
+                                )
+                                .parent(current_sym),
+                        ));
                     }
                     _ => {}
                 }
@@ -524,8 +521,7 @@ impl<'a> CheckerState<'a> {
             if inst_props.is_empty() {
                 TypeId::ANY
             } else {
-                let factory = self.ctx.types.factory();
-                factory.object(inst_props)
+                class_type::class_member_object_type(self.ctx.types, inst_props)
             }
         };
 
@@ -538,16 +534,11 @@ impl<'a> CheckerState<'a> {
         // instance snapshot, so generic inference can match construct
         // constraints (`make<P>(x: { new(): { props: P } })` infers `P`) and
         // `return this` from static methods stays constructable (TS2351).
-        let patched_return_type = match rough_self_instance_ref {
-            Some(self_ref)
-                if rough_instance_return_type != TypeId::ANY
-                    && rough_instance_return_type != TypeId::ERROR =>
-            {
-                factory.intersection2(self_ref, rough_instance_return_type)
-            }
-            Some(self_ref) => self_ref,
-            None => rough_instance_return_type,
-        };
+        let patched_return_type = class_type::rough_class_instance_return_type(
+            self.ctx.types,
+            rough_self_instance_ref,
+            rough_instance_return_type,
+        );
         for sig in &mut rough_construct_signatures {
             sig.return_type = patched_return_type;
         }
@@ -640,13 +631,13 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
-                                extra_property: Some(PropertyInfo {
-                                    optional: prop.question_token,
-                                    readonly,
-                                    visibility,
-                                    parent_id: current_sym,
-                                    ..PropertyInfo::new(name_atom, TypeId::ANY)
-                                }),
+                                extra_property: Some(class_type::class_member_property(
+                                    class_type::ClassMemberProperty::new(name_atom, TypeId::ANY)
+                                        .optional(prop.question_token)
+                                        .readonly(readonly)
+                                        .visibility(visibility)
+                                        .parent(current_sym),
+                                )),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
                                 construct_signatures: &rough_construct_signatures,
@@ -752,13 +743,13 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
-                                extra_property: Some(PropertyInfo {
-                                    optional: prop.question_token,
-                                    readonly,
-                                    visibility,
-                                    parent_id: current_sym,
-                                    ..PropertyInfo::new(name_atom, TypeId::ANY)
-                                }),
+                                extra_property: Some(class_type::class_member_property(
+                                    class_type::ClassMemberProperty::new(name_atom, TypeId::ANY)
+                                        .optional(prop.question_token)
+                                        .readonly(readonly)
+                                        .visibility(visibility)
+                                        .parent(current_sym),
+                                )),
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
                                 construct_signatures: &rough_construct_signatures,
@@ -822,13 +813,13 @@ impl<'a> CheckerState<'a> {
 
                     properties.insert(
                         name_atom,
-                        PropertyInfo {
-                            optional: prop.question_token,
-                            readonly,
-                            visibility,
-                            parent_id: current_sym,
-                            ..PropertyInfo::new(name_atom, type_id)
-                        },
+                        class_type::class_member_property(
+                            class_type::ClassMemberProperty::new(name_atom, type_id)
+                                .optional(prop.question_token)
+                                .readonly(readonly)
+                                .visibility(visibility)
+                                .parent(current_sym),
+                        ),
                     );
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -879,20 +870,15 @@ impl<'a> CheckerState<'a> {
                             self.ctx.symbol_types.remove(&sym_id);
                         }
                     }
-                    let callable_type = factory.callable(CallableShape {
-                        call_signatures: vec![signature.clone()],
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    });
-                    let callable_or_undefined = if method.question_token {
-                        factory.union2(callable_type, TypeId::UNDEFINED)
-                    } else {
-                        callable_type
-                    };
+                    let callable_type = class_type::class_method_callable_type(
+                        self.ctx.types,
+                        vec![signature.clone()],
+                    );
+                    let callable_or_undefined = class_type::optional_class_member_type(
+                        self.ctx.types,
+                        callable_type,
+                        method.question_token,
+                    );
                     let Some(name) = self.get_property_name_resolved(method.name) else {
                         if self
                             .ctx
@@ -1073,12 +1059,9 @@ impl<'a> CheckerState<'a> {
                         .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                         .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
 
-                    let idx_sig = IndexSignature {
-                        key_type,
-                        value_type,
-                        readonly,
-                        param_name,
-                    };
+                    let idx_sig = class_type::class_declared_index_signature(
+                        key_type, value_type, readonly, param_name,
+                    );
 
                     if is_valid_index_type {
                         if key_type == TypeId::NUMBER {
@@ -1105,14 +1088,13 @@ impl<'a> CheckerState<'a> {
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
             properties.insert(
                 name,
-                PropertyInfo {
-                    type_id: read_type,
-                    write_type,
-                    readonly,
-                    visibility: accessor.visibility,
-                    parent_id: current_sym,
-                    ..PropertyInfo::new(name, read_type)
-                },
+                class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(name, read_type)
+                        .with_write_type(write_type)
+                        .readonly(readonly)
+                        .visibility(accessor.visibility)
+                        .parent(current_sym),
+                ),
             );
         }
 
@@ -1127,15 +1109,7 @@ impl<'a> CheckerState<'a> {
             if signatures.is_empty() {
                 continue;
             }
-            let type_id = factory.callable(CallableShape {
-                call_signatures: signatures,
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            });
+            let type_id = class_type::class_method_callable_type(self.ctx.types, signatures);
             // Cache the final method type for declaration emit so
             // the emitter can resolve return types for static methods.
             // Skip when overloads exist to avoid interfering with TS2394
@@ -1145,13 +1119,13 @@ impl<'a> CheckerState<'a> {
             }
             properties.insert(
                 name,
-                PropertyInfo {
-                    optional,
-                    is_method: true,
-                    visibility: method.visibility,
-                    parent_id: current_sym,
-                    ..PropertyInfo::new(name, type_id)
-                },
+                class_type::class_member_property(
+                    class_type::ClassMemberProperty::new(name, type_id)
+                        .optional(optional)
+                        .method(false)
+                        .visibility(method.visibility)
+                        .parent(current_sym),
+                ),
             );
         }
 
@@ -1229,21 +1203,20 @@ impl<'a> CheckerState<'a> {
                     let prototype_type = current_sym
                         .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
                         .unwrap_or(TypeId::ANY);
-                    partial_ctor_props.push(PropertyInfo {
-                        parent_id: current_sym,
-                        ..PropertyInfo::new(prototype_name, prototype_type)
-                    });
+                    partial_ctor_props.push(class_type::class_member_property(
+                        class_type::ClassMemberProperty::new(prototype_name, prototype_type)
+                            .parent(current_sym),
+                    ));
                 }
 
-                let partial_ctor = factory.callable(CallableShape {
-                    call_signatures: Vec::new(),
-                    construct_signatures: rough_construct_signatures,
-                    properties: partial_ctor_props,
-                    string_index: static_string_index,
-                    number_index: static_number_index,
-                    symbol: current_sym,
-                    is_abstract: false,
-                });
+                let partial_ctor = class_type::partial_static_constructor_callable_type(
+                    self.ctx.types,
+                    current_sym,
+                    partial_ctor_props,
+                    &rough_construct_signatures,
+                    static_string_index,
+                    static_number_index,
+                );
                 self.ctx.symbol_types.insert(sym_id, partial_ctor);
 
                 // ── Partial INSTANCE type (for TYPE references like `Bar<any>`) ──
@@ -1275,16 +1248,17 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    inst_props.push(PropertyInfo {
-                        optional: prop.question_token,
-                        readonly: self.has_readonly_modifier(&prop.modifiers),
-                        visibility: self.get_member_visibility(&prop.modifiers, prop.name),
-                        parent_id: current_sym,
-                        ..PropertyInfo::new(name_atom, type_id)
-                    });
+                    inst_props.push(class_type::class_member_property(
+                        class_type::ClassMemberProperty::new(name_atom, type_id)
+                            .optional(prop.question_token)
+                            .readonly(self.has_readonly_modifier(&prop.modifiers))
+                            .visibility(self.get_member_visibility(&prop.modifiers, prop.name))
+                            .parent(current_sym),
+                    ));
                 }
                 if !inst_props.is_empty() {
-                    let partial_instance = factory.object(inst_props);
+                    let partial_instance =
+                        class_type::class_member_object_type(self.ctx.types, inst_props);
                     self.ctx
                         .symbol_instance_types
                         .insert(sym_id, partial_instance);
@@ -1347,10 +1321,10 @@ impl<'a> CheckerState<'a> {
         let prototype_name = self.ctx.types.intern_string("prototype");
         properties.insert(
             prototype_name,
-            PropertyInfo {
-                parent_id: current_sym,
-                ..PropertyInfo::new(prototype_name, prototype_type)
-            },
+            class_type::class_member_property(
+                class_type::ClassMemberProperty::new(prototype_name, prototype_type)
+                    .parent(current_sym),
+            ),
         );
 
         // Track base class constructor for inheritance
