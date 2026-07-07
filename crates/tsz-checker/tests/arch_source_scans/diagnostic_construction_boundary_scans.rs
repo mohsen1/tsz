@@ -8,14 +8,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const DIAGNOSTICS_BOUNDARY: &str = "src/query_boundaries/diagnostics.rs";
-const DIAGNOSTIC_REPORTER_CONSTRUCTION_MODULES: &[&str] = &[
+const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/error_reporter/core/type_display.rs",
     "src/error_reporter/core/excess_display.rs",
     "src/error_reporter/generics.rs",
+    "src/state/type_environment/formatting.rs",
 ];
 
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
+}
+
+fn is_allowed_shape_return_signature(trimmed: &str) -> bool {
+    matches!(
+        trimmed,
+        ") -> tsz_solver::FunctionShape {" | ") -> tsz_solver::CallableShape {"
+    )
 }
 
 fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<String>) {
@@ -23,7 +31,7 @@ fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<Str
         .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
     for (line_index, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("//") {
+        if trimmed.starts_with("//") || is_allowed_shape_return_signature(trimmed) {
             continue;
         }
         for pattern in patterns {
@@ -38,7 +46,7 @@ fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<Str
 }
 
 #[test]
-fn error_reporters_route_solver_shape_construction_through_diagnostics_boundary() {
+fn diagnostic_display_callers_route_solver_shape_construction_through_diagnostics_boundary() {
     const FORBIDDEN_PATTERNS: &[&str] = &[
         ".factory().object(",
         ".factory().object_with_index(",
@@ -61,13 +69,13 @@ fn error_reporters_route_solver_shape_construction_through_diagnostics_boundary(
     ];
 
     let mut violations = Vec::new();
-    for relative in DIAGNOSTIC_REPORTER_CONSTRUCTION_MODULES {
+    for relative in DIAGNOSTIC_CONSTRUCTION_MODULES {
         scan_for_patterns(relative, FORBIDDEN_PATTERNS, &mut violations);
     }
 
     assert!(
         violations.is_empty(),
-        "error_reporter modules must route diagnostic solver shape construction \
+        "diagnostic display callers must route solver shape construction \
          through query_boundaries::diagnostics:\n{}",
         violations.join("\n")
     );
@@ -85,6 +93,8 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "function_type_with_params_replaced",
         "function_type_with_return_replaced",
         "function_type_with_params_and_return_replaced",
+        "function_type_without_type_params",
+        "function_type_from_call_signature_without_type_params",
         "callable_type_from_shape",
         "call_only_callable_type",
         "callable_type_with_signatures_replaced",
