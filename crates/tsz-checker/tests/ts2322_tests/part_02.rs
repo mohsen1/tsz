@@ -1555,10 +1555,37 @@ fn enum_member_vs_weak_type_emits_ts2559() {
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
+    let ts2559 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2559)
+        .map(|(_, message)| message.as_str());
     assert!(
-        has_ts2559,
+        ts2559.is_some(),
         "Expected TS2559 for enum member assigned to weak type. Got: {diagnostics:?}"
+    );
+    let message = ts2559.expect("checked above");
+    assert!(
+        message.contains("Type 'E' has no properties in common with type '{ nope?: any; }'."),
+        "TS2559 should widen enum member source to parent enum display, got: {message}"
+    );
+}
+
+#[test]
+fn renamed_enum_member_vs_weak_type_widens_parent_display_for_ts2559() {
+    let source = r#"
+        enum Palette { Crimson = "crimson" }
+        let x: { maybe?: number } = Palette.Crimson;
+    "#;
+
+    let diagnostics = get_all_diagnostics(source);
+    let ts2559 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2559)
+        .map(|(_, message)| message.as_str())
+        .expect("expected TS2559 for renamed enum member assigned to weak type");
+    assert!(
+        ts2559.starts_with("Type 'Palette' has no properties in common with type "),
+        "TS2559 should use enum parent display independent of binder names, got: {ts2559}"
     );
 }
 

@@ -12,7 +12,7 @@
 //! negative numeric enums, and the no-op narrowing case so a fix that only
 //! special-cases one spelling fails the suite.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{check_source_code_messages, check_source_diagnostics};
 
 fn assert_clean(source: &str) {
     let diagnostics = check_source_diagnostics(source);
@@ -20,6 +20,13 @@ fn assert_clean(source: &str) {
         diagnostics.is_empty(),
         "Expected no diagnostics, got: {diagnostics:#?}"
     );
+}
+
+fn ts2845_messages(source: &str) -> Vec<String> {
+    check_source_code_messages(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2845).then_some(message))
+        .collect()
 }
 
 #[test]
@@ -222,5 +229,69 @@ if (ok) {
     assert_eq!(
         ts2322, 1,
         "Expected one TS2322 for unrelated-enum assignment: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn enum_member_truthiness_uses_materialized_literal_values() {
+    let messages = ts2845_messages(
+        r#"
+enum Numeric { Zero = 0, One = 1, Two = 2 }
+enum Text { Empty = "", Filled = "filled" }
+
+if (Numeric.Zero) {}
+if (Numeric.One) {}
+if (Numeric.Two) {}
+if (Text.Empty) {}
+if (Text.Filled) {}
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        5,
+        "expected one TS2845 per enum-member condition, got: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'false'"))
+            .count(),
+        2,
+        "zero and empty-string enum members should be always false, got: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'true'"))
+            .count(),
+        3,
+        "non-zero and non-empty enum members should be always true, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn renamed_enum_member_truthiness_is_not_name_keyed() {
+    let messages = ts2845_messages(
+        r#"
+enum Renamed { Blank = "", Enabled = 10 }
+
+if (Renamed.Blank) {}
+if (Renamed.Enabled) {}
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        2,
+        "expected TS2845 for both renamed enum member conditions, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains("'false'")),
+        "empty-string member should be always false independent of names, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains("'true'")),
+        "numeric non-zero member should be always true independent of names, got: {messages:#?}"
     );
 }

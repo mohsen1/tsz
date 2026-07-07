@@ -1558,12 +1558,10 @@ impl<'a> CheckerState<'a> {
     /// the general `format_type_diagnostic` output where `Parent.Member`
     /// remains correct.
     fn ts2559_source_display(&self, source: TypeId) -> String {
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(source)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
-            && let Some(parent) = self.ctx.binder.get_symbol(symbol.parent)
+        if let Some(parent_name) =
+            enum_query::enum_member_like_parent_escaped_name(&self.ctx, source)
         {
-            return parent.escaped_name.to_string();
+            return parent_name;
         }
         // tsc renders the source's *widened* apparent type in the weak-type
         // ("no properties in common") slot: a fresh object literal `{ c: 1 }`
