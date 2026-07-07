@@ -3,6 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+use crate::query_boundaries::assignability as assignability_boundary;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -29,7 +30,6 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
     ) -> Option<TypeId> {
         let pattern_node = self.ctx.arena.get(pattern_idx)?;
-        let factory = self.ctx.types.factory();
 
         if pattern_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             let array = self.ctx.arena.get_literal_expr(pattern_node)?;
@@ -41,12 +41,10 @@ impl<'a> CheckerState<'a> {
                 } else {
                     let elem_idx = self.ctx.arena.skip_parenthesized_and_assertions(elem_idx);
                     let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                        tuple_elements.push(tsz_solver::TupleElement {
-                            type_id: TypeId::ANY,
-                            optional: false,
-                            rest: false,
-                            name: None,
-                        });
+                        tuple_elements.push(assignability_boundary::assignability_tuple_element(
+                            TypeId::ANY,
+                            false,
+                        ));
                         continue;
                     };
 
@@ -105,15 +103,15 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
-                tuple_elements.push(tsz_solver::TupleElement {
-                    type_id: elem_type,
-                    optional: false,
-                    rest: is_rest,
-                    name: None,
-                });
+                tuple_elements.push(assignability_boundary::assignability_tuple_element(
+                    elem_type, is_rest,
+                ));
             }
 
-            Some(factory.tuple(tuple_elements))
+            Some(assignability_boundary::assignability_tuple_type(
+                self.ctx.types,
+                tuple_elements,
+            ))
         } else if pattern_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let object = self.ctx.arena.get_literal_expr(pattern_node)?;
             let mut properties = Vec::new();
@@ -197,10 +195,17 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(atom, prop_type));
+                properties.push(
+                    assignability_boundary::assignability_contextual_pattern_property(
+                        atom, prop_type,
+                    ),
+                );
             }
 
-            Some(factory.object(properties))
+            Some(assignability_boundary::assignability_object_type(
+                self.ctx.types,
+                properties,
+            ))
         } else {
             None
         }

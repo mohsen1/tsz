@@ -17,6 +17,9 @@
 //! - `common_boundary_export_ratchets`: the `query_boundaries/common.rs`
 //!   `pub(crate) fn` surface only changes with an explicit allowlist update
 //!   (issue #12948).
+//! - `assignability_surface_construction_boundary_scans`: assignability
+//!   relation-preparation callers route transient tuple/object/property/union
+//!   construction through `query_boundaries::assignability::construction`.
 //! - `construction_boundary_signature_scans`: the issue #13022 module set
 //!   constructs signature-bearing solver types only through
 //!   `query_boundaries::construct_signatures`, never via inline shape
@@ -130,6 +133,8 @@
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
 
+#[path = "arch_source_scans/assignability_surface_construction_boundary_scans.rs"]
+mod assignability_surface_construction_boundary_scans;
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]

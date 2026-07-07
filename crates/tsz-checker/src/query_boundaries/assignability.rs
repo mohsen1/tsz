@@ -707,6 +707,7 @@ pub(crate) use tsz_solver::type_queries::{
 /// overload subtype pass, indexed-access normalization shape probes, and the
 /// non-default relation-kind query variants.
 mod cache_key;
+mod construction;
 mod final_relation;
 mod overload_subtype_pass;
 mod relation_kind_variants;
@@ -714,6 +715,15 @@ mod shape;
 pub(crate) use cache_key::{
     RelationFlags, assignability_cache_key, assignability_cache_key_for_policy,
     checker_final_assignability_cache_key, subtype_cache_key,
+};
+pub(crate) use construction::{
+    assignability_array_type, assignability_contextual_pattern_property,
+    assignability_empty_object_type, assignability_function_with_return_type,
+    assignability_index_access_type, assignability_intersection_type,
+    assignability_namespace_export_property, assignability_noinfer_type, assignability_object_type,
+    assignability_readonly_type, assignability_resolved_property,
+    assignability_resolved_tuple_element, assignability_tuple_element, assignability_tuple_type,
+    assignability_union_preserve_members, assignability_union_type,
 };
 pub(crate) use final_relation::cached_final_assignability;
 pub(crate) use overload_subtype_pass::cached_overload_subtype_pass_assignability;

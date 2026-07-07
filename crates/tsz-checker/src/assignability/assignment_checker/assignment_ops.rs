@@ -1161,8 +1161,8 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
-        // Build the empty target type once for diagnostic reuse.
-        let empty_target = self.ctx.types.factory().object(Vec::new());
+        let empty_target =
+            crate::query_boundaries::assignability::assignability_empty_object_type(self.ctx.types);
         for source_prop in &source_shape.properties {
             let report_idx = self
                 .find_object_literal_property_element(right_idx, source_prop.name)
@@ -1884,12 +1884,12 @@ impl<'a> CheckerState<'a> {
         if !self.is_valid_index_for_type_param(index_type, object_type) {
             return None;
         }
-
         Some(
-            self.ctx
-                .types
-                .factory()
-                .index_access(object_type, index_type),
+            crate::query_boundaries::assignability::assignability_index_access_type(
+                self.ctx.types,
+                object_type,
+                index_type,
+            ),
         )
     }
 
