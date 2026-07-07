@@ -35,6 +35,11 @@ import https from "node:https";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
+import {
+  collectSentinelIssues,
+  closeDuplicateSentinels,
+} from "../ci/lib/sentinel-issues.mjs";
+
 export const DEFAULT_LATEST_URL = "https://tsz.dev/benchmark-data/latest.json";
 export const DEFAULT_MAX_AGE_HOURS = 6;
 const ISSUE_MARKER = "<!-- bench-latest-freshness-sentinel -->";
@@ -227,46 +232,28 @@ function runGh(args) {
 
 const TRACKED_GENERATED_RE = /generated_at:\s*`([^`]+)`/;
 
-const SENTINEL_PER_PAGE = 100;
-// The `/issues` endpoint returns open issues *and* open PRs, so on an active
-// repo the combined list routinely exceeds one 100-item page. A persistent
-// tracking issue (a standing freeze can live for hours/days) is sorted
-// created-desc and steadily sinks past page 1 as new PRs/issues land, so a
-// single-page scan silently stops finding it — then reconcileIssue re-creates a
-// duplicate every firing and can never close the real one on recovery. Page
-// through open issues until the marker is found or the list is exhausted so the
-// dedup sentinel is always located. The bound caps the walk on a pathological
-// backlog without ever masking a reachable sentinel.
-const SENTINEL_MAX_PAGES = 20;
-
-function findSentinelIssue(repository, fetchJson) {
-  for (let page = 1; page <= SENTINEL_MAX_PAGES; page += 1) {
-    const issues = fetchJson([
-      "api",
-      "-H",
-      "Accept: application/vnd.github+json",
-      `repos/${repository}/issues?state=open&per_page=${SENTINEL_PER_PAGE}&page=${page}`,
-    ]);
-    if (!Array.isArray(issues)) return null;
-    const match = issues.find(
-      (it) => typeof it.body === "string" && it.body.includes(ISSUE_MARKER),
-    );
-    if (match) return match;
-    // A short (or empty) page is the last one — the sentinel is not open.
-    if (issues.length < SENTINEL_PER_PAGE) return null;
-  }
-  return null;
-}
-
 /**
  * Open / update / close the single dedup tracking issue.
+ *
+ * The lookup (shared with `check-main-red.mjs`) returns every open sentinel —
+ * marker match or exact-title fallback, oldest first. The oldest is canonical:
+ * it is the one updated (re-stamping the marker if a body edit stripped it) or
+ * closed on recovery; any younger matches are duplicates from a past lookup
+ * miss and are closed pointing at the canonical issue, so a duplicated
+ * sentinel heals itself on the next firing instead of splitting forever.
+ *
  * @param {ReturnType<typeof classifyFreshness>} verdict
  */
 export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
   const { repository } = ctx;
   const fetchJson = gh.fetchJson || runGhJson;
   const runCommand = gh.runCommand || runGh;
-  const existing = findSentinelIssue(repository, fetchJson);
+  const matches = collectSentinelIssues(repository, fetchJson, {
+    marker: ISSUE_MARKER,
+    title: ISSUE_TITLE,
+  });
+  const existing = matches[0] ?? null;
+  const duplicates = matches.slice(1);
 
   if (verdict.alert) {
     const body = formatIssueBody(verdict, ctx, nowIso);
@@ -288,7 +275,14 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
           `Still stale as of ${nowIso}: generated_at \`${current}\` (${verdict.reason}).`,
         ]);
       }
-      return { action: "updated", number: existing.number, commented: changed };
+      const closedDuplicates = closeDuplicateSentinels(
+        duplicates,
+        existing.number,
+        repository,
+        runCommand,
+        nowIso,
+      );
+      return { action: "updated", number: existing.number, commented: changed, closedDuplicates };
     }
     const created = runCommand([
       "issue",
@@ -316,7 +310,14 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
       `✅ Published benchmark data is fresh again as of ${nowIso} (${verdict.reason}). Closing.`,
     ]);
     runCommand(["issue", "close", String(existing.number), "--repo", repository, "--reason", "completed"]);
-    return { action: "closed", number: existing.number };
+    const closedDuplicates = closeDuplicateSentinels(
+      duplicates,
+      existing.number,
+      repository,
+      runCommand,
+      nowIso,
+    );
+    return { action: "closed", number: existing.number, closedDuplicates };
   }
   return { action: "noop" };
 }

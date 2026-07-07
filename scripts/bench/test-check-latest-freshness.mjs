@@ -219,6 +219,99 @@ function NOW_ISO() {
   assert.deepEqual(seenPages, [1, 2], "pages through until the marker is found");
   assert.ok(!calls.some((c) => c[1] === "create"), "never creates a duplicate tracking issue");
 }
+{
+  // Two open sentinels (a healed duplicate from a past lookup miss) + still
+  // stale -> the oldest is canonical and updated; the newer one is closed as a
+  // duplicate pointing at it. Never a third issue.
+  const MARKER = "<!-- bench-latest-freshness-sentinel -->";
+  const calls = [];
+  const verdict = classifyFreshness(JSON.stringify({ generated_at: "2026-06-27T19:03:16.801Z" }), {
+    now: NOW,
+    maxAgeHours: 6,
+  });
+  const existingBody = formatIssueBody(verdict, { url: DEFAULT_LATEST_URL, repository: "tsz-org/tsz" }, NOW_ISO());
+  const outcome = reconcileIssue(
+    verdict,
+    { url: DEFAULT_LATEST_URL, repository: "tsz-org/tsz" },
+    NOW_ISO(),
+    {
+      fetchJson: () => [
+        { number: 15532, body: `${MARKER}\nnewer duplicate` },
+        { number: 15401, body: existingBody },
+      ],
+      runCommand: (args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    },
+  );
+  assert.equal(outcome.action, "updated");
+  assert.equal(outcome.number, 15401, "the oldest sentinel is canonical");
+  assert.deepEqual(outcome.closedDuplicates, [15532], "the younger duplicate is closed");
+  assert.ok(!calls.some((c) => c[1] === "create"), "never creates a third tracking issue");
+  const dupComment = calls.find((c) => c[1] === "comment" && c[2] === "15532");
+  assert.match(dupComment[dupComment.length - 1], /#15401/, "duplicate close points at the canonical issue");
+}
+{
+  // A body edit that stripped the marker must not orphan the sentinel: the
+  // exact bot title still matches, the issue is updated (re-stamping the
+  // marker), and no duplicate is created.
+  const calls = [];
+  const verdict = classifyFreshness(JSON.stringify({ generated_at: "2026-06-27T19:03:16.801Z" }), {
+    now: NOW,
+    maxAgeHours: 6,
+  });
+  const outcome = reconcileIssue(
+    verdict,
+    { url: DEFAULT_LATEST_URL, repository: "tsz-org/tsz" },
+    NOW_ISO(),
+    {
+      fetchJson: () => [
+        {
+          number: 61,
+          title: "🟡 benchmark site data is stale — latest.json generated_at not advancing",
+          body: "claimed; body rewritten without the marker",
+        },
+      ],
+      runCommand: (args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    },
+  );
+  assert.equal(outcome.action, "updated", "title fallback finds the marker-stripped sentinel");
+  assert.equal(outcome.number, 61);
+  assert.ok(!calls.some((c) => c[1] === "create"), "no duplicate for a marker-stripped body");
+  const edit = calls.find((c) => c[1] === "edit");
+  assert.match(edit[edit.length - 1], /bench-latest-freshness-sentinel/, "edit restores the marker");
+}
+{
+  // Recovery with a lingering duplicate: BOTH sentinels close, not just the
+  // first match.
+  const MARKER = "<!-- bench-latest-freshness-sentinel -->";
+  const calls = [];
+  const verdict = classifyFreshness(JSON.stringify({ generated_at: at(1) }), { now: NOW, maxAgeHours: 6 });
+  const outcome = reconcileIssue(
+    verdict,
+    { url: DEFAULT_LATEST_URL, repository: "tsz-org/tsz" },
+    NOW_ISO(),
+    {
+      fetchJson: () => [
+        { number: 90, body: `${MARKER}\nnewer duplicate` },
+        { number: 80, body: `${MARKER}\nstale` },
+      ],
+      runCommand: (args) => {
+        calls.push(args);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    },
+  );
+  assert.equal(outcome.action, "closed");
+  assert.equal(outcome.number, 80, "the canonical (oldest) sentinel closes as completed");
+  assert.deepEqual(outcome.closedDuplicates, [90], "the duplicate closes too");
+  const closed = calls.filter((c) => c[1] === "close").map((c) => c[2]);
+  assert.deepEqual(closed.sort(), ["80", "90"], "no zombie sentinel survives recovery");
+}
 
 // ---- end-to-end CLI via --fixture (offline, no network) ---------------------
 function runCli(args, fixtureValue) {
