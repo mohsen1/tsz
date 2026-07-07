@@ -107,38 +107,15 @@ impl<'a> CheckerState<'a> {
             args.push(arg);
             return;
         }
-        if let Some(elem) =
-            crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
-        {
-            self.collect_awaited_application_args(elem, args, depth + 1);
-        }
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
-            for member in members {
-                self.collect_awaited_application_args(member, args, depth + 1);
-            }
-        }
-        if let Some(elems) =
-            crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
-        {
-            for elem in elems {
-                self.collect_awaited_application_args(elem.type_id, args, depth + 1);
-            }
-        }
+        query::for_each_awaited_application_container_child(self.ctx.types, type_id, |child| {
+            self.collect_awaited_application_args(child, args, depth + 1);
+        });
     }
 
     pub(crate) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        // Cheap pre-check: read the base without materializing the args Vec.
-        // `evaluate_application_type` now consults this helper for every
-        // generic application; allocating an args Vec for `Array<T>`,
-        // `Map<K,V>`, etc. just to reject them is wasted work.
-        let base = crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)?;
-        if !self.is_awaited_application_base(base) {
-            return None;
-        }
-        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
-        args.first().copied()
+        query::awaited_application_arg_from_type(self.ctx.types, type_id, |base| {
+            self.is_awaited_application_base(base)
+        })
     }
 
     pub(crate) fn builtin_promise_like_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
