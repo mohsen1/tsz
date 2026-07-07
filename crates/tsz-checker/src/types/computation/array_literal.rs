@@ -6,11 +6,12 @@
 
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::type_computation::array_literals as array_surfaces;
 use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Whether an array-literal spread source is the `never` type (directly, or as
@@ -365,7 +366,7 @@ impl<'a> CheckerState<'a> {
         let elem = match elems.len() {
             0 => return None,
             1 => elems[0],
-            _ => self.ctx.types.union(elems),
+            _ => array_surfaces::element_union(self.ctx.types, elems),
         };
         // Don't thread an element type that still contains free type parameters.
         // That regime belongs to generic inference / overload resolution, where the
@@ -457,7 +458,6 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &crate::context::TypingRequest,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         let contextual_type = request.contextual_type;
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -484,7 +484,7 @@ impl<'a> CheckerState<'a> {
             // type parameter call), empty arrays become empty readonly tuples, not
             // `never[]`. This matches tsc's behavior for `[] as const` → `readonly []`.
             if self.ctx.in_const_assertion {
-                return factory.tuple(vec![]);
+                return array_surfaces::empty_tuple_type(self.ctx.types);
             }
 
             // Empty array literal element type depends on noImplicitAny and strictNullChecks:
@@ -518,7 +518,7 @@ impl<'a> CheckerState<'a> {
                 resolved = self.resolve_index_access_base_constraint(resolved);
                 resolved = self.resolve_type_for_property_access(resolved);
                 if crate::query_boundaries::common::is_tuple_type(self.ctx.types, resolved) {
-                    return factory.tuple(vec![]);
+                    return array_surfaces::empty_tuple_type(self.ctx.types);
                 }
                 // When the contextual type is an array (e.g. assigning `[]` to
                 // `Types[T][]` in `obj.entries[name] = []`), thread the
@@ -542,7 +542,7 @@ impl<'a> CheckerState<'a> {
                         resolved,
                     )
                 {
-                    return factory.array(elem);
+                    return array_surfaces::array_type(self.ctx.types, elem);
                 }
             }
 
@@ -550,9 +550,9 @@ impl<'a> CheckerState<'a> {
             // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
             // which is the "evolving array type" starting point.
             if !self.ctx.no_implicit_any() && !self.empty_array_literal_prefers_never(idx) {
-                return factory.array(TypeId::ANY);
+                return array_surfaces::any_array_type(self.ctx.types);
             }
-            return factory.array(TypeId::NEVER);
+            return array_surfaces::never_array_type(self.ctx.types);
         }
 
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
@@ -879,12 +879,11 @@ impl<'a> CheckerState<'a> {
                     || force_tuple_for_tuple_like
                     || self.ctx.in_const_assertion
                 {
-                    tuple_elements.push(TupleElement {
-                        type_id: hole_type,
-                        name: None,
-                        optional: hole_optional,
-                        rest: false,
-                    });
+                    tuple_elements.push(array_surfaces::tuple_element(
+                        hole_type,
+                        hole_optional,
+                        false,
+                    ));
                     saw_optional_elision |= hole_optional;
                 } else {
                     saw_array_element_for_bct = true;
@@ -1044,12 +1043,11 @@ impl<'a> CheckerState<'a> {
                                 Some(el) => el.optional,
                                 None => false,
                             };
-                            tuple_elements.push(TupleElement {
-                                type_id: elem.type_id,
-                                name: None,
+                            tuple_elements.push(array_surfaces::tuple_element(
+                                elem.type_id,
                                 optional,
-                                rest: elem.rest,
-                            });
+                                elem.rest,
+                            ));
                             // Don't increment index here - each tuple element maps to position
                         }
                     } else {
@@ -1084,7 +1082,7 @@ impl<'a> CheckerState<'a> {
 
                 if tuple_context.is_some() || self.ctx.in_const_assertion {
                     let rest_type = if self.ctx.in_const_assertion && tuple_context.is_none() {
-                        factory.array(elem_type)
+                        array_surfaces::array_type(self.ctx.types, elem_type)
                     } else {
                         elem_type
                     };
@@ -1092,12 +1090,10 @@ impl<'a> CheckerState<'a> {
                         Some(el) => el.optional,
                         None => false,
                     };
-                    tuple_elements.push(TupleElement {
-                        type_id: rest_type,
-                        name: None,
-                        optional,
-                        rest: true, // Mark as spread for non-tuple spreads in tuple context
-                    });
+                    tuple_elements.push(array_surfaces::tuple_element(
+                        rest_type, optional,
+                        true, // Mark as spread for non-tuple spreads in tuple context
+                    ));
                 } else {
                     saw_array_element_for_bct = true;
                     all_array_elements_const_asserted = false;
@@ -1158,12 +1154,11 @@ impl<'a> CheckerState<'a> {
                 // following present element inherits the elision's optionality:
                 // `[, , true]` is `[never?, never?, true?]`, not
                 // `[never?, never?, true]` (see `saw_optional_elision`).
-                tuple_elements.push(TupleElement {
-                    type_id: elem_type,
-                    name: None,
-                    optional: saw_optional_elision,
-                    rest: false,
-                });
+                tuple_elements.push(array_surfaces::tuple_element(
+                    elem_type,
+                    saw_optional_elision,
+                    false,
+                ));
             } else {
                 saw_array_element_for_bct = true;
                 all_array_elements_const_asserted &= elem_is_const_assertion;
@@ -1204,7 +1199,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            return factory.tuple(tuple_elements);
+            return array_surfaces::tuple_type(self.ctx.types, tuple_elements);
         }
 
         // When contextual type is a homomorphic mapped type, force tuple typing.
@@ -1214,16 +1209,7 @@ impl<'a> CheckerState<'a> {
             || force_tuple_for_array_length_intersection
             || force_tuple_for_tuple_like
         {
-            let mapped_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
-                .iter()
-                .map(|&type_id| tsz_solver::TupleElement {
-                    type_id,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                })
-                .collect();
-            return factory.tuple(mapped_tuple_elements);
+            return array_surfaces::tuple_from_element_types(self.ctx.types, &element_types);
         }
 
         // When in a const assertion context, array literals become tuples (not arrays)
@@ -1232,7 +1218,7 @@ impl<'a> CheckerState<'a> {
             if tuple_elements.len() == 1 && tuple_elements[0].rest {
                 return tuple_elements[0].type_id;
             }
-            return factory.tuple(tuple_elements);
+            return array_surfaces::tuple_type(self.ctx.types, tuple_elements);
         }
 
         // Use contextual element type when available for better inference
@@ -1318,7 +1304,7 @@ impl<'a> CheckerState<'a> {
                         *elem_node,
                     );
                 }
-                return factory.array(context_element_type);
+                return array_surfaces::array_type(self.ctx.types, context_element_type);
             }
         }
 
@@ -1363,7 +1349,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
                     diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
                 );
-                return factory.array(TypeId::ERROR);
+                return array_surfaces::error_array_type(self.ctx.types);
             }
         }
 
@@ -1378,7 +1364,7 @@ impl<'a> CheckerState<'a> {
             || preserve_tuple_spread_literals
             || preserve_const_asserted_element_literals
         {
-            self.ctx.types.union(element_types.clone())
+            array_surfaces::element_union(self.ctx.types, element_types.clone())
         } else {
             expr_ops::compute_best_common_type_cached(
                 self.ctx.types,
@@ -1401,10 +1387,10 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
                 diagnostic_codes::EXPRESSION_PRODUCES_A_UNION_TYPE_THAT_IS_TOO_COMPLEX_TO_REPRESENT,
             );
-            return factory.array(TypeId::ERROR);
+            return array_surfaces::error_array_type(self.ctx.types);
         }
 
-        factory.array(element_type)
+        array_surfaces::array_type(self.ctx.types, element_type)
     }
 
     /// When the contextual type is a generic application like `Definition<Schema>`, the
@@ -1507,7 +1493,7 @@ impl<'a> CheckerState<'a> {
         } else if element_types.len() == 1 {
             Some(element_types[0])
         } else {
-            Some(self.ctx.types.union(element_types))
+            Some(array_surfaces::element_union(self.ctx.types, element_types))
         }
     }
 

@@ -20,6 +20,9 @@
 //! - `assignability_surface_construction_boundary_scans`: assignability
 //!   relation-preparation callers route transient tuple/object/property/union
 //!   construction through `query_boundaries::assignability::construction`.
+//! - `array_literal_surface_construction_boundary_scans`: array-literal
+//!   computation routes tuple/array/union result surfaces through
+//!   `query_boundaries::type_computation::array_literals`.
 //! - `construction_boundary_signature_scans`: the issue #13022 module set
 //!   constructs signature-bearing solver types only through
 //!   `query_boundaries::construct_signatures`, never via inline shape
@@ -136,6 +139,8 @@
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
 
+#[path = "arch_source_scans/array_literal_surface_construction_boundary_scans.rs"]
+mod array_literal_surface_construction_boundary_scans;
 #[path = "arch_source_scans/assignability_surface_construction_boundary_scans.rs"]
 mod assignability_surface_construction_boundary_scans;
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
