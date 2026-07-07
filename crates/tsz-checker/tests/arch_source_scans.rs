@@ -67,6 +67,9 @@
 //! - `expression_result_construction_boundary_scans`: expression computation
 //!   routes selected result-shape construction through
 //!   `query_boundaries::type_computation::expression_results`.
+//! - `yield_context_construction_boundary_scans`: yield dispatch routes
+//!   `yield*` contextual generator/array construction through
+//!   `query_boundaries::dispatch`.
 
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
@@ -122,3 +125,5 @@ mod type_guard_walk_state;
 mod type_query_construction_boundary_scans;
 #[path = "arch_source_scans/type_reference_depth_session_scans.rs"]
 mod type_reference_depth_session_scans;
+#[path = "arch_source_scans/yield_context_construction_boundary_scans.rs"]
+mod yield_context_construction_boundary_scans;
