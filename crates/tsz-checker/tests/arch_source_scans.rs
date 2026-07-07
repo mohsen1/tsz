@@ -67,6 +67,9 @@
 //! - `call_inference_construction_boundary_scans`: call inference routes
 //!   partial object/function/tuple inference construction through
 //!   `query_boundaries::checkers::call`.
+//! - `call_result_construction_boundary_scans`: call result handling routes
+//!   correlated unions, optional-chain returns, and recursive fallback result
+//!   construction through `query_boundaries::checkers::call`.
 //! - `expression_result_construction_boundary_scans`: expression computation
 //!   routes selected result-shape construction through
 //!   `query_boundaries::type_computation::expression_results`.
@@ -83,6 +86,8 @@ mod await_promise_construction_boundary_scans;
 mod binding_pattern_construction_boundary_scans;
 #[path = "arch_source_scans/call_inference_construction_boundary_scans.rs"]
 mod call_inference_construction_boundary_scans;
+#[path = "arch_source_scans/call_result_construction_boundary_scans.rs"]
+mod call_result_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
 #[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]
