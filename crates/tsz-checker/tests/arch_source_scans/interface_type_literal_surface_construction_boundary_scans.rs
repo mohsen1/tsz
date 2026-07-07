@@ -1,9 +1,10 @@
 //! Interface/type-literal own surface construction boundary scans.
 //!
-//! `get_type_of_interface` and `get_type_from_type_literal` own AST traversal,
+//! `get_type_of_interface` and both type-literal resolvers own AST traversal,
 //! diagnostics, ordering, and member classification. Solver construction for
-//! declared properties, indexes, functions, callables, and object surfaces
-//! belongs in `query_boundaries::type_construction` or
+//! declared call signatures, properties, indexes, functions, callables, and
+//! object surfaces belongs in `query_boundaries::type_construction`,
+//! `query_boundaries::signature_building`, or
 //! `query_boundaries::construct_signatures`.
 //!
 //! This scan intentionally excludes interface heritage/merge reconstruction in
@@ -13,8 +14,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const INTERFACE_TYPE: &str = "src/types/interface_type.rs";
+const TYPE_NODE: &str = "src/types/type_node.rs";
 const TYPE_LITERAL_CHECKER: &str = "src/types/type_literal_checker.rs";
 const TYPE_CONSTRUCTION_BOUNDARY: &str = "src/query_boundaries/type_construction.rs";
+const SIGNATURE_BUILDING_BOUNDARY: &str = "src/query_boundaries/signature_building.rs";
 const CONSTRUCT_SIGNATURES_BOUNDARY: &str = "src/query_boundaries/construct_signatures.rs";
 
 fn checker_path(relative: &str) -> PathBuf {
@@ -62,6 +65,8 @@ fn defines_fn(source: &str, name: &str) -> bool {
 fn interface_and_type_literal_own_surfaces_route_solver_construction_through_boundaries() {
     let interface_source =
         fs::read_to_string(checker_path(INTERFACE_TYPE)).expect("failed to read interface_type.rs");
+    let type_node_source =
+        fs::read_to_string(checker_path(TYPE_NODE)).expect("failed to read type_node.rs");
     let type_literal_source = fs::read_to_string(checker_path(TYPE_LITERAL_CHECKER))
         .expect("failed to read type_literal_checker.rs");
 
@@ -75,8 +80,14 @@ fn interface_and_type_literal_own_surfaces_route_solver_construction_through_bou
         "pub(crate) fn get_type_from_type_literal",
         "\n    }\n}",
     );
+    let type_node_literal_surface = slice_between(
+        &type_node_source,
+        "fn get_type_from_type_literal",
+        "/// Resolve a type symbol from a node index.",
+    );
 
     let patterns = [
+        "CallSignature {",
         "PropertyInfo {",
         "Visibility::Public",
         "IndexSignature {",
@@ -98,6 +109,11 @@ fn interface_and_type_literal_own_surfaces_route_solver_construction_through_bou
         "get_type_from_type_literal",
         &patterns,
     ));
+    violations.extend(scan_source_for_patterns(
+        type_node_literal_surface,
+        "TypeNodeChecker::get_type_from_type_literal",
+        &patterns,
+    ));
 
     assert!(
         violations.is_empty(),
@@ -111,6 +127,8 @@ fn interface_and_type_literal_own_surfaces_route_solver_construction_through_bou
 fn interface_and_type_literal_boundaries_own_surface_helpers() {
     let type_construction = fs::read_to_string(checker_path(TYPE_CONSTRUCTION_BOUNDARY))
         .expect("failed to read query_boundaries/type_construction.rs");
+    let signature_building = fs::read_to_string(checker_path(SIGNATURE_BUILDING_BOUNDARY))
+        .expect("failed to read query_boundaries/signature_building.rs");
     let construct_signatures = fs::read_to_string(checker_path(CONSTRUCT_SIGNATURES_BOUNDARY))
         .expect("failed to read query_boundaries/construct_signatures.rs");
 
@@ -129,6 +147,11 @@ fn interface_and_type_literal_boundaries_own_surface_helpers() {
             "query_boundaries::type_construction must own `{helper}`"
         );
     }
+
+    assert!(
+        defines_fn(&signature_building, "call_signature"),
+        "query_boundaries::signature_building must own `call_signature`"
+    );
 
     for helper in [
         "declared_method_function_type",
@@ -154,6 +177,11 @@ fn interface_and_type_literal_boundaries_own_surface_helpers() {
             "query_boundaries::type_construction should own `{construction_pattern}`"
         );
     }
+
+    assert!(
+        signature_building.contains("CallSignature {"),
+        "query_boundaries::signature_building should own `CallSignature {{`"
+    );
 
     for construction_pattern in ["FunctionShape {", "CallableShape {", "db.callable("] {
         assert!(
