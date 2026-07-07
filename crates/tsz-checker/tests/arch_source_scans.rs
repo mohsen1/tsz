@@ -121,6 +121,9 @@
 //! - `await_promise_construction_boundary_scans`: await checking routes
 //!   contextual promise operand and `Awaited<T>` join construction through
 //!   `query_boundaries::checkers::promise`.
+//! - `async_promise_classification_boundary_scans`: async Promise diagnostics
+//!   and await cycle traversal route Promise classification through
+//!   `query_boundaries::checkers::promise`.
 //! - `awaited_assignability_normalization_boundary_scans`: `Awaited<T>`
 //!   assignability normalization routes solver shape reads and rebuilt shells
 //!   through `query_boundaries::checkers::promise`.
@@ -203,6 +206,8 @@
 mod array_literal_surface_construction_boundary_scans;
 #[path = "arch_source_scans/assignability_surface_construction_boundary_scans.rs"]
 mod assignability_surface_construction_boundary_scans;
+#[path = "arch_source_scans/async_promise_classification_boundary_scans.rs"]
+mod async_promise_classification_boundary_scans;
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/awaited_application_surface_boundary_scans.rs"]

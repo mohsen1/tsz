@@ -6,7 +6,7 @@ use tsz_solver::{CallSignature, FunctionShape, ObjectShape, TypeId};
 pub(crate) use super::super::common::{
     application_info, intersection_members, lazy_def_id, union_members,
 };
-pub(crate) use tsz_solver::type_queries::PromiseTypeKind;
+use tsz_solver::type_queries::PromiseTypeKind;
 
 pub(crate) fn call_signatures_for_type(
     db: &dyn TypeDatabase,
@@ -22,7 +22,7 @@ pub(crate) fn function_shape_for_type(
     tsz_solver::type_queries::get_function_shape(db, type_id)
 }
 
-pub(crate) fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
+fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
     tsz_solver::type_queries::classify_promise_type(db, type_id)
 }
 
@@ -66,6 +66,18 @@ pub(crate) fn promise_application_parts(
     Some(PromiseApplicationParts { base, args })
 }
 
+pub(crate) fn promise_application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    promise_application_parts(db, type_id).map(|parts| parts.base)
+}
+
+pub(crate) fn promise_application_base_lazy_def_id(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_solver::DefId> {
+    let base = promise_application_base(db, type_id)?;
+    promise_base_lazy_def_id(db, base)
+}
+
 pub(crate) fn promise_base_symbol_id(
     db: &dyn TypeDatabase,
     base: TypeId,
@@ -74,6 +86,16 @@ pub(crate) fn promise_base_symbol_id(
     match classify_promise_type(db, base) {
         PromiseTypeKind::Lazy(def_id) => def_to_symbol_id(def_id),
         PromiseTypeKind::TypeQuery(sym_ref) => Some(symbol_ref_to_symbol_id(sym_ref)),
+        _ => None,
+    }
+}
+
+pub(crate) fn promise_base_lazy_def_id(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+) -> Option<tsz_solver::DefId> {
+    match classify_promise_type(db, base) {
+        PromiseTypeKind::Lazy(def_id) => Some(def_id),
         _ => None,
     }
 }
@@ -148,7 +170,17 @@ pub(crate) fn promise_lazy_def_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<tsz_solver::DefId> {
-    super::super::common::lazy_def_id(db, type_id)
+    match classify_promise_type(db, type_id) {
+        PromiseTypeKind::Lazy(def_id) => Some(def_id),
+        _ => None,
+    }
+}
+
+pub(crate) fn promise_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    match classify_promise_type(db, type_id) {
+        PromiseTypeKind::Union(members) => Some(members),
+        _ => None,
+    }
 }
 
 pub(crate) fn promise_type_is_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
