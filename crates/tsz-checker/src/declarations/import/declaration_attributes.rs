@@ -387,6 +387,7 @@ impl<'a> CheckerState<'a> {
     /// has augmented `ImportAttributes` (e.g., `interface ImportAttributes { type: "json" }`),
     /// mismatched values will produce TS2322.
     pub(crate) fn check_import_attributes_assignability(&mut self, attributes_idx: NodeIndex) {
+        use crate::query_boundaries::import_attributes as import_attribute_query;
         use tsz_solver::TypeId;
 
         if attributes_idx.is_none() {
@@ -449,7 +450,10 @@ impl<'a> CheckerState<'a> {
             let value_type = if let Some(val_node) = self.ctx.arena.get(attr_data.value) {
                 if val_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
                     if let Some(lit) = self.ctx.arena.get_literal(val_node) {
-                        self.ctx.types.factory().literal_string(&lit.text)
+                        import_attribute_query::import_attribute_literal_string_type(
+                            self.ctx.types,
+                            &lit.text,
+                        )
                     } else {
                         self.get_type_of_node(attr_data.value)
                     }
@@ -488,14 +492,17 @@ impl<'a> CheckerState<'a> {
             };
 
             let name_atom = self.ctx.types.intern_string(&name);
-            properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            properties.push(import_attribute_query::import_attribute_property(
+                name_atom, value_type,
+            ));
         }
 
         if properties.is_empty() {
             return;
         }
 
-        let source_type = self.ctx.types.factory().object(properties);
+        let source_type =
+            import_attribute_query::import_attribute_object_type(self.ctx.types, properties);
 
         // Don't check if source or target are any/error
         if source_type == TypeId::ANY
