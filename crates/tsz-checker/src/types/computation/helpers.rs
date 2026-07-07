@@ -4,6 +4,7 @@
 
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::type_computation::core::{
     self as expr_ops, evaluate_contextual_structure_with,
@@ -595,7 +596,8 @@ impl<'a> CheckerState<'a> {
                     let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
                     let nullish_can_flow_to_number = non_nullish.is_none_or(|ty| {
                         let evaluated = self.evaluate_type_with_env(ty);
-                        evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
+                        evaluator.is_arithmetic_operand(evaluated)
+                            || enum_query::is_arithmetic_enum_like_type(&self.ctx, ty)
                     });
                     let nullish_fired = if self.ctx.strict_null_checks()
                         && nullish_can_flow_to_number
@@ -614,8 +616,8 @@ impl<'a> CheckerState<'a> {
                     // When strictNullChecks is off, null/undefined are silently
                     // assignable to number, so skip arithmetic check for them.
                     let is_valid = evaluator.is_arithmetic_operand(resolved_type)
-                        || self.is_enum_like_type(operand_type)
-                        || self.is_enum_like_type(resolved_type)
+                        || enum_query::is_arithmetic_enum_like_type(&self.ctx, operand_type)
+                        || enum_query::is_arithmetic_enum_like_type(&self.ctx, resolved_type)
                         || (!self.ctx.strict_null_checks()
                             && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 

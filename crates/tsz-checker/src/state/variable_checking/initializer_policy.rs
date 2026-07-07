@@ -6,6 +6,7 @@
 
 use crate::computation::complex::is_contextually_sensitive;
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;

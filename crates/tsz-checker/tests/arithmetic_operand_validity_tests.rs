@@ -129,6 +129,37 @@ fn numeric_enum_with_number_is_valid() {
     );
 }
 
+#[test]
+fn aliased_numeric_enum_member_union_is_binary_arithmetic_operand() {
+    let codes = check_expr(
+        "enum Choice { Off = 0, On = 1 }\ntype Decision = Choice.Off | Choice.On;\ndeclare const d: Decision;",
+        "d - Choice.On",
+    );
+    assert_eq!(
+        count(&codes, 2362) + count(&codes, 2363),
+        0,
+        "aliased numeric enum-member union is arithmetic-compatible: {codes:?}"
+    );
+}
+
+#[test]
+fn aliased_numeric_enum_member_union_allows_increment() {
+    let source = r#"
+export {};
+enum RenamedMode { Off = 0, On = 1 }
+type ModeAlias = RenamedMode.Off | RenamedMode.On;
+let mode: ModeAlias = RenamedMode.Off;
+mode++;
+--mode;
+"#;
+    let codes = check_source_strict_codes(source);
+    assert_eq!(
+        count(&codes, 2356),
+        0,
+        "aliased numeric enum-member union should allow ++/--: {codes:?}"
+    );
+}
+
 // ── never-paired: the invalid operand is still reported ─────────────────────
 
 #[test]

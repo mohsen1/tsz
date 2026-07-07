@@ -8,6 +8,7 @@ mod yield_;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as query_utils;
 use crate::query_boundaries::type_computation::core as type_comp_query;
 use crate::state::CheckerState;
@@ -329,8 +330,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             type_comp_query::is_arithmetic_operand(
                                 self.checker.ctx.types,
                                 evaluated,
-                            ) || (self.checker.is_enum_like_type(ty)
-                                && self.checker.is_unresolved_lazy_type(evaluated))
+                            ) || (enum_query::is_arithmetic_enum_like_type(&self.checker.ctx, ty)
+                                && enum_query::is_unresolved_lazy_type(
+                                    self.checker.ctx.types,
+                                    evaluated,
+                                ))
                         });
                         let nullish_fired = if self.checker.ctx.strict_null_checks()
                             && nullish_can_flow_to_number
@@ -355,8 +359,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let is_valid = type_comp_query::is_arithmetic_operand(
                             self.checker.ctx.types,
                             resolved_type,
-                        ) || self.checker.is_enum_like_type(operand_type)
-                            || self.checker.is_enum_like_type(resolved_type);
+                        ) || enum_query::is_arithmetic_enum_like_type(
+                            &self.checker.ctx,
+                            operand_type,
+                        ) || enum_query::is_arithmetic_enum_like_type(
+                            &self.checker.ctx,
+                            resolved_type,
+                        );
                         if !nullish_fired && !is_valid {
                             ts2356_emitted = true;
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

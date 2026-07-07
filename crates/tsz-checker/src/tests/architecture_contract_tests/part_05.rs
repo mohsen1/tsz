@@ -89,6 +89,82 @@ fn test_jsx_children_type_shape_queries_use_domain_boundary() {
     );
 }
 
+/// Enum arithmetic/widening predicates must live behind the enum-analysis
+/// boundary so checker callers do not reopen local enum/member symbol walks.
+#[test]
+fn test_enum_arithmetic_and_widening_facts_use_enum_analysis_boundary() {
+    let enum_checker_source =
+        fs::read_to_string("src/checkers/enum_checker.rs").expect("failed to read enum_checker.rs");
+    for removed_helper in [
+        "fn is_enum_type(",
+        "fn is_enum_like_type(",
+        "fn is_unresolved_lazy_type(",
+        "fn is_enum_or_enum_member(",
+        "ENUM_MEMBER",
+    ] {
+        assert!(
+            !enum_checker_source.contains(removed_helper),
+            "enum_checker.rs should not own enum semantic helper `{removed_helper}`; use query_boundaries::enum_analysis"
+        );
+    }
+
+    let boundary_source = fs::read_to_string("src/query_boundaries/enum_analysis.rs")
+        .expect("failed to read enum_analysis.rs");
+    for helper in [
+        "fn is_enum_type(",
+        "fn is_arithmetic_enum_like_type(",
+        "fn is_unresolved_lazy_type(",
+        "fn enum_member_parent_symbol_for_widening(",
+        "fn is_enum_member_for_widening(",
+    ] {
+        assert!(
+            boundary_source.contains(helper),
+            "query_boundaries::enum_analysis must own `{helper}`"
+        );
+    }
+
+    for (path, helper) in [
+        (
+            "src/dispatch/mod.rs",
+            "enum_query::is_arithmetic_enum_like_type(",
+        ),
+        (
+            "src/types/computation/helpers.rs",
+            "enum_query::is_arithmetic_enum_like_type(",
+        ),
+        (
+            "src/types/computation/binary.rs",
+            "enum_query::is_enum_type(",
+        ),
+        (
+            "src/types/utilities/core.rs",
+            "enum_query::enum_member_parent_symbol_for_widening(",
+        ),
+        (
+            "src/state/variable_checking/initializer_policy.rs",
+            "enum_query::is_enum_member_for_widening(",
+        ),
+        (
+            "src/types/function_type.rs",
+            "enum_query::is_enum_member_for_widening(",
+        ),
+        (
+            "src/types/utilities/return_type.rs",
+            "enum_query::is_enum_member_for_widening(",
+        ),
+        (
+            "src/types/property_access_type/helpers.rs",
+            "enum_query::is_enum_member_for_widening(",
+        ),
+    ] {
+        let source = fs::read_to_string(path).unwrap_or_else(|_| panic!("failed to read {path}"));
+        assert!(
+            source.contains(helper),
+            "{path} should ask query_boundaries::enum_analysis via `{helper}`"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]

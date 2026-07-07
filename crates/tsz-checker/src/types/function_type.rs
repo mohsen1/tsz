@@ -14,6 +14,7 @@ use super::function_type_helpers::{
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

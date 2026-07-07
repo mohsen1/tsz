@@ -3,6 +3,7 @@
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::PropertyAccessResult;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::property_access as access_query;
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
@@ -1600,8 +1601,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let init_type = self.get_type_of_node(var_decl.initializer);
-        self.is_enum_member_type_for_widening(init_type)
-            .then_some(init_type)
+        enum_query::is_enum_member_for_widening(&self.ctx, init_type).then_some(init_type)
     }
 
     /// Resolve the base constraint of an `IndexAccess` type for display purposes.

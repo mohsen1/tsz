@@ -2,6 +2,7 @@
 //! for `CheckerState`.
 
 use super::heritage_walk_state::HeritageSymbolWalkState;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -583,24 +584,6 @@ impl<'a> CheckerState<'a> {
         self.enum_member_widened_display_type(type_id)
             // Do NOT widen literal types - return as-is
             .unwrap_or(type_id)
-    }
-
-    /// Check if a type is an enum member type (not the parent enum type).
-    ///
-    /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
-    /// when assigned to mutable bindings, even if they're not "fresh" literals.
-    pub(crate) fn is_enum_member_type_for_widening(&self, type_id: TypeId) -> bool {
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            // Check if this DefId has a parent (meaning it's a member, not the enum itself)
-            return self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .is_some_and(|env| env.get_enum_parent(def_id).is_some());
-        }
-        false
     }
 
     /// Check if an expression produces a "fresh" literal type that should be widened.
