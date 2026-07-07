@@ -116,9 +116,30 @@ fn assignability_diagnostics_routes_top_level_mismatch_probes_through_relation_o
         "numeric enum assignment override should use the numeric-enum assignment RelationOutcome"
     );
     assert!(
+        numeric_enum_compact
+            .contains("enum_query::numeric_enum_assignment_target(&self.ctx,target"),
+        "numeric enum assignment override should ask enum_analysis for target classification"
+    );
+    assert!(
+        numeric_enum_compact.contains("enum_query::numeric_literal_value(self.ctx.types"),
+        "numeric enum assignment override should ask enum_analysis for source literal classification"
+    );
+    assert!(
         !numeric_enum_compact.contains("assign_relation_outcome(source_literal,structural_target"),
         "numeric enum assignment override should not use the generic assign request"
     );
+    for forbidden_probe in [
+        "query_boundaries::diagnostics::enum_def_id",
+        "query_boundaries::diagnostics::enum_member_type",
+        "query_boundaries::diagnostics::literal_value",
+        "ctx.is_numeric_enum",
+        "ctx.is_enum_type",
+    ] {
+        assert!(
+            !numeric_enum_helper.contains(forbidden_probe),
+            "numeric enum assignment override should not own enum semantic probe `{forbidden_probe}`"
+        );
+    }
     let default_reporter_start = root_source
         .find("fn check_assignable_or_report_at_with_options")
         .expect("missing default assignability reporter");

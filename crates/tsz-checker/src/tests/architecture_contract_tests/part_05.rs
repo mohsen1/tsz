@@ -219,6 +219,59 @@ fn test_full_enum_member_union_parent_uses_enum_analysis_boundary() {
     }
 }
 
+/// Numeric enum assignment diagnostics should ask the enum-analysis boundary
+/// for target/literal facts, then use the assignability gateway only for the
+/// final whole-enum member-value relation.
+#[test]
+fn test_numeric_enum_assignment_uses_enum_analysis_boundary() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/enum_analysis.rs")
+        .expect("failed to read enum_analysis.rs");
+    for helper in [
+        "enum NumericEnumAssignmentTarget",
+        "fn numeric_enum_assignment_target(",
+        "fn numeric_literal_value(",
+    ] {
+        assert!(
+            boundary_source.contains(helper),
+            "query_boundaries::enum_analysis must own `{helper}`"
+        );
+    }
+
+    let diagnostic_source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+    assert!(
+        diagnostic_source.contains("enum_query::numeric_enum_assignment_target("),
+        "assignability diagnostics should ask enum_analysis for numeric enum assignment targets"
+    );
+    assert!(
+        diagnostic_source.contains("NumericEnumAssignmentTarget::Enum"),
+        "assignability diagnostics should handle whole numeric enum targets from enum_analysis"
+    );
+    assert!(
+        diagnostic_source.contains("NumericEnumAssignmentTarget::Member"),
+        "assignability diagnostics should handle numeric enum member targets from enum_analysis"
+    );
+
+    let call_error_source = fs::read_to_string("src/error_reporter/call_errors/error_emission.rs")
+        .expect("failed to read call error emission");
+    assert!(
+        call_error_source.contains("numeric_enum_assignment_override_from_source("),
+        "TS2345 call emission should share the numeric enum assignment override"
+    );
+    for forbidden_probe in [
+        "query_boundaries::diagnostics::enum_def_id",
+        "query_boundaries::diagnostics::enum_member_type",
+        "query_boundaries::diagnostics::literal_value",
+        "ctx.is_numeric_enum",
+        "ctx.is_enum_type",
+    ] {
+        assert!(
+            !call_error_source.contains(forbidden_probe),
+            "TS2345 call emission should not own enum semantic probe `{forbidden_probe}`"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]

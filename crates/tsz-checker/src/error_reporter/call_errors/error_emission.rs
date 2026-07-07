@@ -114,6 +114,12 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if self
+            .numeric_enum_assignment_override_from_source(arg_type, param_type, idx)
+            .is_some_and(|allowed| allowed)
+        {
+            return;
+        }
 
         // Suppress cascading TS2345 when TS2353 (excess property) already covers this span.
         if let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) {

@@ -300,3 +300,5 @@ mod part_03;
 mod part_04;
 #[path = "ts2322_tests/part_05.rs"]
 mod part_05;
+#[path = "ts2322_tests/part_06.rs"]
+mod part_06;

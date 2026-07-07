@@ -10,7 +10,9 @@ use rustc_hash::FxHashSet;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::DefId;
-use tsz_solver::{ObjectShape, TypeId};
+use tsz_solver::{LiteralValue, ObjectShape, TypeId};
+
+use super::common::TypeResolver;
 
 pub(crate) fn enum_def_id(
     db: &dyn TypeDatabase,
@@ -87,6 +89,43 @@ pub(crate) fn enum_member_parent_symbol_for_widening(
 /// binding and fresh-return positions.
 pub(crate) fn is_enum_member_for_widening(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
     enum_member_parent_symbol_for_widening(ctx, type_id).is_some()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NumericEnumAssignmentTarget {
+    Enum { structural_target: TypeId },
+    Member { target_literal: LiteralValue },
+}
+
+/// Numeric-enum target facts needed by assignment diagnostics. Whole enum
+/// targets relate numeric literal sources to the enum member-value union, while
+/// enum member targets compare against the member's literal value.
+pub(crate) fn numeric_enum_assignment_target(
+    ctx: &CheckerContext<'_>,
+    target: TypeId,
+) -> Option<NumericEnumAssignmentTarget> {
+    let target_def_id = enum_def_id(ctx.types, target)?;
+    if !ctx.is_numeric_enum(target_def_id) {
+        return None;
+    }
+
+    if is_enum_type(ctx, target) {
+        return Some(NumericEnumAssignmentTarget::Enum {
+            structural_target: enum_member_type(ctx.types, target).unwrap_or(target),
+        });
+    }
+
+    let target_member = enum_member_type(ctx.types, target)?;
+    let target_literal = literal_value(ctx.types, target_member)?;
+    Some(NumericEnumAssignmentTarget::Member { target_literal })
+}
+
+pub(crate) fn numeric_literal_value(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<LiteralValue> {
+    let value = literal_value(db, type_id)?;
+    matches!(value, LiteralValue::Number(_)).then_some(value)
 }
 
 /// Parent enum symbol when `type_id` is an enum member or an indexed access
@@ -248,6 +287,10 @@ fn enum_symbol_with_flags(
 /// not an enum type. This is the enum's comparison/overlap value-set.
 pub(crate) fn enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     super::common::enum_member_type(db, type_id)
+}
+
+pub(crate) fn literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralValue> {
+    super::common::literal_value(db, type_id)
 }
 
 /// When exactly one of `(left, right)` is an enum (and the other is not),
