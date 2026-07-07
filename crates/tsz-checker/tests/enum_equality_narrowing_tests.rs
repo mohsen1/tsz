@@ -350,3 +350,37 @@ if (Mixed.Missing) {}
         "empty string member should be always false, got: {messages:#?}"
     );
 }
+
+#[test]
+fn enum_member_truthiness_recovers_after_explicit_numeric_following_string_initializer() {
+    let messages = ts2845_messages(
+        r#"
+enum Mixed { Empty = "", One = 1, Two }
+if (Mixed.Empty) {}
+if (Mixed.One) {}
+if (Mixed.Two) {}
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        3,
+        "string initializers should not block later explicit numeric recovery: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'false'"))
+            .count(),
+        1,
+        "empty string member should be always false, got: {messages:#?}"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.contains("'true'"))
+            .count(),
+        2,
+        "explicit numeric and its following auto member should be always true, got: {messages:#?}"
+    );
+}

@@ -341,6 +341,14 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         enum_eval_source.contains("fn enum_member_initializer_const_value("),
         "enum_eval should own enum member initializer value recovery"
     );
+    assert!(
+        enum_eval_source.contains("fn visit_enum_member_declared_const_values("),
+        "enum_eval should expose one-pass declaration-order enum value recovery"
+    );
+    assert!(
+        enum_eval_source.contains("visit_enum_member_declared_const_values(sym_id,"),
+        "enum compatibility maps should share the declaration-order value visitor"
+    );
 
     let truthiness_source = fs::read_to_string("src/types/queries/callable_truthiness.rs")
         .expect("failed to read callable_truthiness.rs");
@@ -356,6 +364,47 @@ fn test_enum_declared_value_fallback_uses_enum_eval_helper() {
         assert!(
             !truthiness_source.contains(forbidden_helper),
             "callable truthiness should not own enum declaration fallback helper `{forbidden_helper}`"
+        );
+    }
+
+    let computed_symbol_source = fs::read_to_string("src/state/type_analysis/computed/mod.rs")
+        .expect("failed to read computed symbol type source");
+    assert!(
+        computed_symbol_source.contains("self.enum_member_type_from_decl(member_idx)"),
+        "enum type construction should ask enum_eval for member literal types"
+    );
+    for forbidden_fragment in [
+        "let mut auto_value: Option<f64>",
+        "self.evaluate_constant_expression(member.initializer)",
+    ] {
+        assert!(
+            !computed_symbol_source.contains(forbidden_fragment),
+            "enum type construction should not own enum value counter fragment `{forbidden_fragment}`"
+        );
+    }
+
+    let type_environment_source = fs::read_to_string("src/state/type_environment/core.rs")
+        .expect("failed to read type environment core source");
+    assert!(
+        type_environment_source.contains("checker.enum_member_type_from_decl(member_idx)"),
+        "cross-file enum object construction should delegate enum member literal recovery"
+    );
+    assert!(
+        type_environment_source.contains("CheckerCreationReason::TypeEnvironmentCore"),
+        "cross-file enum object construction should attribute declaration-file delegation"
+    );
+    assert!(
+        type_environment_source.contains("enter_delegate()"),
+        "cross-file enum object construction should track delegation depth"
+    );
+    for forbidden_fragment in [
+        "SyntaxKind::StringLiteral",
+        "SyntaxKind::NumericLiteral",
+        "parse_numeric_literal_value",
+    ] {
+        assert!(
+            !type_environment_source.contains(forbidden_fragment),
+            "enum object construction should not hand-parse enum member values with `{forbidden_fragment}`"
         );
     }
 }

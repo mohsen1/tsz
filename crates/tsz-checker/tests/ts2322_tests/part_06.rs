@@ -192,3 +192,40 @@ takeFull(4);
         "full enum-member union parameter should collapse to parent enum display, got: {messages:#?}"
     );
 }
+
+#[test]
+fn test_ts2322_numeric_enum_compatibility_resets_auto_values_per_merged_declaration() {
+    let messages = ts2322_messages(
+        r#"
+namespace Left {
+    export enum Status { Ready = 1 }
+    export enum Status { Done }
+}
+namespace Right {
+    export enum Status { Ready = 1, Done = 0 }
+}
+namespace Carry {
+    export enum Status { Ready = 1, Done = 2 }
+}
+
+declare const left: Left.Status;
+declare const right: Right.Status;
+declare const carry: Carry.Status;
+
+const okToRight: Right.Status = left;
+const okToLeft: Left.Status = right;
+const badCarryToRight: Right.Status = carry;
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        1,
+        "only the carried-value enum should fail numeric compatibility, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message
+            .contains("Type 'Carry.Status' is not assignable to type 'Right.Status'.")),
+        "merged enum declaration auto-values should reset per declaration block, got: {messages:#?}"
+    );
+}

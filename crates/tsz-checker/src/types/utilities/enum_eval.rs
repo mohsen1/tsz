@@ -108,41 +108,70 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: SymbolId,
     ) -> Option<FxHashMap<String, EnumMemberConstValue>> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let mut result = FxHashMap::default();
-        let mut next_numeric_value = 0.0;
-        let mut saw_enum_decl = false;
+        let mut failed = false;
 
-        for decl_idx in symbol.declarations.iter().copied() {
-            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
-                continue;
-            };
-            saw_enum_decl = true;
-
-            for &member_idx in &enum_decl.members.nodes {
-                let member_node = self.ctx.arena.get(member_idx)?;
-                let member = self.ctx.arena.get_enum_member(member_node)?;
-                let member_name = self.get_property_name(member.name)?;
-
-                let value = if let Some(initializer) = member.initializer.into_option() {
-                    match self.enum_member_initializer_const_value(initializer)? {
-                        EnumMemberConstValue::Number(value) => {
-                            next_numeric_value = value + 1.0;
-                            EnumMemberConstValue::Number(value)
-                        }
-                        EnumMemberConstValue::String(value) => EnumMemberConstValue::String(value),
-                    }
-                } else {
-                    let value = EnumMemberConstValue::Number(next_numeric_value);
-                    next_numeric_value += 1.0;
-                    value
+        let saw_enum_decl =
+            self.visit_enum_member_declared_const_values(sym_id, |_, member_name, value| {
+                let (Some(member_name), Some(value)) = (member_name, value) else {
+                    failed = true;
+                    return true;
                 };
-
                 result.insert(member_name, value);
-            }
+                false
+            })?;
+
+        if failed {
+            return None;
         }
 
         saw_enum_decl.then_some(result)
+    }
+
+    fn visit_enum_member_declared_const_values(
+        &self,
+        enum_sym_id: SymbolId,
+        mut visit: impl FnMut(NodeIndex, Option<String>, Option<EnumMemberConstValue>) -> bool,
+    ) -> Option<bool> {
+        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
+        let mut saw_enum_decl = false;
+
+        for &decl_idx in &enum_symbol.declarations {
+            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
+            saw_enum_decl = true;
+            let mut auto_value = Some(0.0);
+
+            for &member_idx in &enum_decl.members.nodes {
+                let member_node = self.ctx.arena.get(member_idx)?;
+                let member_data = self.ctx.arena.get_enum_member(member_node)?;
+                let value = if let Some(initializer) = member_data.initializer.into_option() {
+                    self.enum_member_initializer_const_value(initializer)
+                } else {
+                    auto_value.map(EnumMemberConstValue::Number)
+                };
+
+                let should_stop = visit(
+                    member_idx,
+                    self.get_property_name(member_data.name),
+                    value.clone(),
+                );
+
+                if member_data.initializer.is_some() {
+                    auto_value = match value {
+                        Some(EnumMemberConstValue::Number(value)) => Some(value + 1.0),
+                        Some(EnumMemberConstValue::String(_)) | None => None,
+                    };
+                } else {
+                    auto_value = auto_value.map(|value| value + 1.0);
+                }
+
+                if should_stop {
+                    return Some(saw_enum_decl);
+                }
+            }
+        }
+
+        Some(saw_enum_decl)
     }
 
     /// Get the literal type of an enum member from its initializer.
@@ -480,31 +509,19 @@ impl<'a> CheckerState<'a> {
         enum_sym_id: SymbolId,
         target_member_decl: NodeIndex,
     ) -> Option<EnumMemberConstValue> {
-        let enum_symbol = self.ctx.binder.get_symbol(enum_sym_id)?;
-
-        for &decl_idx in &enum_symbol.declarations {
-            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
-            let mut auto_value = 0.0;
-            for &member_idx in &enum_decl.members.nodes {
-                let member_node = self.ctx.arena.get(member_idx)?;
-                let member_data = self.ctx.arena.get_enum_member(member_node)?;
-
-                if member_idx == target_member_decl {
-                    return if let Some(initializer) = member_data.initializer.into_option() {
-                        self.enum_member_initializer_const_value(initializer)
-                    } else {
-                        Some(EnumMemberConstValue::Number(auto_value))
-                    };
-                }
-
-                if let Some(initializer) = member_data.initializer.into_option() {
-                    auto_value = self.next_numeric_enum_auto_value(initializer)?;
-                } else {
-                    auto_value += 1.0;
-                }
+        let mut found = false;
+        let mut result = None;
+        self.visit_enum_member_declared_const_values(enum_sym_id, |member_idx, _, value| {
+            if member_idx == target_member_decl {
+                found = true;
+                result = value;
+                true
+            } else {
+                false
             }
-        }
-        None
+        })?;
+
+        found.then_some(result).flatten()
     }
 
     pub(crate) fn enum_member_initializer_const_value(
@@ -522,13 +539,6 @@ impl<'a> CheckerState<'a> {
             _ => self
                 .evaluate_constant_expression(initializer)
                 .map(EnumMemberConstValue::Number),
-        }
-    }
-
-    fn next_numeric_enum_auto_value(&self, initializer: NodeIndex) -> Option<f64> {
-        match self.enum_member_initializer_const_value(initializer)? {
-            EnumMemberConstValue::Number(value) => Some(value + 1.0),
-            EnumMemberConstValue::String(_) => None,
         }
     }
 

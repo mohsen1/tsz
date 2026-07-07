@@ -7,7 +7,6 @@ use rustc_hash::FxHashSet;
 use std::cell::Cell;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::MappedTypeId;
 use tsz_solver::TypeId;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo};
@@ -47,6 +46,35 @@ impl CheckerState<'_> {
             .ctx
             .get_binder_for_file(file_idx)
             .unwrap_or(self.ctx.binder);
+        let mut _enum_decl_delegate_guard = None;
+        let mut enum_decl_checker = if std::ptr::eq(enum_arena, self.ctx.arena) {
+            None
+        } else {
+            let file_name = enum_arena
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.clone())
+                .unwrap_or_else(|| self.ctx.file_name.clone());
+            tsz_common::perf_counters::record_delegate_cross_arena_miss();
+            _enum_decl_delegate_guard = Some(tsz_common::perf_counters::enter_delegate());
+            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                enum_arena,
+                enum_binder,
+                self.ctx.types,
+                file_name,
+                self.ctx.compiler_options.clone(),
+                self,
+                tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+            ));
+            checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
+            checker.ctx.copy_cross_file_state_from(&self.ctx);
+            self.ctx.copy_symbol_file_targets_to_attributed(
+                &mut checker.ctx,
+                tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+            );
+            checker.ctx.current_file_idx = file_idx;
+            Some(checker)
+        };
 
         let mut seen_props: FxHashSet<Atom> = FxHashSet::default();
         let mut props: Vec<PropertyInfo> = Vec::new();
@@ -86,28 +114,11 @@ impl CheckerState<'_> {
                 let member_def_id = self.ctx.get_or_create_def_id(member_sym_id);
                 let literal_type = if std::ptr::eq(enum_arena, self.ctx.arena) {
                     self.enum_member_type_from_decl(member_idx)
-                } else if member.initializer.is_some() {
-                    match enum_arena.get(member.initializer) {
-                        Some(init_node) => match init_node.kind {
-                            k if k == SyntaxKind::StringLiteral as u16 => enum_arena
-                                .get_literal(init_node)
-                                .map(|lit| factory.literal_string(&lit.text))
-                                .unwrap_or(TypeId::STRING),
-                            k if k == SyntaxKind::NumericLiteral as u16 => enum_arena
-                                .get_literal(init_node)
-                                .and_then(|lit| {
-                                    lit.value.or_else(|| {
-                                        tsz_common::numeric::parse_numeric_literal_value(&lit.text)
-                                    })
-                                })
-                                .map(|value| factory.literal_number(value))
-                                .unwrap_or(TypeId::NUMBER),
-                            _ => TypeId::NUMBER,
-                        },
-                        None => TypeId::NUMBER,
-                    }
                 } else {
-                    TypeId::NUMBER
+                    enum_decl_checker
+                        .as_mut()
+                        .map(|checker| checker.enum_member_type_from_decl(member_idx))
+                        .unwrap_or(TypeId::NUMBER)
                 };
                 let specific_member_type = factory.enum_type(member_def_id, literal_type);
 
