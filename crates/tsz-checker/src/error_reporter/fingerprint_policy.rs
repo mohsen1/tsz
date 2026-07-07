@@ -206,27 +206,7 @@ impl DiagnosticRenderRequest {
 
 impl<'a> CheckerState<'a> {
     fn widen_display_property_literals_for_related_info(&mut self, type_id: TypeId) -> TypeId {
-        if self.ctx.types.get_display_properties(type_id).is_none() {
-            return type_id;
-        }
-        let Some(shape) = query_common::object_shape_for_type(self.ctx.types, type_id) else {
-            return type_id;
-        };
-
-        let mut widened_shape = shape.as_ref().clone();
-        let mut changed = false;
-        for prop in &mut widened_shape.properties {
-            let widened_read = query_common::widen_literal_type(self.ctx.types, prop.type_id);
-            let widened_write = query_common::widen_literal_type(self.ctx.types, prop.write_type);
-            changed |= widened_read != prop.type_id || widened_write != prop.write_type;
-            prop.type_id = widened_read;
-            prop.write_type = widened_write;
-        }
-        if changed {
-            self.ctx.types.factory().object_with_index(widened_shape)
-        } else {
-            type_id
-        }
+        diagnostics::display_property_literals_widened_for_related_info(self.ctx.types, type_id)
     }
 
     /// Re-render an anonymous object display with its literal annotations

@@ -1,4 +1,5 @@
 use super::state::checking as state_checking;
+use tsz_common::interner::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::{DefKind, DefinitionStore};
 use tsz_solver::{
@@ -127,6 +128,49 @@ pub(crate) fn object_type_with_unknown_display_members(
     } else {
         Some(object_type_from_properties(db, properties))
     }
+}
+
+pub(crate) fn mapped_property_mismatch_parameter_display_type(
+    db: &dyn TypeDatabase,
+    property_name: Atom,
+    target_property_type: TypeId,
+) -> TypeId {
+    let mut property = PropertyInfo::new(property_name, target_property_type);
+    property.optional = type_includes_undefined(db, target_property_type);
+    object_type_from_properties(db, vec![property])
+}
+
+pub(crate) fn display_property_literals_widened_for_related_info(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    if db.get_display_properties(type_id).is_none() {
+        return type_id;
+    }
+    let Some(shape) = object_shape_for_type(db, type_id) else {
+        return type_id;
+    };
+
+    let mut widened_shape = shape.as_ref().clone();
+    let mut changed = false;
+    for prop in &mut widened_shape.properties {
+        let widened_read = super::common::widen_literal_type(db, prop.type_id);
+        let widened_write = super::common::widen_literal_type(db, prop.write_type);
+        changed |= widened_read != prop.type_id || widened_write != prop.write_type;
+        prop.type_id = widened_read;
+        prop.write_type = widened_write;
+    }
+    if changed {
+        object_type_from_shape(db, widened_shape)
+    } else {
+        type_id
+    }
+}
+
+fn type_includes_undefined(db: &dyn TypeDatabase, ty: TypeId) -> bool {
+    ty == TypeId::UNDEFINED
+        || super::common::union_members(db, ty)
+            .is_some_and(|members| members.contains(&TypeId::UNDEFINED))
 }
 
 pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {

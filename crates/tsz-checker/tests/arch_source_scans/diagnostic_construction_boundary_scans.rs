@@ -13,10 +13,12 @@ const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/error_reporter/core/excess_display.rs",
     "src/error_reporter/core/diagnostic_source.rs",
     "src/error_reporter/core/diagnostic_source/static_schema.rs",
+    "src/error_reporter/fingerprint_policy.rs",
     "src/error_reporter/generics.rs",
     "src/error_reporter/properties.rs",
     "src/error_reporter/call_errors/display_formatting.rs",
     "src/error_reporter/call_errors/display_formatting_parameters.rs",
+    "src/error_reporter/call_errors/error_emission.rs",
     "src/error_reporter/call_errors/elaboration.rs",
     "src/state/type_environment/formatting.rs",
 ];
@@ -33,12 +35,19 @@ fn is_allowed_shape_return_signature(trimmed: &str) -> bool {
     )
 }
 
+fn is_allowed_failure_reason_match(line: &str) -> bool {
+    line.contains("SubtypeFailureReason::MissingIndexSignature {")
+}
+
 fn scan_for_patterns(relative: &str, patterns: &[&str], violations: &mut Vec<String>) {
     let source = fs::read_to_string(checker_path(relative))
         .unwrap_or_else(|err| panic!("failed to read {relative}: {err}"));
     for (line_index, line) in source.lines().enumerate() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("//") || is_allowed_shape_return_signature(trimmed) {
+        if trimmed.starts_with("//")
+            || is_allowed_shape_return_signature(trimmed)
+            || is_allowed_failure_reason_match(line)
+        {
             continue;
         }
         for pattern in patterns {
@@ -109,6 +118,8 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "object_type_preserving_display_properties",
         "shallow_object_property_literals_widened_for_call_parameter_display",
         "object_type_with_unknown_display_members",
+        "mapped_property_mismatch_parameter_display_type",
+        "display_property_literals_widened_for_related_info",
         "function_type_from_shape",
         "function_type_with_params_replaced",
         "function_type_with_return_replaced",
