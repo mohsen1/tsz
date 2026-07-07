@@ -1,8 +1,8 @@
 use tsz_common::Atom;
 #[cfg(test)]
 use tsz_solver::TupleElement;
-use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{PropertyInfo, TypeId};
 
 pub(crate) use super::super::common::{
     array_element_type, callable_shape_for_type as callable_shape, intersection_members,
@@ -126,6 +126,23 @@ pub(crate) fn collect_finite_mapped_property_names(
     mapped_id: tsz_solver::MappedTypeId,
 ) -> Option<rustc_hash::FxHashSet<Atom>> {
     tsz_solver::type_queries::collect_finite_mapped_property_names(db, mapped_id)
+}
+
+pub(crate) fn excess_property_any_object_type_from_names(
+    db: &dyn TypeDatabase,
+    prop_names: Vec<Atom>,
+) -> Option<TypeId> {
+    let mut props = Vec::with_capacity(prop_names.len());
+    for name in prop_names {
+        if props.iter().any(|prop: &PropertyInfo| prop.name == name) {
+            continue;
+        }
+        let mut prop = PropertyInfo::new(name, TypeId::ANY);
+        prop.declaration_order = props.len() as u32;
+        props.push(prop);
+    }
+
+    (!props.is_empty()).then(|| db.object(props))
 }
 
 pub(crate) fn get_finite_mapped_property_type(

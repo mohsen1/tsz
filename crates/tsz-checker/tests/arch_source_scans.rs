@@ -24,6 +24,8 @@
 //! - `diagnostic_construction_boundary_scans`: diagnostic reporters route
 //!   display-only solver shape construction through
 //!   `query_boundaries::diagnostics`.
+//! - `excess_property_construction_boundary_scans`: excess-property checking
+//!   routes object shape construction through query boundaries.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
 //!   named checker-owned walk state instead of paired raw visited sets.
 //! - `cross_arena_delegation_scope_scans`: cross-arena delegation depth uses a
@@ -46,6 +48,8 @@ mod construction_boundary_signature_scans;
 mod cross_arena_delegation_scope_scans;
 #[path = "arch_source_scans/diagnostic_construction_boundary_scans.rs"]
 mod diagnostic_construction_boundary_scans;
+#[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]
+mod excess_property_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]

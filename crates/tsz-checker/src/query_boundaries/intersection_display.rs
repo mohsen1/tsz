@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{ObjectShape, TypeId};
@@ -40,6 +41,28 @@ pub(crate) fn collected_properties_object_type<R: TypeResolver>(
                 Some(db.object(properties))
             }
         }
+        _ => None,
+    }
+}
+
+pub(crate) fn collected_properties_object_shape<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<Arc<ObjectShape>> {
+    match collect_properties(type_id, db, resolver) {
+        PropertyCollectionResult::Properties {
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+        } => Some(Arc::new(ObjectShape {
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+            ..ObjectShape::default()
+        })),
         _ => None,
     }
 }
