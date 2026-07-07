@@ -21,7 +21,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{CallableShape, PropertyInfo, TypeId, Visibility};
+use tsz_solver::{
+    CallSignature, CallableShape, FunctionShape, ParamInfo, PropertyInfo, TypeId, Visibility,
+};
 
 pub(crate) fn commonjs_direct_export_supports_named_props(
     types: &dyn tsz_solver::construction::TypeDatabase,
@@ -228,6 +230,227 @@ pub(crate) fn commonjs_namespace_any_property(
     public_export_property(db, name, TypeId::ANY, false, declaration_order)
 }
 
+pub(crate) fn commonjs_namespace_export_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    type_id: TypeId,
+    declaration_order: u32,
+) -> PropertyInfo {
+    public_export_property(db, name, type_id, false, declaration_order)
+}
+
+fn commonjs_export_property_with_write(
+    db: &dyn TypeDatabase,
+    name: &str,
+    type_id: TypeId,
+    write_type: TypeId,
+    readonly: bool,
+    is_method: bool,
+    declaration_order: u32,
+) -> PropertyInfo {
+    PropertyInfo {
+        name: db.intern_string(name),
+        type_id,
+        write_type,
+        optional: false,
+        readonly,
+        is_method,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
+fn widen_commonjs_descriptor_type(db: &dyn TypeDatabase, ty: TypeId) -> TypeId {
+    crate::query_boundaries::common::widen_type(
+        db,
+        crate::query_boundaries::common::widen_freshness(db, ty),
+    )
+}
+
+pub(crate) fn commonjs_define_property_setter_contextual_function_type(
+    db: &dyn TypeDatabase,
+    getter_type: Option<TypeId>,
+) -> Option<TypeId> {
+    getter_type.map(|ty| {
+        db.function(FunctionShape::new(
+            vec![ParamInfo::unnamed(ty)],
+            TypeId::VOID,
+        ))
+    })
+}
+
+pub(crate) struct CommonJsDefinePropertyDescriptorFacts {
+    pub(crate) value_type: Option<TypeId>,
+    pub(crate) getter_type: Option<TypeId>,
+    pub(crate) setter_type: Option<TypeId>,
+    pub(crate) has_value: bool,
+    pub(crate) has_setter: bool,
+    pub(crate) writable_true: bool,
+}
+
+pub(crate) fn commonjs_define_property_descriptor_property(
+    db: &dyn TypeDatabase,
+    name: &str,
+    facts: CommonJsDefinePropertyDescriptorFacts,
+    declaration_order: u32,
+) -> PropertyInfo {
+    let has_getter = facts.getter_type.is_some();
+    let has_accessor_descriptor = has_getter || facts.has_setter;
+    let has_data_descriptor = facts.has_value || facts.writable_true;
+
+    if (!has_accessor_descriptor && !has_data_descriptor)
+        || (has_accessor_descriptor && has_data_descriptor)
+        || (facts.writable_true && !facts.has_value && !has_accessor_descriptor)
+    {
+        return commonjs_export_property_with_write(
+            db,
+            name,
+            TypeId::ANY,
+            TypeId::ANY,
+            true,
+            false,
+            declaration_order,
+        );
+    }
+
+    let value_type = facts
+        .value_type
+        .map(|ty| widen_commonjs_descriptor_type(db, ty));
+    let getter_type = facts
+        .getter_type
+        .map(|ty| widen_commonjs_descriptor_type(db, ty));
+    let mut setter_type = facts
+        .setter_type
+        .map(|ty| widen_commonjs_descriptor_type(db, ty));
+
+    if facts.has_setter && setter_type == Some(TypeId::ANY) && getter_type.is_some() {
+        setter_type = getter_type;
+    }
+
+    let writable = facts.has_setter || (facts.has_value && facts.writable_true);
+    let precise_setter_type = setter_type.filter(|&ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
+    let read_type = value_type
+        .or(getter_type)
+        .or(setter_type)
+        .unwrap_or(TypeId::ANY);
+    let write_type = if writable {
+        precise_setter_type
+            .or(getter_type)
+            .or(value_type)
+            .unwrap_or(read_type)
+    } else {
+        read_type
+    };
+
+    commonjs_export_property_with_write(
+        db,
+        name,
+        read_type,
+        write_type,
+        !writable,
+        false,
+        declaration_order,
+    )
+}
+
+pub(crate) fn commonjs_type_with_define_property_members(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    base_type: TypeId,
+    props: Vec<PropertyInfo>,
+) -> TypeId {
+    if props.is_empty() {
+        return base_type;
+    }
+
+    let base_shape = crate::query_boundaries::common::object_shape_for_type(db, base_type)
+        .map(|shape| shape.as_ref().clone())
+        .or_else(|| {
+            let widened = crate::query_boundaries::common::widen_freshness(db, base_type);
+            crate::query_boundaries::common::object_shape_for_type(db, widened)
+                .map(|shape| shape.as_ref().clone())
+        });
+
+    if let Some(shape) = base_shape {
+        let mut merged_props = shape.properties.clone();
+        for prop in props {
+            if let Some(existing) = merged_props
+                .iter_mut()
+                .find(|existing| existing.name == prop.name)
+            {
+                *existing = prop;
+            } else {
+                merged_props.push(prop);
+            }
+        }
+
+        return db.factory().object_with_shape_metadata(merged_props, &shape);
+    }
+
+    let define_property_type = db.object(props);
+    if base_type.is_unknown_or_error() {
+        define_property_type
+    } else {
+        db.intersection2(base_type, define_property_type)
+    }
+}
+
+pub(crate) fn commonjs_export_constructor_type_with_instance(
+    db: &dyn TypeDatabase,
+    rhs_type: TypeId,
+    instance_type: TypeId,
+    symbol: Option<SymbolId>,
+) -> TypeId {
+    if let Some(func) = crate::query_boundaries::common::function_shape_for_type(db, rhs_type) {
+        if func.is_constructor {
+            return rhs_type;
+        }
+
+        let call_sig = CallSignature {
+            type_params: func.type_params.clone(),
+            params: func.params.clone(),
+            this_type: func.this_type,
+            return_type: func.return_type,
+            type_predicate: func.type_predicate,
+            is_method: func.is_method,
+        };
+        let construct_sig = CallSignature {
+            return_type: instance_type,
+            ..call_sig.clone()
+        };
+        return db.callable(CallableShape {
+            call_signatures: vec![call_sig],
+            construct_signatures: vec![construct_sig],
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol,
+            is_abstract: false,
+        });
+    }
+
+    let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, rhs_type) else {
+        return rhs_type;
+    };
+    if !shape.construct_signatures.is_empty() || shape.call_signatures.is_empty() {
+        return rhs_type;
+    }
+
+    let mut new_shape = shape.as_ref().clone();
+    let mut construct_sig = new_shape.call_signatures[0].clone();
+    construct_sig.return_type = instance_type;
+    new_shape.construct_signatures.push(construct_sig);
+    if new_shape.symbol.is_none() {
+        new_shape.symbol = symbol;
+    }
+    db.callable(new_shape)
+}
+
 pub(crate) fn commonjs_empty_namespace_type(db: &dyn TypeDatabase) -> TypeId {
     db.object(Vec::new())
 }
@@ -287,6 +510,63 @@ pub(crate) fn current_file_commonjs_namespace_type(
             .insert(empty_namespace, display_name);
         empty_namespace
     })
+}
+
+pub(crate) fn commonjs_export_surface_type_with_display_name(
+    checker: &mut CheckerState<'_>,
+    surface: &JsExportSurface,
+    display_name: String,
+) -> Option<TypeId> {
+    surface.to_type_id_with_display_name(checker, Some(display_name))
+}
+
+pub(crate) fn commonjs_imported_module_value_type(
+    checker: &mut CheckerState<'_>,
+    mut props: Vec<PropertyInfo>,
+    export_equals_type: Option<TypeId>,
+    module_is_non_module_entity: bool,
+    display_module_name: Option<String>,
+) -> Option<TypeId> {
+    let namespace_type = (!props.is_empty()).then(|| {
+        JsExportSurface::normalize_property_declaration_order(&mut props);
+        let namespace_type = checker.ctx.types.object(props);
+        if let Some(display_module_name) = display_module_name.as_ref() {
+            checker
+                .ctx
+                .namespace_module_names
+                .insert(namespace_type, display_module_name.clone());
+        }
+        namespace_type
+    });
+
+    if let Some(export_equals_type) = export_equals_type {
+        let result = if module_is_non_module_entity {
+            if checker.ctx.allow_synthetic_default_imports() {
+                namespace_type.unwrap_or(export_equals_type)
+            } else {
+                export_equals_type
+            }
+        } else {
+            namespace_type
+                .map(|namespace_type| {
+                    checker
+                        .ctx
+                        .types
+                        .intersection2(export_equals_type, namespace_type)
+                })
+                .unwrap_or(export_equals_type)
+        };
+        if let Some(display_module_name) = display_module_name {
+            checker
+                .ctx
+                .namespace_module_names
+                .entry(result)
+                .or_insert(display_module_name);
+        }
+        return Some(result);
+    }
+
+    namespace_type
 }
 
 /// Represents the synthesized export surface of a JS/CommonJS module.

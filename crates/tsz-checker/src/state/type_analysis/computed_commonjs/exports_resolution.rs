@@ -1,11 +1,11 @@
-use crate::query_boundaries::common::{callable_shape_for_type, function_shape_for_type};
+use crate::query_boundaries::common::function_shape_for_type;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{PropertyInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
     fn infer_descriptor_parameter_type_in_current_checker(
@@ -332,13 +332,7 @@ impl<'a> CheckerState<'a> {
                                 prop.initializer,
                                 None,
                             );
-                            value_type = Some(crate::query_boundaries::common::widen_type(
-                                self.ctx.types,
-                                crate::query_boundaries::common::widen_freshness(
-                                    self.ctx.types,
-                                    value,
-                                ),
-                            ));
+                            value_type = Some(value);
                         }
                         "writable" => {
                             writable_true = arena
@@ -386,21 +380,15 @@ impl<'a> CheckerState<'a> {
                     else {
                         continue;
                     };
-                    let contextual_method_type = (prop_name.as_str() == "set")
-                        .then_some(getter_type)
-                        .flatten();
+                    let contextual_method_type =
+                        crate::query_boundaries::js_exports::commonjs_define_property_setter_contextual_function_type(
+                            self.ctx.types,
+                            (prop_name.as_str() == "set").then_some(getter_type).flatten(),
+                        );
                     let method_type = self.infer_commonjs_descriptor_method_type(
                         target_file_idx,
                         element_idx,
-                        contextual_method_type.map(|ty| {
-                            self.ctx
-                                .types
-                                .factory()
-                                .function(tsz_solver::FunctionShape::new(
-                                    vec![tsz_solver::ParamInfo::unnamed(ty)],
-                                    TypeId::VOID,
-                                ))
-                        }),
+                        contextual_method_type,
                     );
                     let Some(shape) = function_shape_for_type(self.ctx.types, method_type) else {
                         continue;
@@ -462,88 +450,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let has_getter = getter_type.is_some();
-        let has_accessor_descriptor = has_getter || has_setter;
-        let has_data_descriptor = has_value || writable_true;
-
-        // tsc treats malformed or mixed descriptors as readonly any-typed
-        // properties: an empty `{}`, a mixed accessor+data shape (`get`+`value`),
-        // and a lone `writable: true` (no `value`, no accessor) all produce
-        // properties that exist for read access but reject writes with TS2540.
-        // Only a paired `value` + `writable: true` data descriptor or an explicit
-        // `set` accessor makes the property writable.
-        if (!has_accessor_descriptor && !has_data_descriptor)
-            || (has_accessor_descriptor && has_data_descriptor)
-            || (writable_true && !has_value && !has_accessor_descriptor)
-        {
-            return Some(PropertyInfo {
-                name: self.ctx.types.intern_string(name),
-                type_id: TypeId::ANY,
-                write_type: TypeId::ANY,
-                optional: false,
-                readonly: true,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
-        }
-
-        // Widen fresh literal types that flow from the inferred getter/setter
-        // bodies into the property's read/write type, mirroring tsc behavior.
-        // Without this, `Object.defineProperty(x, "p", { get() { return 21.75 }})`
-        // gives `x.p` the literal type `21.75` instead of `number`, and assigning
-        // anything else (even a JSDoc-cast `number`) fails TS2322.
-        let widen = |ty: TypeId| -> TypeId {
-            crate::query_boundaries::common::widen_type(
+        Some(
+            crate::query_boundaries::js_exports::commonjs_define_property_descriptor_property(
                 self.ctx.types,
-                crate::query_boundaries::common::widen_freshness(self.ctx.types, ty),
-            )
-        };
-        getter_type = getter_type.map(widen);
-        setter_type = setter_type.map(widen);
-
-        if has_setter && setter_type == Some(TypeId::ANY) && getter_type.is_some() {
-            setter_type = getter_type;
-        }
-
-        let writable = has_setter || (has_value && writable_true);
-        let precise_setter_type =
-            setter_type.filter(|&ty| ty != TypeId::ANY && ty != TypeId::UNKNOWN);
-        let read_type = value_type
-            .or(getter_type)
-            .or(setter_type)
-            .unwrap_or(TypeId::ANY);
-        let write_type = if writable {
-            precise_setter_type
-                .or(getter_type)
-                .or(value_type)
-                .unwrap_or(read_type)
-        } else {
-            read_type
-        };
-
-        Some(PropertyInfo {
-            name: self.ctx.types.intern_string(name),
-            type_id: read_type,
-            write_type,
-            optional: false,
-            readonly: !writable,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        })
+                name,
+                crate::query_boundaries::js_exports::CommonJsDefinePropertyDescriptorFacts {
+                    value_type,
+                    getter_type,
+                    setter_type,
+                    has_value,
+                    has_setter,
+                    writable_true,
+                },
+                declaration_order,
+            ),
+        )
     }
 
     pub(crate) fn augment_object_type_with_define_properties(
@@ -636,44 +557,11 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
-        let base_shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, base_type)
-                .map(|shape| shape.as_ref().clone())
-                .or_else(|| {
-                    let widened =
-                        crate::query_boundaries::common::widen_freshness(self.ctx.types, base_type);
-                    crate::query_boundaries::common::object_shape_for_type(self.ctx.types, widened)
-                        .map(|shape| shape.as_ref().clone())
-                });
-        if let Some(shape) = base_shape {
-            let mut merged_props = shape.properties.clone();
-            for prop in props {
-                if let Some(existing) = merged_props
-                    .iter_mut()
-                    .find(|existing| existing.name == prop.name)
-                {
-                    *existing = prop;
-                } else {
-                    merged_props.push(prop);
-                }
-            }
-
-            return self
-                .ctx
-                .types
-                .factory()
-                .object_with_shape_metadata(merged_props, &shape);
-        }
-
-        let define_property_type = self.ctx.types.factory().object(props);
-        if base_type.is_unknown_or_error() {
-            define_property_type
-        } else {
-            self.ctx
-                .types
-                .factory()
-                .intersection2(base_type, define_property_type)
-        }
+        crate::query_boundaries::js_exports::commonjs_type_with_define_property_members(
+            self.ctx.types,
+            base_type,
+            props,
+        )
     }
 
     pub(super) fn upgrade_commonjs_export_constructor_type(
@@ -687,54 +575,13 @@ impl<'a> CheckerState<'a> {
             return rhs_type;
         };
 
-        if let Some(func) = function_shape_for_type(self.ctx.types, rhs_type) {
-            if func.is_constructor {
-                return rhs_type;
-            }
-
-            let call_sig = tsz_solver::CallSignature {
-                type_params: func.type_params.clone(),
-                params: func.params.clone(),
-                this_type: func.this_type,
-                return_type: func.return_type,
-                type_predicate: func.type_predicate,
-                is_method: func.is_method,
-            };
-            let construct_sig = tsz_solver::CallSignature {
-                return_type: instance_type,
-                ..call_sig.clone()
-            };
-            let symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
-            return self
-                .ctx
-                .types
-                .factory()
-                .callable(tsz_solver::CallableShape {
-                    call_signatures: vec![call_sig],
-                    construct_signatures: vec![construct_sig],
-                    properties: Vec::new(),
-                    string_index: None,
-                    number_index: None,
-                    symbol,
-                    is_abstract: false,
-                });
-        }
-
-        let Some(shape) = callable_shape_for_type(self.ctx.types, rhs_type) else {
-            return rhs_type;
-        };
-        if !shape.construct_signatures.is_empty() || shape.call_signatures.is_empty() {
-            return rhs_type;
-        }
-
-        let mut new_shape = shape.as_ref().clone();
-        let mut construct_sig = new_shape.call_signatures[0].clone();
-        construct_sig.return_type = instance_type;
-        new_shape.construct_signatures.push(construct_sig);
-        if new_shape.symbol.is_none() {
-            new_shape.symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
-        }
-        self.ctx.types.factory().callable(new_shape)
+        let symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
+        crate::query_boundaries::js_exports::commonjs_export_constructor_type_with_instance(
+            self.ctx.types,
+            rhs_type,
+            instance_type,
+            symbol,
+        )
     }
 
     pub(crate) fn direct_commonjs_module_export_assignment_rhs(
@@ -882,22 +729,14 @@ impl<'a> CheckerState<'a> {
                     existing.readonly = false;
                     continue;
                 }
-                props.push(tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: props.len() as u32 + 1,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                props.push(
+                    crate::query_boundaries::js_exports::commonjs_namespace_export_property(
+                        self.ctx.types,
+                        &name_text,
+                        rhs_type,
+                        props.len() as u32 + 1,
+                    ),
+                );
             }
         }
     }
@@ -1070,8 +909,6 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
-
         if let Some(json_type) = self.json_module_type_for_module(module_name, source_file_idx) {
             return Some(json_type);
         }
@@ -1167,7 +1004,11 @@ impl<'a> CheckerState<'a> {
                 && surface.has_commonjs_exports
             {
                 let display_name = self.imported_namespace_display_module_name(module_name);
-                return surface.to_type_id_with_display_name(self, Some(display_name));
+                return crate::query_boundaries::js_exports::commonjs_export_surface_type_with_display_name(
+                    self,
+                    surface,
+                    display_name,
+                );
             }
             let mut props: Vec<PropertyInfo> = if surface
                 .as_ref()
@@ -1204,23 +1045,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         props.len() as u32 + 2
                     };
-                    let name_atom = self.ctx.types.intern_string(name);
-                    props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id: prop_type,
-                        write_type: prop_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    props.push(
+                        crate::query_boundaries::js_exports::commonjs_namespace_export_property(
+                            self.ctx.types,
+                            name,
+                            prop_type,
+                            declaration_order,
+                        ),
+                    );
                 }
                 props
             };
@@ -1232,24 +1064,15 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    props.push(PropertyInfo {
-                        name: name_atom,
-                        // Cross-file augmentation declarations may live in a different
-                        // arena; use `any` here to preserve namespace member visibility.
-                        type_id: TypeId::ANY,
-                        write_type: TypeId::ANY,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    // Cross-file augmentation declarations may live in a different
+                    // arena; use `any` here to preserve namespace member visibility.
+                    props.push(
+                        crate::query_boundaries::js_exports::commonjs_namespace_any_property(
+                            self.ctx.types,
+                            &aug_name,
+                            0,
+                        ),
+                    );
                 }
             }
 
@@ -1258,47 +1081,13 @@ impl<'a> CheckerState<'a> {
                 !(module_is_non_module_entity && self.ctx.allow_synthetic_default_imports());
             let display_module_name = (has_named_props && preserve_namespace_display)
                 .then(|| self.resolve_namespace_display_module_name(&exports_table, module_name));
-            let namespace_type = has_named_props.then(|| {
-                Self::normalize_namespace_export_declaration_order(&mut props);
-                let namespace_type = factory.object(props);
-                if let Some(display_module_name) = display_module_name.as_ref() {
-                    self.ctx
-                        .namespace_module_names
-                        .insert(namespace_type, display_module_name.clone());
-                }
-                namespace_type
-            });
-            if let Some(export_equals_type) = export_equals_type {
-                let result = if module_is_non_module_entity {
-                    if self.ctx.allow_synthetic_default_imports() {
-                        namespace_type.unwrap_or(export_equals_type)
-                    } else {
-                        export_equals_type
-                    }
-                } else {
-                    namespace_type
-                        .map(|namespace_type| {
-                            factory.intersection2(export_equals_type, namespace_type)
-                        })
-                        .unwrap_or(export_equals_type)
-                };
-                if let Some(display_module_name) = display_module_name {
-                    self.ctx
-                        .namespace_module_names
-                        .entry(result)
-                        .or_insert(display_module_name);
-                }
-                return Some(result);
-            }
-
-            if let Some(namespace_type) = namespace_type {
-                if module_is_non_module_entity {
-                    return Some(namespace_type);
-                }
-                return Some(namespace_type);
-            }
-
-            return None;
+            return crate::query_boundaries::js_exports::commonjs_imported_module_value_type(
+                self,
+                props,
+                export_equals_type,
+                module_is_non_module_entity,
+                display_module_name,
+            );
         }
 
         if let Some(direct_export_assignment_type) = direct_export_assignment_type {
@@ -1313,7 +1102,11 @@ impl<'a> CheckerState<'a> {
             && surface.has_commonjs_exports
         {
             let display_name = self.imported_namespace_display_module_name(module_name);
-            return surface.to_type_id_with_display_name(self, Some(display_name));
+            return crate::query_boundaries::js_exports::commonjs_export_surface_type_with_display_name(
+                self,
+                &surface,
+                display_name,
+            );
         }
 
         None
