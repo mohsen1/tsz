@@ -136,6 +136,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // tsc parity for `getBestMatchIndexedAccessTypeOrUndefined`
+        // (`elaborateElementwise`): when the target is a union that contains an
+        // array-like member, a fresh object-literal source does NOT resolve its
+        // per-property target through any member that happens to expose the key
+        // via an index signature. Instead tsc's `findBestTypeForObjectLiteral`
+        // selects the first non-array-like member in union order, and the
+        // per-property target comes from that member alone. If the best-matching
+        // member lacks the key, elaboration is skipped for that property and the
+        // outer assignment error is reported.
+        let array_union_best_match_member =
+            self.object_literal_array_union_best_match_member(effective_param_type);
+
         let mut elaborated = false;
         let mut seen_named_properties: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
@@ -272,12 +284,14 @@ impl<'a> CheckerState<'a> {
                 }
                 None => continue,
             };
+            // Resolve the per-property target against the best-matching union
+            // member when one exists (tsc's `findBestTypeForObjectLiteral`),
+            // else against the whole target. A `None` here — the best member
+            // lacks the key — makes the loop skip this property, so the outer
+            // assignment error is reported instead of drilling into the value.
+            let target_source_type = array_union_best_match_member.unwrap_or(effective_param_type);
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
-                .object_literal_target_property_type(
-                    effective_param_type,
-                    prop_name_idx,
-                    &prop_name,
-                )
+                .object_literal_target_property_type(target_source_type, prop_name_idx, &prop_name)
             else {
                 continue;
             };
@@ -977,6 +991,54 @@ impl<'a> CheckerState<'a> {
             return self.type_has_mapped_alias_surface(body_type, depth + 1);
         }
         false
+    }
+
+    /// tsc's `findBestTypeForObjectLiteral` (the object-literal branch of
+    /// `getBestMatchingType`, used by `getBestMatchIndexedAccessTypeOrUndefined`):
+    /// when a fresh object-literal source is related to a union target that has
+    /// an array-like member, the best-matching member for per-property
+    /// elaboration is the first non-array-like member in union order. Returns
+    /// that member, or `None` when the target does not resolve to such a union
+    /// (no array-like member, or not a union at all).
+    ///
+    /// This is a deliberate narrowing of tsc's full `getBestMatchingType`
+    /// (which also scores members by discriminant/property overlap): the
+    /// array-like branch is the one that governs the recursive-JSON-alias shape
+    /// this gate targets (`… | Json[] | { [k: string]: Json }`), where the
+    /// leading primitive/object member is selected. Array-like = `T[]`, tuple,
+    /// or `readonly T[]` (tsc's `isArrayLikeType`).
+    pub(crate) fn object_literal_array_union_best_match_member(
+        &mut self,
+        param_type: TypeId,
+    ) -> Option<TypeId> {
+        use crate::query_boundaries::type_checking_utilities::{
+            ArrayLikeKind, classify_array_like,
+        };
+
+        let resolved = self.resolve_type_for_property_access(param_type);
+        let evaluated = self.judge_evaluate(resolved);
+        for candidate in [param_type, resolved, evaluated] {
+            let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+            else {
+                continue;
+            };
+            let db = self.ctx.types.as_type_database();
+            let is_array_like = |member: TypeId| {
+                matches!(
+                    classify_array_like(db, member),
+                    ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple | ArrayLikeKind::Readonly(_)
+                )
+            };
+            if !members.iter().any(|&member| is_array_like(member)) {
+                continue;
+            }
+            return members
+                .iter()
+                .copied()
+                .find(|&member| !is_array_like(member));
+        }
+        None
     }
 
     fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {

@@ -325,18 +325,39 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let target_shapes = target_members
-                .iter()
-                .map(|(_, shape)| shape.clone())
-                .collect::<Vec<_>>();
+            // tsc's `getBestMatchIndexedAccessTypeOrUndefined` (`elaborateElementwise`):
+            // when the union target has an array-like member, a fresh object
+            // literal resolves each property's index-signature target against the
+            // first non-array-like member alone (`findBestTypeForObjectLiteral`),
+            // not against every member that happens to expose an index signature.
+            // If that best-matching member is a primitive (or otherwise carries no
+            // object shape), no per-property index-signature check applies and the
+            // outer assignment error is reported instead. Example:
+            // `type Json = … | Json[] | { [k: string]: Json }` selects the leading
+            // `string`, so `{ a: () => 1 }` is not drilled into `Json` per-property.
+            let best_match_member =
+                self.object_literal_array_union_best_match_member(union_check_target);
+            let target_shapes = if let Some(best_member) = best_match_member {
+                let resolved_best = self.resolve_type_for_property_access(best_member);
+                query::object_shape(self.ctx.types, resolved_best)
+                    .map(|shape| vec![shape])
+                    .unwrap_or_default()
+            } else {
+                target_members
+                    .iter()
+                    .map(|(_, shape)| shape.clone())
+                    .collect::<Vec<_>>()
+            };
 
-            if self.try_union_index_signature_value_check(
-                source_props,
-                idx,
-                &target_shapes,
-                explicit_property_names.as_ref(),
-                target,
-            ) {
+            if !target_shapes.is_empty()
+                && self.try_union_index_signature_value_check(
+                    source_props,
+                    idx,
+                    &target_shapes,
+                    explicit_property_names.as_ref(),
+                    target,
+                )
+            {
                 return;
             }
 
