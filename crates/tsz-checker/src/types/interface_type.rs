@@ -11,9 +11,7 @@
 
 use crate::query_boundaries::{
     construct_signatures as signature_boundary,
-    interface_merge::{
-        self as interface_merge_boundary, MergedCallableSurface,
-    },
+    interface_merge::{self as interface_merge_boundary, MergedCallableSurface},
     signature_building as signature_building_boundary, type_construction as construction_boundary,
 };
 use crate::state::CheckerState;
@@ -1508,13 +1506,17 @@ impl<'a> CheckerState<'a> {
                 );
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                let result = self.ctx.types.factory().object_with_shape_metadata_and_index_signatures(
-                    properties,
-                    &derived_shape,
-                    base_shape.string_index_signature().copied(),
-                    base_shape.number_index,
-                    base_shape.symbol_index_signature().copied(),
-                );
+                let result = self
+                    .ctx
+                    .types
+                    .factory()
+                    .object_with_shape_metadata_and_index_signatures(
+                        properties,
+                        &derived_shape,
+                        base_shape.string_index_signature().copied(),
+                        base_shape.number_index,
+                        base_shape.symbol_index_signature().copied(),
+                    );
                 tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
                 result
             }
@@ -1539,21 +1541,24 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                self.ctx.types.factory().object_with_shape_metadata_and_index_signatures(
-                    properties,
-                    &derived_shape,
-                    derived_shape
-                        .string_index_signature()
-                        .copied()
-                        .or_else(|| base_shape.string_index_signature().copied()),
-                    derived_shape
-                        .number_index
-                        .or_else(|| base_shape.number_index),
-                    derived_shape
-                        .symbol_index_signature()
-                        .copied()
-                        .or_else(|| base_shape.symbol_index_signature().copied()),
-                )
+                self.ctx
+                    .types
+                    .factory()
+                    .object_with_shape_metadata_and_index_signatures(
+                        properties,
+                        &derived_shape,
+                        derived_shape
+                            .string_index_signature()
+                            .copied()
+                            .or_else(|| base_shape.string_index_signature().copied()),
+                        derived_shape
+                            .number_index
+                            .or_else(|| base_shape.number_index),
+                        derived_shape
+                            .symbol_index_signature()
+                            .copied()
+                            .or_else(|| base_shape.symbol_index_signature().copied()),
+                    )
             }
             // Decompose intersections so callable/object cores merge structurally
             // before augmentation members are rewrapped.
@@ -1631,21 +1636,24 @@ impl<'a> CheckerState<'a> {
                             &base_shape.properties,
                             mode,
                         );
-                        self.ctx.types.factory().object_with_shape_metadata_and_index_signatures(
-                            properties,
-                            &derived_shape,
-                            derived_shape
-                                .string_index_signature()
-                                .copied()
-                                .or_else(|| base_shape.string_index_signature().copied()),
-                            derived_shape
-                                .number_index
-                                .or_else(|| base_shape.number_index),
-                            derived_shape
-                                .symbol_index_signature()
-                                .copied()
-                                .or_else(|| base_shape.symbol_index_signature().copied()),
-                        )
+                        self.ctx
+                            .types
+                            .factory()
+                            .object_with_shape_metadata_and_index_signatures(
+                                properties,
+                                &derived_shape,
+                                derived_shape
+                                    .string_index_signature()
+                                    .copied()
+                                    .or_else(|| base_shape.string_index_signature().copied()),
+                                derived_shape
+                                    .number_index
+                                    .or_else(|| base_shape.number_index),
+                                derived_shape
+                                    .symbol_index_signature()
+                                    .copied()
+                                    .or_else(|| base_shape.symbol_index_signature().copied()),
+                            )
                     }
                     _ => derived,
                 }

@@ -390,7 +390,9 @@ pub(crate) fn commonjs_type_with_define_property_members(
             }
         }
 
-        return db.factory().object_with_shape_metadata(merged_props, &shape);
+        return db
+            .factory()
+            .object_with_shape_metadata(merged_props, &shape);
     }
 
     let define_property_type = db.object(props);

@@ -477,7 +477,10 @@ impl<'a> CheckerState<'a> {
 
                     let string_index = if !string_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), string_index_types)
+                            object_literals::order_preserving_union(
+                                self.ctx.types.as_type_database(),
+                                string_index_types,
+                            )
                         } else {
                             self.ctx.types.factory().union(string_index_types)
                         };
@@ -492,7 +495,10 @@ impl<'a> CheckerState<'a> {
                     };
                     let number_index = if !number_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), number_index_types)
+                            object_literals::order_preserving_union(
+                                self.ctx.types.as_type_database(),
+                                number_index_types,
+                            )
                         } else {
                             self.ctx.types.factory().union(number_index_types)
                         };
@@ -507,7 +513,10 @@ impl<'a> CheckerState<'a> {
                     };
                     let symbol_index = if !symbol_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), symbol_index_types)
+                            object_literals::order_preserving_union(
+                                self.ctx.types.as_type_database(),
+                                symbol_index_types,
+                            )
                         } else {
                             self.ctx.types.factory().union(symbol_index_types)
                         };

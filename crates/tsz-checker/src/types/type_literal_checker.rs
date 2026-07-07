@@ -5,9 +5,7 @@
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
 use crate::query_boundaries::signature_building as signature_building_boundary;
-use crate::query_boundaries::{
-    type_construction as construction_boundary,
-};
+use crate::query_boundaries::type_construction as construction_boundary;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
