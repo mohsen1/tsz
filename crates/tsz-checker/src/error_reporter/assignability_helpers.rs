@@ -9,6 +9,7 @@ use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -92,7 +93,7 @@ impl<'a> CheckerState<'a> {
                 return source;
             }
 
-            let recovered = self.ctx.types.array(widened);
+            let recovered = diagnostic_query::display_array_type(self.ctx.types, widened);
             if recovered != source {
                 return recovered;
             }

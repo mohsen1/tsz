@@ -170,7 +170,7 @@ pub(crate) fn display_property_literals_widened_for_related_info(
 pub(crate) fn source_display_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
     match members.as_slice() {
         [single] => *single,
-        _ => db.union(members),
+        _ => display_union_type(db, members),
     }
 }
 
@@ -184,17 +184,123 @@ pub(crate) fn source_display_union_type_from_slice(
     }
 }
 
+pub(crate) fn display_application_type(
+    db: &dyn TypeDatabase,
+    base: TypeId,
+    args: Vec<TypeId>,
+) -> TypeId {
+    db.application(base, args)
+}
+
+pub(crate) fn display_union_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.union(members)
+}
+
+pub(crate) fn display_union_or_single_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    tsz_solver::utils::union_or_single(db, members)
+}
+
+pub(crate) fn display_union_preserve_members_type(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    db.union_preserve_members(members)
+}
+
+pub(crate) fn display_intersection_type(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    db.intersection(members)
+}
+
+pub(crate) fn display_intersection_or_single_type(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> TypeId {
+    tsz_solver::utils::intersection_or_single(db, members)
+}
+
 pub(crate) fn rebuilt_array_source_display_type(
     db: &dyn TypeDatabase,
     source_type: TypeId,
     element_type: TypeId,
 ) -> TypeId {
-    let rebuilt = db.array(element_type);
+    let rebuilt = display_array_type(db, element_type);
     if tsz_solver::type_queries::is_readonly_type(db, source_type) {
         db.readonly_type(rebuilt)
     } else {
         rebuilt
     }
+}
+
+pub(crate) fn display_array_type(db: &dyn TypeDatabase, element_type: TypeId) -> TypeId {
+    db.array(element_type)
+}
+
+pub(crate) fn display_index_access_type(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+) -> TypeId {
+    db.index_access(object_type, index_type)
+}
+
+pub(crate) fn display_union_with_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    db.union2(type_id, TypeId::UNDEFINED)
+}
+
+pub(crate) fn display_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
+    db.literal_string(value)
+}
+
+pub(crate) fn display_string_literal_atom_type(db: &dyn TypeDatabase, atom: Atom) -> TypeId {
+    db.literal_string_atom(atom)
+}
+
+pub(crate) fn display_number_literal_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
+    db.literal_number(value)
+}
+
+pub(crate) fn display_rest_parameter_type(
+    db: &dyn TypeDatabase,
+    rest_param_type: TypeId,
+    rest_start: usize,
+    index: usize,
+    is_rest: bool,
+) -> TypeId {
+    if is_rest {
+        let element = display_index_access_type(db, rest_param_type, TypeId::NUMBER);
+        display_array_type(db, element)
+    } else {
+        let offset = index - rest_start;
+        let index_type = display_number_literal_type(db, offset as f64);
+        display_index_access_type(db, rest_param_type, index_type)
+    }
+}
+
+pub(crate) const fn display_property(name: Atom, type_id: TypeId) -> PropertyInfo {
+    PropertyInfo::new(name, type_id)
+}
+
+pub(crate) fn mapped_display_property(
+    name: Atom,
+    type_id: TypeId,
+    optional_modifier: Option<tsz_solver::MappedModifier>,
+    readonly_modifier: Option<tsz_solver::MappedModifier>,
+) -> PropertyInfo {
+    let mut property = display_property(name, type_id);
+    property.optional = optional_modifier == Some(tsz_solver::MappedModifier::Add);
+    property.readonly = readonly_modifier == Some(tsz_solver::MappedModifier::Add);
+    property
+}
+
+pub(crate) const fn static_schema_display_property_from_source(
+    source: &PropertyInfo,
+    type_id: TypeId,
+) -> PropertyInfo {
+    let mut property = display_property(source.name, type_id);
+    property.optional = source.optional;
+    property.readonly = source.readonly;
+    property.declaration_order = source.declaration_order;
+    property
 }
 
 fn type_includes_undefined(db: &dyn TypeDatabase, ty: TypeId) -> bool {

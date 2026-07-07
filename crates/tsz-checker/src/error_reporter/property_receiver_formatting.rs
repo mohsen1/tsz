@@ -1,3 +1,4 @@
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -60,7 +61,10 @@ impl<'a> CheckerState<'a> {
                             match element_types.as_slice() {
                                 [] => TypeId::NEVER,
                                 [element_type] => *element_type,
-                                _ => self.ctx.types.factory().union(element_types),
+                                _ => diagnostic_query::display_union_type(
+                                    self.ctx.types,
+                                    element_types,
+                                ),
                             }
                         })
                 })?;

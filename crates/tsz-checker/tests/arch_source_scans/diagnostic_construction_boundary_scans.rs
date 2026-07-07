@@ -1,8 +1,8 @@
 //! Diagnostic construction boundary scans.
 //!
 //! Reporter modules choose display policy and source locations. Interning
-//! diagnostic-only object/function/callable solver surfaces belongs in
-//! `query_boundaries::diagnostics`.
+//! diagnostic-only object/function/callable/compound solver surfaces belongs
+//! in `query_boundaries::diagnostics`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,13 +11,21 @@ const DIAGNOSTICS_BOUNDARY: &str = "src/query_boundaries/diagnostics.rs";
 const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/error_reporter/core/type_display.rs",
     "src/error_reporter/core/excess_display.rs",
+    "src/error_reporter/core_alias_display.rs",
+    "src/error_reporter/core_formatting.rs",
     "src/error_reporter/core/diagnostic_source.rs",
+    "src/error_reporter/core/diagnostic_source/assignment_formatting.rs",
+    "src/error_reporter/core/diagnostic_source/object_literal_targets.rs",
     "src/error_reporter/core/diagnostic_source/static_schema.rs",
+    "src/error_reporter/assignability_contextual_display.rs",
+    "src/error_reporter/assignability_helpers.rs",
     "src/error_reporter/fingerprint_policy.rs",
     "src/error_reporter/generics.rs",
+    "src/error_reporter/property_receiver_formatting.rs",
     "src/error_reporter/properties.rs",
     "src/error_reporter/call_errors/display_formatting.rs",
     "src/error_reporter/call_errors/display_formatting_parameters.rs",
+    "src/error_reporter/call_errors/elaboration_array_mismatch.rs",
     "src/error_reporter/call_errors/error_emission.rs",
     "src/error_reporter/call_errors/elaboration.rs",
     "src/state/type_environment/formatting.rs",
@@ -75,14 +83,42 @@ fn diagnostic_display_callers_route_solver_shape_construction_through_diagnostic
         ".factory().object_with_index(",
         ".factory().function(",
         ".factory().callable(",
+        ".factory().application(",
+        ".factory().union(",
+        ".factory().union_preserve_members(",
+        ".factory().intersection(",
+        ".factory().index_access(",
+        ".factory().array(",
+        ".factory().literal_string(",
+        ".factory().literal_string_atom(",
+        ".factory().literal_number(",
         ".factory.object(",
         ".factory.object_with_index(",
         ".factory.function(",
         ".factory.callable(",
+        ".factory.application(",
+        ".factory.union(",
+        ".factory.union_preserve_members(",
+        ".factory.intersection(",
+        ".factory.index_access(",
+        ".factory.array(",
+        ".factory.literal_string(",
+        ".factory.literal_string_atom(",
+        ".factory.literal_number(",
         ".types.object(",
         ".types.object_with_index(",
         ".types.function(",
         ".types.callable(",
+        ".types.array(",
+        ".types.union(",
+        ".types.union2(",
+        ".types.readonly_type(",
+        ".types.literal_string(",
+        ".types.literal_string_atom(",
+        ".types.literal_number(",
+        "PropertyInfo::new(",
+        "tsz_solver::utils::union_or_single(",
+        "tsz_solver::utils::intersection_or_single(",
         "FunctionShape {",
         "FunctionShape::new(",
         "CallableShape {",
@@ -109,7 +145,8 @@ fn diagnostic_display_callers_route_solver_shape_construction_through_diagnostic
 
     assert!(
         violations.is_empty(),
-        "diagnostic display callers must route solver shape construction \
+        "diagnostic display callers must route solver shape and compound \
+         construction \
          through query_boundaries::diagnostics:\n{}",
         violations.join("\n")
     );
@@ -156,6 +193,22 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "source_display_union_type",
         "source_display_union_type_from_slice",
         "rebuilt_array_source_display_type",
+        "display_application_type",
+        "display_union_type",
+        "display_union_or_single_type",
+        "display_union_preserve_members_type",
+        "display_intersection_type",
+        "display_intersection_or_single_type",
+        "display_array_type",
+        "display_index_access_type",
+        "display_union_with_undefined",
+        "display_string_literal_type",
+        "display_string_literal_atom_type",
+        "display_number_literal_type",
+        "display_rest_parameter_type",
+        "display_property",
+        "mapped_display_property",
+        "static_schema_display_property_from_source",
         "function_type_from_shape",
         "function_type_with_params_replaced",
         "function_type_with_return_replaced",

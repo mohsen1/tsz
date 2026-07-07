@@ -1,3 +1,4 @@
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -137,8 +138,9 @@ impl<'a> CheckerState<'a> {
                         target,
                     )
                 {
-                    raw_call_param_property_target =
-                        Some(self.ctx.types.union2(target, TypeId::UNDEFINED));
+                    raw_call_param_property_target = Some(
+                        diagnostic_query::display_union_with_undefined(self.ctx.types, target),
+                    );
                 }
             }
         }
@@ -315,14 +317,14 @@ impl<'a> CheckerState<'a> {
 
         let shared_index = shared_index?;
         let combined_object =
-            tsz_solver::utils::intersection_or_single(self.ctx.types, object_members);
-        let mut combined = self
-            .ctx
-            .types
-            .factory()
-            .index_access(combined_object, shared_index);
+            diagnostic_query::display_intersection_or_single_type(self.ctx.types, object_members);
+        let mut combined = diagnostic_query::display_index_access_type(
+            self.ctx.types,
+            combined_object,
+            shared_index,
+        );
         if has_optional_property && self.ctx.strict_null_checks() {
-            combined = self.ctx.types.union2(combined, TypeId::UNDEFINED);
+            combined = diagnostic_query::display_union_with_undefined(self.ctx.types, combined);
         }
 
         Some(self.format_type_for_assignability_message(combined))

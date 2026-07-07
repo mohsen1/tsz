@@ -4,6 +4,7 @@
 //! file under the LOC ceiling. Pure file-organization move; no logic changes.
 
 use super::literal_widening_helpers::literal_display_appropriate_for_undefined_null_target;
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -1827,10 +1828,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let recovered = self
-            .ctx
-            .types
-            .array(self.widen_type_for_display(element_type));
+        let recovered = diagnostic_query::display_array_type(
+            self.ctx.types,
+            self.widen_type_for_display(element_type),
+        );
         Some(self.format_assignability_type_for_message(recovered, target))
     }
 

@@ -4,7 +4,7 @@ use crate::context::TypingRequest;
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type,
 };
-use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::{common as query_common, diagnostics as query_diagnostics};
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use rustc_hash::FxHashMap;
@@ -818,7 +818,10 @@ impl<'a> CheckerState<'a> {
             return match property_types.as_slice() {
                 [] => None,
                 [single] => Some(*single),
-                _ => Some(self.ctx.types.factory().union(property_types)),
+                _ => Some(query_diagnostics::display_union_type(
+                    self.ctx.types,
+                    property_types,
+                )),
             };
         }
 
@@ -864,7 +867,10 @@ impl<'a> CheckerState<'a> {
             return match property_types.as_slice() {
                 [] => None,
                 [single] => Some(*single),
-                _ => Some(self.ctx.types.factory().union(property_types)),
+                _ => Some(query_diagnostics::display_union_type(
+                    self.ctx.types,
+                    property_types,
+                )),
             };
         }
 
@@ -924,7 +930,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let key_literal = self.ctx.types.literal_string(prop_name);
+        let key_literal = query_diagnostics::display_string_literal_type(self.ctx.types, prop_name);
         let mut display_type =
             crate::query_boundaries::state::checking::instantiate_mapped_template_for_property(
                 self.ctx.types,
@@ -954,7 +960,11 @@ impl<'a> CheckerState<'a> {
                             || crate::query_boundaries::class_type::type_includes_undefined(
                                 self.ctx.types,
                                 self.evaluate_type_with_env(
-                                    self.ctx.types.factory().index_access(member, index_type),
+                                    query_diagnostics::display_index_access_type(
+                                        self.ctx.types,
+                                        member,
+                                        index_type,
+                                    ),
                                 ),
                             )
                     }))
@@ -967,7 +977,8 @@ impl<'a> CheckerState<'a> {
                     self.evaluate_type_with_env(display_type),
                 ))
         {
-            display_type = self.ctx.types.union2(display_type, TypeId::UNDEFINED);
+            display_type =
+                query_diagnostics::display_union_with_undefined(self.ctx.types, display_type);
         }
         Some(display_type)
     }
@@ -1082,10 +1093,16 @@ impl<'a> CheckerState<'a> {
                                 if members.contains(&TypeId::UNDEFINED) {
                                     p.type_id
                                 } else {
-                                    self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
+                                    query_diagnostics::display_union_with_undefined(
+                                        self.ctx.types,
+                                        p.type_id,
+                                    )
                                 }
                             } else {
-                                self.ctx.types.union2(p.type_id, TypeId::UNDEFINED)
+                                query_diagnostics::display_union_with_undefined(
+                                    self.ctx.types,
+                                    p.type_id,
+                                )
                             }
                         })
             });
