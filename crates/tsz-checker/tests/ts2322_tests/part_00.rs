@@ -719,6 +719,32 @@ const x: Color.Red | Color.Green = c;
 }
 
 #[test]
+fn test_ts2322_keyof_typeof_enum_indexed_access_display_collapses_only_full_union() {
+    let messages = ts2322_messages(
+        r#"
+enum Mode { Read, Write, Execute }
+
+const fullTarget: (typeof Mode)[keyof typeof Mode] = "nope";
+const subsetTarget: (typeof Mode)["Read" | "Write"] = "nope";
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type '\"nope\"' is not assignable to type 'Mode'.")),
+        "expected full keyof/typeof enum indexed-access target to display as Mode, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m
+                .contains("Type '\"nope\"' is not assignable to type 'Mode.Read | Mode.Write'.")),
+        "expected proper subset indexed-access target to stay as member union, got: {messages:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_numeric_literal_union_alias_source_display_preserved_for_property_assignment() {
     let diagnostics = get_all_diagnostics(
         r#"

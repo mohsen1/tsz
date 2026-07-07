@@ -165,6 +165,60 @@ fn test_enum_arithmetic_and_widening_facts_use_enum_analysis_boundary() {
     }
 }
 
+/// Full enum-member-union parent detection is a semantic enum fact. Indexed
+/// access and diagnostic display callers should share the enum-analysis helper
+/// instead of recounting enum exports locally.
+#[test]
+fn test_full_enum_member_union_parent_uses_enum_analysis_boundary() {
+    let boundary_source = fs::read_to_string("src/query_boundaries/enum_analysis.rs")
+        .expect("failed to read enum_analysis.rs");
+    for helper in [
+        "fn enum_member_like_parent_symbol(",
+        "fn union_contains_all_members_of_enum(",
+        "fn full_enum_member_union_parent_symbol(",
+        "fn full_enum_member_union_parent_type(",
+    ] {
+        assert!(
+            boundary_source.contains(helper),
+            "query_boundaries::enum_analysis must own `{helper}`"
+        );
+    }
+
+    let indexed_access_source =
+        fs::read_to_string("src/types/type_node_advanced/enum_indexed_access.rs")
+            .expect("failed to read enum_indexed_access.rs");
+    assert!(
+        indexed_access_source.contains("enum_query::full_enum_member_union_parent_type("),
+        "enum indexed-access handling should ask enum_analysis for full enum-member union parents"
+    );
+    assert!(
+        !indexed_access_source.contains("fn enum_parent_for_member_like_type("),
+        "enum indexed-access handling should not locally rediscover member-like enum parents"
+    );
+
+    let display_source = fs::read_to_string("src/error_reporter/assignability_enum_display.rs")
+        .expect("failed to read assignability_enum_display.rs");
+    for helper in [
+        "enum_query::full_enum_member_union_parent_symbol(",
+        "enum_query::enum_member_like_parent_symbol(",
+        "enum_query::union_contains_all_members_of_enum(",
+    ] {
+        assert!(
+            display_source.contains(helper),
+            "assignability enum display should call `{helper}`"
+        );
+    }
+    for removed_helper in [
+        "fn enum_member_symbol_for_type(",
+        "fn union_contains_all_enum_members(",
+    ] {
+        assert!(
+            !display_source.contains(removed_helper),
+            "assignability enum display should not own `{removed_helper}`"
+        );
+    }
+}
+
 /// The `RelationFailure` enum must live in `relation_types.rs` and provide
 /// structured variant coverage for the semantic families we're unifying.
 #[test]
