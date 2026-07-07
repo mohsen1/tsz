@@ -3,6 +3,7 @@
 use crate::query_boundaries::dispatch::is_type_parameter_like;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
+use crate::types_domain::utilities::enum_eval::enum_symbol_member_decl_for_name;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1380,37 +1381,10 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.has_any_flags(symbol_flags::ENUM) {
-            return None;
-        }
-
-        // Check if the property exists in this enum
-        for &decl_idx in &symbol.declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(enum_decl) = self.ctx.arena.get_enum(node) else {
-                continue;
-            };
-            for &member_idx in &enum_decl.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                let Some(member) = self.ctx.arena.get_enum_member(member_node) else {
-                    continue;
-                };
-                if let Some(name) = self.get_property_name(member.name)
-                    && name == property_name
-                {
-                    // Return the enum type itself by getting the computed type of the symbol
-                    // This returns TypeData::Enum(def_id, structural_type) which allows proper
-                    // enum assignability checking with nominal identity
-                    return Some(self.get_type_of_symbol(sym_id));
-                }
-            }
-        }
-
-        None
+        enum_symbol_member_decl_for_name(&self.ctx, sym_id, property_name)?;
+        // Return the enum type itself by getting the computed type of the symbol.
+        // This returns `TypeData::Enum(def_id, structural_type)` which allows
+        // proper enum assignability checking with nominal identity.
+        Some(self.get_type_of_symbol(sym_id))
     }
 }

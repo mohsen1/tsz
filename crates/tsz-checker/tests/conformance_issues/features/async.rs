@@ -260,6 +260,30 @@ export enum Flags {
 }
 
 #[test]
+fn test_isolated_declarations_enum_string_literal_member_reference_no_ts9020() {
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+export enum Flags {
+    "first-key" = 1,
+    Next = Flags["first-key"],
+    Combined = Next + Flags["first-key"],
+}
+"#,
+        CheckerOptions {
+            isolated_declarations: true,
+            emit_declarations: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !has_error(&diagnostics, 9020),
+        "Did not expect TS9020 for same-enum string-literal member references.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_isolated_declarations_enum_external_reference_reports_ts9020() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
