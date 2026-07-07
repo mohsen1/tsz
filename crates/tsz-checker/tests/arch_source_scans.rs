@@ -58,7 +58,12 @@
 //! - `class_partial_constructor_construction_boundary_scans`: class
 //!   constructor-part helpers route partial static-constructor solver
 //!   construction through `query_boundaries::class_type`.
+//! - `await_promise_construction_boundary_scans`: await checking routes
+//!   contextual promise operand and `Awaited<T>` join construction through
+//!   `query_boundaries::checkers::promise`.
 
+#[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
+mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
