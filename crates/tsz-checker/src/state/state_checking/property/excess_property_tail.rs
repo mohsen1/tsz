@@ -135,10 +135,10 @@ impl<'a> CheckerState<'a> {
         if let Some((candidate, true)) = self.single_non_undefined_member(nested_target)
             && self.is_recursive_self_reference(candidate, &outer_members)
         {
-            return self
-                .ctx
-                .types
-                .union(vec![outer_intersection, TypeId::UNDEFINED]);
+            return query::optional_excess_property_nested_target(
+                self.ctx.types,
+                outer_intersection,
+            );
         }
 
         nested_target
@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if has_undef {
-            self.ctx.types.union(vec![outer_object, TypeId::UNDEFINED])
+            query::optional_excess_property_nested_target(self.ctx.types, outer_object)
         } else {
             outer_object
         }
@@ -344,7 +344,10 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&member| self.excess_property_annotation_component_type(member, visited))
                 .collect::<Vec<_>>();
-            return self.raw_intersection_or_single(member_types);
+            return query::excess_property_annotation_intersection_or_single(
+                self.ctx.types,
+                member_types,
+            );
         }
 
         if let Some(union_type) = self.excess_property_annotation_union_type(type_node, visited) {
@@ -373,17 +376,6 @@ impl<'a> CheckerState<'a> {
             return self.annotation_node_contains_intersection(wrapped.type_node);
         }
         false
-    }
-
-    pub(super) fn raw_intersection_or_single(&self, members: Vec<TypeId>) -> TypeId {
-        let mut iter = members.into_iter();
-        let Some(mut result) = iter.next() else {
-            return TypeId::UNKNOWN;
-        };
-        for member in iter {
-            result = self.ctx.types.intersect_types_raw2(result, member);
-        }
-        result
     }
 
     pub(super) fn named_type_reference_lazy_type(
