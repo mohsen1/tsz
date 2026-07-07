@@ -714,7 +714,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 self.interner.lookup(member)
                             {
                                 let s_app = self.interner.type_application(s_app_id);
-                                if s_app.base == t_base && s_app.args.len() == t_args_len {
+                                if self.application_bases_share_declaration(s_app.base, t_base)
+                                    && s_app.args.len() == t_args_len
+                                {
                                     for (i, &arg) in s_app.args.iter().enumerate() {
                                         combined_args[i].push(arg);
                                     }
@@ -1613,8 +1615,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_app = self.interner.type_application(t_app_id);
                 let evaluated_source = self.checker.evaluate_type(source);
                 let evaluated_target = self.checker.evaluate_type(target);
-                let same_base_application =
-                    s_app.base == t_app.base && s_app.args.len() == t_app.args.len();
+                let same_base_application = self
+                    .application_bases_share_declaration(s_app.base, t_app.base)
+                    && s_app.args.len() == t_app.args.len();
                 tracing::trace!(
                     source = source.0,
                     target = target.0,
@@ -1705,7 +1708,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // vs Generator<T> where Generator has 3 type params but only 1 is
                 // specified). Match the overlapping prefix of type arguments.
                 else if !same_base_application
-                    && s_app.base == t_app.base
+                    && self.application_bases_share_declaration(s_app.base, t_app.base)
                     && !t_app.args.is_empty()
                     && t_app.args.len() < s_app.args.len()
                     && t_app.args.iter().any(|arg| var_map.contains_key(arg))

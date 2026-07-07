@@ -1,5 +1,6 @@
 //! Helper methods for the core constraint walker.
 
+use crate::def::DefId;
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
@@ -124,10 +125,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &self,
         base: TypeId,
     ) -> Option<std::sync::Arc<[Variance]>> {
-        let def_id = match self.interner.lookup(base)? {
-            TypeData::Lazy(def_id) => def_id,
-            _ => return None,
-        };
+        let def_id = self.application_base_def_id_for_constraint(base)?;
         let resolver = self
             .checker
             .type_resolver()
@@ -138,6 +136,48 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             Some(self.interner),
             def_id,
         )
+    }
+
+    pub(super) fn application_bases_share_declaration(
+        &self,
+        source_base: TypeId,
+        target_base: TypeId,
+    ) -> bool {
+        if source_base == target_base {
+            return true;
+        }
+        let Some(source_def) = self.application_base_def_id_for_constraint(source_base) else {
+            return false;
+        };
+        let Some(target_def) = self.application_base_def_id_for_constraint(target_base) else {
+            return false;
+        };
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        let source_def = resolver.canonical_def_id(source_def);
+        let target_def = resolver.canonical_def_id(target_def);
+        resolver.defs_are_equivalent(source_def, target_def)
+    }
+
+    fn application_base_def_id_for_constraint(&self, base: TypeId) -> Option<DefId> {
+        if base.is_intrinsic() {
+            return None;
+        }
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => resolver.symbol_to_def_id(sym_ref),
+            TypeData::UnresolvedTypeName(atom) => {
+                let name = self.interner.resolve_atom(atom);
+                resolver.resolve_unresolved_type_name(&name)
+            }
+            _ => None,
+        }
     }
 
     /// Constrain source properties against target properties for two object
@@ -297,19 +337,39 @@ mod tests {
     use crate::def::DefId;
     use crate::intern::TypeInterner;
     use crate::relations::subtype::{TypeEnvironment, TypeResolver};
-    use crate::types::{PropertyInfo, TypeParamInfo};
+    use crate::types::{InferencePriority, PropertyInfo, SymbolRef, TypeParamInfo};
 
     struct ResolverBackedChecker<'a> {
         resolver: &'a dyn TypeResolver,
+        assignable: bool,
     }
 
     impl AssignabilityChecker for ResolverBackedChecker<'_> {
         fn is_assignable_to(&mut self, _source: TypeId, _target: TypeId) -> bool {
-            true
+            self.assignable
         }
 
         fn type_resolver(&self) -> Option<&dyn TypeResolver> {
             Some(self.resolver)
+        }
+    }
+
+    struct PairEquivalentResolver {
+        left: DefId,
+        right: DefId,
+    }
+
+    impl TypeResolver for PairEquivalentResolver {
+        fn resolve_ref(
+            &self,
+            _symbol: SymbolRef,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn defs_are_equivalent(&self, a: DefId, b: DefId) -> bool {
+            a == b || (a == self.left && b == self.right) || (a == self.right && b == self.left)
         }
     }
 
@@ -328,7 +388,10 @@ mod tests {
 
         let mut env = TypeEnvironment::new();
         env.insert_def_with_params(def_id, body, vec![t_param]);
-        let mut checker = ResolverBackedChecker { resolver: &env };
+        let mut checker = ResolverBackedChecker {
+            resolver: &env,
+            assignable: true,
+        };
         let evaluator = CallEvaluator::new(&cache, &mut checker);
 
         assert_eq!(cache.statistics().variance_cache_entries, 0);
@@ -336,5 +399,81 @@ mod tests {
         assert_eq!(cache.statistics().variance_cache_entries, 1);
         assert!(evaluator.compute_application_variances(base).is_some());
         assert_eq!(cache.statistics().variance_cache_entries, 1);
+    }
+
+    #[test]
+    fn equivalent_application_bases_constrain_type_args() {
+        let interner = TypeInterner::new();
+        let cache = QueryCache::new(&interner);
+        let source_def = DefId(143_570);
+        let target_def = DefId(143_571);
+        let resolver = PairEquivalentResolver {
+            left: source_def,
+            right: target_def,
+        };
+        let mut checker = ResolverBackedChecker {
+            resolver: &resolver,
+            assignable: false,
+        };
+        let mut evaluator = CallEvaluator::new(&cache, &mut checker);
+
+        let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+        let t_type = interner.type_param(t_param);
+        let mut infer_ctx = InferenceContext::new(&interner);
+        let var_t = infer_ctx.fresh_type_param(t_param.name, false);
+        let mut var_map = FxHashMap::default();
+        var_map.insert(t_type, var_t);
+
+        let source = interner.application(interner.lazy(source_def), vec![TypeId::STRING]);
+        let target = interner.application(interner.lazy(target_def), vec![t_type]);
+        evaluator.constrain_types(
+            &mut infer_ctx,
+            &var_map,
+            source,
+            target,
+            InferencePriority::NakedTypeVariable,
+        );
+
+        assert_eq!(
+            infer_ctx.resolve_with_constraints(var_t).unwrap(),
+            TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn unrelated_application_bases_do_not_constrain_type_args() {
+        let interner = TypeInterner::new();
+        let cache = QueryCache::new(&interner);
+        let resolver = PairEquivalentResolver {
+            left: DefId(143_580),
+            right: DefId(143_581),
+        };
+        let mut checker = ResolverBackedChecker {
+            resolver: &resolver,
+            assignable: false,
+        };
+        let mut evaluator = CallEvaluator::new(&cache, &mut checker);
+
+        let t_param = TypeParamInfo::simple(interner.intern_string("T"));
+        let t_type = interner.type_param(t_param);
+        let mut infer_ctx = InferenceContext::new(&interner);
+        let var_t = infer_ctx.fresh_type_param(t_param.name, false);
+        let mut var_map = FxHashMap::default();
+        var_map.insert(t_type, var_t);
+
+        let source = interner.application(interner.lazy(DefId(143_582)), vec![TypeId::STRING]);
+        let target = interner.application(interner.lazy(DefId(143_583)), vec![t_type]);
+        evaluator.constrain_types(
+            &mut infer_ctx,
+            &var_map,
+            source,
+            target,
+            InferencePriority::NakedTypeVariable,
+        );
+
+        assert_eq!(
+            infer_ctx.resolve_with_constraints(var_t).unwrap(),
+            TypeId::UNKNOWN
+        );
     }
 }
