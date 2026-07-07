@@ -33,7 +33,12 @@ fn type_formatter_cache_statistics_account_for_application_memos() {
 
     fmt.application_reduction_cache
         .borrow_mut()
-        .insert(TypeId::STRING, Some(TypeId::NUMBER));
+        .insert(
+            TypeId::STRING,
+            Some(application_reduction::ApplicationDisplayReduction::Type(
+                TypeId::NUMBER,
+            )),
+        );
     fmt.recursive_alias_base_cache
         .borrow_mut()
         .insert(TypeId::OBJECT, false);

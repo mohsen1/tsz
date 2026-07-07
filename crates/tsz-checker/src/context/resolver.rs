@@ -1674,7 +1674,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         // having to bounce back into the wider CheckerContext path. Routed
         // through the env-write authority (deferring on borrow races instead
         // of silently skipping, and mirroring into the flow-analyzer env so
-        // `overlay_missing_from` has nothing left to repair — #14348).
+        // reconcile has nothing left to repair — #14348).
         self.register_unresolved_resolution_in_envs(name.to_string(), def_id);
         Some(def_id)
     }

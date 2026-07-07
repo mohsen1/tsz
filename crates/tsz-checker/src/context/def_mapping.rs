@@ -746,32 +746,11 @@ impl CheckerContext<'_> {
         def_id
     }
 
-    /// Ensure both `TypeEnvironment` instances end up with a reference to the
-    /// shared `DefinitionStore`, by writing it to the authoritative evaluator
-    /// env and letting reconcile propagate it to the flow-analyzer env.
-    ///
-    /// `type_env` (primary evaluator) needs the `DefinitionStore` fallback so
-    /// that `get_def_kind` can locate entries not written directly due to
-    /// `RefCell` borrow conflicts during recursive resolution; it is written
-    /// here (race-safe, via the same deferral discipline as every other
-    /// evaluator-env registration).
-    ///
-    /// The flow-analyzer env (`type_environment`) receives the *same* `Arc`
-    /// through `overlay_missing_from` at the file-prep reconcile boundary
-    /// (`reconcile_flow_and_evaluator_envs`), which runs before flow analysis
-    /// reads the env. The `DefinitionStore` is a single content-identical shared
-    /// pointer regardless of which env holds it, so eagerly *mirroring* it into
-    /// the flow env is pure redundancy with the reconcile vacancy-fill. Dropping
-    /// that mirror removes the `SetDefinitionStore` op from the flow-env mirror
-    /// set as the first provably zero-delta step of the dual-`TypeEnvironment`
-    /// collapse (#14348) — the eager mirror added work (and a possible deferred
-    /// replay) for a pointer reconcile already installs.
-    ///
-    /// `set_definition_store` is idempotent when the same `Arc` pointer is
-    /// reinstalled (checked via `Arc::ptr_eq`), so calling this function
-    /// multiple times across registration sites is safe.
+    /// Wire the shared `DefinitionStore` fallback into both `TypeEnvironment`
+    /// instances through the same race-safe deferred-write authority as ordinary
+    /// env registrations.
     pub fn ensure_both_envs_have_definition_store(&self) {
-        self.apply_to_eval_env(DeferredFlowEnvWrite::SetDefinitionStore(Arc::clone(
+        self.register_in_envs(DeferredFlowEnvWrite::SetDefinitionStore(Arc::clone(
             &self.definition_store,
         )));
     }
@@ -859,9 +838,9 @@ impl CheckerContext<'_> {
 
     /// Replay any deferred evaluator-env (`type_env`) writes that lost the
     /// borrow race during recursive resolution. Called at the file-preparation
-    /// boundary, before the flow-analyzer env is reconciled from `type_env`, so
+    /// boundary, before the flow-analyzer env is checked against `type_env`, so
     /// the authoritative env holds every class-instance / def entry before any
-    /// consumer (method-body checking, `overlay_missing_from`) reads it. A no-op
+    /// consumer (method-body checking, flow-env assertions) reads it. A no-op
     /// when nothing was deferred or `type_env` is momentarily unborrowable.
     pub fn flush_deferred_eval_env_writes(&self) {
         flush_env_write_queue(&self.type_env, &self.deferred_eval_env_writes);

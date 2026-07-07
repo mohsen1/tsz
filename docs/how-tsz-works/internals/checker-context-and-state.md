@@ -227,9 +227,10 @@ during recursive resolution), the operation is **reified** into
 symmetric `deferred_eval_env_writes` queue does the same for the authoritative
 `type_env` side — a dropped write there used to collapse a class-instance / def
 body to `never` for every later consumer (the xstate `Actor` `this` collapse).
-Both queues are flushed at file-preparation time, and a `debug_assert_eq!`
-enforces that the flow-env queue is empty once
-`prepare_source_file_for_checking` returns.
+Both queues are flushed at file-preparation time. `debug_assert_eq!` guards
+enforce that the evaluator and flow queues are empty before statements run, and
+the reconcile step asserts that the flow env is not missing evaluator-env
+entries after deferred replay.
 
 ## The per-file checking lifecycle
 
