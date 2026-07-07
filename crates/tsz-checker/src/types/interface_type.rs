@@ -1354,7 +1354,7 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
-        use tsz_solver::{CallableShape, ObjectShape};
+        use tsz_solver::CallableShape;
 
         // Bail out if type resolution fuel is exhausted to prevent
         // expensive merges from hanging on augmented module interfaces
@@ -1526,14 +1526,13 @@ impl<'a> CheckerState<'a> {
                 );
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                let result = factory.object_with_index(ObjectShape {
+                let result = factory.object_with_shape_metadata_and_index_signatures(
                     properties,
-                    string_index: base_shape.string_index,
-                    number_index: base_shape.number_index,
-                    symbol_index: base_shape.symbol_index,
-                    symbol: derived_shape.symbol,
-                    ..ObjectShape::default()
-                });
+                    &derived_shape,
+                    base_shape.string_index_signature().copied(),
+                    base_shape.number_index,
+                    base_shape.symbol_index_signature().copied(),
+                );
                 tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
                 result
             }
@@ -1545,14 +1544,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                factory.object_with_index(ObjectShape {
-                    properties,
-                    string_index: derived_shape.string_index,
-                    number_index: derived_shape.number_index,
-                    symbol_index: derived_shape.symbol_index,
-                    symbol: derived_shape.symbol,
-                    ..ObjectShape::default()
-                })
+                factory.object_with_shape_metadata(properties, &derived_shape)
             }
             (
                 InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
@@ -1562,20 +1554,21 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                factory.object_with_index(ObjectShape {
+                factory.object_with_shape_metadata_and_index_signatures(
                     properties,
-                    string_index: derived_shape
-                        .string_index
-                        .or_else(|| base_shape.string_index),
-                    number_index: derived_shape
+                    &derived_shape,
+                    derived_shape
+                        .string_index_signature()
+                        .copied()
+                        .or_else(|| base_shape.string_index_signature().copied()),
+                    derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
-                    symbol_index: derived_shape
-                        .symbol_index
-                        .or_else(|| base_shape.symbol_index),
-                    symbol: derived_shape.symbol,
-                    ..ObjectShape::default()
-                })
+                    derived_shape
+                        .symbol_index_signature()
+                        .copied()
+                        .or_else(|| base_shape.symbol_index_signature().copied()),
+                )
             }
             // When one side is an intersection (e.g., from global augmentation merging
             // an interface with additional properties), decompose it and merge the
@@ -1657,13 +1650,21 @@ impl<'a> CheckerState<'a> {
                             &base_shape.properties,
                             mode,
                         );
-                        factory.object_with_index(ObjectShape {
+                        factory.object_with_shape_metadata_and_index_signatures(
                             properties,
-                            string_index: derived_shape.string_index,
-                            number_index: derived_shape.number_index,
-                            symbol: derived_shape.symbol,
-                            ..ObjectShape::default()
-                        })
+                            &derived_shape,
+                            derived_shape
+                                .string_index_signature()
+                                .copied()
+                                .or_else(|| base_shape.string_index_signature().copied()),
+                            derived_shape
+                                .number_index
+                                .or_else(|| base_shape.number_index),
+                            derived_shape
+                                .symbol_index_signature()
+                                .copied()
+                                .or_else(|| base_shape.symbol_index_signature().copied()),
+                        )
                     }
                     _ => derived,
                 }

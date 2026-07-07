@@ -1234,46 +1234,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        // Match const `symbol` computed members stored under stable binding keys.
         if result_type.is_none()
-            && index_type == TypeId::SYMBOL
-            && !crate::query_boundaries::common::is_type_parameter(
-                self.ctx.types,
+            && let Some(symbol_result) = self.wide_symbol_binding_access_type(
+                access.name_or_argument,
                 pre_resolution_object_type,
+                object_type_for_access,
+                index_type,
+                index_type_for_access,
+                skip_flow_narrowing,
+                write_presence_only,
             )
-            && let Some(property_name) =
-                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
         {
-            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
-            if let PropertyAccessResult::Success {
-                type_id,
-                write_type,
-                ..
-            } = result
-            {
-                use_index_signature_check = false;
-                result_type = Some(effective_write_result(type_id, write_type));
-            }
+            result_type = Some(symbol_result);
+            use_index_signature_check = false;
         }
-
-        // A wide `symbol` index made through a symbol-typed identifier may carry
-        // a binding-identity key for exact computed-member lookup. Once that
-        // exact lookup misses, a receiver with a broad symbol index signature
-        // should resolve through `receiver[symbol]`, not through the binding key.
-        if result_type.is_none()
-            && index_type == TypeId::SYMBOL
-            && index_type_for_access != index_type
-        {
-            let symbol_index_result =
-                self.get_element_access_type(object_type_for_access, TypeId::SYMBOL, None);
-            if symbol_index_result != TypeId::UNDEFINED && symbol_index_result != TypeId::ERROR {
-                result_type = Some(symbol_index_result);
-                use_index_signature_check = false;
-            }
-        }
-
         // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
