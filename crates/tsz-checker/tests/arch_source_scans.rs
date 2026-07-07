@@ -70,6 +70,9 @@
 //! - `expression_result_construction_boundary_scans`: expression computation
 //!   routes selected result-shape construction through
 //!   `query_boundaries::type_computation::expression_results`.
+//! - `object_literal_context_construction_boundary_scans`: object-literal
+//!   contextual typing routes union/intersection rebuilds through
+//!   `query_boundaries::object_literal_context`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -116,6 +119,8 @@ mod lazy_resolution_session_scans;
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]
 mod object_literal_annotation_walker_scans;
+#[path = "arch_source_scans/object_literal_context_construction_boundary_scans.rs"]
+mod object_literal_context_construction_boundary_scans;
 #[path = "arch_source_scans/relation_boundary_session_scans.rs"]
 mod relation_boundary_session_scans;
 #[path = "arch_source_scans/relation_routing_residual_arch_tests.rs"]
