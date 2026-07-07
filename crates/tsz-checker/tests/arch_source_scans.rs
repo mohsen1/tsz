@@ -27,6 +27,9 @@
 //! - `diagnostic_construction_boundary_scans`: diagnostic reporters route
 //!   display-only solver shape construction through
 //!   `query_boundaries::diagnostics`.
+//! - `flow_assignment_surface_construction_boundary_scans`: flow assignment
+//!   fallback/narrowing callers route tuple/object/callable/rest construction
+//!   through `query_boundaries::flow_analysis`.
 //! - `excess_property_construction_boundary_scans`: excess-property checking
 //!   routes object shape construction through query boundaries.
 //! - `class_instance_walk_state_scans`: class instance base traversal uses a
@@ -175,6 +178,8 @@ mod excess_property_construction_boundary_scans;
 mod excess_property_nested_target_construction_boundary_scans;
 #[path = "arch_source_scans/expression_result_construction_boundary_scans.rs"]
 mod expression_result_construction_boundary_scans;
+#[path = "arch_source_scans/flow_assignment_surface_construction_boundary_scans.rs"]
+mod flow_assignment_surface_construction_boundary_scans;
 #[path = "arch_source_scans/import_attribute_construction_boundary_scans.rs"]
 mod import_attribute_construction_boundary_scans;
 #[path = "arch_source_scans/index_signature_boundary_scans.rs"]
