@@ -15,7 +15,9 @@ impl<'a> CheckerState<'a> {
     /// instead of `[number, string]`). Ordinary assignment diagnostics anchor
     /// on a non-expression node (the binder name — rejected by
     /// `direct_diagnostic_source_expression`) or on the RHS itself, so they
-    /// keep the enclosing-assignment walk.
+    /// keep the enclosing-assignment walk. Callers may feed the selected
+    /// expression to non-tuple displays too (annotation text, literal
+    /// display); the preference applies to any array-literal anchor.
     pub(in crate::error_reporter) fn tuple_display_source_expression(
         &self,
         anchor_idx: NodeIndex,

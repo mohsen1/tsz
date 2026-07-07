@@ -1474,7 +1474,7 @@ pub(crate) fn tuple_leading_fixed_drill_cap(
     // elements before interning, so a `rest` marker here is always a genuine
     // variable-length rest.
     let first_rest_pos = elements.iter().position(|e| e.rest)?;
-    if elements.len() == 1 {
+    if elements.iter().all(|e| e.rest) {
         return None;
     }
     Some(first_rest_pos)

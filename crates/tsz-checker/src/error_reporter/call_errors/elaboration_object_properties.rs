@@ -1139,8 +1139,9 @@ impl<'a> CheckerState<'a> {
 
         // tsc's `elaborateElementwise` reports an unelaborated element mismatch
         // with the *source tuple's* element type
-        // (`getTypeOfPropertyOfType(source, `${i}`)`), not a context-free
-        // retype of the element expression. Recover that tuple once; element
+        // (`getIndexedAccessTypeOrUndefined(source, getNumberLiteralType(i))`,
+        // which reduces to the fixed slot's type), not a context-free retype
+        // of the element expression. Recover that tuple once; element
         // index i maps to slot i only when the literal is hole/spread-free
         // (equal lengths, all fixed slots — checked per element below).
         let source_tuple_elements = crate::query_boundaries::common::tuple_elements(
