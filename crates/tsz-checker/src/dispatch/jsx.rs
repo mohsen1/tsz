@@ -4,6 +4,7 @@
 //! Handles `JSX_ELEMENT` children synthesis, contextual typing, and component-type resolution.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -167,22 +168,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 let synthesized_type = if child_types.len() == 1 && !has_spread_child {
                     child_types[0]
                 } else if !has_spread_child {
-                    let elements = child_types
-                        .iter()
-                        .copied()
-                        .map(|type_id| tsz_solver::TupleElement {
-                            type_id,
-                            name: None,
-                            optional: false,
-                            rest: false,
-                        })
-                        .collect();
-                    self.checker.ctx.types.factory().tuple(elements)
+                    jsx_query::tuple_type_from_required_element_types(
+                        self.checker.ctx.types,
+                        child_types.to_vec(),
+                    )
                 } else {
                     // Multiple children: synthesize as an array type.
                     // tsc uses the union of all child types as the element type.
-                    let element_type = self.checker.ctx.types.factory().union(child_types.clone());
-                    self.checker.ctx.types.factory().array(element_type)
+                    let element_type = jsx_query::union_type_from_members(
+                        self.checker.ctx.types,
+                        child_types.clone(),
+                    );
+                    jsx_query::array_type_from_element(self.checker.ctx.types, element_type)
                 };
                 let normalized_child_count = if has_spread_child {
                     child_count.max(2)

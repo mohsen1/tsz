@@ -117,22 +117,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *type_id
                 };
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: display_type,
-                    write_type: display_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                }
+                jsx_queries::property_info_with_write_type(name_atom, display_type, display_type)
             })
             .collect();
         crate::query_boundaries::checkers::jsx::object_type_from_properties(
@@ -261,7 +246,8 @@ impl<'a> CheckerState<'a> {
             .any(|&spread_type| self.jsx_relation_operand_defers(spread_type));
         let explicit_type = self.build_jsx_provided_attrs_object_type(&explicit_attrs);
         generic_spreads.push(explicit_type);
-        let attrs_type = self.ctx.types.factory().intersection(generic_spreads);
+        let attrs_type =
+            jsx_queries::intersection_type_from_members(self.ctx.types, generic_spreads);
         if !has_explicit_mismatch {
             if spread_source_is_deferred {
                 return;
@@ -761,9 +747,9 @@ impl<'a> CheckerState<'a> {
         let array_element = if element_types.len() == 1 {
             element_types[0]
         } else {
-            self.ctx.types.factory().union(element_types)
+            jsx_queries::union_type_from_members(self.ctx.types, element_types)
         };
-        self.ctx.types.factory().array(array_element)
+        jsx_queries::array_type_from_element(self.ctx.types, array_element)
     }
 
     fn format_jsx_provided_attrs_source_type(
@@ -1162,7 +1148,11 @@ impl<'a> CheckerState<'a> {
             instance_type,
             TypeId::ANY,
         );
-        Some(self.ctx.types.factory().union2(TypeId::STRING, callback))
+        Some(jsx_queries::union_type_from_pair(
+            self.ctx.types,
+            TypeId::STRING,
+            callback,
+        ))
     }
 
     fn get_jsx_intrinsic_class_attribute_from_heritage(
@@ -1750,7 +1740,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Build target: IntrinsicAttributes & spread_type
-            let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
+            let target =
+                jsx_queries::intersection_type_from_pair(self.ctx.types, ia_type, spread_type);
 
             if !crate::query_boundaries::checkers::jsx::props_are_assignable(
                 self,
@@ -1868,10 +1859,7 @@ impl<'a> CheckerState<'a> {
         let display_type = if !prop_is_optional_in_anonymous_source {
             write_check_type
         } else if write_check_type == declared_type_id {
-            self.ctx
-                .types
-                .factory()
-                .union2(write_check_type, TypeId::UNDEFINED)
+            jsx_queries::union_type_from_pair(self.ctx.types, write_check_type, TypeId::UNDEFINED)
         } else {
             declared_type_id
         };

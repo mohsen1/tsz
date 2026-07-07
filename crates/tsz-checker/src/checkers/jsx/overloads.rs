@@ -5,6 +5,7 @@
 //! matches, emits TS2769 ("No overload matches this call.").
 
 use crate::context::speculation::FullSpeculationSnapshot;
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -711,22 +712,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|attr| {
                 let name_atom = self.ctx.types.intern_string(&attr.name);
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: attr.type_id,
-                    write_type: attr.type_id,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                }
+                jsx_query::property_info_with_write_type(name_atom, attr.type_id, attr.type_id)
             })
             .collect();
         crate::query_boundaries::checkers::jsx::object_type_from_properties(

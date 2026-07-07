@@ -1,6 +1,7 @@
 //! JSX diagnostics rendering: display target building, type formatting for
 //! error messages, tag name text extraction, and text-children checks.
 
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
@@ -83,7 +84,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let ica = self.get_intrinsic_class_attributes_lazy_type()?;
         let inst = self.get_class_instance_type_for_component(component_type)?;
-        let app = self.ctx.types.factory().application(ica, vec![inst]);
+        let app = jsx_query::type_application_from_args(self.ctx.types, ica, vec![inst]);
         let evaluated = self.normalize_jsx_required_props_target(app);
         if evaluated == TypeId::ANY || evaluated == TypeId::ERROR {
             return None;

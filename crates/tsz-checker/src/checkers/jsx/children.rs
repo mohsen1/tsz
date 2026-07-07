@@ -38,7 +38,7 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => TypeId::NEVER,
                 [element_type] => self.evaluate_type_with_env(*element_type),
-                _ => self.ctx.types.factory().union(element_types),
+                _ => jsx_query::union_type_from_members(self.ctx.types, element_types),
             };
         }
 
@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => TypeId::NEVER,
                 [element_type] => self.evaluate_type_with_env(*element_type),
-                _ => self.ctx.types.factory().union(element_types),
+                _ => jsx_query::union_type_from_members(self.ctx.types, element_types),
             };
         }
 
@@ -678,7 +678,10 @@ impl<'a> CheckerState<'a> {
         match multiple_candidates.as_slice() {
             [] => None,
             [candidate] => Some(*candidate),
-            _ => Some(self.ctx.types.factory().union(multiple_candidates)),
+            _ => Some(jsx_query::union_type_from_members(
+                self.ctx.types,
+                multiple_candidates,
+            )),
         }
     }
 
@@ -842,7 +845,10 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => None,
                 [element_type] => Some(*element_type),
-                _ => Some(self.ctx.types.factory().union(element_types)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    element_types,
+                )),
             };
         }
 
@@ -862,7 +868,10 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => None,
                 [element_type] => Some(*element_type),
-                _ => Some(self.ctx.types.factory().union(element_types)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    element_types,
+                )),
             };
         }
 
@@ -917,7 +926,10 @@ impl<'a> CheckerState<'a> {
             return match element_types.as_slice() {
                 [] => None,
                 [e] => Some(*e),
-                _ => Some(self.ctx.types.factory().union(element_types)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    element_types,
+                )),
             };
         }
 
@@ -936,7 +948,7 @@ impl<'a> CheckerState<'a> {
         mut element_types: Vec<TypeId>,
     ) -> TypeId {
         self.order_react_node_multiple_children_union_for_display(&mut element_types);
-        let union = self.ctx.types.factory().union(element_types.clone());
+        let union = jsx_query::union_type_from_members(self.ctx.types, element_types.clone());
         if element_types.len() > 1 {
             self.ctx
                 .types
@@ -1047,15 +1059,22 @@ impl<'a> CheckerState<'a> {
             0 => match other_candidates.len() {
                 0 => None,
                 1 => other_candidates.into_iter().next(),
-                _ => Some(self.ctx.types.factory().union(other_candidates)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    other_candidates,
+                )),
             },
             1 if other_candidates.is_empty() => callable_candidates.into_iter().next(),
-            _ if other_candidates.is_empty() => {
-                Some(self.ctx.types.factory().union(callable_candidates))
-            }
+            _ if other_candidates.is_empty() => Some(jsx_query::union_type_from_members(
+                self.ctx.types,
+                callable_candidates,
+            )),
             _ => {
                 callable_candidates.extend(other_candidates);
-                Some(self.ctx.types.factory().union(callable_candidates))
+                Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    callable_candidates,
+                ))
             }
         }
     }
@@ -1086,14 +1105,20 @@ impl<'a> CheckerState<'a> {
         if !callable_candidates.is_empty() {
             return match callable_candidates.len() {
                 1 => callable_candidates.into_iter().next(),
-                _ => Some(self.ctx.types.factory().union(callable_candidates)),
+                _ => Some(jsx_query::union_type_from_members(
+                    self.ctx.types,
+                    callable_candidates,
+                )),
             };
         }
 
         match multiple_candidates.len() {
             0 => None,
             1 => multiple_candidates.into_iter().next(),
-            _ => Some(self.ctx.types.factory().union(multiple_candidates)),
+            _ => Some(jsx_query::union_type_from_members(
+                self.ctx.types,
+                multiple_candidates,
+            )),
         }
     }
 
@@ -1591,24 +1616,21 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         if self.type_has_tuple_like_multiple_children(children_type) {
-            let elements = child_types
-                .into_iter()
-                .map(|type_id| tsz_solver::TupleElement {
-                    type_id,
-                    name: None,
-                    optional: false,
-                    rest: false,
-                })
-                .collect();
-            return Some(self.ctx.types.factory().tuple(elements));
+            return Some(jsx_query::tuple_type_from_required_element_types(
+                self.ctx.types,
+                child_types,
+            ));
         }
 
         let element_type = match child_types.len() {
             0 => TypeId::NEVER,
             1 => child_types[0],
-            _ => self.ctx.types.factory().union(child_types),
+            _ => jsx_query::union_type_from_members(self.ctx.types, child_types),
         };
-        Some(self.ctx.types.factory().array(element_type))
+        Some(jsx_query::array_type_from_element(
+            self.ctx.types,
+            element_type,
+        ))
     }
     pub(super) fn get_jsx_body_child_nodes(
         &self,
@@ -1702,7 +1724,7 @@ impl<'a> CheckerState<'a> {
         // children type. This handles cases like `ReactNode` where `ReactNodeArray extends
         // Array<ReactNode>` is a member of the union, but we can't detect it structurally
         // because it's an interface extending Array rather than a direct Array type.
-        let array_of_children = self.ctx.types.factory().array(type_id);
+        let array_of_children = jsx_query::array_type_from_element(self.ctx.types, type_id);
         if self
             .jsx_children_relation_outcome(array_of_children, type_id)
             .related
