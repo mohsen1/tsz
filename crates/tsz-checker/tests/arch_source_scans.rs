@@ -43,6 +43,9 @@
 //! - `strict_bind_call_apply_construction_boundary_scans`: property-access
 //!   helpers route strict bind/call/apply signature construction through
 //!   `query_boundaries::property_access`.
+//! - `declaration_export_construction_boundary_scans`: namespace/module
+//!   declaration checkers route export-surface construction through
+//!   `query_boundaries::declaration_exports`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -52,6 +55,8 @@ mod common_boundary_export_ratchets;
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]
 mod cross_arena_delegation_scope_scans;
+#[path = "arch_source_scans/declaration_export_construction_boundary_scans.rs"]
+mod declaration_export_construction_boundary_scans;
 #[path = "arch_source_scans/diagnostic_construction_boundary_scans.rs"]
 mod diagnostic_construction_boundary_scans;
 #[path = "arch_source_scans/excess_property_construction_boundary_scans.rs"]

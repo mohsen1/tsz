@@ -1,9 +1,9 @@
 //! Module import/export validation and circular re-export detection.
 
+use crate::query_boundaries::declaration_exports;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::Visibility;
 
 mod verbatim_module_syntax;
 
@@ -709,8 +709,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
     ) -> tsz_solver::TypeId {
-        use tsz_solver::PropertyInfo;
-
         // Get the first argument (module specifier)
         let args = match call.arguments.as_ref() {
             Some(a) => a.nodes.as_slice(),
@@ -756,7 +754,7 @@ impl<'a> CheckerState<'a> {
             let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
 
             // Create an object type with all module exports
-            let mut props: Vec<PropertyInfo> = Vec::new();
+            let mut props: Vec<tsz_solver::PropertyInfo> = Vec::new();
             for &(name, export_sym_id) in &ordered_exports {
                 if name == "export=" {
                     continue;
@@ -768,22 +766,11 @@ impl<'a> CheckerState<'a> {
                     props.len() as u32 + 2
                 };
                 let name_atom = self.ctx.types.intern_string(name);
-                props.push(PropertyInfo {
-                    name: name_atom,
-                    type_id: prop_type,
-                    write_type: prop_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
+                props.push(declaration_exports::declaration_export_property(
+                    name_atom,
+                    prop_type,
                     declaration_order,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
+                ));
             }
 
             // Merge module augmentations
@@ -804,26 +791,17 @@ impl<'a> CheckerState<'a> {
                     // Check if this augments an existing export
                     if let Some(existing) = props.iter_mut().find(|p| p.name == name_atom) {
                         // Merge types - for interfaces, this creates an intersection
-                        existing.type_id = self.ctx.types.intersection2(existing.type_id, aug_type);
+                        existing.type_id = declaration_exports::module_export_augmented_type(
+                            self.ctx.types,
+                            existing.type_id,
+                            aug_type,
+                        );
                         existing.write_type = existing.type_id;
                     } else {
                         // New export from augmentation
-                        props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id: aug_type,
-                            write_type: aug_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                        props.push(declaration_exports::declaration_export_property(
+                            name_atom, aug_type, 0,
+                        ));
                     }
                 }
             }
@@ -836,28 +814,17 @@ impl<'a> CheckerState<'a> {
             {
                 let default_atom = self.ctx.types.intern_string("default");
                 if !props.iter().any(|p| p.name == default_atom) {
-                    props.push(PropertyInfo {
-                        name: default_atom,
-                        type_id: eq_type,
-                        write_type: eq_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: 1,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    props.push(declaration_exports::declaration_export_property(
+                        default_atom,
+                        eq_type,
+                        1,
+                    ));
                 }
             }
 
             Self::normalize_namespace_export_declaration_order(&mut props);
-            let factory = self.ctx.types.factory();
-            let module_type = factory.object(props);
+            let module_type =
+                declaration_exports::dynamic_import_module_object_type(self.ctx.types, props);
             let display_module_name =
                 self.resolve_namespace_display_module_name(&exports_table, module_name);
             self.ctx
@@ -885,8 +852,6 @@ impl<'a> CheckerState<'a> {
         // Resolve Promise as Lazy(DefId), the same form that type annotations use.
         // `var p: Promise<T>` goes through create_lazy_type_ref → Application(Lazy(DefId), [T]).
         // We must do the same here so that `import()` returns a structurally compatible type.
-        let factory = self.ctx.types.factory();
-
         if let Some(sym_id) = self.ctx.lib_promise_sym_id() {
             let _ = self.get_type_of_symbol(sym_id);
             // Ensure the Promise DefId has its type parameters and body registered
@@ -897,11 +862,19 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .lib_promise_type_ref()
                 .unwrap_or_else(|| self.ctx.create_lazy_type_ref(sym_id));
-            return factory.application(promise_base, vec![inner_type]);
+            return declaration_exports::dynamic_import_promise_type(
+                self.ctx.types,
+                promise_base,
+                inner_type,
+            );
         }
 
         // Fallback: use synthetic PROMISE_BASE (works without lib files)
-        factory.application(TypeId::PROMISE_BASE, vec![inner_type])
+        declaration_exports::dynamic_import_promise_type(
+            self.ctx.types,
+            TypeId::PROMISE_BASE,
+            inner_type,
+        )
     }
 
     /// Check `export { x };` (local named exports)
