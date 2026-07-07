@@ -7,7 +7,9 @@ use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common::ContextualTypeContext;
-use crate::query_boundaries::construct_signatures::has_construct_overloads;
+use crate::query_boundaries::construct_signatures::{
+    function_type_from_shape, has_construct_overloads,
+};
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -889,16 +891,7 @@ impl<'a> CheckerState<'a> {
             // signatures. Without this, merged function+class declarations would use
             // the function's call signature parameters instead of the class constructor's
             // construct signature parameters for contextual typing of `new` arguments.
-            let factory = self.ctx.types.factory();
-            let func_type = factory.function(tsz_solver::FunctionShape {
-                params: shape.params.clone(),
-                return_type: shape.return_type,
-                this_type: shape.this_type,
-                type_params: shape.type_params.clone(),
-                type_predicate: shape.type_predicate,
-                is_constructor: true,
-                is_method: false,
-            });
+            let func_type = function_type_from_shape(self.ctx.types, shape.clone());
             ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 func_type,
@@ -1252,9 +1245,14 @@ impl<'a> CheckerState<'a> {
                                                 .types
                                                 .factory()
                                                 .union2(inner, promise_like_inner);
-                                            first_param.type_id =
-                                                self.ctx.types.function(resolve_shape);
-                                            Some(self.ctx.types.function(exec_shape))
+                                            first_param.type_id = function_type_from_shape(
+                                                self.ctx.types,
+                                                resolve_shape,
+                                            );
+                                            Some(function_type_from_shape(
+                                                self.ctx.types,
+                                                exec_shape,
+                                            ))
                                         } else {
                                             None
                                         }

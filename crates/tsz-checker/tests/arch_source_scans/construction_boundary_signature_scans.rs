@@ -38,6 +38,11 @@ const CONTEXTUAL_FUNCTION_MATERIALIZATION_MODULES: &[&str] = &[
     "src/types/computation/tagged_template.rs",
     "src/types/function_type_helpers.rs",
 ];
+const CALL_CONTEXT_FUNCTION_SURFACE_MODULES: &[&str] = &[
+    "src/types/computation/call_inference.rs",
+    "src/types/computation/call/callee_context.rs",
+    "src/types/computation/complex.rs",
+];
 
 /// Type literals assemble AST-derived signature/index/property facts, but the
 /// solver shape construction belongs to query boundaries.
@@ -192,6 +197,35 @@ fn contextual_function_materialization_routes_interning_through_boundary() {
     );
 }
 
+/// Call inference and callee/new-expression context helpers may assemble
+/// request shapes, but the interned function/callable surfaces must flow
+/// through `construct_signatures`.
+#[test]
+fn call_context_function_surfaces_route_interning_through_boundary() {
+    const PATTERNS: &[&str] = &[
+        ".factory().function(",
+        ".factory().callable(",
+        ".factory.function(",
+        ".factory.callable(",
+        ".types.function(",
+        ".types.callable(",
+        ".ctx.types.function(",
+        ".ctx.types.callable(",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    for module in CALL_CONTEXT_FUNCTION_SURFACE_MODULES {
+        scan_for_patterns(module, PATTERNS, &mut violations);
+    }
+    assert!(
+        violations.is_empty(),
+        "call context helpers must intern temporary function/callable types through \
+         query_boundaries::construct_signatures:\n{}",
+        violations.join("\n")
+    );
+}
+
 /// `CallSignature` literals are signature *data* assembly and belong to the
 /// designated builder module (`checkers/signature_builder.rs`) or the
 /// boundary itself; the other issue #13022 modules round-trip through
@@ -315,6 +349,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "call_only_callable_type",
         "construct_only_callable_type",
         "type_literal_callable_type",
+        "callable_type_from_shape",
         "callable_with_signatures_replaced",
         "callable_with_abstract_flag",
         "callable_with_construct_return_type",
@@ -335,6 +370,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "call_only_callable_type",
         "construct_only_callable_type",
         "type_literal_callable_type",
+        "callable_type_from_shape",
         "callable_with_signatures_replaced",
         "callable_with_abstract_flag",
         "callable_with_construct_return_type",

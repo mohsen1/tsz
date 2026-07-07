@@ -267,6 +267,11 @@ pub(crate) fn type_literal_callable_type(
     })
 }
 
+/// Intern a callable type from an explicit, helper-built shape.
+pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableShape) -> TypeId {
+    db.callable(shape)
+}
+
 /// Re-intern `base` with the given signature lists, preserving properties,
 /// index signatures, nominal `symbol`, and abstractness.
 pub(crate) fn callable_with_signatures_replaced(
