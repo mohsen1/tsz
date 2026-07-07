@@ -83,7 +83,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         callable_idx: NodeIndex,
     ) -> TypeId {
-        use tsz_solver::{CallSignature, CallableShape, ParamInfo};
+        use tsz_solver::ParamInfo;
 
         let Some(callable_node) = self.ctx.arena.get(callable_idx) else {
             return TypeId::ANY;
@@ -219,22 +219,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.ctx.types.factory().callable(CallableShape {
-            call_signatures: vec![CallSignature {
-                type_params,
-                params,
-                this_type: None,
-                return_type,
-                type_predicate: None,
-                is_method: true,
-            }],
-            construct_signatures: Vec::new(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-            is_abstract: false,
-        })
+        query::shallow_js_method_callable_type(self.ctx.types, type_params, params, return_type)
     }
 
     fn assignment_chain_terminal_object_literal(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
@@ -311,22 +296,7 @@ impl<'a> CheckerState<'a> {
                 let rhs_type = self.shallow_object_literal_callable_type(elem_idx);
                 method_bindings.push((
                     prop_name_atom,
-                    tsz_solver::PropertyInfo {
-                        name: prop_name_atom,
-                        type_id: rhs_type,
-                        write_type: rhs_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: true,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: parent_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    },
+                    query::js_surface_property(prop_name_atom, rhs_type, parent_sym, true),
                 ));
                 continue;
             }
@@ -369,22 +339,7 @@ impl<'a> CheckerState<'a> {
             };
             method_bindings.push((
                 prop_name_atom,
-                tsz_solver::PropertyInfo {
-                    name: prop_name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: parent_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                query::js_surface_property(prop_name_atom, rhs_type, parent_sym, is_method),
             ));
         }
     }
@@ -493,22 +448,12 @@ impl<'a> CheckerState<'a> {
                     };
                     method_bindings.push((
                         method_name_atom,
-                        tsz_solver::PropertyInfo {
-                            name: method_name_atom,
-                            type_id: rhs_type,
-                            write_type: rhs_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: is_method_like,
-                            is_class_prototype: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: parent_sym,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        },
+                        query::js_surface_property(
+                            method_name_atom,
+                            rhs_type,
+                            parent_sym,
+                            is_method_like,
+                        ),
                     ));
                 }
             }
@@ -948,22 +893,12 @@ impl<'a> CheckerState<'a> {
                 };
                 method_bindings.push((
                     method_name_atom,
-                    tsz_solver::PropertyInfo {
-                        name: method_name_atom,
-                        type_id: rhs_type,
-                        write_type: rhs_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: is_method_like,
-                        is_class_prototype: false,
-                        visibility: tsz_solver::Visibility::Public,
-                        parent_id: parent_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    },
+                    query::js_surface_property(
+                        method_name_atom,
+                        rhs_type,
+                        parent_sym,
+                        is_method_like,
+                    ),
                 ));
             }
 
@@ -1049,22 +984,7 @@ impl<'a> CheckerState<'a> {
             let rhs_type = self.shallow_object_literal_callable_type(terminal_rhs);
             method_bindings.push((
                 method_name_atom,
-                tsz_solver::PropertyInfo {
-                    name: method_name_atom,
-                    type_id: rhs_type,
-                    write_type: rhs_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: true,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: parent_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                query::js_surface_property(method_name_atom, rhs_type, parent_sym, true),
             ));
         }
 

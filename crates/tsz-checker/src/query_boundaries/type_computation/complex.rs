@@ -1,5 +1,10 @@
+use tsz_binder::SymbolId;
+use tsz_common::Atom;
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{
+    CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeParamInfo, Visibility,
+};
 
 pub(crate) use super::super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries::{
@@ -86,6 +91,62 @@ pub(crate) fn classify_for_call_signatures(
     type_id: TypeId,
 ) -> CallSignaturesKind {
     tsz_solver::type_queries::classify_for_call_signatures(db, type_id)
+}
+
+pub(crate) fn shallow_js_method_callable_type(
+    db: &dyn TypeDatabase,
+    type_params: Vec<TypeParamInfo>,
+    params: Vec<ParamInfo>,
+    return_type: TypeId,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params,
+            params,
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_method: true,
+        }],
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    })
+}
+
+pub(crate) const fn js_surface_property(
+    name: Atom,
+    type_id: TypeId,
+    parent_id: Option<SymbolId>,
+    is_method: bool,
+) -> PropertyInfo {
+    PropertyInfo {
+        name,
+        type_id,
+        write_type: type_id,
+        optional: false,
+        readonly: false,
+        is_method,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+        non_widening: false,
+    }
+}
+
+pub(crate) fn js_instance_object_with_symbol(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    symbol: Option<SymbolId>,
+) -> TypeId {
+    db.object_with_flags_and_symbol(properties, tsz_solver::ObjectFlags::empty(), symbol)
 }
 
 pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
