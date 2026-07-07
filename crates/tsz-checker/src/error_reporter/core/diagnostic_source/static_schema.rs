@@ -332,7 +332,10 @@ impl<'a> CheckerState<'a> {
             static_prop.declaration_order = prop.declaration_order;
             properties.push(static_prop);
         }
-        Some(self.ctx.types.factory().object(properties))
+        Some(diagnostic_query::object_type_from_properties(
+            self.ctx.types,
+            properties,
+        ))
     }
 
     fn rewrite_nested_static_projection_members(
@@ -362,7 +365,7 @@ impl<'a> CheckerState<'a> {
             }
             properties.push(next);
         }
-        changed.then(|| self.ctx.types.factory().object(properties))
+        changed.then(|| diagnostic_query::object_type_from_properties(self.ctx.types, properties))
     }
 
     fn schema_property_type(&mut self, schema_type: TypeId, property: &str) -> Option<TypeId> {

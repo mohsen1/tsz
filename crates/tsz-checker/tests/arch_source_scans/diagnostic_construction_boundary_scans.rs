@@ -11,9 +11,13 @@ const DIAGNOSTICS_BOUNDARY: &str = "src/query_boundaries/diagnostics.rs";
 const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
     "src/error_reporter/core/type_display.rs",
     "src/error_reporter/core/excess_display.rs",
+    "src/error_reporter/core/diagnostic_source/static_schema.rs",
     "src/error_reporter/generics.rs",
+    "src/error_reporter/properties.rs",
+    "src/error_reporter/call_errors/display_formatting_parameters.rs",
     "src/state/type_environment/formatting.rs",
 ];
+const DIAGNOSTIC_FUNCTION_CONSTRUCTION_MODULES: &[&str] = &["src/error_reporter/render_failure.rs"];
 
 fn checker_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -73,6 +77,17 @@ fn diagnostic_display_callers_route_solver_shape_construction_through_diagnostic
         scan_for_patterns(relative, FORBIDDEN_PATTERNS, &mut violations);
     }
 
+    const FUNCTION_FORBIDDEN_PATTERNS: &[&str] = &[
+        ".factory().function(",
+        ".factory.function(",
+        ".types.function(",
+        "FunctionShape {",
+        "FunctionShape::new(",
+    ];
+    for relative in DIAGNOSTIC_FUNCTION_CONSTRUCTION_MODULES {
+        scan_for_patterns(relative, FUNCTION_FORBIDDEN_PATTERNS, &mut violations);
+    }
+
     assert!(
         violations.is_empty(),
         "diagnostic display callers must route solver shape construction \
@@ -95,6 +110,7 @@ fn diagnostics_boundary_owns_construction_helpers() {
         "function_type_with_params_and_return_replaced",
         "function_type_without_type_params",
         "function_type_from_call_signature_without_type_params",
+        "function_type_from_call_signature",
         "callable_type_from_shape",
         "call_only_callable_type",
         "callable_type_with_signatures_replaced",

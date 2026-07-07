@@ -663,7 +663,10 @@ impl<'a> CheckerState<'a> {
             properties.push(property);
         }
 
-        Some(self.ctx.types.factory().object(properties))
+        Some(query_diagnostics::object_type_from_properties(
+            self.ctx.types,
+            properties,
+        ))
     }
 
     fn simple_function_call_parameter_annotation_display(

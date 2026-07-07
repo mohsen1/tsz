@@ -130,6 +130,15 @@ pub(crate) fn function_type_with_return_type(
     db.function(shape)
 }
 
+/// Intern a simple function type from explicit parameter and return slots.
+pub(crate) fn function_type_from_params_and_return(
+    db: &dyn TypeDatabase,
+    params: Vec<ParamInfo>,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_shape(db, FunctionShape::new(params, return_type))
+}
+
 /// Intern a function type from declaration-lowered signature parts.
 pub(crate) fn function_type_from_parts(
     db: &dyn TypeDatabase,

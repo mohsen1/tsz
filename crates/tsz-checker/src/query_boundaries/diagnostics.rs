@@ -165,6 +165,25 @@ pub(crate) fn function_type_from_call_signature_without_type_params(
     )
 }
 
+pub(crate) fn function_type_from_call_signature(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    is_constructor: bool,
+) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: sig.type_params.clone(),
+            params: sig.params.clone(),
+            this_type: sig.this_type,
+            return_type: sig.return_type,
+            type_predicate: sig.type_predicate,
+            is_constructor,
+            is_method: sig.is_method,
+        },
+    )
+}
+
 pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableShape) -> TypeId {
     db.callable(shape)
 }

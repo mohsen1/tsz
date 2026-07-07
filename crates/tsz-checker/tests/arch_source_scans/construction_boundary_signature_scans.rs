@@ -33,6 +33,7 @@ const SIGNATURE_CONSTRUCTION_CLEAN_MODULES: &[&str] = &[
 
 /// The designated checker-side `CallSignature` data assembler.
 const SIGNATURE_DATA_BUILDER: &str = "src/checkers/signature_builder.rs";
+const CALL_DISPLAY_MODULE: &str = "src/types/computation/call_display.rs";
 
 /// Type literals assemble AST-derived signature/index/property facts, but the
 /// solver shape construction belongs to query boundaries.
@@ -136,6 +137,29 @@ fn issue_13022_modules_do_not_build_type_shape_literals() {
         violations.is_empty(),
         "issue #13022 modules must not hand-build interned type shape literals; \
          use query_boundaries::construct_signatures helpers:\n{}",
+        violations.join("\n")
+    );
+}
+
+/// `call_display.rs` also builds temporary function surfaces for relation and
+/// contextual-return checks. Those function types are signature-bearing
+/// construction and must stay behind the same boundary, but the module still
+/// assembles read-only `CallSignature` data for display skeletons.
+#[test]
+fn call_display_routes_function_type_construction_through_boundary() {
+    const PATTERNS: &[&str] = &[
+        ".factory().function(",
+        ".factory.function(",
+        ".types.function(",
+        "FunctionShape::new(",
+    ];
+
+    let mut violations = Vec::new();
+    scan_for_patterns(CALL_DISPLAY_MODULE, PATTERNS, &mut violations);
+    assert!(
+        violations.is_empty(),
+        "call_display.rs must intern temporary function types through \
+         query_boundaries::construct_signatures:\n{}",
         violations.join("\n")
     );
 }

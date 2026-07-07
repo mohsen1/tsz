@@ -12,6 +12,7 @@ use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
+use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -83,8 +84,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let source_fn = self.ctx.types.factory().function(normalize(source_shape));
-        let target_fn = self.ctx.types.factory().function(normalize(target_shape));
+        let source_fn = signature_construction::function_type_from_shape(
+            self.ctx.types,
+            normalize(source_shape),
+        );
+        let target_fn = signature_construction::function_type_from_shape(
+            self.ctx.types,
+            normalize(target_shape),
+        );
         self.call_arg_relation_outcome_with_env(source_fn, target_fn)
             .related
     }
@@ -242,11 +249,11 @@ impl<'a> CheckerState<'a> {
             };
             // Wrap contextual type as `() => ctx_type` so the function expression
             // resolver can use get_return_type() to extract the expected return type.
-            let wrapper_fn = self
-                .ctx
-                .types
-                .factory()
-                .function(FunctionShape::new(vec![], body_context_type));
+            let wrapper_fn = signature_construction::function_type_from_params_and_return(
+                self.ctx.types,
+                vec![],
+                body_context_type,
+            );
             Some((wrapper_fn, ctx_type))
         } else {
             None
