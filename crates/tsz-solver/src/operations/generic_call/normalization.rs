@@ -550,6 +550,68 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         instantiate_type(self.interner, return_type, &subst)
     }
 
+    /// Default any *leaked* call-local inference placeholder (`InferPlaceholder`
+    /// origin, historically `__infer_N`) that is NOT one of the current call's
+    /// own tracked placeholders to its constraint (when concrete) or `unknown`.
+    ///
+    /// Such a placeholder is a call-local inference variable minted for a
+    /// *nested* generic call — for example a curried callback's uninferable type
+    /// parameter reachable only through an inner (contravariant) parameter slot —
+    /// that never received an inference candidate. `tsc`'s `getInferredType`
+    /// resolves an uninferable type parameter to its constraint or `unknown` and
+    /// never lets an internal placeholder ride into the finalized result type,
+    /// including when the placeholder was captured inside another type
+    /// parameter's inferred value (issue #15461).
+    ///
+    /// The higher-order *source* placeholder (`__infer_src_*`) equivalent is
+    /// already handled by [`Self::normalize_inferred_placeholder_type`]; this
+    /// covers the call-local `InferPlaceholder` family. The current call's own
+    /// placeholders are preserved (they are substituted to their resolved values
+    /// through the normal placeholder substitution, and the tautology-breaking
+    /// revert in `finish_generic_call_resolution` relies on them surviving).
+    pub(super) fn default_leaked_inference_placeholders(
+        &self,
+        ty: TypeId,
+        own_placeholder_atoms: &FxHashSet<tsz_common::Atom>,
+    ) -> TypeId {
+        // Cheap short-circuiting gate: the common (no-leak) resolved type carries
+        // no call-local placeholder at all, so avoid materializing every subtype
+        // via `collect_all_types` unless one is actually present.
+        if !crate::type_queries::data::contains_current_infer_placeholder_db(
+            self.interner.as_type_database(),
+            ty,
+        ) {
+            return ty;
+        }
+        let mut subst = TypeSubstitution::new();
+        for member in crate::visitor::collect_all_types(self.interner.as_type_database(), ty) {
+            let Some(TypeData::TypeParameter(info)) = self.interner.lookup(member) else {
+                continue;
+            };
+            if !info.is_current_infer_placeholder() || own_placeholder_atoms.contains(&info.name) {
+                continue;
+            }
+            // An uninferable parameter defaults to its constraint when that
+            // constraint is already concrete, otherwise to `unknown` (matches
+            // `tsc`'s `getInferredType` / `getConstraintOfTypeParameter` fallback).
+            let fallback = match info.constraint {
+                Some(constraint)
+                    if !crate::visitor::contains_type_parameters(
+                        self.interner.as_type_database(),
+                        constraint,
+                    ) =>
+                {
+                    constraint
+                }
+                _ => TypeId::UNKNOWN,
+            };
+            subst.insert(info.name, fallback);
+        }
+        // `instantiate_type` no-ops on an empty substitution (all leaked
+        // placeholders belonged to this call), so no explicit guard is needed.
+        instantiate_type(self.interner, ty, &subst)
+    }
+
     pub(super) fn normalize_inferred_placeholder_type_preserving_source_placeholders(
         &self,
         ty: TypeId,
