@@ -16,7 +16,7 @@ type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
 /// These facts are computed without running relation or evaluation queries, so
 /// they can be reused across the simplifier's O(n^2) pair loop. The final
 /// decision still runs the relation probe and every veto in order.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct CompoundMemberFacts {
     property_names: MemberPropertyNames,
     property_modifiers: MemberModifierMap,
@@ -28,6 +28,12 @@ struct CompoundMemberFacts {
     is_widening_primitive_intrinsic: bool,
     is_opaque_under_bypass_eval: bool,
     is_branded_primitive_intersection: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CompoundMemberFactsKey {
+    type_id: TypeId,
+    include_property_modifiers: bool,
 }
 
 /// Controls which subtype direction makes a member redundant when simplifying
@@ -137,9 +143,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // pure, per-call data, so relation probes can mutably borrow `self`
         // without re-walking object/intersection shapes for every pair.
         let needs_property_modifiers = matches!(direction, SubtypeDirection::OtherSubsumedBySource);
+        let mut member_facts_memo = FxHashMap::default();
         let member_facts: Vec<CompoundMemberFacts> = members
             .iter()
-            .map(|&id| self.compound_member_facts(id, needs_property_modifiers))
+            .map(|&id| {
+                self.compound_member_facts_memoized(
+                    id,
+                    needs_property_modifiers,
+                    &mut member_facts_memo,
+                )
+            })
             .collect();
 
         // Union subtype reduction only removes a member that is structured or
@@ -314,24 +327,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// one member. This is intentionally per-call state, not an evaluator cache:
     /// the member list is small and the facts are only valid inside one type
     /// database/request shape.
+    #[cfg(test)]
     fn compound_member_facts(
         &self,
         type_id: TypeId,
         include_property_modifiers: bool,
     ) -> CompoundMemberFacts {
+        let mut memo = FxHashMap::default();
+        self.compound_member_facts_memoized(type_id, include_property_modifiers, &mut memo)
+    }
+
+    fn compound_member_facts_memoized(
+        &self,
+        type_id: TypeId,
+        include_property_modifiers: bool,
+        memo: &mut FxHashMap<CompoundMemberFactsKey, CompoundMemberFacts>,
+    ) -> CompoundMemberFacts {
+        let key = CompoundMemberFactsKey {
+            type_id,
+            include_property_modifiers,
+        };
+        if let Some(facts) = memo.get(&key) {
+            return facts.clone();
+        }
+
         let mut names = FxHashSet::default();
-        Self::collect_property_names(self.interner, type_id, &mut names);
+        self.collect_property_names_memoized(type_id, &mut names, memo);
         let property_names = if names.is_empty() { None } else { Some(names) };
 
         let property_modifiers = if include_property_modifiers {
             let mut mods = FxHashMap::default();
-            Self::collect_property_modifiers(self.interner, type_id, &mut mods);
+            self.collect_property_modifiers_memoized(type_id, &mut mods, memo);
             if mods.is_empty() { None } else { Some(mods) }
         } else {
             None
         };
 
-        CompoundMemberFacts {
+        let facts = CompoundMemberFacts {
             property_names,
             property_modifiers,
             carries_index_signature: Self::carries_index_signature(self.interner, type_id),
@@ -359,7 +391,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner,
                 type_id,
             ),
-        }
+        };
+        memo.insert(key, facts.clone());
+        facts
     }
 
     /// Check if `candidate` has any property names that `subsuming` doesn't have,
@@ -485,25 +519,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Collect property name atoms from an object type into the provided set.
-    fn collect_property_names(
-        db: &dyn crate::caches::db::TypeDatabase,
+    fn collect_property_names_memoized(
+        &self,
         type_id: TypeId,
         names: &mut FxHashSet<u32>,
+        memo: &mut FxHashMap<CompoundMemberFactsKey, CompoundMemberFacts>,
     ) {
         if type_id.is_intrinsic() {
             return;
         }
-        match db.lookup(type_id) {
+        match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = db.object_shape(shape_id);
+                let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
                     names.insert(prop.name.0);
                 }
             }
             Some(TypeData::Intersection(list_id)) => {
-                let sub_members = db.type_list(list_id);
+                let sub_members = self.interner.type_list(list_id);
                 for &sub in sub_members.iter() {
-                    Self::collect_property_names(db, sub, names);
+                    if let Some(sub_names) = &self
+                        .compound_member_facts_memoized(sub, false, memo)
+                        .property_names
+                    {
+                        names.extend(sub_names.iter().copied());
+                    }
                 }
             }
             Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
@@ -515,17 +555,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Collect per-property `(optional, readonly)` modifiers for an object-like
     /// member, merging nested intersection members with tsc's AND semantics.
-    fn collect_property_modifiers(
-        db: &dyn crate::caches::db::TypeDatabase,
+    fn collect_property_modifiers_memoized(
+        &self,
         type_id: TypeId,
         mods: &mut FxHashMap<u32, (bool, bool)>,
+        memo: &mut FxHashMap<CompoundMemberFactsKey, CompoundMemberFacts>,
     ) {
         if type_id.is_intrinsic() {
             return;
         }
-        match db.lookup(type_id) {
+        match self.interner.lookup(type_id) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = db.object_shape(shape_id);
+                let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
                     let entry = mods
                         .entry(prop.name.0)
@@ -535,11 +576,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
             Some(TypeData::Intersection(list_id)) => {
-                for &sub in db.type_list(list_id).iter() {
-                    Self::collect_property_modifiers(db, sub, mods);
+                for &sub in self.interner.type_list(list_id).iter() {
+                    if let Some(sub_mods) = &self
+                        .compound_member_facts_memoized(sub, true, memo)
+                        .property_modifiers
+                    {
+                        Self::merge_property_modifiers(mods, sub_mods);
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    fn merge_property_modifiers(
+        target: &mut FxHashMap<u32, (bool, bool)>,
+        source: &FxHashMap<u32, (bool, bool)>,
+    ) {
+        for (&name, &(optional, readonly)) in source {
+            let entry = target.entry(name).or_insert((optional, readonly));
+            entry.0 = entry.0 && optional;
+            entry.1 = entry.1 && readonly;
         }
     }
 
@@ -749,6 +806,115 @@ mod tests {
 
         let union_facts = evaluator.compound_member_facts(intersection, false);
         assert!(union_facts.property_modifiers.is_none());
+    }
+
+    #[test]
+    fn compound_member_facts_memo_partitions_property_modifier_mode() {
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let mut optional_readonly = PropertyInfo::opt(value, TypeId::STRING);
+        optional_readonly.readonly = true;
+        let required = interner.object(vec![PropertyInfo::readonly(value, TypeId::STRING)]);
+        let optional_readonly = interner.object(vec![optional_readonly]);
+        let intersection = interner.intersect_types_raw2(required, optional_readonly);
+        let evaluator = TypeEvaluator::new(&interner);
+        let mut memo = FxHashMap::default();
+
+        let union_facts = evaluator.compound_member_facts_memoized(intersection, false, &mut memo);
+
+        assert!(union_facts.property_modifiers.is_none());
+        assert!(memo.contains_key(&CompoundMemberFactsKey {
+            type_id: intersection,
+            include_property_modifiers: false,
+        }));
+        assert!(!memo.contains_key(&CompoundMemberFactsKey {
+            type_id: intersection,
+            include_property_modifiers: true,
+        }));
+
+        let intersection_facts =
+            evaluator.compound_member_facts_memoized(intersection, true, &mut memo);
+
+        assert_eq!(
+            intersection_facts
+                .property_modifiers
+                .as_ref()
+                .and_then(|mods| mods.get(&value.0).copied()),
+            Some((false, true)),
+            "modifier-sensitive facts must not reuse the union-mode memo entry",
+        );
+        assert!(memo.contains_key(&CompoundMemberFactsKey {
+            type_id: intersection,
+            include_property_modifiers: true,
+        }));
+
+        let entries_after_both_modes = memo.len();
+        assert_eq!(
+            evaluator.compound_member_facts_memoized(intersection, false, &mut memo),
+            union_facts,
+        );
+        assert_eq!(
+            memo.len(),
+            entries_after_both_modes,
+            "re-reading the same mode should hit the local memo",
+        );
+    }
+
+    #[test]
+    fn compound_member_facts_memo_reuses_shared_intersection_children() {
+        let interner = TypeInterner::new();
+        let shared_name = interner.intern_string("shared");
+        let left_name = interner.intern_string("left");
+        let shared = interner.object(vec![PropertyInfo::readonly(shared_name, TypeId::STRING)]);
+        let left_only = interner.object(vec![PropertyInfo::new(left_name, TypeId::NUMBER)]);
+        let tuple = interner.tuple(vec![tuple_elem(TypeId::BOOLEAN)]);
+        let left = interner.intersect_types_raw2(shared, left_only);
+        let right = interner.intersect_types_raw2(shared, tuple);
+        let evaluator = TypeEvaluator::new(&interner);
+        let mut memo = FxHashMap::default();
+
+        let left_facts = evaluator.compound_member_facts_memoized(left, true, &mut memo);
+        let entries_after_left = memo.len();
+        let right_facts = evaluator.compound_member_facts_memoized(right, true, &mut memo);
+
+        assert!(
+            left_facts
+                .property_names
+                .as_ref()
+                .is_some_and(|names| names.contains(&shared_name.0) && names.contains(&left_name.0)),
+            "intersection facts merge object property names",
+        );
+        assert!(
+            right_facts
+                .property_names
+                .as_ref()
+                .is_some_and(|names| names.contains(&shared_name.0) && names.contains(&u32::MAX)),
+            "array-like sentinel facts are preserved while sharing object children",
+        );
+        assert_eq!(
+            right_facts
+                .property_modifiers
+                .as_ref()
+                .and_then(|mods| mods.get(&shared_name.0).copied()),
+            Some((false, true)),
+            "shared child modifier facts stay available in intersection mode",
+        );
+        assert_eq!(
+            memo.len(),
+            entries_after_left + 3,
+            "the second intersection adds only its unique child facts and top-level facts",
+        );
+
+        let entries_after_right = memo.len();
+        assert_eq!(
+            evaluator.compound_member_facts_memoized(right, true, &mut memo),
+            right_facts,
+        );
+        assert_eq!(
+            memo.len(),
+            entries_after_right,
+            "re-reading a top-level intersection should hit the local memo",
+        );
     }
 
     #[test]
