@@ -75,7 +75,7 @@ impl RelatedInformationPolicy {
     /// one related line per failure, deduped and sorted as before.
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
-        dedupe: true,
+        dedupe: false,
         limit: None,
         preserve_order: false,
     };

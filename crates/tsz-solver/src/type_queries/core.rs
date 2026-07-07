@@ -256,6 +256,8 @@ fn alias_body_is_name_dropping_reducing_operator(
         .is_some_and(|next| {
             alias_body_is_name_dropping_reducing_operator(db, def_store, next, depth + 1)
         })
+}
+
 /// The reducing operator a type alias body bottoms out at, if any.
 ///
 /// tsc's `aliasSymbol` policy hinges on whether instantiating an alias
