@@ -1,9 +1,10 @@
 use super::*;
 use crate::query_boundaries::property_access::{
-    is_bigint_type, is_boolean_type, is_number_type, is_string_type, is_symbol_type,
+    intersection_property_access_success, is_bigint_type, is_boolean_type, is_number_type,
+    is_string_type, is_symbol_type, mapped_property_read_type, union_property_access_success,
 };
 use tsz_solver::construction::TypeInterner;
-use tsz_solver::{DefId, FunctionShape, ParamInfo, TupleElement};
+use tsz_solver::{DefId, FunctionShape, MappedModifier, ParamInfo, TupleElement};
 
 #[test]
 fn exposes_property_access_boundary_queries() {
@@ -195,6 +196,50 @@ fn tuple_element_union_and_array_element_type() {
     let arr = types.array(TypeId::NUMBER);
     assert_eq!(array_element_type(&types, arr), Some(TypeId::NUMBER));
     assert_eq!(array_element_type(&types, single), None);
+}
+
+#[test]
+fn property_access_result_construction_helpers() {
+    let types = TypeInterner::new();
+
+    assert_eq!(
+        mapped_property_read_type(&types, TypeId::STRING, None),
+        TypeId::STRING
+    );
+    assert_eq!(
+        mapped_property_read_type(&types, TypeId::STRING, Some(MappedModifier::Remove)),
+        TypeId::STRING
+    );
+    assert_eq!(
+        mapped_property_read_type(&types, TypeId::STRING, Some(MappedModifier::Add)),
+        types.union2(TypeId::STRING, TypeId::UNDEFINED)
+    );
+
+    assert!(union_property_access_success(&types, vec![]).is_none());
+    assert_eq!(
+        union_property_access_success(&types, vec![TypeId::STRING])
+            .and_then(|result| result.success_info()),
+        Some((TypeId::STRING, false))
+    );
+    let union_type = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        union_property_access_success(&types, vec![TypeId::STRING, TypeId::NUMBER])
+            .and_then(|result| result.success_info()),
+        Some((union_type, false))
+    );
+
+    assert!(intersection_property_access_success(&types, vec![], false).is_none());
+    assert_eq!(
+        intersection_property_access_success(&types, vec![TypeId::BOOLEAN], true)
+            .and_then(|result| result.success_info()),
+        Some((TypeId::BOOLEAN, true))
+    );
+    let intersection_type = types.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(
+        intersection_property_access_success(&types, vec![TypeId::STRING, TypeId::NUMBER], false)
+            .and_then(|result| result.success_info()),
+        Some((intersection_type, false))
+    );
 }
 
 #[test]

@@ -1,8 +1,8 @@
 use tsz_common::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
-    CallSignature, CallableShape, FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo,
-    TypeParamOrigin, TypePredicate,
+    CallSignature, CallableShape, FunctionShape, MappedModifier, ParamInfo, TupleElement, TypeId,
+    TypeParamInfo, TypeParamOrigin, TypePredicate,
 };
 
 pub(crate) use super::common::PropertyAccessResult;
@@ -128,6 +128,40 @@ pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 pub(crate) fn tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::get_tuple_element_type_union(db, type_id)
+}
+
+pub(crate) fn mapped_property_read_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    optional_modifier: Option<MappedModifier>,
+) -> TypeId {
+    match optional_modifier {
+        Some(MappedModifier::Add) => db.union2(type_id, TypeId::UNDEFINED),
+        Some(MappedModifier::Remove) | None => type_id,
+    }
+}
+
+pub(crate) fn union_property_access_success(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+) -> Option<PropertyAccessResult> {
+    (!members.is_empty())
+        .then(|| PropertyAccessResult::simple(tsz_solver::utils::union_or_single(db, members)))
+}
+
+pub(crate) fn intersection_property_access_success(
+    db: &dyn TypeDatabase,
+    members: Vec<TypeId>,
+    from_index_signature: bool,
+) -> Option<PropertyAccessResult> {
+    (!members.is_empty()).then(|| {
+        let type_id = tsz_solver::utils::intersection_or_single(db, members);
+        if from_index_signature {
+            PropertyAccessResult::from_index(type_id)
+        } else {
+            PropertyAccessResult::simple(type_id)
+        }
+    })
 }
 
 pub(crate) fn application_first_arg(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
