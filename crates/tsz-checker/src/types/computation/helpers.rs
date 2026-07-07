@@ -342,7 +342,9 @@ impl<'a> CheckerState<'a> {
             // Still type-check the operand for flow/node types.
             k if k == SyntaxKind::TypeOfKeyword as u16 => {
                 self.get_type_of_node(unary.operand);
-                self.ctx.types.factory().typeof_result_union()
+                crate::query_boundaries::type_computation::expression_results::typeof_result_union(
+                    self.ctx.types,
+                )
             }
             // Unary + and - return number unless contextual typing expects a numeric literal.
             // Note: tsc does NOT validate operand types for unary +/- in general.

@@ -1,6 +1,7 @@
 //! Nullish-coalescing (`??`) diagnostic and result helpers.
 
 use super::binary_support::SyntacticNullishness;
+use crate::query_boundaries::type_computation::expression_results as result_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -56,7 +57,7 @@ impl<'a> CheckerState<'a> {
         // deliberately keeps `unknown` whole for flow `!= null` narrowing, so the
         // `??` result type substitutes the empty-object non-nullable form here.
         let non_nullish = if evaluated_left == TypeId::UNKNOWN {
-            self.ctx.types.factory().object(Vec::new())
+            result_query::empty_object_type(self.ctx.types)
         } else {
             non_nullish
         };
@@ -86,7 +87,7 @@ impl<'a> CheckerState<'a> {
             return right_type;
         }
 
-        self.ctx.types.factory().union2(non_nullish, right_type)
+        result_query::nullish_coalescing_union(self.ctx.types, non_nullish, right_type)
     }
 
     fn is_empty_object_literal_expression(&self, idx: NodeIndex) -> bool {
