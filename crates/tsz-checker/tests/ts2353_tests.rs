@@ -436,6 +436,65 @@ v = { p: 1, q: 1, first: "ok", second: "error" }
 }
 
 #[test]
+fn nested_union_property_uses_all_member_targets_for_excess_check() {
+    let diags = get_diagnostics(
+        r#"
+type LeftPayload = { left: string };
+type RightPayload = { right: string };
+type Target = { box: LeftPayload } | { box: RightPayload };
+
+const ok: Target = { box: { right: "r" } };
+const bad: Target = { box: { right: "r", extra: 1 } };
+"#,
+    );
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "expected only nested 'extra', got: {diags:?}"
+    );
+    assert!(ts2353[0].1.contains("'extra'"), "got: {ts2353:?}");
+    assert!(
+        !ts2353.iter().any(|d| d.1.contains("'right'")),
+        "right must be accepted: {diags:?}"
+    );
+    assert!(
+        !codes(&diags).contains(&2322),
+        "no aggregate TS2322 expected: {diags:?}"
+    );
+}
+
+#[test]
+fn discriminated_union_nested_property_uses_narrowed_target_for_excess() {
+    let diags = get_diagnostics(
+        r#"
+type AlphaPayload = { shared: number };
+type BetaPayload = { shared: number; betaOnly: number };
+type Alpha = { tag: "alpha"; payload: AlphaPayload };
+type Beta = { tag: "beta"; payload: BetaPayload };
+type Choice = Alpha | Beta;
+
+const bad: Choice = { tag: "alpha", payload: { shared: 1, betaOnly: 2 } };
+"#,
+    );
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "expected narrowed nested excess, got: {diags:?}"
+    );
+    assert!(ts2353[0].1.contains("'betaOnly'"), "got: {ts2353:?}");
+    assert!(
+        ts2353[0].1.contains("'AlphaPayload'"),
+        "display should use narrowed target: {ts2353:?}"
+    );
+    assert!(
+        !ts2353[0].1.contains("BetaPayload"),
+        "must not use full union target: {ts2353:?}"
+    );
+}
+
+#[test]
 fn indirect_discriminant_variable_does_not_trigger_excess_property_narrowing() {
     let source = r#"
 type Blah =
