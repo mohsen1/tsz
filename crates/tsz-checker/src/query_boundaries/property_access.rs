@@ -1,6 +1,9 @@
 use tsz_common::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::{FunctionShape, TypeId};
+use tsz_solver::{
+    CallSignature, CallableShape, FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo,
+    TypeParamOrigin, TypePredicate,
+};
 
 pub(crate) use super::common::PropertyAccessResult;
 pub(crate) use super::common::intersection_members;
@@ -174,6 +177,190 @@ pub(crate) fn function_shape(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<FunctionShape>> {
     tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
+pub(crate) const fn strict_bind_call_apply_param_with_type(
+    param: ParamInfo,
+    type_id: TypeId,
+) -> ParamInfo {
+    ParamInfo { type_id, ..param }
+}
+
+pub(crate) const fn strict_bind_call_apply_type_param_with_constraint(
+    type_param: TypeParamInfo,
+    constraint: Option<TypeId>,
+) -> TypeParamInfo {
+    TypeParamInfo {
+        constraint,
+        ..type_param
+    }
+}
+
+pub(crate) const fn strict_bind_call_apply_call_signature(
+    type_params: Vec<TypeParamInfo>,
+    params: Vec<ParamInfo>,
+    this_type: Option<TypeId>,
+    return_type: TypeId,
+    type_predicate: Option<TypePredicate>,
+    is_method: bool,
+) -> CallSignature {
+    CallSignature {
+        type_params,
+        params,
+        this_type,
+        return_type,
+        type_predicate,
+        is_method,
+    }
+}
+
+pub(crate) fn strict_bind_call_apply_signature_from_function_shape(
+    shape: &FunctionShape,
+) -> CallSignature {
+    strict_bind_call_apply_call_signature(
+        shape.type_params.clone(),
+        shape.params.clone(),
+        shape.this_type,
+        shape.return_type,
+        shape.type_predicate,
+        shape.is_method,
+    )
+}
+
+pub(crate) fn strict_bind_call_apply_params_tuple_type(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+) -> TypeId {
+    let tuple_elements: Vec<TupleElement> = params
+        .iter()
+        .map(|param| TupleElement {
+            type_id: param.type_id,
+            name: param.name,
+            optional: param.optional && !param.rest,
+            rest: param.rest,
+        })
+        .collect();
+    db.tuple(tuple_elements)
+}
+
+pub(crate) fn strict_bind_call_apply_bound_return_type(
+    db: &dyn TypeDatabase,
+    sig: &CallSignature,
+    remaining_params: Vec<ParamInfo>,
+    is_constructor: bool,
+) -> TypeId {
+    if is_constructor {
+        return db.callable(CallableShape {
+            call_signatures: Vec::new(),
+            construct_signatures: vec![strict_bind_call_apply_call_signature(
+                sig.type_params.clone(),
+                remaining_params,
+                None,
+                sig.return_type,
+                None,
+                false,
+            )],
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+    }
+
+    db.function(FunctionShape {
+        type_params: sig.type_params.clone(),
+        params: remaining_params,
+        this_type: None,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor: false,
+        is_method: false,
+    })
+}
+
+pub(crate) fn strict_bind_call_apply_call_only_callable_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures,
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    })
+}
+
+pub(crate) fn strict_bind_call_apply_this_arg_param(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ParamInfo {
+    ParamInfo {
+        name: Some(db.intern_string("thisArg")),
+        type_id,
+        optional: false,
+        rest: false,
+    }
+}
+
+pub(crate) fn strict_bind_call_apply_args_param(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ParamInfo {
+    ParamInfo {
+        name: Some(db.intern_string("args")),
+        type_id,
+        optional: true,
+        rest: false,
+    }
+}
+
+pub(crate) fn strict_bind_call_apply_generic_this_param(
+    db: &dyn TypeDatabase,
+    constraint: TypeId,
+) -> (TypeParamInfo, TypeId) {
+    let info = TypeParamInfo {
+        name: db.intern_string("TThis"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let type_id = db.type_param(info);
+    (info, type_id)
+}
+
+pub(crate) fn strict_bind_call_apply_method_type(
+    db: &dyn TypeDatabase,
+    method_signatures: Vec<CallSignature>,
+) -> Option<TypeId> {
+    match method_signatures.len() {
+        0 => None,
+        1 => {
+            let sig = method_signatures.into_iter().next()?;
+            Some(db.function(FunctionShape {
+                type_params: sig.type_params,
+                params: sig.params,
+                this_type: None,
+                return_type: sig.return_type,
+                type_predicate: sig.type_predicate,
+                is_constructor: false,
+                is_method: false,
+            }))
+        }
+        _ => Some(db.callable(CallableShape {
+            call_signatures: method_signatures,
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        })),
+    }
 }
 
 /// Check if a type has a named property accessible on all branches.
