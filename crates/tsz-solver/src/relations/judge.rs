@@ -50,10 +50,10 @@
 
 use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
-use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::evaluation::result::EvaluationMemoResult;
 use crate::objects::index_signatures::IndexKind;
-use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
+use crate::relations::subtype::{SubtypeChecker, TypeEnvironment, TypeResolver};
 use crate::types::{
     CallSignature, IntrinsicKind, LiteralValue, ParamInfo, TypeData, TypeId, TypeParamInfo,
 };
@@ -230,7 +230,7 @@ pub struct DefaultJudge<'a> {
     /// Cache for subtype results
     subtype_cache: RefCell<FxHashMap<(TypeId, TypeId), bool>>,
     /// Cache for evaluated types
-    eval_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
 }
 
 /// Operation-local cache statistics for [`DefaultJudge`].
@@ -241,7 +241,7 @@ pub struct DefaultJudge<'a> {
 pub struct DefaultJudgeCacheStatistics {
     /// Entries in the subtype memo keyed by source and target `TypeId`.
     pub subtype_entries: usize,
-    /// Entries in the evaluation memo keyed by input `TypeId`.
+    /// Entries in the evaluation memo keyed by [`EvaluationCacheKey`].
     pub eval_entries: usize,
     estimated_size_bytes: usize,
 }
@@ -284,7 +284,9 @@ impl<'a> DefaultJudge<'a> {
         let eval_entries = self.eval_cache.borrow().len();
         let estimated_size_bytes = subtype_entries
             .saturating_mul(std::mem::size_of::<((TypeId, TypeId), bool)>())
-            .saturating_add(eval_entries.saturating_mul(std::mem::size_of::<(TypeId, TypeId)>()));
+            .saturating_add(
+                eval_entries.saturating_mul(std::mem::size_of::<(EvaluationCacheKey, TypeId)>()),
+            );
         DefaultJudgeCacheStatistics {
             subtype_entries,
             eval_entries,
@@ -292,10 +294,14 @@ impl<'a> DefaultJudge<'a> {
         }
     }
 
-    fn record_evaluation_result(&self, input: TypeId, result: EvaluationMemoResult) -> TypeId {
+    fn record_evaluation_result(
+        &self,
+        key: EvaluationCacheKey,
+        result: EvaluationMemoResult,
+    ) -> TypeId {
         let type_id = result.into_type_id();
         if result.is_stable_for_depth_agnostic_cache() {
-            self.eval_cache.borrow_mut().insert(input, type_id);
+            self.eval_cache.borrow_mut().insert(key, type_id);
         }
         type_id
     }
@@ -310,7 +316,17 @@ impl<'a> DefaultJudge<'a> {
     fn configured_evaluator(&self) -> TypeEvaluator<'a, TypeEnvironment> {
         let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
         evaluator.set_no_unchecked_indexed_access(self.config.no_unchecked_indexed_access);
+        evaluator.set_exact_optional_property_types(self.config.exact_optional_property_types);
         evaluator
+    }
+
+    fn evaluation_request(&self, type_id: TypeId) -> EvaluationRequest {
+        EvaluationRequest::new(type_id)
+            .with_no_unchecked_indexed_access(self.config.no_unchecked_indexed_access)
+            .with_exact_optional_property_types(self.config.exact_optional_property_types)
+            .with_type_database_identity(self.db.type_database_identity())
+            .with_resolver_identity(self.env.resolver_identity())
+            .with_resolver_generation(self.env.resolver_generation())
     }
 
     /// Check if `source` is a subtype of `target`.
@@ -354,16 +370,17 @@ impl<'a> DefaultJudge<'a> {
         }
 
         // Check cache
-        if let Some(&cached) = self.eval_cache.borrow().get(&type_id) {
+        let request = self.evaluation_request(type_id);
+        let cache_key = request.cache_key();
+        if let Some(&cached) = self.eval_cache.borrow().get(&cache_key) {
             return cached;
         }
 
         // Create evaluator and evaluate
-        let mut evaluator = TypeEvaluator::with_resolver(self.db, self.env);
-        let request = EvaluationRequest::new(type_id);
+        let mut evaluator = self.configured_evaluator();
         let result = evaluator.evaluate_request_memo_result(request);
 
-        self.record_evaluation_result(type_id, result)
+        self.record_evaluation_result(cache_key, result)
     }
 
     /// Instantiate a generic type with type arguments.

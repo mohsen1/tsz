@@ -1,12 +1,38 @@
 //! Query cache statistics and size-accounting coverage tests.
 
-use crate::caches::db::{IntersectionMergeCacheEntry, QueryDatabase, TypeApplicationEvalCache};
+use crate::caches::db::{
+    IntersectionMergeCacheEntry, QueryDatabase, TypeApplicationEvalCache, TypeDatabase,
+};
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::caches::query_cache::{QueryCache, SharedQueryCache};
 use crate::caches::query_cache_statistics::QueryCacheStatistics;
 use crate::def::{DefId, DefinitionStore};
 use crate::intern::TypeInterner;
 use crate::types::{RelationCacheConfig, RelationCacheKey, TypeId};
+
+#[test]
+fn query_cache_type_database_identity_is_backing_interner() {
+    let interner = TypeInterner::new();
+    let db_a = QueryCache::new(&interner);
+    let db_b = QueryCache::new(&interner);
+    assert_eq!(
+        db_a.type_database_identity(),
+        interner.type_database_identity()
+    );
+    assert_eq!(
+        db_a.type_database_identity(),
+        db_b.type_database_identity(),
+        "wrappers around the same interner should share the same TypeId-universe identity"
+    );
+
+    let other = TypeInterner::new();
+    let other_db = QueryCache::new(&other);
+    assert_ne!(
+        db_a.type_database_identity(),
+        other_db.type_database_identity(),
+        "different interners should remain distinct TypeId universes"
+    );
+}
 
 #[test]
 fn intersection_merge_cache_is_visible_in_statistics_and_size_estimate() {

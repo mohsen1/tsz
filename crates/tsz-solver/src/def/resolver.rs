@@ -17,6 +17,16 @@ use tsz_binder::SymbolId;
 /// This allows the `SubtypeChecker` to lazily resolve Ref types
 /// without being tightly coupled to the binder/checker.
 pub trait TypeResolver {
+    /// Process-local identity for this `TypeResolver` owner.
+    ///
+    /// Fresh-evaluator session memos use this alongside
+    /// [`Self::resolver_generation`] because sibling checker contexts can share
+    /// a generation value while resolving the same `DefId` through distinct
+    /// resolver environments.
+    fn resolver_identity(&self) -> usize {
+        std::ptr::from_ref(self).cast::<()>() as usize
+    }
+
     /// Monotonic generation for resolver-visible state.
     ///
     /// Narrowing and relation caches include this value when they depend on
@@ -493,6 +503,10 @@ impl TypeResolver for NoopResolver {
 /// This allows `&dyn TypeResolver` (which is Sized) to be used wherever
 /// `R: TypeResolver` is expected.
 impl<T: TypeResolver + ?Sized> TypeResolver for &T {
+    fn resolver_identity(&self) -> usize {
+        (**self).resolver_identity()
+    }
+
     fn resolver_generation(&self) -> u64 {
         (**self).resolver_generation()
     }

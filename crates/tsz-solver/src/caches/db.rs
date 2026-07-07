@@ -387,6 +387,15 @@ pub trait TypeDatabase:
     + TypeContainsByIdCache
     + TypePruneUnionCache
 {
+    /// Process-local identity for this `TypeDatabase` owner.
+    ///
+    /// Fresh-evaluator session memos use this as a discriminator because
+    /// `TypeId` values are arena-local: the same numeric id can name a
+    /// different shape in a sibling checker arena.
+    fn type_database_identity(&self) -> usize {
+        std::ptr::from_ref(self).cast::<()>() as usize
+    }
+
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {

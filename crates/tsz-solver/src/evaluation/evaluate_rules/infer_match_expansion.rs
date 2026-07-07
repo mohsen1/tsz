@@ -306,7 +306,10 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         let exact_optional = self.exact_optional_property_types();
         let request = crate::evaluation::request::EvaluationRequest::new(type_id)
             .with_no_unchecked_indexed_access(nuia)
-            .with_exact_optional_property_types(exact_optional);
+            .with_exact_optional_property_types(exact_optional)
+            .with_type_database_identity(self.interner().type_database_identity())
+            .with_resolver_identity(self.resolver().resolver_identity())
+            .with_resolver_generation(self.resolver().resolver_generation());
         crate::evaluation::cross_eval_guard::memoized_eval(session, request, || {
             let Ok(_entry) = session.enter_infer_match_expansion_depth() else {
                 return EvaluationMemoResult::unstable_complete(type_id);

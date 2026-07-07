@@ -1,8 +1,9 @@
 use super::*;
-use crate::def::DefId;
+use crate::def::{DefId, DefinitionStore};
 use crate::types::{
     CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape, ParamInfo, TupleElement,
 };
+use std::sync::Arc;
 
 mod common {
     include!("common/mod.rs");
@@ -329,7 +330,7 @@ fn test_non_stable_evaluation_result_is_not_cached() {
 
     assert_eq!(
         judge.record_evaluation_result(
-            no_infer_string,
+            judge.evaluation_request(no_infer_string).cache_key(),
             crate::evaluation::result::EvaluationMemoResult::unstable_complete(TypeId::ERROR),
         ),
         TypeId::ERROR
@@ -338,13 +339,37 @@ fn test_non_stable_evaluation_result_is_not_cached() {
 
     assert_eq!(
         judge.record_evaluation_result(
-            no_infer_string,
+            judge.evaluation_request(no_infer_string).cache_key(),
             crate::evaluation::result::EvaluationMemoResult::cached(TypeId::STRING),
         ),
         TypeId::STRING
     );
     assert_eq!(judge.cache_statistics().eval_entries, 1);
     assert_eq!(judge.evaluate(no_infer_string), TypeId::STRING);
+}
+
+#[test]
+fn default_judge_eval_cache_partitions_by_resolver_generation() {
+    let mut setup = JudgeSetup::new();
+    let store = Arc::new(DefinitionStore::new());
+    setup.env.set_definition_store(Arc::clone(&store));
+
+    let def_id = DefId(40_003);
+    let lazy = setup.interner.lazy(def_id);
+    store.set_body(def_id, TypeId::STRING);
+
+    let judge = setup.judge();
+    assert_eq!(judge.cache_statistics().eval_entries, 0);
+    assert_eq!(judge.evaluate(lazy), TypeId::STRING);
+    assert_eq!(judge.cache_statistics().eval_entries, 1);
+
+    store.set_body(def_id, TypeId::NUMBER);
+    assert_eq!(
+        judge.evaluate(lazy),
+        TypeId::NUMBER,
+        "resolver generation changes must miss the operation-local eval cache"
+    );
+    assert_eq!(judge.cache_statistics().eval_entries, 2);
 }
 
 // =============================================================================

@@ -362,6 +362,12 @@ fn evaluation_engine_keeps_request_stage_boundary() {
                 ".with_exact_optional_property_types(self.exact_optional_property_types)"
             )
             && function_checking_eval_rs
+                .contains(".with_type_database_identity(self.interner.type_database_identity())")
+            && function_checking_eval_rs
+                .contains(".with_resolver_identity(self.resolver.resolver_identity())")
+            && function_checking_eval_rs
+                .contains(".with_resolver_generation(self.resolver.resolver_generation())")
+            && function_checking_eval_rs
                 .contains("RelationEvaluationResult::from_depth_agnostic_memo(memo_result)")
             && function_checking_eval_rs.contains("if entry.is_stable_for_depth_agnostic_cache()")
             && functions_mod_rs.contains(".is_unstable_unknown()")
@@ -448,6 +454,12 @@ fn infer_match_fresh_evaluators_use_explicit_session_depth() {
             && evaluate_rs.contains("with_evaluation_session")
             && infer_match_expansion_rs.contains("session.enter_infer_match_expansion_depth()")
             && infer_match_expansion_rs.contains(".with_evaluation_session(session)")
+            && infer_match_expansion_rs
+                .contains(".with_type_database_identity(self.interner().type_database_identity())")
+            && infer_match_expansion_rs
+                .contains(".with_resolver_identity(self.resolver().resolver_identity())")
+            && infer_match_expansion_rs
+                .contains(".with_resolver_generation(self.resolver().resolver_generation())")
             && conditional_rs.contains("checker = checker.with_evaluation_session(session)")
             && !infer_match_expansion_rs.contains("thread_local!")
             && !infer_match_expansion_rs.contains("INFER_MATCH_EXPANSION_DEPTH"),
