@@ -58,6 +58,9 @@
 //! - `import_attribute_construction_boundary_scans`: static and dynamic import
 //!   callers route import-attribute object construction through
 //!   `query_boundaries::import_attributes`.
+//! - `commonjs_json_export_surface_construction_boundary_scans`: JSON module
+//!   and current-file CommonJS namespace surfaces route solver construction
+//!   through `query_boundaries::js_exports`.
 //! - `binding_pattern_construction_boundary_scans`: binding/destructuring
 //!   pattern callers route contextual tuple/object/property/union construction
 //!   through `query_boundaries::binding_patterns`.
@@ -103,6 +106,8 @@ mod class_instance_walk_state_scans;
 mod class_partial_constructor_construction_boundary_scans;
 #[path = "arch_source_scans/common_boundary_export_ratchets.rs"]
 mod common_boundary_export_ratchets;
+#[path = "arch_source_scans/commonjs_json_export_surface_construction_boundary_scans.rs"]
+mod commonjs_json_export_surface_construction_boundary_scans;
 #[path = "arch_source_scans/construction_boundary_signature_scans.rs"]
 mod construction_boundary_signature_scans;
 #[path = "arch_source_scans/cross_arena_delegation_scope_scans.rs"]

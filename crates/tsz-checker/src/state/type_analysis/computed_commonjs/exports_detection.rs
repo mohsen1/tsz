@@ -1,3 +1,4 @@
+use crate::query_boundaries::js_exports as js_exports_query;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde_json::Value as JsonValue;
@@ -7,7 +8,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn current_source_file_has_esm_syntax(&self) -> bool {
@@ -328,108 +329,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
-        match value {
-            JsonValue::Null => TypeId::NULL,
-            JsonValue::Bool(_) => TypeId::BOOLEAN,
-            JsonValue::Number(_) => TypeId::NUMBER,
-            JsonValue::String(_) => TypeId::STRING,
-            JsonValue::Array(elements) => self.json_array_type(elements),
-            JsonValue::Object(entries) => self.json_object_type(entries, None),
-        }
-    }
-
-    fn json_array_type(&mut self, elements: &[JsonValue]) -> TypeId {
-        let object_property_order = Self::json_array_object_property_order(elements);
-        let element_types: Vec<TypeId> = elements
-            .iter()
-            .map(|element| match element {
-                JsonValue::Object(entries) if !object_property_order.is_empty() => {
-                    self.json_object_type(entries, Some(&object_property_order))
-                }
-                _ => self.json_value_type(element),
-            })
-            .collect();
-        let element_type = match element_types.as_slice() {
-            [] => TypeId::NEVER,
-            [single] => *single,
-            _ => self.ctx.types.factory().union(element_types),
-        };
-        self.ctx.types.factory().array(element_type)
-    }
-
-    fn json_array_object_property_order(elements: &[JsonValue]) -> Vec<String> {
-        let mut names = Vec::new();
-        for element in elements {
-            let JsonValue::Object(entries) = element else {
-                continue;
-            };
-            for name in entries.keys() {
-                if !names.iter().any(|existing| existing == name) {
-                    names.push(name.clone());
-                }
-            }
-        }
-        names
-    }
-
-    fn json_object_type(
-        &mut self,
-        entries: &serde_json::Map<String, JsonValue>,
-        complete_property_order: Option<&[String]>,
-    ) -> TypeId {
-        let mut props = Vec::with_capacity(entries.len());
-        let mut present_names = FxHashSet::default();
-        for (declaration_order, (name, entry_value)) in entries.iter().enumerate() {
-            let prop_type = self.json_value_type(entry_value);
-            present_names.insert(name.as_str());
-            props.push(PropertyInfo {
-                name: self.ctx.types.intern_string(name),
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: (declaration_order + 1) as u32,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
-        }
-
-        if let Some(all_names) = complete_property_order {
-            let mut declaration_order = props.len() as u32 + 1;
-            for name in all_names {
-                if present_names.contains(name.as_str()) {
-                    continue;
-                }
-                props.push(PropertyInfo {
-                    name: self.ctx.types.intern_string(name),
-                    type_id: TypeId::UNDEFINED,
-                    write_type: TypeId::UNDEFINED,
-                    optional: true,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                });
-                declaration_order += 1;
-            }
-        }
-
-        self.ctx.types.factory().object(props)
-    }
-
     pub(crate) fn json_module_type_for_module(
         &mut self,
         module_name: &str,
@@ -454,11 +353,16 @@ impl<'a> CheckerState<'a> {
 
         let source_text = source_file.text.trim();
         if source_text.is_empty() {
-            return Some(self.ctx.types.factory().object(Vec::new()));
+            return Some(js_exports_query::commonjs_empty_namespace_type(
+                self.ctx.types,
+            ));
         }
 
         let parsed = serde_json::from_str::<JsonValue>(source_text).ok()?;
-        Some(self.json_value_type(&parsed))
+        Some(js_exports_query::json_module_value_type(
+            self.ctx.types,
+            &parsed,
+        ))
     }
 
     pub(crate) fn json_module_namespace_type_for_module(
@@ -468,54 +372,16 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let json_type = self.json_module_type_for_module(module_name, source_file_idx)?;
         if !self.json_namespace_import_uses_default_export(source_file_idx) {
-            return Some(self.commonjs_json_namespace_type(json_type));
+            return Some(js_exports_query::commonjs_json_namespace_type(
+                self.ctx.types,
+                json_type,
+            ));
         }
 
-        let namespace_type = self.ctx.types.factory().object(vec![PropertyInfo {
-            name: self.ctx.types.intern_string("default"),
-            type_id: json_type,
-            write_type: json_type,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 0,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        }]);
-        Some(namespace_type)
-    }
-
-    fn commonjs_json_namespace_type(&mut self, json_type: TypeId) -> TypeId {
-        let default_atom = self.ctx.types.intern_string("default");
-        let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, json_type)
-        else {
-            return json_type;
-        };
-        if !shape
-            .properties
-            .iter()
-            .any(|property| property.name == default_atom)
-        {
-            return json_type;
-        }
-
-        let mut properties = shape.properties.clone();
-        for property in &mut properties {
-            if property.name == default_atom {
-                property.type_id = json_type;
-                property.write_type = json_type;
-                property.optional = false;
-                property.readonly = false;
-                property.declaration_order = 0;
-            }
-        }
-        self.ctx.types.factory().object(properties)
+        Some(js_exports_query::json_esm_namespace_type(
+            self.ctx.types,
+            json_type,
+        ))
     }
 
     fn json_namespace_import_uses_default_export(&self, source_file_idx: Option<usize>) -> bool {
@@ -589,7 +455,7 @@ impl<'a> CheckerState<'a> {
         preserve_js_extension: bool,
     ) -> TypeId {
         if self.current_source_file_has_esm_syntax() {
-            let empty_namespace = self.ctx.types.factory().object(Vec::new());
+            let empty_namespace = js_exports_query::commonjs_empty_namespace_type(self.ctx.types);
             self.ctx.namespace_module_names.insert(
                 empty_namespace,
                 self.current_file_commonjs_module_name(preserve_js_extension),
@@ -601,76 +467,30 @@ impl<'a> CheckerState<'a> {
         // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
         let current_file_idx = self.ctx.current_file_idx;
         let surface = self.resolve_js_export_surface(current_file_idx);
-        let can_merge_named_exports = surface.direct_export_type.is_none_or(|direct_export_type| {
-            crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+        let can_merge_named_exports =
+            js_exports_query::commonjs_export_surface_can_merge_named_exports(
                 self.ctx.types,
-                direct_export_type,
-            )
-        });
+                &surface,
+            );
 
         // Deep-scan the AST for export names that may be nested (in if-blocks, etc.)
         // and not captured by the surface's top-level + IIFE scan.
         let mut export_names = BTreeSet::new();
-        for source_file in &self.ctx.arena.source_files {
-            for &stmt_idx in &source_file.statements.nodes {
-                self.collect_current_file_commonjs_export_names(stmt_idx, &mut export_names);
+        if can_merge_named_exports {
+            for source_file in &self.ctx.arena.source_files {
+                for &stmt_idx in &source_file.statements.nodes {
+                    self.collect_current_file_commonjs_export_names(stmt_idx, &mut export_names);
+                }
             }
         }
 
-        // Start with the surface's typed named exports and any deep-scan names.
-        let mut props = if can_merge_named_exports {
-            surface.named_exports
-        } else {
-            Vec::new()
-        };
-
-        // Add ANY-typed entries for any deep-scan names not already in the surface
-        for name in &export_names {
-            if !can_merge_named_exports {
-                break;
-            }
-            let name_atom = self.ctx.types.intern_string(name);
-            if props.iter().any(|p| p.name == name_atom) {
-                continue;
-            }
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: TypeId::ANY,
-                write_type: TypeId::ANY,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: props.len() as u32,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
-        }
-
-        let has_named_props = !props.is_empty();
-        crate::query_boundaries::js_exports::JsExportSurface {
-            direct_export_type: surface.direct_export_type,
-            named_exports: props,
-            prototype_members: surface.prototype_members,
-            has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
-            has_augmented_named_exports: surface.has_augmented_named_exports || has_named_props,
-        }
-        .to_type_id_with_display_name(
+        let display_name = self.current_file_commonjs_module_name(preserve_js_extension);
+        js_exports_query::current_file_commonjs_namespace_type(
             self,
-            Some(self.current_file_commonjs_module_name(preserve_js_extension)),
+            surface,
+            export_names,
+            display_name,
         )
-        .unwrap_or_else(|| {
-            let empty_namespace = self.ctx.types.factory().object(Vec::new());
-            self.ctx.namespace_module_names.insert(
-                empty_namespace,
-                self.current_file_commonjs_module_name(preserve_js_extension),
-            );
-            empty_namespace
-        })
     }
 
     fn collect_current_file_commonjs_export_names(
