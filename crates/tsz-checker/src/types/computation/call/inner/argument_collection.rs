@@ -1554,9 +1554,12 @@ impl<'a> CheckerState<'a> {
                                     )
                                     .related
                                 {
-                                    let mut new_shape = (*fn_shape).clone();
-                                    new_shape.return_type = ctx_return;
-                                    *arg_type = self.ctx.types.factory().function(new_shape);
+                                    *arg_type =
+                                        crate::query_boundaries::construct_signatures::function_type_with_return_replaced(
+                                            self.ctx.types,
+                                            fn_shape.as_ref(),
+                                            ctx_return,
+                                        );
                                 }
                             }
                             refreshed_args

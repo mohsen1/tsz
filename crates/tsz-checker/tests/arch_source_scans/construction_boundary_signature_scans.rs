@@ -343,6 +343,7 @@ fn construct_signatures_boundary_owns_construction_helpers() {
         "function_type_with_return_type",
         "function_type_from_parts",
         "function_type_with_params_replaced",
+        "function_type_with_return_replaced",
         "function_type_from_call_signature",
         "function_type_from_call_signature_preserving_method",
         "method_function_type_from_call_signature",

@@ -14,7 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, ParamInfo, TupleElement, TypeId};
+use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 
 pub(super) struct CallResultContext<'a> {
     pub(super) callee_expr: NodeIndex,
@@ -219,17 +219,7 @@ impl<'a> CheckerState<'a> {
             .or_else(|| {
                 common::callable_shape_for_type(self.ctx.types, callee_type)
                     .and_then(|callable| callable.call_signatures.first().cloned())
-                    .map(|sig| {
-                        std::sync::Arc::new(tsz_solver::FunctionShape {
-                            type_params: sig.type_params,
-                            params: sig.params,
-                            this_type: sig.this_type,
-                            return_type: TypeId::UNKNOWN,
-                            type_predicate: sig.type_predicate,
-                            is_constructor: false,
-                            is_method: sig.is_method,
-                        })
-                    })
+                    .map(call_checker::call_result_unknown_return_shape)
             });
         let shape = shape?;
         if shape.type_params.len() < 2 || shape.params.len() < 3 {
@@ -348,13 +338,15 @@ impl<'a> CheckerState<'a> {
                     mapped_id,
                     &property_name,
                 )?;
-            let mut property = tsz_solver::PropertyInfo::new(name, type_id);
-            property.optional = mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add);
-            property.readonly = mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add);
-            properties.push(property);
+            properties.push((name, type_id));
         }
 
-        Some(self.ctx.types.factory().object(properties))
+        Some(call_checker::call_result_finite_mapped_display_object(
+            self.ctx.types,
+            properties,
+            mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add),
+            mapped.readonly_modifier == Some(tsz_solver::MappedModifier::Add),
+        ))
     }
 
     fn stable_call_recovery_return_type(&self, callee_type: TypeId) -> Option<TypeId> {
@@ -400,8 +392,8 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut changed = false;
-        let elements: Vec<_> = actual_elements
-            .into_iter()
+        let element_types: Vec<_> = actual_elements
+            .iter()
             .enumerate()
             .zip(rest_args.iter().copied())
             .map(|((actual_pos, element), arg_idx)| {
@@ -412,7 +404,7 @@ impl<'a> CheckerState<'a> {
                 );
                 let should_widen =
                     expected_element.is_some_and(|ty| common::is_callable_type(self.ctx.types, ty));
-                let type_id = if should_widen {
+                if should_widen {
                     element.type_id
                 } else {
                     self.literal_type_from_initializer(arg_idx)
@@ -420,17 +412,17 @@ impl<'a> CheckerState<'a> {
                             changed |= literal_type != element.type_id;
                         })
                         .unwrap_or(element.type_id)
-                };
-                TupleElement {
-                    type_id,
-                    name: element.name,
-                    optional: element.optional,
-                    rest: element.rest,
                 }
             })
             .collect();
 
-        changed.then(|| self.ctx.types.tuple(elements))
+        changed.then(|| {
+            call_checker::call_result_literalized_tuple_actual(
+                self.ctx.types,
+                actual_elements,
+                element_types,
+            )
+        })
     }
 
     pub(crate) fn inline_literal_satisfies_has_permissive_target(
@@ -561,10 +553,7 @@ impl<'a> CheckerState<'a> {
         }
         let drop_count = declared_rest_index - index;
         let elements = common::tuple_elements(self.ctx.types, actual)?;
-        if drop_count > elements.len() {
-            return None;
-        }
-        Some(self.ctx.types.tuple(elements[drop_count..].to_vec()))
+        call_checker::call_result_tuple_tail(self.ctx.types, &elements, drop_count)
     }
 
     fn spread_rest_tuple_diagnostic_types(
@@ -583,31 +572,12 @@ impl<'a> CheckerState<'a> {
         spread_type = self.evaluate_application_type(spread_type);
         common::array_element_type(self.ctx.types, spread_type)?;
 
-        let mut callback_shape =
-            (*common::function_shape_for_type(self.ctx.types, expected)?).clone();
-        let last_param = callback_shape.params.last_mut()?;
-        if !last_param.rest {
-            return None;
-        }
-        *last_param = ParamInfo {
-            type_id: spread_type,
-            ..*last_param
-        };
-        let callback_type = self.ctx.types.factory().function(callback_shape);
-        let expected_tuple = self.ctx.types.tuple(vec![
-            TupleElement {
-                type_id: spread_type,
-                name: None,
-                optional: false,
-                rest: true,
-            },
-            TupleElement {
-                type_id: callback_type,
-                name: None,
-                optional: false,
-                rest: false,
-            },
-        ]);
+        let callback_shape = common::function_shape_for_type(self.ctx.types, expected)?;
+        let expected_tuple = call_checker::call_result_spread_rest_tuple_display_target(
+            self.ctx.types,
+            callback_shape.as_ref(),
+            spread_type,
+        )?;
         Some((spread_type, expected_tuple))
     }
 
@@ -876,20 +846,10 @@ impl<'a> CheckerState<'a> {
         // trivially assignable from the source (e.g., `(v:string) => string`
         // for `identity<T>(v:T):T` vs `(v:string) => boolean`), suppressing
         // the TS2345 error that tsc emits.
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .function(tsz_solver::FunctionShape {
-                    type_params: vec![],
-                    params: target_fn.params.clone(),
-                    this_type: target_fn.this_type,
-                    return_type: target_fn.return_type,
-                    type_predicate: target_fn.type_predicate,
-                    is_constructor: target_fn.is_constructor,
-                    is_method: target_fn.is_method,
-                }),
-        )
+        Some(call_checker::call_result_generic_callable_display_target(
+            self.ctx.types,
+            &target_fn,
+        ))
     }
 
     /// Handle the result of a call evaluation, emitting diagnostics for errors

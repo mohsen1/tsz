@@ -111,6 +111,10 @@
 //! - `call_result_construction_boundary_scans`: call result handling routes
 //!   correlated unions, optional-chain returns, and recursive fallback result
 //!   construction through `query_boundaries::checkers::call`.
+//! - `call_diagnostic_surface_construction_boundary_scans`: call diagnostic
+//!   result/display surfaces route object, tuple, and function construction
+//!   through `query_boundaries::checkers::call` and
+//!   `query_boundaries::construct_signatures`.
 //! - `excess_property_nested_target_construction_boundary_scans`: nested
 //!   excess-property target and annotation intersections route through
 //!   `query_boundaries::state::checking`.
@@ -151,6 +155,8 @@ mod assignability_surface_construction_boundary_scans;
 mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
+#[path = "arch_source_scans/call_diagnostic_surface_construction_boundary_scans.rs"]
+mod call_diagnostic_surface_construction_boundary_scans;
 #[path = "arch_source_scans/call_inference_construction_boundary_scans.rs"]
 mod call_inference_construction_boundary_scans;
 #[path = "arch_source_scans/call_result_construction_boundary_scans.rs"]
