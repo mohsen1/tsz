@@ -8,7 +8,9 @@
 //! - `JsdocParamTagInfo` assembly helpers
 
 use super::types::JsdocParamTagInfo;
-use crate::query_boundaries::jsdoc_construction::jsdoc_object_type;
+use crate::query_boundaries::jsdoc_construction::{
+    jsdoc_array_type, jsdoc_object_type, jsdoc_union_pair_type,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
@@ -268,7 +270,7 @@ impl<'a> CheckerState<'a> {
 
         // For rest params ({...Type}), wrap in array
         if is_rest {
-            base_type = self.ctx.types.factory().array(base_type);
+            base_type = jsdoc_array_type(self.ctx.types, base_type);
         }
 
         // Check if parameter is optional via bracket syntax [name] or [name=default]
@@ -278,12 +280,11 @@ impl<'a> CheckerState<'a> {
             && base_type != tsz_solver::TypeId::ANY
             && base_type != tsz_solver::TypeId::UNDEFINED
         {
-            Some(
-                self.ctx
-                    .types
-                    .factory()
-                    .union2(base_type, tsz_solver::TypeId::UNDEFINED),
-            )
+            Some(jsdoc_union_pair_type(
+                self.ctx.types,
+                base_type,
+                tsz_solver::TypeId::UNDEFINED,
+            ))
         } else {
             Some(base_type)
         }
@@ -584,11 +585,11 @@ impl<'a> CheckerState<'a> {
                     && prop_type_id != tsz_solver::TypeId::ANY
                     && prop_type_id != tsz_solver::TypeId::UNDEFINED
                 {
-                    prop_type_id = self
-                        .ctx
-                        .types
-                        .factory()
-                        .union2(prop_type_id, tsz_solver::TypeId::UNDEFINED);
+                    prop_type_id = jsdoc_union_pair_type(
+                        self.ctx.types,
+                        prop_type_id,
+                        tsz_solver::TypeId::UNDEFINED,
+                    );
                 }
                 let name_atom = self.ctx.types.intern_string(prop_name);
                 properties.push(tsz_solver::PropertyInfo {
@@ -614,7 +615,7 @@ impl<'a> CheckerState<'a> {
         }
         let obj_type = jsdoc_object_type(self.ctx.types, properties, None, None)?;
         if is_array {
-            Some(self.ctx.types.factory().array(obj_type))
+            Some(jsdoc_array_type(self.ctx.types, obj_type))
         } else {
             Some(obj_type)
         }

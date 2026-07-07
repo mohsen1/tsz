@@ -13,7 +13,9 @@
 //! - Arrow function parsing (`parse_jsdoc_arrow_function_type`)
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
-use crate::query_boundaries::jsdoc_construction::{jsdoc_function_type, jsdoc_object_index_type};
+use crate::query_boundaries::jsdoc_construction::{
+    self as jsdoc_construct, jsdoc_function_type, jsdoc_object_index_type,
+};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
@@ -90,9 +92,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_expr: &str,
     ) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
         match type_expr {
-            "Array" | "array" => Some(factory.array(TypeId::ANY)),
+            "Array" | "array" => Some(jsdoc_construct::jsdoc_array_type(
+                self.ctx.types,
+                TypeId::ANY,
+            )),
             "Function" | "function" => self.resolve_jsdoc_global_implicit_any_type("Function"),
             "Object" => {
                 if self.ctx.no_implicit_any() {
@@ -322,8 +326,7 @@ impl<'a> CheckerState<'a> {
             return if members.len() == 1 {
                 Some(members.remove(0))
             } else {
-                let factory = self.ctx.types.factory();
-                Some(factory.union(members))
+                Some(jsdoc_construct::jsdoc_union_type(self.ctx.types, members))
             };
         }
         if !starts_with_function && let Some(parts) = Self::split_top_level_binary(type_expr, '&') {
@@ -334,8 +337,10 @@ impl<'a> CheckerState<'a> {
             return if members.len() == 1 {
                 Some(members.remove(0))
             } else {
-                let factory = self.ctx.types.factory();
-                Some(factory.intersection(members))
+                Some(jsdoc_construct::jsdoc_intersection_type(
+                    self.ctx.types,
+                    members,
+                ))
             };
         }
         if type_expr == "?" {
@@ -350,8 +355,11 @@ impl<'a> CheckerState<'a> {
             if !inner.is_empty()
                 && let Some(inner_type) = self.resolve_jsdoc_type_str(inner)
             {
-                let factory = self.ctx.types.factory();
-                return Some(factory.union2(inner_type, TypeId::NULL));
+                return Some(jsdoc_construct::jsdoc_union_pair_type(
+                    self.ctx.types,
+                    inner_type,
+                    TypeId::NULL,
+                ));
             }
         }
         if let Some(inner) = type_expr.strip_prefix('!') {
@@ -363,13 +371,19 @@ impl<'a> CheckerState<'a> {
         if type_expr.len() > 1 && !type_expr.ends_with("[]") {
             if let Some(inner) = type_expr.strip_suffix('?') {
                 if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
-                    let factory = self.ctx.types.factory();
-                    return Some(factory.union2(inner_type, TypeId::NULL));
+                    return Some(jsdoc_construct::jsdoc_union_pair_type(
+                        self.ctx.types,
+                        inner_type,
+                        TypeId::NULL,
+                    ));
                 }
             } else if let Some(inner) = type_expr.strip_suffix('=') {
                 if let Some(inner_type) = self.resolve_jsdoc_type_str(inner) {
-                    let factory = self.ctx.types.factory();
-                    return Some(factory.union2(inner_type, TypeId::UNDEFINED));
+                    return Some(jsdoc_construct::jsdoc_union_pair_type(
+                        self.ctx.types,
+                        inner_type,
+                        TypeId::UNDEFINED,
+                    ));
                 }
             } else if let Some(inner) = type_expr.strip_suffix('!') {
                 return self.resolve_jsdoc_type_str(inner);
@@ -383,8 +397,10 @@ impl<'a> CheckerState<'a> {
                 inner
             };
             let element_type = self.resolve_jsdoc_type_str(inner)?;
-            let factory = self.ctx.types.factory();
-            return Some(factory.array(element_type));
+            return Some(jsdoc_construct::jsdoc_array_type(
+                self.ctx.types,
+                element_type,
+            ));
         }
         if !type_expr.starts_with('[')
             && type_expr.ends_with(']')
@@ -451,7 +467,11 @@ impl<'a> CheckerState<'a> {
                     return Some(TypeId::ERROR);
                 }
             }
-            return Some(self.ctx.types.factory().index_access(base_type, index_type));
+            return Some(jsdoc_construct::jsdoc_index_access_type(
+                self.ctx.types,
+                base_type,
+                index_type,
+            ));
         }
         if type_expr.starts_with('[') && type_expr.ends_with(']') {
             return self.parse_jsdoc_tuple_type(type_expr);
@@ -481,7 +501,6 @@ impl<'a> CheckerState<'a> {
         if let Some(ty) = self.resolve_jsdoc_implicit_any_builtin_type(type_expr) {
             return Some(ty);
         }
-        let factory = self.ctx.types.factory();
         match type_expr {
             "string" | "String" => Some(TypeId::STRING),
             "number" | "Number" => Some(TypeId::NUMBER),
@@ -573,18 +592,21 @@ impl<'a> CheckerState<'a> {
                             let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
                             let k_atom = self.ctx.types.intern_string(k_name);
                             if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
-                                use crate::query_boundaries::common::{MappedType, ParamInfo};
-                                use tsz_solver::TypeParamInfo;
-                                let keyof_t_id = factory.keyof(t_id);
-                                let k_param = TypeParamInfo {
-                                    name: k_atom,
-                                    constraint: Some(keyof_t_id),
-                                    default: None,
-                                    is_const: false,
-                                    origin: tsz_solver::TypeParamOrigin::User,
-                                };
-                                let k_id = factory.type_param(k_param);
-                                let t_k_id = factory.index_access(t_id, k_id);
+                                use tsz_solver::ParamInfo;
+                                let keyof_t_id =
+                                    jsdoc_construct::jsdoc_keyof_type(self.ctx.types, t_id);
+                                let k_param = jsdoc_construct::jsdoc_type_param_info(
+                                    k_atom,
+                                    Some(keyof_t_id),
+                                    None,
+                                );
+                                let k_id =
+                                    jsdoc_construct::jsdoc_type_param_type(self.ctx.types, k_param);
+                                let t_k_id = jsdoc_construct::jsdoc_index_access_type(
+                                    self.ctx.types,
+                                    t_id,
+                                    k_id,
+                                );
                                 let template_id = jsdoc_function_type(
                                     self.ctx.types,
                                     Vec::new(),
@@ -600,14 +622,13 @@ impl<'a> CheckerState<'a> {
                                     false,
                                     false,
                                 );
-                                return Some(factory.mapped(MappedType {
-                                    type_param: k_param,
-                                    constraint: keyof_t_id,
-                                    name_type: None,
-                                    template: template_id,
-                                    readonly_modifier: None,
-                                    optional_modifier: None,
-                                }));
+                                return Some(jsdoc_construct::jsdoc_mapped_type(
+                                    self.ctx.types,
+                                    k_param,
+                                    keyof_t_id,
+                                    template_id,
+                                    None,
+                                ));
                             }
                         }
                     }
@@ -675,8 +696,7 @@ impl<'a> CheckerState<'a> {
                                 let effective_p = if is_rest { &p[3..] } else { p };
                                 if let Some(p_type) = self.resolve_jsdoc_reference(effective_p) {
                                     let type_id = if is_rest {
-                                        let factory = self.ctx.types.factory();
-                                        factory.array(p_type)
+                                        jsdoc_construct::jsdoc_array_type(self.ctx.types, p_type)
                                     } else {
                                         p_type
                                     };
@@ -742,7 +762,8 @@ impl<'a> CheckerState<'a> {
                                 if operand == TypeId::ERROR {
                                     continue;
                                 }
-                                let keyof = factory.keyof(operand);
+                                let keyof =
+                                    jsdoc_construct::jsdoc_keyof_type(self.ctx.types, operand);
                                 return Some(self.judge_evaluate(keyof));
                             }
                         }
@@ -750,7 +771,7 @@ impl<'a> CheckerState<'a> {
                     if !rest.is_empty()
                         && let Some(operand) = self.resolve_jsdoc_type_str(rest)
                     {
-                        let keyof = factory.keyof(operand);
+                        let keyof = jsdoc_construct::jsdoc_keyof_type(self.ctx.types, operand);
                         return Some(self.judge_evaluate(keyof));
                     }
                 }
@@ -820,7 +841,6 @@ impl<'a> CheckerState<'a> {
         let mut type_param_updates = Vec::new();
         let mut jsdoc_type_params = Vec::new();
         if let Some(tp_str) = type_params_str {
-            let factory = self.ctx.types.factory();
             for tp_name in tp_str.split(',') {
                 let tp_name = tp_name.trim();
                 if tp_name.is_empty() {
@@ -829,14 +849,8 @@ impl<'a> CheckerState<'a> {
                 let (name, constraint_str) = Self::split_jsdoc_type_param_constraint(tp_name);
                 let constraint = constraint_str.and_then(|s| self.jsdoc_type_from_expression(s));
                 let atom = self.ctx.types.intern_string(name);
-                let info = tsz_solver::TypeParamInfo {
-                    name: atom,
-                    constraint,
-                    default: None,
-                    is_const: false,
-                    origin: tsz_solver::TypeParamOrigin::User,
-                };
-                let ty = factory.type_param(info);
+                let info = jsdoc_construct::jsdoc_type_param_info(atom, constraint, None);
+                let ty = jsdoc_construct::jsdoc_type_param_type(self.ctx.types, info);
                 jsdoc_type_params.push(info);
                 let previous = self.ctx.type_parameter_scope.insert(name.to_string(), ty);
                 type_param_updates.push((name.to_string(), previous));

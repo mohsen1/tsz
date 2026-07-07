@@ -6,6 +6,7 @@
 //! to `Application(Lazy(DefId), args)` and the solver resolves it
 //! coinductively instead of re-expanding the body until the stack overflows.
 
+use crate::query_boundaries::jsdoc_construction::jsdoc_application_type;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -33,11 +34,7 @@ impl<'a> CheckerState<'a> {
             if type_args.is_empty() {
                 return Some(base);
             }
-            let app = self
-                .ctx
-                .types
-                .factory()
-                .application(base, type_args.to_vec());
+            let app = jsdoc_application_type(self.ctx.types, base, type_args.to_vec());
             self.register_jsdoc_generic_display_name(base_name, type_args, app);
             return Some(app);
         }

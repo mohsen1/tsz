@@ -16,6 +16,7 @@
 //! - Scoping helpers (`is_in_different_function_scope`, `find_function_body_end`)
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::jsdoc_construction::jsdoc_application_type;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
@@ -591,7 +592,7 @@ impl<'a> CheckerState<'a> {
                 if let Ok(mut stack) = self.ctx.typeof_resolution_stack.try_borrow_mut() {
                     stack.remove(&sym_id);
                 }
-                self.ctx.types.application(base, args)
+                jsdoc_application_type(self.ctx.types, base, args)
             }
             query::TypeQueryKind::Application { .. } | query::TypeQueryKind::Other => type_id,
         }

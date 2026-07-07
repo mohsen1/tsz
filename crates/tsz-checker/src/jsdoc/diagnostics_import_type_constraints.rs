@@ -2,6 +2,7 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::jsdoc::types::JsdocTypedefInfo;
+use crate::query_boundaries::jsdoc_construction::{jsdoc_type_param_info, jsdoc_type_param_type};
 use crate::state::CheckerState;
 
 pub(super) struct JsdocImportTypeConstraintDiagnostic<'a> {
@@ -32,7 +33,6 @@ impl<'a> CheckerState<'a> {
             comment_end,
             source_text,
         } = request;
-        let factory = self.ctx.types.factory();
         let mut scope_updates = Vec::new();
         for tp in &typedef_info.template_params {
             let constraint = tp
@@ -40,14 +40,8 @@ impl<'a> CheckerState<'a> {
                 .as_deref()
                 .and_then(|c| self.resolve_jsdoc_type_str(c));
             let atom = self.ctx.types.intern_string(&tp.name);
-            let param = tsz_solver::TypeParamInfo {
-                name: atom,
-                constraint,
-                default: None,
-                is_const: false,
-                origin: tsz_solver::TypeParamOrigin::User,
-            };
-            let type_id = factory.type_param(param);
+            let param = jsdoc_type_param_info(atom, constraint, None);
+            let type_id = jsdoc_type_param_type(self.ctx.types, param);
             let previous = self
                 .ctx
                 .type_parameter_scope
