@@ -11,6 +11,10 @@ fn codes(source: &str) -> Vec<u32> {
     get_diagnostics(source).iter().map(|(c, _)| *c).collect()
 }
 
+fn count_code(codes: &[u32], code: u32) -> usize {
+    codes.iter().filter(|&&actual| actual == code).count()
+}
+
 fn assert_index_key_spaces_are_clean(codes: &[u32], context: &str) {
     assert!(
         !codes.contains(&2322),
@@ -130,6 +134,77 @@ class NumberStore implements NumericStore {
 }
 
 #[test]
+fn class_with_matching_symbol_index_sig_no_ts2420() {
+    let source = r#"
+interface SymbolStore {
+  [key: symbol]: boolean;
+}
+
+class FlagStore implements SymbolStore {
+  [key: symbol]: boolean;
+  named(): string { return ""; }
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&2420),
+        "expected no TS2420 for class with matching symbol index sig; got codes: {cs:?}"
+    );
+    assert!(
+        !cs.contains(&2411),
+        "symbol index must not constrain string-named class members; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_with_symbol_index_plus_named_props_satisfies_mixed_interface() {
+    let source = r#"
+interface SymbolNamedStore {
+  [key: symbol]: boolean;
+  name: string;
+}
+
+class NamedFlagStore implements SymbolNamedStore {
+  [key: symbol]: boolean;
+  name: string = "";
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&2420),
+        "expected no TS2420 when class satisfies both named props and symbol index sig; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_with_string_and_symbol_indexes_suppresses_duplicate_ts2420() {
+    let source = r#"
+interface PropertyRegistry {
+  [key: string]: string;
+  [key: symbol]: boolean;
+}
+
+class Registry implements PropertyRegistry {
+  [key: string]: string;
+  [key: symbol]: boolean;
+  get(key: string): string {
+    return this[key] ?? "";
+  }
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        !cs.contains(&2420),
+        "expected no duplicate TS2420 when class indexes satisfy interface indexes; got codes: {cs:?}"
+    );
+    assert_eq!(
+        count_code(&cs, 2411),
+        1,
+        "expected exactly one TS2411 for string-named method violating class string index constraint; got codes: {cs:?}"
+    );
+}
+
+#[test]
 fn private_field_index_access_uses_declared_type_over_empty_object_initializer() {
     let source = r#"
 class Request {
@@ -218,6 +293,87 @@ class NumberDict implements StringDict {
     assert!(
         cs.contains(&2420) || cs.iter().any(|&c| c == 2415 || c == 2416),
         "expected a compatibility error when class index sig value type is incompatible; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_without_symbol_index_sig_gets_ts2420() {
+    let source = r#"
+interface SymbolDictionary {
+  [key: symbol]: boolean;
+}
+
+class NoSymbolIndexSig implements SymbolDictionary {
+  foo: boolean = true;
+}
+"#;
+    let cs = codes(source);
+    assert_eq!(
+        count_code(&cs, 2420),
+        1,
+        "expected exactly one TS2420 when class has no symbol index signature; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_with_string_index_sig_does_not_satisfy_symbol_index_sig() {
+    let source = r#"
+interface NeedsSymbols {
+  [key: symbol]: boolean;
+}
+
+class StringOnlyForSymbols implements NeedsSymbols {
+  [key: string]: boolean;
+}
+"#;
+    let cs = codes(source);
+    assert_eq!(
+        count_code(&cs, 2420),
+        1,
+        "expected exactly one TS2420 because a string index signature does not satisfy a symbol index signature; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_with_unique_symbol_member_does_not_satisfy_wide_symbol_index_sig() {
+    let source = r#"
+declare const tag: unique symbol;
+
+interface WideSymbols {
+  [key: symbol]: boolean;
+}
+
+class OneTag implements WideSymbols {
+  [tag]: boolean = true;
+}
+"#;
+    let cs = codes(source);
+    assert_eq!(
+        count_code(&cs, 2420),
+        1,
+        "expected exactly one TS2420 because one unique-symbol member is not a wide symbol index signature; got codes: {cs:?}"
+    );
+}
+
+#[test]
+fn class_with_incompatible_symbol_index_sig_value_type_gets_ts2420() {
+    let source = r#"
+interface SymbolFlags {
+  [key: symbol]: boolean;
+}
+
+class SymbolNumbers implements SymbolFlags {
+  [key: symbol]: number;
+}
+"#;
+    let cs = codes(source);
+    assert!(
+        cs.contains(&2420) || cs.iter().any(|&c| c == 2415 || c == 2416),
+        "expected a compatibility error when class symbol index value type is incompatible; got codes: {cs:?}"
+    );
+    assert!(
+        count_code(&cs, 2420) <= 1,
+        "symbol index value incompatibility should not duplicate TS2420; got codes: {cs:?}"
     );
 }
 

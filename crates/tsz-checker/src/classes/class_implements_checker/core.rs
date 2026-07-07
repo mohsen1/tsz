@@ -11,9 +11,21 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{IndexSignature, PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
+    fn class_implements_index_signature_value_satisfies(
+        &mut self,
+        source_index: &IndexSignature,
+        target_index: &IndexSignature,
+    ) -> bool {
+        self.class_implements_index_value_relation_outcome(
+            source_index.value_type,
+            target_index.value_type,
+        )
+        .related
+    }
+
     fn class_index_signatures_satisfy_interface(
         &mut self,
         class_instance_type: TypeId,
@@ -32,18 +44,12 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut checked_index = false;
-        if let Some(target_index) = interface_shape.string_index.as_ref() {
+        if let Some(target_index) = interface_shape.string_index_signature() {
             checked_index = true;
-            let Some(source_index) = class_shape.string_index.as_ref() else {
+            let Some(source_index) = class_shape.string_index_signature() else {
                 return false;
             };
-            if !self
-                .class_implements_index_value_relation_outcome(
-                    source_index.value_type,
-                    target_index.value_type,
-                )
-                .related
-            {
+            if !self.class_implements_index_signature_value_satisfies(source_index, target_index) {
                 return false;
             }
         }
@@ -59,6 +65,15 @@ impl<'a> CheckerState<'a> {
                 )
                 .related
             {
+                return false;
+            }
+        }
+        if let Some(target_index) = interface_shape.symbol_index_signature() {
+            checked_index = true;
+            let Some(source_index) = class_shape.symbol_index_signature() else {
+                return false;
+            };
+            if !self.class_implements_index_signature_value_satisfies(source_index, target_index) {
                 return false;
             }
         }
@@ -142,8 +157,9 @@ impl<'a> CheckerState<'a> {
                         prop
                     })
                     .collect();
-                let has_index_signature =
-                    shape.string_index.is_some() || shape.number_index.is_some();
+                let has_index_signature = shape.string_index_signature().is_some()
+                    || shape.number_index.is_some()
+                    || shape.symbol_index_signature().is_some();
                 return (properties, has_index_signature, display_name);
             }
         }
@@ -159,7 +175,9 @@ impl<'a> CheckerState<'a> {
         {
             (
                 shape.properties.to_vec(),
-                shape.string_index.is_some() || shape.number_index.is_some(),
+                shape.string_index_signature().is_some()
+                    || shape.number_index.is_some()
+                    || shape.symbol_index_signature().is_some(),
             )
         } else {
             (Vec::new(), false)
@@ -1680,21 +1698,26 @@ impl<'a> CheckerState<'a> {
                         } else {
                             interface_type
                         };
-                        if !self
+                        let whole_type_related = self
                             .class_implements_whole_type_relation_outcome(
                                 class_instance_type,
                                 target_type,
                             )
-                            .related
-                        {
+                            .related;
+                        let index_signatures_satisfy_interface = !is_class
+                            && interface_has_index_signature
+                            && self.class_index_signatures_satisfy_interface(
+                                class_instance_type,
+                                target_type,
+                            );
+                        let index_signature_mismatch = !is_class
+                            && interface_has_index_signature
+                            && !index_signatures_satisfy_interface;
+                        if !whole_type_related || index_signature_mismatch {
                             let analysis = self
                                 .analyze_assignability_failure(class_instance_type, target_type);
-                            let suppress_index_member_duplicate = !is_class
-                                && interface_has_index_signature
-                                && self.class_index_signatures_satisfy_interface(
-                                    class_instance_type,
-                                    target_type,
-                                )
+                            let suppress_index_member_duplicate = index_signatures_satisfy_interface
+                                && !index_signature_mismatch
                                 && matches!(
                                     analysis.failure_reason,
                                     Some(
