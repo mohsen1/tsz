@@ -1,3 +1,4 @@
+use crate::query_boundaries::checkers::promise as promise_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
@@ -99,54 +100,11 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         depth: u8,
     ) -> Option<TypeId> {
-        let shape_id = crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id)?;
-        let shape = self.ctx.types.object_shape(shape_id);
-        let mut changed = false;
-        let evaluated_properties: Vec<_> = shape
-            .properties
-            .iter()
-            .map(|prop| {
-                let evaluated_type = self
-                    .evaluate_awaited_application_for_assignability_inner(prop.type_id, depth + 1);
-                let evaluated_write = self.evaluate_awaited_application_for_assignability_inner(
-                    prop.write_type,
-                    depth + 1,
-                );
-                changed |= evaluated_type != prop.type_id || evaluated_write != prop.write_type;
-                tsz_solver::PropertyInfo {
-                    type_id: evaluated_type,
-                    write_type: evaluated_write,
-                    ..*prop
-                }
-            })
-            .collect();
-        let evaluated_string_index = shape.string_index.map(|mut index| {
-            let evaluated = self
-                .evaluate_awaited_application_for_assignability_inner(index.value_type, depth + 1);
-            changed |= evaluated != index.value_type;
-            index.value_type = evaluated;
-            index
-        });
-        let evaluated_number_index = shape.number_index.map(|mut index| {
-            let evaluated = self
-                .evaluate_awaited_application_for_assignability_inner(index.value_type, depth + 1);
-            changed |= evaluated != index.value_type;
-            index.value_type = evaluated;
-            index
-        });
-
-        changed.then(|| {
-            self.ctx
-                .types
-                .factory()
-                .object_with_shape_metadata_and_index_signatures(
-                    evaluated_properties,
-                    &shape,
-                    evaluated_string_index,
-                    evaluated_number_index,
-                    shape.symbol_index,
-                )
-        })
+        promise_query::awaited_assignability_object_with_mapped_slots(
+            self.ctx.types,
+            type_id,
+            |slot| self.evaluate_awaited_application_for_assignability_inner(slot, depth + 1),
+        )
     }
     pub(crate) fn evaluate_awaited_application_for_assignability(
         &mut self,
@@ -254,26 +212,24 @@ impl<'a> CheckerState<'a> {
         depth: u8,
     ) -> TypeId {
         if self.awaited_application_arg(type_id).is_none() {
-            if let Some(elem) =
-                crate::query_boundaries::common::array_element_type(self.ctx.types, type_id)
-            {
-                let evaluated_elem =
-                    self.evaluate_awaited_application_for_assignability_inner(elem, depth + 1);
-                if evaluated_elem != elem {
-                    return self.ctx.types.factory().array(evaluated_elem);
-                }
+            if let Some(evaluated) = promise_query::awaited_assignability_array_with_mapped_element(
+                self.ctx.types,
+                type_id,
+                |elem| self.evaluate_awaited_application_for_assignability_inner(elem, depth + 1),
+            ) {
+                return evaluated;
             }
-            if let Some(members) =
-                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-            {
-                let raw_awaited_distribution = members
-                    .iter()
-                    .copied()
-                    .any(|member| self.is_raw_awaited_conditional_for_assignability(member));
-                let mut changed = false;
-                let evaluated_members: Vec<_> = members
-                    .into_iter()
-                    .map(|member| {
+            let raw_awaited_distribution =
+                promise_query::awaited_assignability_union_has_raw_awaited_distribution(
+                    self.ctx.types,
+                    type_id,
+                    |ty| self.evaluate_type_for_assignability(ty),
+                );
+            if let Some(evaluated) =
+                promise_query::awaited_assignability_union_with_mapped_members_if_changed(
+                    self.ctx.types,
+                    type_id,
+                    |member| {
                         let mut evaluated = self
                             .evaluate_awaited_application_for_assignability_inner(
                                 member,
@@ -289,51 +245,29 @@ impl<'a> CheckerState<'a> {
                                 depth + 1,
                             );
                         }
-                        changed |= evaluated != member;
                         evaluated
-                    })
-                    .collect();
-                if changed {
-                    return self.ctx.types.factory().union(evaluated_members);
-                }
-            }
-            if let Some(elems) =
-                crate::query_boundaries::common::tuple_elements(self.ctx.types, type_id)
+                    },
+                )
             {
-                let mut changed = false;
-                let evaluated_elems: Vec<_> = elems
-                    .into_iter()
-                    .map(|mut elem| {
-                        let evaluated = self.evaluate_awaited_application_for_assignability_inner(
-                            elem.type_id,
-                            depth + 1,
-                        );
-                        changed |= evaluated != elem.type_id;
-                        elem.type_id = evaluated;
-                        elem
-                    })
-                    .collect();
-                if changed {
-                    return self.ctx.types.factory().tuple(evaluated_elems);
-                }
+                return evaluated;
             }
-            if let Some((base, args)) =
-                crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            if let Some(evaluated) = promise_query::awaited_assignability_tuple_with_mapped_elements(
+                self.ctx.types,
+                type_id,
+                |element| {
+                    self.evaluate_awaited_application_for_assignability_inner(element, depth + 1)
+                },
+            ) {
+                return evaluated;
+            }
+            if let Some(evaluated) =
+                promise_query::awaited_assignability_application_with_mapped_args(
+                    self.ctx.types,
+                    type_id,
+                    |arg| self.evaluate_awaited_application_for_assignability_inner(arg, depth + 1),
+                )
             {
-                let mut changed = false;
-                let evaluated_args: Vec<_> = args
-                    .iter()
-                    .copied()
-                    .map(|arg| {
-                        let evaluated = self
-                            .evaluate_awaited_application_for_assignability_inner(arg, depth + 1);
-                        changed |= evaluated != arg;
-                        evaluated
-                    })
-                    .collect();
-                if changed {
-                    return self.ctx.types.factory().application(base, evaluated_args);
-                }
+                return evaluated;
             }
             if let Some(evaluated) =
                 self.evaluate_awaited_object_properties_for_assignability(type_id, depth)
@@ -361,24 +295,21 @@ impl<'a> CheckerState<'a> {
         };
         let arg = self.evaluate_type_for_assignability(arg);
 
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, arg) {
-            let awaited_members = members
-                .into_iter()
-                .map(|member| {
-                    if let Some(awaited) = self
-                        .unwrap_promise_type(member)
-                        .or_else(|| self.extract_awaited_type_from_thenable(member))
-                    {
-                        self.evaluate_awaited_application_for_assignability_inner(
-                            awaited,
-                            depth + 1,
-                        )
-                    } else {
-                        member
-                    }
-                })
-                .collect();
-            return self.ctx.types.factory().union(awaited_members);
+        if let Some(evaluated) = promise_query::awaited_assignability_union_with_mapped_members(
+            self.ctx.types,
+            arg,
+            |member| {
+                if let Some(awaited) = self
+                    .unwrap_promise_type(member)
+                    .or_else(|| self.extract_awaited_type_from_thenable(member))
+                {
+                    self.evaluate_awaited_application_for_assignability_inner(awaited, depth + 1)
+                } else {
+                    member
+                }
+            },
+        ) {
+            return evaluated;
         }
 
         if let Some(awaited) = self
@@ -400,19 +331,18 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         depth: u8,
     ) -> Option<TypeId> {
-        let cond_id =
-            crate::query_boundaries::common::get_conditional_type_id(self.ctx.types, type_id)?;
-        let cond = self.ctx.types.conditional_type(cond_id);
         // Awaited<T> expands to `T extends thenable ? ... : T`. After
         // distribution over a union, assignability can see the raw conditional
         // branches instead of the `Awaited<T>` application. Only fold that
         // canonical false-branch shape; other conditional aliases must stay
         // deferred.
-        if !self.is_raw_awaited_conditional_for_assignability(type_id) {
-            return None;
-        }
+        let raw = promise_query::raw_awaited_conditional_for_assignability(
+            self.ctx.types,
+            type_id,
+            |ty| self.evaluate_type_for_assignability(ty),
+        )?;
 
-        let check_type = self.evaluate_type_for_assignability(cond.check_type);
+        let check_type = self.evaluate_type_for_assignability(raw.check_type);
         if let Some(awaited) = self
             .unwrap_promise_type(check_type)
             .or_else(|| self.extract_awaited_type_from_thenable(check_type))
@@ -422,32 +352,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if !crate::query_boundaries::common::has_property_by_str(self.ctx.types, check_type, "then")
+        if !promise_query::awaited_assignability_type_has_then_property(self.ctx.types, check_type)
         {
             return Some(
                 self.evaluate_awaited_application_for_assignability_inner(
-                    cond.false_type,
+                    raw.false_type,
                     depth + 1,
                 ),
             );
         }
 
         None
-    }
-
-    fn is_raw_awaited_conditional_for_assignability(&mut self, type_id: TypeId) -> bool {
-        let Some(cond_id) =
-            crate::query_boundaries::common::get_conditional_type_id(self.ctx.types, type_id)
-        else {
-            return false;
-        };
-        let cond = self.ctx.types.conditional_type(cond_id);
-        if cond.false_type != cond.check_type {
-            return false;
-        }
-
-        let extends_type = self.evaluate_type_for_assignability(cond.extends_type);
-        crate::query_boundaries::common::has_property_by_str(self.ctx.types, extends_type, "then")
     }
 }
 

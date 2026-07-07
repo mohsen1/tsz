@@ -121,6 +121,9 @@
 //! - `await_promise_construction_boundary_scans`: await checking routes
 //!   contextual promise operand and `Awaited<T>` join construction through
 //!   `query_boundaries::checkers::promise`.
+//! - `awaited_assignability_normalization_boundary_scans`: `Awaited<T>`
+//!   assignability normalization routes solver shape reads and rebuilt shells
+//!   through `query_boundaries::checkers::promise`.
 //! - `call_candidate_spread_surface_construction_boundary_scans`: call
 //!   candidate collection routes spread markers, sensitive placeholders, tuple
 //!   optionality, and callable rest-shape reads through
@@ -193,6 +196,8 @@ mod array_literal_surface_construction_boundary_scans;
 mod assignability_surface_construction_boundary_scans;
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
+#[path = "arch_source_scans/awaited_assignability_normalization_boundary_scans.rs"]
+mod awaited_assignability_normalization_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
 #[path = "arch_source_scans/call_candidate_spread_surface_construction_boundary_scans.rs"]
