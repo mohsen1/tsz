@@ -31,7 +31,7 @@ export const SENTINEL_PER_PAGE = 100;
 // Caps the walk on a pathological backlog (the `/issues` endpoint interleaves
 // open PRs, so the combined listing routinely exceeds one page) without
 // masking a reachable sentinel.
-export const SENTINEL_MAX_PAGES = 20;
+const SENTINEL_MAX_PAGES = 20;
 
 /**
  * Collect every open sentinel issue for a monitor, oldest first.
@@ -102,6 +102,20 @@ export function createSentinelIssue(repository, runCommand, { title, body }) {
     "--label",
     SENTINEL_LABEL,
   ]);
+}
+
+/**
+ * Close the canonical sentinel on recovery: a monitor-worded comment, then a
+ * close with reason `completed`.
+ *
+ * @param {number} number the canonical sentinel's issue number
+ * @param {string} repository owner/repo
+ * @param {(args: string[]) => any} runCommand gh command seam
+ * @param {string} message recovery comment body
+ */
+export function closeSentinelIssue(number, repository, runCommand, message) {
+  runCommand(["issue", "comment", String(number), "--repo", repository, "--body", message]);
+  runCommand(["issue", "close", String(number), "--repo", repository, "--reason", "completed"]);
 }
 
 /**

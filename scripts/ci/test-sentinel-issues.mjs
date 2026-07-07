@@ -4,6 +4,7 @@ import {
   collectSentinelIssues,
   splitSentinels,
   createSentinelIssue,
+  closeSentinelIssue,
   closeDuplicateSentinels,
   SENTINEL_PER_PAGE,
 } from "./lib/sentinel-issues.mjs";
@@ -141,6 +142,17 @@ test("closeDuplicateSentinels comments with the canonical pointer and closes as 
   assert.equal(closes.length, 2);
   assert.match(comments[0][comments[0].length - 1], /#15401/, "comment points at the canonical issue");
   assert.ok(closes.every((c) => c.includes("not planned")), "duplicates close as not planned");
+});
+
+test("closeSentinelIssue comments then closes as completed", () => {
+  const calls = [];
+  closeSentinelIssue(80, REPO, (args) => {
+    calls.push(args);
+    return { status: 0, stdout: "", stderr: "" };
+  }, "✅ recovered. Closing.");
+  assert.deepEqual(calls.map((c) => c[1]), ["comment", "close"]);
+  assert.ok(calls[0].includes("✅ recovered. Closing."));
+  assert.ok(calls[1].includes("completed"), "canonical recovery closes as completed");
 });
 
 test("closeDuplicateSentinels with no duplicates is a no-op", () => {

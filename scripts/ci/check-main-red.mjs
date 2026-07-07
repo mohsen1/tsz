@@ -19,6 +19,7 @@ import {
   collectSentinelIssues,
   splitSentinels,
   createSentinelIssue,
+  closeSentinelIssue,
   closeDuplicateSentinels,
 } from "./lib/sentinel-issues.mjs";
 
@@ -382,10 +383,8 @@ export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
 
   // Green: close every open sentinel issue (canonical + healed duplicates).
   if (existing) {
-    runCommand(["issue", "comment", String(existing.number), "--repo", repository,
-      "--body", `✅ \`main\` is green again as of ${nowIso} (\`${(verdict.run.sha || "").slice(0, 12)}\`). Closing.`]);
-    runCommand(["issue", "close", String(existing.number), "--repo", repository,
-      "--reason", "completed"]);
+    closeSentinelIssue(existing.number, repository, runCommand,
+      `✅ \`main\` is green again as of ${nowIso} (\`${(verdict.run.sha || "").slice(0, 12)}\`). Closing.`);
     return { action: "closed", number: existing.number, closedDuplicates: closeDupes() };
   }
   return { action: "noop" };

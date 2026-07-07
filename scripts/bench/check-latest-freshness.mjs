@@ -39,6 +39,7 @@ import {
   collectSentinelIssues,
   splitSentinels,
   createSentinelIssue,
+  closeSentinelIssue,
   closeDuplicateSentinels,
 } from "../ci/lib/sentinel-issues.mjs";
 
@@ -236,16 +237,12 @@ export function reconcileIssue(verdict, ctx, nowIso, gh = {}) {
   }
 
   if (existing) {
-    runCommand([
-      "issue",
-      "comment",
-      String(existing.number),
-      "--repo",
+    closeSentinelIssue(
+      existing.number,
       repository,
-      "--body",
+      runCommand,
       `✅ Published benchmark data is fresh again as of ${nowIso} (${verdict.reason}). Closing.`,
-    ]);
-    runCommand(["issue", "close", String(existing.number), "--repo", repository, "--reason", "completed"]);
+    );
     return { action: "closed", number: existing.number, closedDuplicates: closeDupes() };
   }
   return { action: "noop" };
