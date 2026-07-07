@@ -1,7 +1,8 @@
-//! JS class-property construction boundary.
+//! Class-property construction boundary.
 //!
-//! JS class-property scanning gathers AST, JSDoc, modifier, and source-order
-//! facts. This module owns the solver shape literals those facts become.
+//! Class-property scanning and checking gather AST, JSDoc, modifier,
+//! source-order, and declaration-owner facts. This module owns the solver
+//! shape literals those facts become.
 
 use tsz_binder::SymbolId;
 use tsz_common::{Atom, Visibility};
@@ -81,6 +82,20 @@ pub(crate) fn js_class_union_pair_type(
     right: TypeId,
 ) -> TypeId {
     db.union2(left, right)
+}
+
+pub(crate) fn class_property_optional_type_with_undefined(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    db.union2(type_id, TypeId::UNDEFINED)
+}
+
+pub(crate) fn static_readonly_unique_symbol_type(
+    db: &dyn TypeDatabase,
+    symbol: SymbolId,
+) -> TypeId {
+    db.unique_symbol(tsz_solver::SymbolRef(symbol.0))
 }
 
 pub(crate) const fn js_class_property_info(fact: JsClassPropertyFact) -> PropertyInfo {

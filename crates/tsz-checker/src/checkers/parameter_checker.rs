@@ -1,6 +1,7 @@
 //! Function parameter validation (duplicates, ordering, initializers).
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::parameters as parameter_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -804,7 +805,6 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2372:
     /// "Parameter 'x' cannot reference itself."
     pub(crate) fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
-        let factory = self.ctx.types.factory();
         for (param_pos, &param_idx) in parameters.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -875,7 +875,10 @@ impl<'a> CheckerState<'a> {
                         && t != TypeId::UNKNOWN
                         && t != TypeId::ERROR
                     {
-                        t = factory.union2(t, TypeId::UNDEFINED);
+                        t = parameter_query::optional_parameter_type_with_undefined(
+                            self.ctx.types,
+                            t,
+                        );
                     }
                     Some(t)
                 } else {
@@ -938,7 +941,7 @@ impl<'a> CheckerState<'a> {
                     && t != TypeId::UNKNOWN
                     && t != TypeId::ERROR
                 {
-                    t = factory.union2(t, TypeId::UNDEFINED);
+                    t = parameter_query::optional_parameter_type_with_undefined(self.ctx.types, t);
                 }
                 Some(t)
             } else if self
@@ -1296,9 +1299,8 @@ impl<'a> CheckerState<'a> {
                 if !self.is_array_like_type(declared_type)
                     && !self.is_array_like_type(array_check_type)
                 {
-                    let factory = self.ctx.types.factory();
-                    let any_array = factory.array(TypeId::ANY);
-                    let readonly_any_array = factory.readonly_type(any_array);
+                    let readonly_any_array =
+                        parameter_query::readonly_any_array_type(self.ctx.types);
 
                     if !self
                         .rest_parameter_relation_outcome(declared_type, readonly_any_array)
@@ -1333,9 +1335,8 @@ impl<'a> CheckerState<'a> {
                     && init_type != TypeId::ERROR
                     && !self.is_array_like_type(init_type)
                 {
-                    let factory = self.ctx.types.factory();
-                    let any_array = factory.array(TypeId::ANY);
-                    let readonly_any_array = factory.readonly_type(any_array);
+                    let readonly_any_array =
+                        parameter_query::readonly_any_array_type(self.ctx.types);
                     if !self
                         .rest_parameter_relation_outcome(init_type, readonly_any_array)
                         .related

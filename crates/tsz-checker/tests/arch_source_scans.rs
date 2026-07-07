@@ -165,6 +165,10 @@
 //! - `iterable_protocol_surface_construction_boundary_scans`: iterable checking
 //!   routes iterator protocol object/signature/evaluation facts through
 //!   `query_boundaries::checkers::iterable`.
+//! - `parameter_contextual_surface_construction_boundary_scans`: parameter
+//!   checking and contextual-parameter typing route tuple, union, function,
+//!   and rest-array surfaces through
+//!   `query_boundaries::checkers::parameters`.
 //! - `js_constructor_surface_construction_boundary_scans`: checked-JS
 //!   constructor/prototype instance surfaces route through
 //!   `query_boundaries::type_computation::complex`.
@@ -268,6 +272,8 @@ mod object_literal_context_construction_boundary_scans;
 mod object_literal_member_surface_construction_boundary_scans;
 #[path = "arch_source_scans/object_literal_result_construction_boundary_scans.rs"]
 mod object_literal_result_construction_boundary_scans;
+#[path = "arch_source_scans/parameter_contextual_surface_construction_boundary_scans.rs"]
+mod parameter_contextual_surface_construction_boundary_scans;
 #[path = "arch_source_scans/property_access_result_construction_boundary_scans.rs"]
 mod property_access_result_construction_boundary_scans;
 #[path = "arch_source_scans/relation_boundary_session_scans.rs"]
