@@ -96,12 +96,11 @@ let other: typeof pinned = Signal.Stop;
     assert_eq!(diags.len(), 1, "no other diagnostics expected: {diags:?}");
 }
 
-/// Known drift from tsc, pinned (#15445): tsc gates the enum arm on
-/// freshness, so an *annotated* enum-member const reference keeps `E.A` and
-/// the re-assignment errors; tsz's type-based gate widens it to `E` and
-/// accepts the write. Flip this expectation when fixing #15445.
+/// tsc gates the enum arm on freshness (#15445): an *annotated* enum-member
+/// const reference is non-fresh, so it keeps `Level.Low` and the
+/// re-assignment errors.
 #[test]
-fn annotated_enum_const_reference_currently_still_widens() {
+fn annotated_enum_const_reference_keeps_member_type() {
     let diags = check_strict(
         r#"
 enum Level { Low, High }
@@ -111,8 +110,8 @@ cursor = Level.High;
 "#,
     );
     assert!(
-        diags.is_empty(),
-        "pinned current behavior — `cursor` widens to `Level` (tsc keeps `Level.Low`; #15445): {diags:?}"
+        diags.iter().any(|(code, _)| *code == 2322),
+        "expected TS2322 — `cursor` keeps `Level.Low` (non-fresh reference; #15445): {diags:?}"
     );
 }
 

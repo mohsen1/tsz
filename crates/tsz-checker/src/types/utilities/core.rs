@@ -494,37 +494,63 @@ impl<'a> CheckerState<'a> {
         crate::query_boundaries::common::widen_type_for_display(self.ctx.types, type_id)
     }
 
-    /// Resolve an enum member type to its parent enum type, or `None` when
-    /// `type_id` is not an enum member. TypeScript widens enum member values
-    /// (`E.A`) to the parent enum (`E`) at mutable observation points; this is
-    /// the single owner of that member-to-parent resolution.
-    pub(crate) fn enum_member_widened_parent_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+    /// The parent enum `DefId` for an enum-member type, or `None` when `type_id`
+    /// is not an enum member. Both widening entry points below resolve this
+    /// `DefId` to the enum *type* `E` — never `get_type_of_symbol(parent)`, which
+    /// in value context yields the enum *object* type (`typeof E`). tsc's
+    /// `getBaseTypeOfEnumLikeType` widens an enum-member literal to the enum
+    /// type, never its static/object shape.
+    fn enum_member_parent_def_id(&mut self, type_id: TypeId) -> Option<tsz_solver::DefId> {
+        // Primary: nominal `DefId` path — the member type carries its own DefId
+        // whose parent edge points at the enum.
         if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            // Check if this DefId is an enum member (has a parent enum)
-            let parent_def_id = self
+            && let Some(parent) = self
                 .ctx
                 .type_env
                 .try_borrow()
                 .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id
-                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
-            {
-                return Some(self.get_type_of_symbol(parent_sym_id));
-            }
-        }
-
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
+                .and_then(|env| env.get_enum_parent(def_id))
         {
-            return Some(self.get_type_of_symbol(symbol.parent));
+            return Some(parent);
         }
 
-        None
+        // Fallback: symbol-flags path for members whose type lost its DefId.
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+        Some(self.ctx.get_or_create_def_id(symbol.parent))
+    }
+
+    /// The parent enum type `E` for an enum-member type as a **binding** type: a
+    /// `Lazy(parent_def)` semantic ref (matching the solver's
+    /// `common_parent_enum_type`). Kept as a `Lazy` because, as a variable's
+    /// declared type, it must answer a `typeof` query with the enum type `E`
+    /// (`typeof stage` → `Phase`); the resolved `Enum(def, structural)` form gets
+    /// object-converted by the value-position `typeof` path.
+    fn enum_member_widened_binding_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let parent = self.enum_member_parent_def_id(type_id)?;
+        Some(self.ctx.types.factory().lazy(parent))
+    }
+
+    /// The parent enum type `E` for an enum-member type as a **display** type:
+    /// the concrete `Enum(parent_def, structural)` body published on the parent
+    /// def, so downstream display reductions (e.g. `Hue | 1` → `number` in a
+    /// `TS2367` message) see the numeric structural. `get_def` returns the enum
+    /// type, never the object type — that lives in a separate
+    /// `enum_namespace_types` map. Falls back to a `Lazy` ref when the body has
+    /// not been published yet.
+    fn enum_member_widened_display_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        let parent = self.enum_member_parent_def_id(type_id)?;
+        let concrete = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_def(parent))
+            .filter(|&body| crate::query_boundaries::common::is_enum_type(self.ctx.types, body));
+        Some(concrete.unwrap_or_else(|| self.ctx.types.factory().lazy(parent)))
     }
 
     /// Widen a mutable binding initializer type (let/var semantics).
@@ -533,7 +559,9 @@ impl<'a> CheckerState<'a> {
     /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
     /// specific member.
     pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
-        if let Some(parent) = self.enum_member_widened_parent_type(type_id) {
+        // Enum member → parent enum type `E` (the union of member literals),
+        // never the enum object type `typeof E`.
+        if let Some(parent) = self.enum_member_widened_binding_type(type_id) {
             return parent;
         }
         // Use the mutable-binding widening entry so fresh array/object members
@@ -550,7 +578,10 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        self.enum_member_widened_parent_type(type_id)
+        // Enum member → parent enum type `E`, never `typeof E`. Uses the concrete
+        // display form so operator-error reductions see the enum's structural.
+        self.enum_member_widened_display_type(type_id)
+            // Do NOT widen literal types - return as-is
             .unwrap_or(type_id)
     }
 
@@ -684,6 +715,37 @@ impl<'a> CheckerState<'a> {
             && var_decl.initializer.is_some()
         {
             return self.is_fresh_literal_expression_inner(var_decl.initializer, depth + 1);
+        }
+
+        // A direct enum-member access `E.A` (or namespace-qualified `NS.E.A`)
+        // mints a *fresh* enum literal that widens to the parent enum `E` at a
+        // mutable binding, exactly as a primitive literal token widens to its
+        // base. tsc gives enum literal types the same fresh/regular duality as
+        // string/number literals. A property *read* of an enum-member-typed
+        // value (`o.p` where `o: { p: E.A }`) is non-fresh: it keeps `E.A`.
+        // Distinguish the two by resolving the access to its symbol — a genuine
+        // enum-member access resolves to an `ENUM_MEMBER` symbol, a property
+        // read does not.
+        //
+        // The symbol resolution walks the entity-name chain, so it is gated
+        // behind the node's cached type: an access whose already-computed type is
+        // not an enum-member type can never be a fresh enum-member access, which
+        // fast-rejects the common `obj.prop` initializer before the walk. When
+        // the type is not yet cached, fall through to the resolve so freshness is
+        // never under-reported.
+        if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && self
+                .ctx
+                .node_types
+                .get(&idx.0)
+                .copied()
+                .is_none_or(|t| self.is_enum_member_type_for_widening(t))
+            && self
+                .resolve_qualified_symbol(idx)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|sym| sym.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
+        {
+            return true;
         }
 
         // Everything else (identifiers, call expressions, binary expressions, etc.)
