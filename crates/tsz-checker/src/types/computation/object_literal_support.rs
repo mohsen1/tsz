@@ -1,5 +1,6 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::TypeResolver;
+use crate::query_boundaries::type_computation::object_literals;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
@@ -120,19 +121,6 @@ pub(crate) struct ObjectLiteralFinalizeCtx {
     pub(crate) generic_spread_types: Vec<TypeId>,
     /// Whether all properties are context-sensitive (deferred freshness).
     pub(crate) all_properties_context_sensitive: bool,
-}
-
-fn order_preserving_union(
-    factory: tsz_solver::construction::TypeFactory<'_>,
-    mut members: Vec<TypeId>,
-) -> TypeId {
-    let mut seen = rustc_hash::FxHashSet::default();
-    members.retain(|id| *id != TypeId::NEVER && seen.insert(*id));
-    match members.as_slice() {
-        [] => TypeId::NEVER,
-        [only] => *only,
-        _ => factory.union_preserve_order(members),
-    }
 }
 
 impl<'a> CheckerState<'a> {
@@ -428,7 +416,7 @@ impl<'a> CheckerState<'a> {
             properties,
             display_type_overrides,
             display_parent_overrides,
-            mut string_index_types,
+            string_index_types,
             number_index_types,
             symbol_index_types,
             string_index_param_name,
@@ -489,7 +477,7 @@ impl<'a> CheckerState<'a> {
 
                     let string_index = if !string_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            order_preserving_union(self.ctx.types.factory(), string_index_types)
+                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), string_index_types)
                         } else {
                             self.ctx.types.factory().union(string_index_types)
                         };
@@ -504,7 +492,7 @@ impl<'a> CheckerState<'a> {
                     };
                     let number_index = if !number_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            order_preserving_union(self.ctx.types.factory(), number_index_types)
+                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), number_index_types)
                         } else {
                             self.ctx.types.factory().union(number_index_types)
                         };
@@ -519,7 +507,7 @@ impl<'a> CheckerState<'a> {
                     };
                     let symbol_index = if !symbol_index_types.is_empty() {
                         let value_type = if self.ctx.in_const_assertion {
-                            order_preserving_union(self.ctx.types.factory(), symbol_index_types)
+                            object_literals::order_preserving_union(self.ctx.types.as_type_database(), symbol_index_types)
                         } else {
                             self.ctx.types.factory().union(symbol_index_types)
                         };
@@ -551,7 +539,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types.store_display_properties(obj, display_props);
                 union_members.push(obj);
             }
-            self.ctx.types.factory().union(union_members)
+            object_literals::union_type(self.ctx.types, union_members)
         } else {
             let mut properties: Vec<PropertyInfo> = properties.into_values().collect();
             properties.sort_by_key(|p| p.declaration_order);
@@ -565,25 +553,11 @@ impl<'a> CheckerState<'a> {
                     crate::query_boundaries::diagnostics::normalize_display_property_order(
                         &mut display_props,
                     );
-                    let type_id = self
-                        .ctx
-                        .types
-                        .factory()
-                        .object_preserve_declaration_order(properties);
-                    self.ctx
-                        .types
-                        .store_display_properties(type_id, display_props);
-                    type_id
+                    object_literals::spread_object_type(self.ctx.types, properties, display_props)
                 } else {
-                    let type_id = if all_properties_context_sensitive {
-                        self.ctx
-                            .types
-                            .factory()
-                            .object_fresh_all_properties_context_sensitive(properties.clone())
-                    } else {
-                        self.ctx.types.factory().object_fresh(properties.clone())
-                    };
-                    if !display_type_overrides.is_empty() || !display_parent_overrides.is_empty() {
+                    let display_props = if !display_type_overrides.is_empty()
+                        || !display_parent_overrides.is_empty()
+                    {
                         let mut display_props: Vec<PropertyInfo> = properties
                             .iter()
                             .map(|prop| {
@@ -601,89 +575,20 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::diagnostics::normalize_display_property_order(
                             &mut display_props,
                         );
-                        self.ctx
-                            .types
-                            .store_display_properties(type_id, display_props);
-                    }
-                    type_id
+                        Some(display_props)
+                    } else {
+                        None
+                    };
+                    object_literals::fresh_object_type(
+                        self.ctx.types,
+                        properties,
+                        all_properties_context_sensitive,
+                        display_props,
+                    )
                 }
             } else {
-                use tsz_solver::{IndexSignature, ObjectShape};
-
-                if !string_index_types.is_empty() {
-                    let prop_types = properties.iter().map(|prop| prop.type_id);
-                    if self.ctx.in_const_assertion {
-                        string_index_types = prop_types.chain(string_index_types).collect();
-                    } else {
-                        string_index_types.extend(prop_types);
-                    }
-                }
-
-                let string_index = if !string_index_types.is_empty() {
-                    let value_type = if self.ctx.in_const_assertion {
-                        order_preserving_union(self.ctx.types.factory(), string_index_types)
-                    } else {
-                        self.ctx.types.factory().union(string_index_types)
-                    };
-                    Some(IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: string_index_param_name,
-                    })
-                } else {
-                    None
-                };
-
-                let symbol_index = if !symbol_index_types.is_empty() {
-                    let value_type = if self.ctx.in_const_assertion {
-                        order_preserving_union(self.ctx.types.factory(), symbol_index_types)
-                    } else {
-                        self.ctx.types.factory().union(symbol_index_types)
-                    };
-                    Some(IndexSignature {
-                        key_type: TypeId::SYMBOL,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    })
-                } else {
-                    None
-                };
-
-                let number_index = if !number_index_types.is_empty() {
-                    let value_type = if self.ctx.in_const_assertion {
-                        order_preserving_union(self.ctx.types.factory(), number_index_types)
-                    } else {
-                        self.ctx.types.factory().union(number_index_types)
-                    };
-                    Some(IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type,
-                        readonly: false,
-                        param_name: number_index_param_name,
-                    })
-                } else {
-                    None
-                };
-
-                let mut shape = ObjectShape {
-                    properties,
-                    string_index,
-                    number_index,
-                    symbol_index,
-                    ..ObjectShape::default()
-                };
-                if !has_spread {
-                    shape.mark_fresh_literal();
-                    if all_properties_context_sensitive {
-                        shape.mark_all_properties_context_sensitive();
-                    }
-                }
-
                 let display_props = if has_spread {
-                    shape.mark_preserve_declaration_order();
-                    let mut display_props = shape.properties.clone();
+                    let mut display_props = properties.clone();
                     crate::query_boundaries::diagnostics::normalize_display_property_order(
                         &mut display_props,
                     );
@@ -691,20 +596,28 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
-                let type_id = self.ctx.types.factory().object_with_index(shape);
-                if let Some(display_props) = display_props {
-                    self.ctx
-                        .types
-                        .store_display_properties(type_id, display_props);
-                }
-                type_id
+                object_literals::indexed_object_type(
+                    self.ctx.types,
+                    object_literals::ObjectLiteralIndexedType {
+                        properties,
+                        string_index_types,
+                        number_index_types,
+                        symbol_index_types,
+                        string_index_param_name,
+                        number_index_param_name,
+                        in_const_assertion: self.ctx.in_const_assertion,
+                        has_spread,
+                        all_properties_context_sensitive,
+                        display_properties: display_props,
+                    },
+                )
             }
         };
 
         if !generic_spread_types.is_empty() {
             let mut members = generic_spread_types;
             members.push(object_type);
-            self.ctx.types.factory().intersection(members)
+            object_literals::intersection_type(self.ctx.types, members)
         } else {
             object_type
         }
@@ -738,17 +651,13 @@ impl<'a> CheckerState<'a> {
             let eval_constraint =
                 self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
             let mapped_id = if eval_constraint != mapped.constraint {
-                let mapped_type = tsz_solver::MappedType {
-                    type_param: mapped.type_param,
-                    constraint: eval_constraint,
-                    name_type: mapped.name_type,
-                    template: mapped.template,
-                    readonly_modifier: mapped.readonly_modifier,
-                    optional_modifier: mapped.optional_modifier,
-                };
                 crate::query_boundaries::common::mapped_type_id(
                     self.ctx.types,
-                    self.ctx.types.factory().mapped(mapped_type),
+                    object_literals::mapped_type_with_constraint(
+                        self.ctx.types,
+                        mapped.as_ref(),
+                        eval_constraint,
+                    ),
                 )
                 .unwrap_or(mapped_id)
             } else {
@@ -770,21 +679,7 @@ impl<'a> CheckerState<'a> {
                                 mapped_id,
                                 prop_name.as_ref(),
                             )?;
-                        Some(PropertyInfo {
-                            name,
-                            type_id,
-                            optional: false,
-                            readonly: false,
-                            write_type: type_id,
-                            is_class_prototype: false,
-                            is_method: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false, non_widening: false,
-                        })
+                        Some(object_literals::mapped_spread_property(name, type_id))
                     })
                     .collect();
             }
@@ -911,17 +806,13 @@ impl<'a> CheckerState<'a> {
             let eval_constraint =
                 self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
             let resolved_mapped_id = if eval_constraint != mapped.constraint {
-                let mapped_type = tsz_solver::MappedType {
-                    type_param: mapped.type_param,
-                    constraint: eval_constraint,
-                    name_type: mapped.name_type,
-                    template: mapped.template,
-                    readonly_modifier: mapped.readonly_modifier,
-                    optional_modifier: mapped.optional_modifier,
-                };
                 crate::query_boundaries::common::mapped_type_id(
                     self.ctx.types,
-                    self.ctx.types.factory().mapped(mapped_type),
+                    object_literals::mapped_type_with_constraint(
+                        self.ctx.types,
+                        mapped.as_ref(),
+                        eval_constraint,
+                    ),
                 )
                 .unwrap_or(mapped_id)
             } else {
@@ -943,11 +834,12 @@ impl<'a> CheckerState<'a> {
                             prop_name.as_ref(),
                         )
                     {
-                        properties.push(tsz_solver::PropertyInfo::new(name, prop_type_id));
+                        properties
+                            .push(object_literals::mapped_spread_property(name, prop_type_id));
                     }
                 }
                 if !properties.is_empty() {
-                    return self.ctx.types.factory().object(properties);
+                    return object_literals::mapped_spread_object_type(self.ctx.types, properties);
                 }
             }
         }

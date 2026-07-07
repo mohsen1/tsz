@@ -101,6 +101,9 @@
 //! - `object_literal_context_construction_boundary_scans`: object-literal
 //!   contextual typing routes union/intersection rebuilds through
 //!   `query_boundaries::object_literal_context`.
+//! - `object_literal_result_construction_boundary_scans`: object-literal
+//!   result construction routes final object/index/union/intersection/mapped
+//!   surfaces through `query_boundaries::type_computation::object_literals`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -161,6 +164,8 @@ mod object_flags_boundary_scans;
 mod object_literal_annotation_walker_scans;
 #[path = "arch_source_scans/object_literal_context_construction_boundary_scans.rs"]
 mod object_literal_context_construction_boundary_scans;
+#[path = "arch_source_scans/object_literal_result_construction_boundary_scans.rs"]
+mod object_literal_result_construction_boundary_scans;
 #[path = "arch_source_scans/property_access_result_construction_boundary_scans.rs"]
 mod property_access_result_construction_boundary_scans;
 #[path = "arch_source_scans/relation_boundary_session_scans.rs"]
