@@ -1383,7 +1383,7 @@ impl<'a> CheckerState<'a> {
                     source_tuple_elements
                         .as_deref()
                         .and_then(|elements| elements.get(index))
-                        .filter(|element| !element.rest && !element.optional)
+                        .filter(|element| element.is_required())
                         .map(|element| element.type_id)
                         .filter(|&source_element| !source_element.is_any_unknown_or_error())
                         .unwrap_or(elem_type)
