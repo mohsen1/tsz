@@ -14,7 +14,9 @@
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::query_boundaries::jsdoc_construction::{
-    self as jsdoc_construct, jsdoc_function_type, jsdoc_object_index_type, jsdoc_param_info,
+    self as jsdoc_construct, jsdoc_function_type, jsdoc_lazy_type, jsdoc_literal_boolean_type,
+    jsdoc_literal_number_type, jsdoc_literal_string_type, jsdoc_object_index_type,
+    jsdoc_param_info, jsdoc_readonly_type, jsdoc_type_predicate,
 };
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -23,7 +25,7 @@ use tsz_common::numeric::parse_numeric_literal_value;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypePredicate};
+use tsz_solver::TypeId;
 
 /// Strip a leading and matching trailing `"` or `'` from `s` if both are
 /// present. Returns the bare inner string when stripped, otherwise `None`.
@@ -348,7 +350,7 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(inner) = type_expr.strip_prefix("readonly ") {
             let inner_type = self.resolve_jsdoc_type_str(inner.trim())?;
-            return Some(self.ctx.types.factory().readonly_type(inner_type));
+            return Some(jsdoc_readonly_type(self.ctx.types, inner_type));
         }
         if let Some(inner) = type_expr.strip_prefix('?') {
             let inner = inner.trim();
@@ -481,22 +483,18 @@ impl<'a> CheckerState<'a> {
             && type_expr.len() >= 2
         {
             let inner = &type_expr[1..type_expr.len() - 1];
-            let factory = self.ctx.types.factory();
-            return Some(factory.literal_string(inner));
+            return Some(jsdoc_literal_string_type(self.ctx.types, inner));
         }
         if type_expr == "true" {
-            let factory = self.ctx.types.factory();
-            return Some(factory.literal_boolean(true));
+            return Some(jsdoc_literal_boolean_type(self.ctx.types, true));
         }
         if type_expr == "false" {
-            let factory = self.ctx.types.factory();
-            return Some(factory.literal_boolean(false));
+            return Some(jsdoc_literal_boolean_type(self.ctx.types, false));
         }
         if Self::jsdoc_type_expr_may_be_numeric_literal(type_expr)
             && let Some(n) = parse_numeric_literal_value(type_expr)
         {
-            let factory = self.ctx.types.factory();
-            return Some(factory.literal_number(n));
+            return Some(jsdoc_literal_number_type(self.ctx.types, n));
         }
         if let Some(ty) = self.resolve_jsdoc_implicit_any_builtin_type(type_expr) {
             return Some(ty);
@@ -935,24 +933,14 @@ impl<'a> CheckerState<'a> {
                 let pred_type = self.jsdoc_type_from_expression(type_str);
                 let (target, parameter_index) =
                     self.jsdoc_type_predicate_target(param_name, params_inner);
-                let predicate = TypePredicate {
-                    asserts: true,
-                    target,
-                    type_id: pred_type,
-                    parameter_index,
-                };
+                let predicate = jsdoc_type_predicate(true, target, pred_type, parameter_index);
                 return (Some(TypeId::VOID), Some(predicate));
             }
             // `asserts param` (no type)
             let param_name = rest;
             let (target, parameter_index) =
                 self.jsdoc_type_predicate_target(param_name, params_inner);
-            let predicate = TypePredicate {
-                asserts: true,
-                target,
-                type_id: None,
-                parameter_index,
-            };
+            let predicate = jsdoc_type_predicate(true, target, None, parameter_index);
             return (Some(TypeId::VOID), Some(predicate));
         }
 
@@ -968,12 +956,7 @@ impl<'a> CheckerState<'a> {
                 let pred_type = self.jsdoc_type_from_expression(type_str);
                 let (target, parameter_index) =
                     self.jsdoc_type_predicate_target(param_name, params_inner);
-                let predicate = TypePredicate {
-                    asserts: false,
-                    target,
-                    type_id: pred_type,
-                    parameter_index,
-                };
+                let predicate = jsdoc_type_predicate(false, target, pred_type, parameter_index);
                 return (Some(TypeId::BOOLEAN), Some(predicate));
             }
         }
@@ -1652,7 +1635,7 @@ impl<'a> CheckerState<'a> {
             let constructor_type = self.get_type_of_symbol(sym_id);
             if !self.ctx.class_instance_resolution_set.insert(sym_id) {
                 let def_id = self.ctx.get_or_create_def_id(sym_id);
-                return self.ctx.types.factory().lazy(def_id);
+                return jsdoc_lazy_type(self.ctx.types, def_id);
             }
             let instance_type = self.synthesize_js_constructor_instance_type(
                 symbol.value_declaration,

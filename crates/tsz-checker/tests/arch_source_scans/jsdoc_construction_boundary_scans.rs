@@ -60,6 +60,16 @@ fn jsdoc_callers_route_solver_shape_construction_through_boundary() {
         ".tuple(",
         ".index_access(",
         ".keyof(",
+        "factory().lazy(",
+        ".lazy(",
+        "factory().readonly_type(",
+        ".readonly_type(",
+        "factory().literal_string(",
+        ".literal_string(",
+        "factory().literal_boolean(",
+        ".literal_boolean(",
+        "factory().literal_number(",
+        ".literal_number(",
         ".mapped(",
         ".conditional(",
         ".type_param(",
@@ -75,6 +85,7 @@ fn jsdoc_callers_route_solver_shape_construction_through_boundary() {
         "ParamInfo::unnamed(",
         "PropertyInfo::new(",
         "PropertyInfo {",
+        "TypePredicate {",
     ];
 
     let mut violations = Vec::new();
@@ -110,12 +121,18 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         "jsdoc_application_type",
         "jsdoc_index_access_type",
         "jsdoc_keyof_type",
+        "jsdoc_lazy_type",
+        "jsdoc_readonly_type",
+        "jsdoc_literal_string_type",
+        "jsdoc_literal_boolean_type",
+        "jsdoc_literal_number_type",
         "jsdoc_type_param_info",
         "jsdoc_type_param_type",
         "jsdoc_tuple_type",
         "jsdoc_tuple_element",
         "jsdoc_param_info",
         "jsdoc_property_info",
+        "jsdoc_type_predicate",
         "jsdoc_mapped_type",
         "jsdoc_conditional_type",
     ] {
@@ -140,6 +157,7 @@ fn jsdoc_construction_boundary_owns_helpers_and_shape_literals() {
         "TypeParamOrigin::User",
         "ParamInfo {",
         "PropertyInfo {",
+        "TypePredicate {",
     ] {
         assert!(
             source.contains(shape_pattern),
