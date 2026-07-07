@@ -2,6 +2,9 @@
 //! assignments that serve as implicit property declarations.
 
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
+use crate::query_boundaries::checkers::class_properties::{
+    self as class_property_query, JsClassPropertyFact,
+};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -9,10 +12,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    CallSignature, CallableShape, ObjectShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
-    Visibility,
-};
+use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 /// Structural classification of an implicit-`any` constructor property, carried
 /// as a fact rather than re-derived from its rendered display string. The
@@ -149,16 +149,13 @@ impl CheckerState<'_> {
                         .get(&name)
                         .and_then(|s| self.resolve_jsdoc_reference(s));
                     template_types.entry(name).or_insert_with(|| {
-                        self.ctx
-                            .types
-                            .factory()
-                            .type_param(tsz_solver::TypeParamInfo {
-                                name: atom,
-                                constraint,
-                                default,
-                                is_const,
-                                origin: tsz_solver::TypeParamOrigin::User,
-                            })
+                        class_property_query::js_class_type_param_type(
+                            self.ctx.types,
+                            atom,
+                            constraint,
+                            default,
+                            is_const,
+                        )
                     });
                 }
                 return template_types;
@@ -220,16 +217,13 @@ impl CheckerState<'_> {
                     .get(&name)
                     .and_then(|s| self.resolve_jsdoc_reference(s));
                 function_template_types.entry(name).or_insert_with(|| {
-                    self.ctx
-                        .types
-                        .factory()
-                        .type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint,
-                            default,
-                            is_const,
-                            origin: tsz_solver::TypeParamOrigin::User,
-                        })
+                    class_property_query::js_class_type_param_type(
+                        self.ctx.types,
+                        atom,
+                        constraint,
+                        default,
+                        is_const,
+                    )
                 });
             }
         }
@@ -444,14 +438,12 @@ impl CheckerState<'_> {
                             let constraint = constraint_strs
                                 .get(&name)
                                 .and_then(|s| self.resolve_jsdoc_reference(s));
-                            return Some(self.ctx.types.factory().type_param(
-                                tsz_solver::TypeParamInfo {
-                                    name: atom,
-                                    constraint,
-                                    default,
-                                    is_const,
-                                    origin: tsz_solver::TypeParamOrigin::User,
-                                },
+                            return Some(class_property_query::js_class_type_param_type(
+                                self.ctx.types,
+                                atom,
+                                constraint,
+                                default,
+                                is_const,
                             ));
                         }
                     }
@@ -524,13 +516,13 @@ impl CheckerState<'_> {
                         let constraint = constraint_strs
                             .get(&name)
                             .and_then(|s| self.resolve_jsdoc_reference(s));
-                        return Some(self.ctx.types.factory().type_param(TypeParamInfo {
-                            name: atom,
+                        return Some(class_property_query::js_class_type_param_type(
+                            self.ctx.types,
+                            atom,
                             constraint,
                             default,
                             is_const,
-                            origin: tsz_solver::TypeParamOrigin::User,
-                        }));
+                        ));
                     }
                 }
             }
@@ -664,7 +656,8 @@ impl CheckerState<'_> {
                     && crate::query_boundaries::common::array_element_type(self.ctx.types, rhs_type)
                         == Some(TypeId::NEVER)
                 {
-                    rhs_type = self.ctx.types.factory().array(TypeId::ANY);
+                    rhs_type =
+                        class_property_query::js_class_array_type(self.ctx.types, TypeId::ANY);
                     provisional_open = true;
                 }
                 if rhs_type == TypeId::NULL || rhs_type == TypeId::UNDEFINED {
@@ -743,7 +736,11 @@ impl CheckerState<'_> {
                         existing.type_id = type_id;
                         existing.write_type = type_id;
                     } else {
-                        let merged = self.ctx.types.factory().union2(existing.type_id, type_id);
+                        let merged = class_property_query::js_class_union_pair_type(
+                            self.ctx.types,
+                            existing.type_id,
+                            type_id,
+                        );
                         existing.type_id = merged;
                         existing.write_type = if provisional_open {
                             TypeId::ANY
@@ -759,7 +756,7 @@ impl CheckerState<'_> {
             constructor_collected_props.insert(name_atom);
             properties.insert(
                 name_atom,
-                PropertyInfo {
+                class_property_query::js_class_property_info(JsClassPropertyFact {
                     name: name_atom,
                     type_id,
                     write_type: if provisional_open {
@@ -769,16 +766,10 @@ impl CheckerState<'_> {
                     },
                     optional: false,
                     readonly: is_readonly,
-                    is_method: false,
-                    is_class_prototype: false,
                     visibility: Visibility::Public,
                     parent_id: parent_sym,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                    non_widening: false,
-                },
+                    ..JsClassPropertyFact::new(name_atom, type_id)
+                }),
             );
         }
 
@@ -797,7 +788,8 @@ impl CheckerState<'_> {
 
             if let Some(property) = properties.get_mut(&name_atom) {
                 if implicit_kind == ImplicitAnyKind::AnyArray {
-                    let any_array = self.ctx.types.factory().array(TypeId::ANY);
+                    let any_array =
+                        class_property_query::js_class_array_type(self.ctx.types, TypeId::ANY);
                     let nullish_part = if property.type_id.is_nullable() {
                         Some(property.type_id)
                     } else {
@@ -814,12 +806,19 @@ impl CheckerState<'_> {
                             match nullish_members.as_slice() {
                                 [] => None,
                                 [single] => Some(*single),
-                                _ => Some(self.ctx.types.factory().union(nullish_members)),
+                                _ => Some(class_property_query::js_class_union_type(
+                                    self.ctx.types,
+                                    nullish_members,
+                                )),
                             }
                         })
                     };
                     if let Some(nullish_part) = nullish_part {
-                        property.type_id = self.ctx.types.factory().union2(any_array, nullish_part);
+                        property.type_id = class_property_query::js_class_union_pair_type(
+                            self.ctx.types,
+                            any_array,
+                            nullish_part,
+                        );
                     } else {
                         property.type_id = any_array;
                         property.write_type = any_array;
@@ -1158,7 +1157,6 @@ impl CheckerState<'_> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         let class_sym = self.ctx.binder.get_node_symbol(class_idx);
         let mut props: Vec<PropertyInfo> = Vec::new();
 
@@ -1201,22 +1199,18 @@ impl CheckerState<'_> {
                         TypeId::ANY
                     };
 
-                    props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id,
-                        write_type: type_id,
-                        optional: prop.question_token,
-                        readonly: is_readonly,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility,
-                        parent_id: class_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    props.push(class_property_query::js_class_property_info(
+                        JsClassPropertyFact {
+                            name: name_atom,
+                            type_id,
+                            write_type: type_id,
+                            optional: prop.question_token,
+                            readonly: is_readonly,
+                            visibility,
+                            parent_id: class_sym,
+                            ..JsClassPropertyFact::new(name_atom, type_id)
+                        },
+                    ));
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
                     let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
@@ -1250,22 +1244,18 @@ impl CheckerState<'_> {
                             TypeId::ANY
                         };
                         let visibility = self.get_visibility_from_modifiers(&param.modifiers);
-                        props.push(PropertyInfo {
-                            name: name_atom,
-                            type_id,
-                            write_type: type_id,
-                            optional: param.question_token,
-                            readonly: is_readonly,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility,
-                            parent_id: class_sym,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                        props.push(class_property_query::js_class_property_info(
+                            JsClassPropertyFact {
+                                name: name_atom,
+                                type_id,
+                                write_type: type_id,
+                                optional: param.question_token,
+                                readonly: is_readonly,
+                                visibility,
+                                parent_id: class_sym,
+                                ..JsClassPropertyFact::new(name_atom, type_id)
+                            },
+                        ));
                     }
                 }
                 k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -1280,43 +1270,21 @@ impl CheckerState<'_> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&method.modifiers, method.name);
-                    let method_type = factory.callable(CallableShape {
-                        call_signatures: vec![CallSignature {
-                            type_params: Vec::new(),
-                            params: vec![ParamInfo {
-                                name: None,
-                                type_id: TypeId::ANY,
-                                optional: false,
-                                rest: true,
-                            }],
-                            this_type: None,
-                            return_type: TypeId::ANY,
-                            type_predicate: None,
+                    let method_type =
+                        class_property_query::js_class_method_callable_type(self.ctx.types);
+                    props.push(class_property_query::js_class_property_info(
+                        JsClassPropertyFact {
+                            name: name_atom,
+                            type_id: method_type,
+                            write_type: method_type,
+                            optional: method.question_token,
                             is_method: true,
-                        }],
-                        construct_signatures: Vec::new(),
-                        properties: Vec::new(),
-                        string_index: None,
-                        number_index: None,
-                        symbol: None,
-                        is_abstract: false,
-                    });
-                    props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id: method_type,
-                        write_type: method_type,
-                        optional: method.question_token,
-                        readonly: false,
-                        is_method: true,
-                        is_class_prototype: true,
-                        visibility,
-                        parent_id: class_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                            is_class_prototype: true,
+                            visibility,
+                            parent_id: class_sym,
+                            ..JsClassPropertyFact::new(name_atom, method_type)
+                        },
+                    ));
                 }
                 k if matches!(
                     k,
@@ -1356,22 +1324,18 @@ impl CheckerState<'_> {
                     } else {
                         TypeId::ANY
                     };
-                    props.push(PropertyInfo {
-                        name: name_atom,
-                        type_id,
-                        write_type: TypeId::ANY,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: true,
-                        visibility,
-                        parent_id: class_sym,
-                        declaration_order: 0,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    props.push(class_property_query::js_class_property_info(
+                        JsClassPropertyFact {
+                            name: name_atom,
+                            type_id,
+                            write_type: TypeId::ANY,
+                            optional: false,
+                            is_class_prototype: true,
+                            visibility,
+                            parent_id: class_sym,
+                            ..JsClassPropertyFact::new(name_atom, type_id)
+                        },
+                    ));
                 }
                 _ => {}
             }
@@ -1486,11 +1450,8 @@ impl CheckerState<'_> {
             return TypeId::ERROR;
         }
 
-        let result = factory.object_with_index(ObjectShape {
-            properties: props,
-            symbol: class_sym,
-            ..ObjectShape::default()
-        });
+        let result =
+            class_property_query::js_class_instance_object_type(self.ctx.types, props, class_sym);
         // Cache the partial type so subsequent nested class expressions can use it
         self.ctx
             .class_instance_type_cache

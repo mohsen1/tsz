@@ -1,4 +1,5 @@
 pub(crate) mod call;
+pub(crate) mod class_properties;
 pub(crate) mod constructor;
 pub(crate) mod generic;
 pub(crate) mod iterable;
