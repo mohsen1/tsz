@@ -5,7 +5,7 @@
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
 use crate::query_boundaries::{
-    construct_signatures as signature_boundary, type_construction as construction_boundary,
+    type_construction as construction_boundary,
 };
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -1119,7 +1119,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{CallSignature, IndexSignature, PropertyInfo};
+        use tsz_solver::CallSignature;
         let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {

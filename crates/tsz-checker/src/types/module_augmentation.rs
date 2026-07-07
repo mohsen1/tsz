@@ -1114,7 +1114,6 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::TypeId {
         use crate::query_boundaries::common::{AugmentationTargetKind, classify_for_augmentation};
         use crate::query_boundaries::state::type_resolution as query;
-        use tsz_solver::CallableShape;
 
         // Fast-path: avoids string allocations and hashset bookkeeping when
         // no augmentations are registered anywhere in the program.
