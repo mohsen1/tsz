@@ -637,7 +637,10 @@ impl<'a> CheckerState<'a> {
                 .cloned()
                 .collect();
             if filtered.len() != shape.properties.len() {
-                return self.ctx.types.factory().object(filtered);
+                return crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                    self.ctx.types,
+                    filtered,
+                );
             }
         }
         props_type

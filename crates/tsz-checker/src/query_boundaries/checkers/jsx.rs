@@ -1,8 +1,12 @@
 //! JSX checker query boundaries.
 
 use crate::state::CheckerState;
+use tsz_common::Atom;
+use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
+use tsz_solver::{
+    CallSignature, DefinitionStore, FunctionShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+};
 
 pub(crate) struct SingleArgTypeApplication {
     pub(crate) base: TypeId,
@@ -186,6 +190,130 @@ pub(crate) fn props_are_assignable(
     target: TypeId,
 ) -> bool {
     checker.jsx_props_relation_outcome(source, target).related
+}
+
+pub(crate) fn object_type_from_properties(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> TypeId {
+    db.object(properties)
+}
+
+pub(crate) fn empty_props_object_type(db: &dyn TypeDatabase) -> TypeId {
+    object_type_from_properties(db, Vec::new())
+}
+
+pub(crate) fn props_param_type_or_empty(db: &dyn TypeDatabase, params: &[ParamInfo]) -> TypeId {
+    params
+        .first()
+        .map(|param| param.type_id)
+        .unwrap_or_else(|| empty_props_object_type(db))
+}
+
+pub(crate) fn function_type_from_shape(db: &dyn TypeDatabase, shape: FunctionShape) -> TypeId {
+    crate::query_boundaries::construct_signatures::function_type_from_shape(db, shape)
+}
+
+pub(crate) fn function_type_from_parts(
+    db: &dyn TypeDatabase,
+    params: Vec<ParamInfo>,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_shape(db, FunctionShape::new(params, return_type))
+}
+
+pub(crate) fn single_required_param_function_type(
+    db: &dyn TypeDatabase,
+    param_name: Atom,
+    param_type: TypeId,
+    return_type: TypeId,
+) -> TypeId {
+    function_type_from_parts(
+        db,
+        vec![ParamInfo::required(param_name, param_type)],
+        return_type,
+    )
+}
+
+pub(crate) fn function_type_with_mapped_component_types(
+    db: &dyn TypeDatabase,
+    shape: &FunctionShape,
+    mut map_type: impl FnMut(TypeId) -> TypeId,
+) -> TypeId {
+    let mapped = crate::query_boundaries::construct_signatures::map_function_shape_types(
+        shape,
+        |_, type_id| map_type(type_id),
+    )
+    .unwrap_or_else(|| shape.clone());
+    function_type_from_shape(db, mapped)
+}
+
+pub(crate) fn function_type_without_this(db: &dyn TypeDatabase, shape: &FunctionShape) -> TypeId {
+    function_type_from_shape(
+        db,
+        FunctionShape {
+            type_params: shape.type_params.clone(),
+            params: shape.params.clone(),
+            this_type: None,
+            return_type: shape.return_type,
+            type_predicate: shape.type_predicate,
+            is_constructor: shape.is_constructor,
+            is_method: false,
+        },
+    )
+}
+
+pub(crate) fn construct_signature_function_shape(sig: CallSignature) -> FunctionShape {
+    FunctionShape {
+        type_params: sig.type_params,
+        params: sig.params,
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor: true,
+        is_method: sig.is_method,
+    }
+}
+
+pub(crate) fn push_required_param(shape: &mut FunctionShape, name: Atom, type_id: TypeId) {
+    shape.params.push(ParamInfo::required(name, type_id));
+}
+
+pub(crate) fn synthetic_single_param_function_shape(
+    type_params: Vec<TypeParamInfo>,
+    param_name: Atom,
+    param_type: TypeId,
+    return_type: TypeId,
+) -> FunctionShape {
+    FunctionShape {
+        type_params,
+        params: vec![ParamInfo {
+            name: Some(param_name),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    }
+}
+
+pub(crate) fn instantiate_function_shape_preserving_unresolved_params(
+    db: &dyn QueryDatabase,
+    func: &FunctionShape,
+    substitution: &TypeSubstitution,
+) -> FunctionShape {
+    let mut full_substitution = substitution.clone();
+    for type_param in &func.type_params {
+        if full_substitution.get(type_param.name).is_none() {
+            let preserved_type_param = db.as_type_database().type_param(*type_param);
+            full_substitution.insert(type_param.name, preserved_type_param);
+        }
+    }
+    crate::query_boundaries::common::instantiate_function_shape(db, func, &full_substitution)
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

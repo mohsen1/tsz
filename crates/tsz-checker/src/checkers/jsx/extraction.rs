@@ -334,11 +334,10 @@ impl<'a> CheckerState<'a> {
             && !shape.is_constructor
         {
             return Some(
-                shape
-                    .params
-                    .first()
-                    .map(|p| p.type_id)
-                    .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+                crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                    self.ctx.types,
+                    &shape.params,
+                ),
             );
         }
 
@@ -352,11 +351,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(
-            non_generic[0]
-                .params
-                .first()
-                .map(|p| p.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![])),
+            crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                self.ctx.types,
+                &non_generic[0].params,
+            ),
         )
     }
 
@@ -1189,11 +1187,10 @@ impl<'a> CheckerState<'a> {
             if !shape.type_params.is_empty() {
                 return None;
             }
-            let props = shape
-                .params
-                .first()
-                .map(|p| p.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let props = crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                self.ctx.types,
+                &shape.params,
+            );
             // Check for type parameters BEFORE evaluation, since evaluation may
             // collapse `T & {children?: ReactNode}` into a concrete object type
             // that loses the type parameter information.
@@ -1234,11 +1231,10 @@ impl<'a> CheckerState<'a> {
             if non_generic.next().is_some() {
                 return None;
             }
-            let props = sig
-                .params
-                .first()
-                .map(|p| p.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let props = crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                self.ctx.types,
+                &sig.params,
+            );
             let raw_has_type_params =
                 crate::query_boundaries::common::contains_type_parameters(self.ctx.types, props);
             let evaluated = if should_preserve_contextual_application_shape(self.ctx.types, props) {
@@ -1320,11 +1316,10 @@ impl<'a> CheckerState<'a> {
             && !shape.is_constructor
             && !shape.type_params.is_empty()
         {
-            let props = shape
-                .params
-                .first()
-                .map(|param| param.type_id)
-                .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+            let props = crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                self.ctx.types,
+                &shape.params,
+            );
             return self.instantiate_jsx_generic_sfc_props_with_defaults(
                 component_type,
                 props,
@@ -1342,11 +1337,10 @@ impl<'a> CheckerState<'a> {
                 .collect();
             if generic.len() == 1 {
                 let sig = generic[0];
-                let props = sig
-                    .params
-                    .first()
-                    .map(|param| param.type_id)
-                    .unwrap_or_else(|| self.ctx.types.factory().object(vec![]));
+                let props = crate::query_boundaries::checkers::jsx::props_param_type_or_empty(
+                    self.ctx.types,
+                    &sig.params,
+                );
                 return self.instantiate_jsx_generic_sfc_props_with_defaults(
                     component_type,
                     props,
@@ -1651,8 +1645,11 @@ impl<'a> CheckerState<'a> {
                                 self.resolve_property_access_with_env(component_type, "propTypes"),
                                 PropertyAccessResult::Success { .. }
                             );
-                            has_managed_props_metadata
-                                .then(|| self.ctx.types.factory().object(vec![]))
+                            has_managed_props_metadata.then(|| {
+                                crate::query_boundaries::checkers::jsx::empty_props_object_type(
+                                    self.ctx.types,
+                                )
+                            })
                         }),
                 }
             }

@@ -108,7 +108,10 @@ impl<'a> CheckerState<'a> {
                 .cloned()
                 .collect();
             if filtered_props.len() != shape.properties.len() {
-                return self.ctx.types.factory().object(filtered_props);
+                return crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                    self.ctx.types,
+                    filtered_props,
+                );
             }
         }
 
@@ -209,7 +212,12 @@ impl<'a> CheckerState<'a> {
             return Some(props_type);
         }
 
-        Some(self.ctx.types.factory().object(properties))
+        Some(
+            crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                self.ctx.types,
+                properties,
+            ),
+        )
     }
 
     /// Get the property name from `JSX.ElementAttributesProperty`.

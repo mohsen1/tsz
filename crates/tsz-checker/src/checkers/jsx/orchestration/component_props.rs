@@ -21,39 +21,14 @@ impl<'a> CheckerState<'a> {
             return type_id;
         };
 
-        let normalized = tsz_solver::FunctionShape {
-            type_params: shape.type_params.clone(),
-            params: shape
-                .params
-                .iter()
-                .map(|param| tsz_solver::ParamInfo {
-                    name: param.name,
-                    type_id: crate::query_boundaries::common::unwrap_readonly_or_noinfer(
-                        self.ctx.types,
-                        param.type_id,
-                    )
-                    .unwrap_or(param.type_id),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            this_type: shape.this_type.map(|this_type| {
-                crate::query_boundaries::common::unwrap_readonly_or_noinfer(
-                    self.ctx.types,
-                    this_type,
-                )
-                .unwrap_or(this_type)
-            }),
-            return_type: crate::query_boundaries::common::unwrap_readonly_or_noinfer(
-                self.ctx.types,
-                shape.return_type,
-            )
-            .unwrap_or(shape.return_type),
-            type_predicate: shape.type_predicate,
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        };
-        self.ctx.types.factory().function(normalized)
+        crate::query_boundaries::checkers::jsx::function_type_with_mapped_component_types(
+            self.ctx.types,
+            shape.as_ref(),
+            |type_id| {
+                crate::query_boundaries::common::unwrap_readonly_or_noinfer(self.ctx.types, type_id)
+                    .unwrap_or(type_id)
+            },
+        )
     }
 
     pub(in crate::checkers_domain::jsx) fn refine_jsx_callable_contextual_type(
@@ -314,7 +289,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if !metadata_props.is_empty() {
-                return self.ctx.types.factory().object(metadata_props);
+                return crate::query_boundaries::checkers::jsx::object_type_from_properties(
+                    self.ctx.types,
+                    metadata_props,
+                );
             }
         }
 
@@ -1093,58 +1071,11 @@ impl<'a> CheckerState<'a> {
         func: &tsz_solver::FunctionShape,
         substitution: &crate::query_boundaries::common::TypeSubstitution,
     ) -> tsz_solver::FunctionShape {
-        let mut full_substitution = substitution.clone();
-        for type_param in &func.type_params {
-            if full_substitution.get(type_param.name).is_none() {
-                let preserved_type_param = self.ctx.types.factory().type_param(*type_param);
-                full_substitution.insert(type_param.name, preserved_type_param);
-            }
-        }
-        tsz_solver::FunctionShape {
-            params: func
-                .params
-                .iter()
-                .map(|param| tsz_solver::ParamInfo {
-                    name: param.name,
-                    type_id: crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        param.type_id,
-                        &full_substitution,
-                    ),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            return_type: crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                func.return_type,
-                &full_substitution,
-            ),
-            this_type: func.this_type.map(|this_type| {
-                crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    this_type,
-                    &full_substitution,
-                )
-            }),
-            type_params: vec![],
-            type_predicate: func.type_predicate.as_ref().map(|predicate| {
-                tsz_solver::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate.type_id.map(|tid| {
-                        crate::query_boundaries::common::instantiate_type(
-                            self.ctx.types,
-                            tid,
-                            &full_substitution,
-                        )
-                    }),
-                    parameter_index: predicate.parameter_index,
-                }
-            }),
-            is_constructor: func.is_constructor,
-            is_method: func.is_method,
-        }
+        crate::query_boundaries::checkers::jsx::instantiate_function_shape_preserving_unresolved_params(
+            self.ctx.types,
+            func,
+            substitution,
+        )
     }
 
     pub(in crate::checkers_domain::jsx) fn infer_jsx_generic_component_props_type(
@@ -1504,20 +1435,13 @@ impl<'a> CheckerState<'a> {
                 _ => continue,
             };
             let expected_type = self.refine_jsx_callable_contextual_type(expected_type);
-            let synthetic_shape = tsz_solver::FunctionShape {
-                type_params: function_shape.type_params.clone(),
-                params: vec![tsz_solver::ParamInfo {
-                    name: Some(self.ctx.types.intern_string(attr_name)),
-                    type_id: expected_type,
-                    optional: false,
-                    rest: false,
-                }],
-                this_type: None,
-                return_type: TypeId::VOID,
-                type_predicate: None,
-                is_constructor: false,
-                is_method: false,
-            };
+            let synthetic_shape =
+                crate::query_boundaries::checkers::jsx::synthetic_single_param_function_shape(
+                    function_shape.type_params.clone(),
+                    self.ctx.types.intern_string(attr_name),
+                    expected_type,
+                    TypeId::VOID,
+                );
             let attr_sub = {
                 let env = self.ctx.type_env.borrow();
                 crate::query_boundaries::checkers::call::compute_contextual_types_with_context(

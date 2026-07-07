@@ -30,6 +30,8 @@
 //!   constructing the raw solver resolver at call sites.
 //! - `jsdoc_construction_boundary_scans`: JSDoc type-resolution callers route
 //!   solver shape construction through `query_boundaries::jsdoc_construction`.
+//! - `jsx_construction_boundary_scans`: JSX checker callers route object and
+//!   function shape construction through `query_boundaries::checkers::jsx`.
 
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
@@ -43,6 +45,8 @@ mod cross_arena_delegation_scope_scans;
 mod index_signature_boundary_scans;
 #[path = "arch_source_scans/jsdoc_construction_boundary_scans.rs"]
 mod jsdoc_construction_boundary_scans;
+#[path = "arch_source_scans/jsx_construction_boundary_scans.rs"]
+mod jsx_construction_boundary_scans;
 #[path = "arch_source_scans/lazy_resolution_session_scans.rs"]
 mod lazy_resolution_session_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]

@@ -174,15 +174,8 @@ impl<'a> CheckerState<'a> {
         )?
         .first()?
         .clone();
-        let mut function_shape = tsz_solver::FunctionShape {
-            type_params: call_sig.type_params,
-            params: call_sig.params,
-            this_type: call_sig.this_type,
-            return_type: call_sig.return_type,
-            type_predicate: call_sig.type_predicate,
-            is_constructor: true,
-            is_method: call_sig.is_method,
-        };
+        let mut function_shape =
+            crate::query_boundaries::checkers::jsx::construct_signature_function_shape(call_sig);
         if function_shape.type_params.is_empty() {
             return None;
         }
@@ -223,9 +216,11 @@ impl<'a> CheckerState<'a> {
 
             if let Some(type_id) = synthesized_param_type {
                 let props_name = self.ctx.types.intern_string("props");
-                function_shape
-                    .params
-                    .push(tsz_solver::ParamInfo::required(props_name, type_id));
+                crate::query_boundaries::checkers::jsx::push_required_param(
+                    &mut function_shape,
+                    props_name,
+                    type_id,
+                );
             }
         }
 
