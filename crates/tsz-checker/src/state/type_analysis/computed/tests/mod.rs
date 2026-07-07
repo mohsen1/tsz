@@ -1,5 +1,6 @@
 use super::*;
 use crate::query_boundaries::common::QueryDatabase;
+use tsz_solver::Visibility;
 
 fn make_prop(name: tsz_common::Atom, declaration_order: u32) -> PropertyInfo {
     PropertyInfo {

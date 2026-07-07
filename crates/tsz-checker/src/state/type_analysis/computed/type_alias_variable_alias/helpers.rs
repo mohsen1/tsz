@@ -202,7 +202,6 @@ impl<'a> CheckerState<'a> {
             return Some(export_eq_type);
         }
 
-        use tsz_solver::PropertyInfo;
         let mut props: Vec<PropertyInfo> = Vec::new();
         for &(name, export_sym_id) in &ordered_exports {
             if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
@@ -215,25 +214,14 @@ impl<'a> CheckerState<'a> {
             };
             let prop_type = self.get_type_of_symbol(export_sym_id);
             let name_atom = self.ctx.types.intern_string(name);
-            props.push(PropertyInfo {
-                name: name_atom,
-                type_id: prop_type,
-                write_type: prop_type,
-                optional: false,
-                readonly: false,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
+            props.push(type_analysis_boundary::namespace_export_property(
+                name_atom,
+                prop_type,
                 declaration_order,
-                is_string_named: false,
-                is_symbol_named: false,
-                single_quoted_name: false,
-                non_widening: false,
-            });
+            ));
         }
         Self::normalize_namespace_export_declaration_order(&mut props);
-        let module_type = self.ctx.types.factory().object(props);
+        let module_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
         self.ctx.namespace_module_names.insert(
             module_type,
             self.imported_namespace_display_module_name(module_name),
@@ -250,24 +238,15 @@ impl<'a> CheckerState<'a> {
             "default",
             Some(self.ctx.current_file_idx),
         )?;
-        use tsz_solver::PropertyInfo;
         let default_type = self.get_type_of_symbol(default_sym_id);
-        let module_type = self.ctx.types.factory().object(vec![PropertyInfo {
-            name: self.ctx.types.intern_string("default"),
-            type_id: default_type,
-            write_type: default_type,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order: 1,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        }]);
+        let module_type = type_analysis_boundary::namespace_object_type(
+            self.ctx.types,
+            vec![type_analysis_boundary::namespace_export_property(
+                self.ctx.types.intern_string("default"),
+                default_type,
+                1,
+            )],
+        );
         self.ctx.namespace_module_names.insert(
             module_type,
             self.imported_namespace_display_module_name(module_name),

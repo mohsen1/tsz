@@ -110,6 +110,9 @@
 //! - `object_literal_result_construction_boundary_scans`: object-literal
 //!   result construction routes final object/index/union/intersection/mapped
 //!   surfaces through `query_boundaries::type_computation::object_literals`.
+//! - `module_type_analysis_surface_construction_boundary_scans`: module and
+//!   namespace type-analysis surfaces route through
+//!   `query_boundaries::state::type_analysis`.
 //! - `yield_context_construction_boundary_scans`: yield dispatch routes
 //!   `yield*` contextual generator/array construction through
 //!   `query_boundaries::dispatch`.
@@ -168,6 +171,8 @@ mod jsdoc_construction_boundary_scans;
 mod jsx_construction_boundary_scans;
 #[path = "arch_source_scans/lazy_resolution_session_scans.rs"]
 mod lazy_resolution_session_scans;
+#[path = "arch_source_scans/module_type_analysis_surface_construction_boundary_scans.rs"]
+mod module_type_analysis_surface_construction_boundary_scans;
 #[path = "arch_source_scans/object_flags_boundary_scans.rs"]
 mod object_flags_boundary_scans;
 #[path = "arch_source_scans/object_literal_annotation_walker_scans.rs"]
