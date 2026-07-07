@@ -340,7 +340,7 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(if changed {
-            self.ctx.types.factory().object_with_index(normalized)
+            query::object_type_from_shape(self.ctx.types, normalized)
         } else {
             ty
         })
@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
             index.readonly = false;
         }
 
-        let normalized_ty = self.ctx.types.factory().object_with_index(normalized);
+        let normalized_ty = query::object_type_from_shape(self.ctx.types, normalized);
         if let Some(props) = display_props {
             let mut props = props.as_ref().clone();
             for prop in &mut props {
@@ -442,7 +442,7 @@ impl<'a> CheckerState<'a> {
             prop.write_type = write;
         }
         if changed {
-            self.ctx.types.factory().object_with_index(normalized)
+            query::object_type_from_shape(self.ctx.types, normalized)
         } else {
             ty
         }
@@ -549,7 +549,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if changed {
-            self.ctx.types.factory().object_with_index(normalized)
+            query::object_type_from_shape(self.ctx.types, normalized)
         } else {
             ty
         }

@@ -233,18 +233,7 @@ impl<'a> CheckerState<'a> {
             if params.iter().zip(shape.params.iter()).all(|(a, b)| a == b) {
                 ty
             } else {
-                self.ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type: shape.this_type,
-                        return_type: shape.return_type,
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
+                query::function_type_with_params_replaced(self.ctx.types, shape.as_ref(), params)
             }
         } else {
             ty
@@ -329,19 +318,11 @@ impl<'a> CheckerState<'a> {
             let widened_return =
                 self.widen_fresh_object_literal_properties_for_display(shape.return_type);
             if widened_return != shape.return_type {
-                widened = self
-                    .ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params: shape.params.clone(),
-                        this_type: shape.this_type,
-                        return_type: widened_return,
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    });
+                widened = query::function_type_with_return_replaced(
+                    self.ctx.types,
+                    shape.as_ref(),
+                    widened_return,
+                );
             }
         } else if let Some(shape) =
             crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, widened)
@@ -367,7 +348,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if changed {
-                widened = self.ctx.types.factory().callable(widened_shape);
+                widened = query::callable_type_from_shape(self.ctx.types, widened_shape);
             }
         }
         if let Some(def_id) = constructor_display_def {
@@ -411,7 +392,7 @@ impl<'a> CheckerState<'a> {
         if !changed {
             return ty;
         }
-        self.ctx.types.factory().object_with_index(widened_shape)
+        query::object_type_from_shape(self.ctx.types, widened_shape)
     }
 
     pub(in crate::error_reporter) fn normalize_property_receiver_application_display_type(
@@ -556,7 +537,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if changed {
-            let new_ty = self.ctx.types.factory().object_with_index(normalized_shape);
+            let new_ty = query::object_type_from_shape(self.ctx.types, normalized_shape);
             if let Some(alias_origin) = self.ctx.types.get_display_alias(ty) {
                 let alias_origin =
                     self.normalize_property_receiver_application_display_type(alias_origin);
@@ -611,18 +592,12 @@ impl<'a> CheckerState<'a> {
             {
                 ty
             } else {
-                self.ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape {
-                        type_params: shape.type_params.clone(),
-                        params,
-                        this_type: shape.this_type,
-                        return_type,
-                        type_predicate: shape.type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    })
+                query::function_type_with_params_and_return_replaced(
+                    self.ctx.types,
+                    shape.as_ref(),
+                    params,
+                    return_type,
+                )
             }
         } else if let Some(members) = query::union_members(self.ctx.types, ty) {
             self.ctx.types.factory().union_preserve_members(
@@ -916,18 +891,12 @@ impl<'a> CheckerState<'a> {
                     {
                         evaluated
                     } else {
-                        self.ctx
-                            .types
-                            .factory()
-                            .function(tsz_solver::FunctionShape {
-                                type_params: shape.type_params.clone(),
-                                params,
-                                this_type: shape.this_type,
-                                return_type,
-                                type_predicate: shape.type_predicate,
-                                is_constructor: shape.is_constructor,
-                                is_method: shape.is_method,
-                            })
+                        query::function_type_with_params_and_return_replaced(
+                            self.ctx.types,
+                            shape.as_ref(),
+                            params,
+                            return_type,
+                        )
                     }
                 } else if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
@@ -982,14 +951,11 @@ impl<'a> CheckerState<'a> {
                         index.value_type = normalized;
                     }
                     if changed {
-                        let new_ty = self.ctx.types.factory().object_with_index(shape);
-                        if let Some(display_props) =
-                            self.ctx.types.get_display_properties(evaluated)
-                        {
-                            self.ctx
-                                .types
-                                .store_display_properties(new_ty, display_props.as_ref().clone());
-                        }
+                        let new_ty = query::object_type_preserving_display_properties(
+                            self.ctx.types,
+                            evaluated,
+                            shape,
+                        );
                         // Propagate display_alias so the formatter can still
                         // recover the named form (e.g., `Array<string>`) for
                         // types whose property types changed during normalization.
@@ -1202,18 +1168,12 @@ impl<'a> CheckerState<'a> {
                 {
                     evaluated
                 } else {
-                    self.ctx
-                        .types
-                        .factory()
-                        .function(tsz_solver::FunctionShape {
-                            type_params: shape.type_params.clone(),
-                            params,
-                            this_type: shape.this_type,
-                            return_type,
-                            type_predicate: shape.type_predicate,
-                            is_constructor: shape.is_constructor,
-                            is_method: shape.is_method,
-                        })
+                    query::function_type_with_params_and_return_replaced(
+                        self.ctx.types,
+                        shape.as_ref(),
+                        params,
+                        return_type,
+                    )
                 }
             } else if let Some(shape) =
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, evaluated)
@@ -1267,12 +1227,11 @@ impl<'a> CheckerState<'a> {
                     index.value_type = normalized;
                 }
                 if changed {
-                    let new_ty = self.ctx.types.factory().object_with_index(shape);
-                    if let Some(display_props) = self.ctx.types.get_display_properties(evaluated) {
-                        self.ctx
-                            .types
-                            .store_display_properties(new_ty, display_props.as_ref().clone());
-                    }
+                    let new_ty = query::object_type_preserving_display_properties(
+                        self.ctx.types,
+                        evaluated,
+                        shape,
+                    );
                     // Propagate display_alias and def-store registration so the
                     // formatter can still show named types (Date, Error, etc.)
                     // after normalization modifies property types.
@@ -1357,8 +1316,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let named_obj = self.ctx.types.factory().object(named_props);
-        let wildcard_obj = self.ctx.types.factory().object(wildcard_props);
+        let named_obj = query::object_type_from_properties(self.ctx.types, named_props);
+        let wildcard_obj = query::object_type_from_properties(self.ctx.types, wildcard_props);
         Some(format!(
             "{} & {}",
             self.format_type_diagnostic(named_obj),
@@ -1409,7 +1368,10 @@ impl<'a> CheckerState<'a> {
                 properties.push(property);
             }
 
-            Some(self.ctx.types.factory().object(properties))
+            Some(query::object_type_from_properties(
+                self.ctx.types,
+                properties,
+            ))
         } else if let Some(members) = query::intersection_members(self.ctx.types, ty) {
             let mut changed = false;
             let remapped: Vec<_> = members

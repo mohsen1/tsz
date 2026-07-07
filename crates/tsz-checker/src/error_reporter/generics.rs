@@ -7,13 +7,14 @@ use crate::query_boundaries::assignability::{
 };
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::CallSignature;
 use tsz_solver::TypeId;
-use tsz_solver::{CallSignature, CallableShape};
 
 impl<'a> CheckerState<'a> {
     fn widen_function_like_assertion_source(&self, type_id: TypeId) -> TypeId {
@@ -74,15 +75,12 @@ impl<'a> CheckerState<'a> {
                 .collect();
 
             if changed {
-                return self.ctx.types.callable(tsz_solver::CallableShape {
+                return diagnostic_query::callable_type_with_signatures_replaced(
+                    self.ctx.types,
+                    shape.as_ref(),
                     call_signatures,
                     construct_signatures,
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: shape.symbol,
-                    is_abstract: shape.is_abstract,
-                });
+                );
             }
         }
 
@@ -169,16 +167,9 @@ impl<'a> CheckerState<'a> {
         let prototype_symbol_name = prototype_symbol.escaped_name.as_str();
         let prototype_display = format!("{prototype_symbol_name}<any>");
         let call_return_type = call_sig.return_type;
-        let call_display =
-            self.format_type_for_assignability_message(self.ctx.types.callable(CallableShape {
-                call_signatures: vec![call_sig],
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            }));
+        let call_display = self.format_type_for_assignability_message(
+            diagnostic_query::call_only_callable_type(self.ctx.types, vec![call_sig]),
+        );
         let construct_display = format!(
             "{prototype_symbol_name}<{}>",
             self.format_type_for_assignability_message(call_return_type)
@@ -222,17 +213,9 @@ impl<'a> CheckerState<'a> {
 
         let symbol_name = symbol.escaped_name.as_str();
         let call_sig = &shape.call_signatures[0];
-        let call_display = self.format_type_for_assignability_message(self.ctx.types.callable(
-            tsz_solver::CallableShape {
-                call_signatures: vec![call_sig.clone()],
-                construct_signatures: Vec::new(),
-                properties: Vec::new(),
-                string_index: None,
-                number_index: None,
-                symbol: None,
-                is_abstract: false,
-            },
-        ));
+        let call_display = self.format_type_for_assignability_message(
+            diagnostic_query::call_only_callable_type(self.ctx.types, vec![call_sig.clone()]),
+        );
         let call_return_display = self.format_type_for_assignability_message(call_sig.return_type);
         let prototype_display = format!("{symbol_name}<any>");
         let construct_display = format!("{symbol_name}<{call_return_display}>");
