@@ -61,11 +61,16 @@
 //! - `await_promise_construction_boundary_scans`: await checking routes
 //!   contextual promise operand and `Awaited<T>` join construction through
 //!   `query_boundaries::checkers::promise`.
+//! - `call_inference_construction_boundary_scans`: call inference routes
+//!   partial object/function/tuple inference construction through
+//!   `query_boundaries::checkers::call`.
 
 #[path = "arch_source_scans/await_promise_construction_boundary_scans.rs"]
 mod await_promise_construction_boundary_scans;
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
+#[path = "arch_source_scans/call_inference_construction_boundary_scans.rs"]
+mod call_inference_construction_boundary_scans;
 #[path = "arch_source_scans/class_instance_walk_state_scans.rs"]
 mod class_instance_walk_state_scans;
 #[path = "arch_source_scans/class_partial_constructor_construction_boundary_scans.rs"]

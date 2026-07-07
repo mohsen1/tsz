@@ -1,6 +1,7 @@
 //! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::checkers::call as call_query;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{Symbol, SymbolId};
@@ -1387,7 +1388,7 @@ impl<'a> CheckerState<'a> {
                         });
 
                     let name_atom = self.ctx.types.intern_string(&name);
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                    properties.push((name_atom, value_type));
                 }
             }
             // Shorthand property: { x }
@@ -1399,7 +1400,7 @@ impl<'a> CheckerState<'a> {
                 let name = ident.escaped_text.clone();
                 let value_type = self.get_type_of_node(shorthand.name);
                 let name_atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
             // Methods with all params annotated are not context-sensitive
             else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
@@ -1412,7 +1413,7 @@ impl<'a> CheckerState<'a> {
                 let value_type =
                     self.get_type_of_function_with_request(elem_idx, &TypingRequest::NONE);
                 let name_atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
             // Accessors are always context-sensitive — skip them
         }
@@ -1421,14 +1422,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let object_type = self.ctx.types.factory().object_fresh(properties);
+        let object_type =
+            call_query::call_inference_partial_object_type(self.ctx.types, properties);
         if wrap_in_zero_arg_function {
-            Some(
-                self.ctx
-                    .types
-                    .factory()
-                    .function(tsz_solver::FunctionShape::new(Vec::new(), object_type)),
-            )
+            Some(call_query::call_inference_zero_arg_function_type(
+                self.ctx.types,
+                object_type,
+            ))
         } else {
             Some(object_type)
         }
@@ -1493,7 +1493,7 @@ impl<'a> CheckerState<'a> {
                     // of the partial type).
                     let value_type =
                         self.get_type_of_node_with_request(prop.initializer, &TypingRequest::NONE);
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                    properties.push((name_atom, value_type));
                     continue;
                 }
 
@@ -1515,7 +1515,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let value_type =
                         self.speculative_type_of_node(prop.initializer, &TypingRequest::NONE);
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                    properties.push((name_atom, value_type));
                     continue;
                 }
 
@@ -1530,7 +1530,7 @@ impl<'a> CheckerState<'a> {
                         type_param_names,
                     )
                 {
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                    properties.push((name_atom, nested_partial));
                     continue;
                 }
 
@@ -1548,7 +1548,7 @@ impl<'a> CheckerState<'a> {
                     mapped_id,
                     type_param_names,
                 ) {
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                    properties.push((name_atom, nested_partial));
                     continue;
                 }
 
@@ -1596,7 +1596,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
             // Shorthand properties are never contextually sensitive
             else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
@@ -1607,7 +1607,7 @@ impl<'a> CheckerState<'a> {
                 let name = ident.escaped_text.clone();
                 let value_type = self.get_type_of_node(shorthand.name);
                 let name_atom = self.ctx.types.intern_string(&name);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
             // Method declarations: check similarly to lambda properties
             else if elem_node.kind == syntax_kind_ext::METHOD_DECLARATION
@@ -1652,7 +1652,7 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_type = self.speculative_type_of_function(elem_idx, &request);
 
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
         }
 
@@ -1660,7 +1660,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.ctx.types.factory().object_fresh(properties))
+        Some(call_query::call_inference_partial_object_type(
+            self.ctx.types,
+            properties,
+        ))
     }
 
     fn inference_callable_context_for_property_target(
@@ -1800,7 +1803,7 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
 
                 // Create a substitution mapping the mapped type's key param to this literal key
-                let key_literal = self.ctx.types.literal_string(&name);
+                let key_literal = call_query::call_inference_string_key_type(self.ctx.types, &name);
                 let subst = common::TypeSubstitution::single(type_param_name, key_literal);
 
                 // Instantiate the template with this key
@@ -1823,7 +1826,7 @@ impl<'a> CheckerState<'a> {
                         self.extract_non_sensitive_object_type(prop.initializer)
                     })
                 {
-                    properties.push(tsz_solver::PropertyInfo::new(name_atom, nested_partial));
+                    properties.push((name_atom, nested_partial));
                 }
             }
             // Handle method declarations - for mapped types, these typically aren't at this level
@@ -1844,7 +1847,7 @@ impl<'a> CheckerState<'a> {
 
                 // For thisless methods, compute the return type directly
                 let value_type = self.speculative_type_of_function(elem_idx, &TypingRequest::NONE);
-                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                properties.push((name_atom, value_type));
             }
         }
 
@@ -1852,7 +1855,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.ctx.types.factory().object_fresh(properties))
+        Some(call_query::call_inference_partial_object_type(
+            self.ctx.types,
+            properties,
+        ))
     }
 
     /// Like `extract_inference_contributing_object_type` but for array/tuple literals.
@@ -1894,12 +1900,7 @@ impl<'a> CheckerState<'a> {
             if !is_contextually_sensitive(self, elem_idx) {
                 // Non-sensitive: compute type without context
                 let value_type = self.get_type_of_node_with_request(elem_idx, &TypingRequest::NONE);
-                elements.push(tsz_solver::TupleElement {
-                    type_id: value_type,
-                    optional: false,
-                    rest: false,
-                    name: None,
-                });
+                elements.push(value_type);
                 any_contributed = true;
                 continue;
             }
@@ -1917,21 +1918,11 @@ impl<'a> CheckerState<'a> {
                     elem_idx,
                     &TypingRequest::with_contextual_type(target_elem_type),
                 );
-                elements.push(tsz_solver::TupleElement {
-                    type_id: value_type,
-                    optional: false,
-                    rest: false,
-                    name: None,
-                });
+                elements.push(value_type);
                 any_contributed = true;
             } else {
                 // Can't contribute — use ANY as placeholder
-                elements.push(tsz_solver::TupleElement {
-                    type_id: TypeId::ANY,
-                    optional: false,
-                    rest: false,
-                    name: None,
-                });
+                elements.push(TypeId::ANY);
             }
         }
 
@@ -1939,7 +1930,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some(self.ctx.types.factory().tuple(elements))
+        Some(call_query::call_inference_tuple_type(
+            self.ctx.types,
+            elements,
+        ))
     }
 
     /// Check if a type contains any of the specified type parameter names.
