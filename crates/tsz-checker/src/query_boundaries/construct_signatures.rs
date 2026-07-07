@@ -17,6 +17,7 @@
 //! the one checker module that assembles `CallSignature` data from AST
 //! signatures.
 
+use tsz_binder::SymbolId;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, IndexSignature, ParamInfo,
@@ -272,6 +273,38 @@ pub(crate) fn callable_type_from_shape(db: &dyn TypeDatabase, shape: CallableSha
     db.callable(shape)
 }
 
+pub(crate) fn declared_method_function_type(db: &dyn TypeDatabase, sig: CallSignature) -> TypeId {
+    db.function(FunctionShape {
+        type_params: sig.type_params,
+        params: sig.params,
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor: false,
+        is_method: true,
+    })
+}
+
+pub(crate) fn declared_callable_surface_type(
+    db: &dyn TypeDatabase,
+    call_signatures: Vec<CallSignature>,
+    construct_signatures: Vec<CallSignature>,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+    is_abstract: bool,
+) -> TypeId {
+    db.callable(CallableShape {
+        call_signatures,
+        construct_signatures,
+        properties,
+        string_index,
+        number_index,
+        symbol,
+        is_abstract,
+    })
+}
 
 /// Re-intern `base` with the given signature lists, preserving properties,
 /// index signatures, nominal `symbol`, and abstractness.

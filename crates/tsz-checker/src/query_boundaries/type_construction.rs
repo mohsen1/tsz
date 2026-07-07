@@ -11,8 +11,131 @@ use tsz_solver::construction::TypeDatabase;
 #[cfg(test)]
 pub(crate) use tsz_solver::construction::TypeInterner;
 use tsz_solver::{
-    IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind, TypeId,
+    IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind, TypeId, Visibility,
 };
+
+pub(crate) struct DeclaredSurfaceProperty {
+    pub(crate) name: Atom,
+    pub(crate) type_id: TypeId,
+    pub(crate) write_type: TypeId,
+    pub(crate) optional: bool,
+    pub(crate) readonly: bool,
+    pub(crate) is_method: bool,
+    pub(crate) declaration_order: u32,
+    pub(crate) is_string_named: bool,
+    pub(crate) is_symbol_named: bool,
+    pub(crate) single_quoted_name: bool,
+}
+
+pub(crate) const fn declared_surface_property(input: DeclaredSurfaceProperty) -> PropertyInfo {
+    PropertyInfo {
+        name: input.name,
+        type_id: input.type_id,
+        write_type: input.write_type,
+        optional: input.optional,
+        readonly: input.readonly,
+        is_method: input.is_method,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: input.declaration_order,
+        is_string_named: input.is_string_named,
+        is_symbol_named: input.is_symbol_named,
+        single_quoted_name: input.single_quoted_name,
+        non_widening: false,
+    }
+}
+
+pub(crate) const fn declared_index_signature(
+    key_type: TypeId,
+    value_type: TypeId,
+    readonly: bool,
+    param_name: Option<Atom>,
+) -> IndexSignature {
+    IndexSignature {
+        key_type,
+        value_type,
+        readonly,
+        param_name,
+    }
+}
+
+pub(crate) fn declared_object_with_symbol(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    symbol: Option<SymbolId>,
+) -> TypeId {
+    db.object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol)
+}
+
+pub(crate) fn declared_object_with_indexes(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+    symbol: Option<SymbolId>,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol_index,
+        symbol,
+        ..ObjectShape::default()
+    })
+}
+
+pub(crate) fn type_literal_object_with_late_bound(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    has_late_bound_members: bool,
+) -> TypeId {
+    let mut flags = ObjectFlags::empty();
+    if has_late_bound_members {
+        flags |= ObjectFlags::HAS_LATE_BOUND_MEMBERS;
+    }
+    let result = db.object_with_flags_and_symbol(properties, flags, None);
+    db.mark_literal_object_annotation(result);
+    result
+}
+
+pub(crate) fn type_literal_object_with_indexes_and_late_bound(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+    string_index: Option<IndexSignature>,
+    number_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+    has_late_bound_members: bool,
+) -> TypeId {
+    let mut shape = ObjectShape {
+        properties,
+        string_index,
+        number_index,
+        symbol_index,
+        ..ObjectShape::default()
+    };
+    if has_late_bound_members {
+        shape.mark_has_late_bound_members();
+    }
+    let result = db.object_with_index(shape);
+    db.mark_literal_object_annotation(result);
+    result
+}
+
+pub(crate) fn type_literal_number_index_member(
+    db: &dyn TypeDatabase,
+    index: IndexSignature,
+) -> TypeId {
+    db.object_with_index(ObjectShape {
+        number_index: Some(index),
+        ..ObjectShape::default()
+    })
+}
+
+pub(crate) fn raw_intersection_pair(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> TypeId {
+    db.intersect_types_raw2(left, right)
+}
 
 /// Intern an object type carrying only a string index signature
 /// (`{ [key: string]: V }`).

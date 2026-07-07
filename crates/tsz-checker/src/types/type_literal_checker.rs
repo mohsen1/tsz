@@ -4,6 +4,9 @@
 //! callable types with call/construct signatures.
 
 use super::type_node_helpers::type_node_includes_explicit_undefined;
+use crate::query_boundaries::{
+    construct_signatures as signature_boundary, type_construction as construction_boundary,
+};
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -12,7 +15,6 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 
 // =============================================================================
 // Type Literal Type Checking
@@ -1319,22 +1321,20 @@ impl<'a> CheckerState<'a> {
                                     type_id
                                 };
                             member_order += 1;
-                            properties.push(PropertyInfo {
-                                name: name_atom,
-                                type_id,
-                                write_type,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: false,
-                                is_class_prototype: false,
-                                visibility: Visibility::Public,
-                                parent_id: None,
-                                declaration_order: member_order,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                                non_widening: false,
-                            });
+                            properties.push(construction_boundary::declared_surface_property(
+                                construction_boundary::DeclaredSurfaceProperty {
+                                    name: name_atom,
+                                    type_id,
+                                    write_type,
+                                    optional: sig.question_token,
+                                    readonly: self.has_readonly_modifier(&sig.modifiers),
+                                    is_method: false,
+                                    declaration_order: member_order,
+                                    is_string_named,
+                                    is_symbol_named,
+                                    single_quoted_name,
+                                },
+                            ));
                         }
                     }
                     _ => {}
@@ -1444,12 +1444,9 @@ impl<'a> CheckerState<'a> {
                     .get(param_data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
-                let info = IndexSignature {
-                    key_type,
-                    value_type,
-                    readonly,
-                    param_name,
-                };
+                let info = construction_boundary::declared_index_signature(
+                    key_type, value_type, readonly, param_name,
+                );
                 if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         if number_index.is_none() {
@@ -1624,22 +1621,20 @@ impl<'a> CheckerState<'a> {
             let (is_string_named, single_quoted_name) = primary_name_idx
                 .map(|name_idx| self.ctx.arena.string_property_name_flags(name_idx))
                 .unwrap_or((false, false));
-            properties.push(PropertyInfo {
-                name,
-                type_id: read_type,
-                write_type,
-                optional: false,
-                readonly,
-                is_method: false,
-                is_class_prototype: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-                declaration_order: accessor.declaration_order,
-                is_string_named,
-                is_symbol_named,
-                single_quoted_name,
-                non_widening: false,
-            });
+            properties.push(construction_boundary::declared_surface_property(
+                construction_boundary::DeclaredSurfaceProperty {
+                    name,
+                    type_id: read_type,
+                    write_type,
+                    optional: false,
+                    readonly,
+                    is_method: false,
+                    declaration_order: accessor.declaration_order,
+                    is_string_named,
+                    is_symbol_named,
+                    single_quoted_name,
+                },
+            ));
         }
 
         // Merge overloaded method signatures into properties.
@@ -1661,22 +1656,20 @@ impl<'a> CheckerState<'a> {
                         sigs.into_iter().map(|entry| entry.signature).collect();
                     call_only_callable_type(self.ctx.types, merged_sigs)
                 };
-                properties.push(PropertyInfo {
-                    name: key.name,
-                    type_id: method_type,
-                    write_type: method_type,
-                    optional,
-                    readonly,
-                    is_method: true,
-                    is_class_prototype: false,
-                    visibility: Visibility::Public,
-                    parent_id: None,
-                    declaration_order: key.decl_order,
-                    is_string_named: key.is_string_named,
-                    is_symbol_named,
-                    single_quoted_name: key.single_quoted_name,
-                    non_widening: false,
-                });
+                properties.push(construction_boundary::declared_surface_property(
+                    construction_boundary::DeclaredSurfaceProperty {
+                        name: key.name,
+                        type_id: method_type,
+                        write_type: method_type,
+                        optional,
+                        readonly,
+                        is_method: true,
+                        declaration_order: key.decl_order,
+                        is_string_named: key.is_string_named,
+                        is_symbol_named,
+                        single_quoted_name: key.single_quoted_name,
+                    },
+                ));
             }
         }
 
