@@ -8,7 +8,6 @@ use super::computation_support::{
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::index_signature::IndexSignature;
-use crate::query_boundaries::type_computation::object_literals;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;

@@ -6,13 +6,13 @@
 //! - Merging augmented members into the target interface/namespace type
 //! - Updating cached symbol types for self-referential augmentations
 
+use crate::query_boundaries::module_augmentation as module_augmentation_boundary;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tsz_binder::{ModuleAugmentation, symbol_flags};
 use tsz_solver::TypeId;
-use tsz_solver::Visibility;
 
 impl<'a> CheckerState<'a> {
     fn module_augmentation_key_candidates(&self, module_spec: &str) -> Vec<String> {
@@ -656,8 +656,6 @@ impl<'a> CheckerState<'a> {
             METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, PROPERTY_SIGNATURE,
             VARIABLE_STATEMENT,
         };
-        use tsz_solver::PropertyInfo;
-        use tsz_solver::TypeId;
 
         let augmentation_decls =
             self.get_module_augmentation_declarations(module_spec, interface_name);
@@ -766,22 +764,14 @@ impl<'a> CheckerState<'a> {
                         };
 
                         aug_member_order += 1;
-                        members.push(PropertyInfo {
-                            name: self.ctx.types.intern_string(&member_name),
+                        members.push(module_augmentation_boundary::augmentation_member_property(
+                            self.ctx.types.intern_string(&member_name),
                             type_id,
-                            write_type: type_id,
-                            optional: sig.question_token,
-                            readonly: self.has_readonly_modifier(&sig.modifiers),
-                            is_method: member_node.kind == METHOD_SIGNATURE,
-                            is_class_prototype: false,
-                            visibility: Visibility::Public,
-                            parent_id: None,
-                            declaration_order: aug_member_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                            non_widening: false,
-                        });
+                            sig.question_token,
+                            self.has_readonly_modifier(&sig.modifiers),
+                            member_node.kind == METHOD_SIGNATURE,
+                            aug_member_order,
+                        ));
                     }
                 }
                 if let Some(updates) = interface_type_param_updates {
@@ -812,22 +802,14 @@ impl<'a> CheckerState<'a> {
                     };
 
                     aug_member_order += 1;
-                    members.push(PropertyInfo {
-                        name: self.ctx.types.intern_string(&member_name),
-                        type_id: TypeId::ANY,
-                        write_type: TypeId::ANY,
-                        optional: false,
-                        readonly: true,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: aug_member_order,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                        non_widening: false,
-                    });
+                    members.push(
+                        module_augmentation_boundary::augmentation_any_member_property(
+                            self.ctx.types.intern_string(&member_name),
+                            true,
+                            false,
+                            aug_member_order,
+                        ),
+                    );
                 }
                 continue;
             }
@@ -878,25 +860,14 @@ impl<'a> CheckerState<'a> {
                                                 TypeId::ANY
                                             };
 
-                                            members.push(PropertyInfo {
-                                                name: self
-                                                    .ctx
-                                                    .types
-                                                    .intern_string(&id_data.escaped_text),
-                                                type_id,
-                                                write_type: type_id,
-                                                optional: false,
-                                                readonly: false,
-                                                is_method: false,
-                                                is_class_prototype: false,
-                                                visibility: Visibility::Public,
-                                                parent_id: None,
-                                                declaration_order: 0,
-                                                is_string_named: false,
-                                                is_symbol_named: false,
-                                                single_quoted_name: false,
-                                                non_widening: false,
-                                            });
+                                            members.push(
+                                                module_augmentation_boundary::augmentation_value_member_property(
+                                                    self.ctx.types.intern_string(
+                                                        &id_data.escaped_text,
+                                                    ),
+                                                    type_id,
+                                                ),
+                                            );
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
                                         && let Some(decl) =
@@ -912,25 +883,14 @@ impl<'a> CheckerState<'a> {
                                             TypeId::ANY
                                         };
 
-                                        members.push(PropertyInfo {
-                                            name: self
-                                                .ctx
-                                                .types
-                                                .intern_string(&id_data.escaped_text),
-                                            type_id,
-                                            write_type: type_id,
-                                            optional: false,
-                                            readonly: false,
-                                            is_method: false,
-                                            is_class_prototype: false,
-                                            visibility: Visibility::Public,
-                                            parent_id: None,
-                                            declaration_order: 0,
-                                            is_string_named: false,
-                                            is_symbol_named: false,
-                                            single_quoted_name: false,
-                                            non_widening: false,
-                                        });
+                                        members.push(
+                                            module_augmentation_boundary::augmentation_value_member_property(
+                                                self.ctx
+                                                    .types
+                                                    .intern_string(&id_data.escaped_text),
+                                                type_id,
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -940,22 +900,11 @@ impl<'a> CheckerState<'a> {
                                 && let Some(name_node) = arena.get(func.name)
                                 && let Some(id_data) = arena.get_identifier(name_node)
                             {
-                                members.push(PropertyInfo {
-                                    name: self.ctx.types.intern_string(&id_data.escaped_text),
-                                    type_id: TypeId::ANY,
-                                    write_type: TypeId::ANY,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: true,
-                                    is_class_prototype: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                    is_string_named: false,
-                                    is_symbol_named: false,
-                                    single_quoted_name: false,
-                                    non_widening: false,
-                                });
+                                members.push(
+                                    module_augmentation_boundary::augmentation_any_method_member_property(
+                                        self.ctx.types.intern_string(&id_data.escaped_text),
+                                    ),
+                                );
                             }
                         }
                         INTERFACE_DECLARATION => {
@@ -963,22 +912,11 @@ impl<'a> CheckerState<'a> {
                                 && let Some(name_node) = arena.get(iface.name)
                                 && let Some(id_data) = arena.get_identifier(name_node)
                             {
-                                members.push(PropertyInfo {
-                                    name: self.ctx.types.intern_string(&id_data.escaped_text),
-                                    type_id: TypeId::ANY,
-                                    write_type: TypeId::ANY,
-                                    optional: false,
-                                    readonly: false,
-                                    is_method: false,
-                                    is_class_prototype: false,
-                                    visibility: Visibility::Public,
-                                    parent_id: None,
-                                    declaration_order: 0,
-                                    is_string_named: false,
-                                    is_symbol_named: false,
-                                    single_quoted_name: false,
-                                    non_widening: false,
-                                });
+                                members.push(
+                                    module_augmentation_boundary::augmentation_any_value_member_property(
+                                        self.ctx.types.intern_string(&id_data.escaped_text),
+                                    ),
+                                );
                             }
                         }
                         EXPORT_DECLARATION => {
@@ -1017,25 +955,14 @@ impl<'a> CheckerState<'a> {
                                                 TypeId::ANY
                                             };
 
-                                            members.push(PropertyInfo {
-                                                name: self
-                                                    .ctx
-                                                    .types
-                                                    .intern_string(&id_data.escaped_text),
-                                                type_id,
-                                                write_type: type_id,
-                                                optional: false,
-                                                readonly: false,
-                                                is_method: false,
-                                                is_class_prototype: false,
-                                                visibility: Visibility::Public,
-                                                parent_id: None,
-                                                declaration_order: 0,
-                                                is_string_named: false,
-                                                is_symbol_named: false,
-                                                single_quoted_name: false,
-                                                non_widening: false,
-                                            });
+                                            members.push(
+                                                module_augmentation_boundary::augmentation_value_member_property(
+                                                    self.ctx.types.intern_string(
+                                                        &id_data.escaped_text,
+                                                    ),
+                                                    type_id,
+                                                ),
+                                            );
                                         }
                                     } else if let Some(decl_node) = arena.get(decl_idx)
                                         && let Some(decl) =
@@ -1051,25 +978,14 @@ impl<'a> CheckerState<'a> {
                                             TypeId::ANY
                                         };
 
-                                        members.push(PropertyInfo {
-                                            name: self
-                                                .ctx
-                                                .types
-                                                .intern_string(&id_data.escaped_text),
-                                            type_id,
-                                            write_type: type_id,
-                                            optional: false,
-                                            readonly: false,
-                                            is_method: false,
-                                            is_class_prototype: false,
-                                            visibility: Visibility::Public,
-                                            parent_id: None,
-                                            declaration_order: 0,
-                                            is_string_named: false,
-                                            is_symbol_named: false,
-                                            single_quoted_name: false,
-                                            non_widening: false,
-                                        });
+                                        members.push(
+                                            module_augmentation_boundary::augmentation_value_member_property(
+                                                self.ctx
+                                                    .types
+                                                    .intern_string(&id_data.escaped_text),
+                                                type_id,
+                                            ),
+                                        );
                                     }
                                 }
                             }
@@ -1136,7 +1052,13 @@ impl<'a> CheckerState<'a> {
         if type_args.is_empty() {
             Some(base_type)
         } else {
-            Some(self.ctx.types.factory().application(base_type, type_args))
+            Some(
+                module_augmentation_boundary::self_reference_application_type(
+                    self.ctx.types,
+                    base_type,
+                    type_args,
+                ),
+            )
         }
     }
 
@@ -1267,7 +1189,6 @@ impl<'a> CheckerState<'a> {
             }
             _ => None,
         };
-        let factory = self.ctx.types.factory();
 
         let result = match kind {
             AugmentationTargetKind::Object(shape_id) => {
@@ -1286,7 +1207,11 @@ impl<'a> CheckerState<'a> {
                 // object-level flags so the augmented type keeps its canonical
                 // declaration name (e.g. `Tool` rather than an expanded
                 // `{ ... }` literal) and stays a single interned identity.
-                let augmented = factory.object_with_shape_metadata(merged_properties, &base_shape);
+                let augmented = self
+                    .ctx
+                    .types
+                    .factory()
+                    .object_with_shape_metadata(merged_properties, &base_shape);
                 if let Some(def_id) = base_def_id
                     && base_shape.symbol.is_some()
                     && self
@@ -1316,7 +1241,10 @@ impl<'a> CheckerState<'a> {
                         .definition_store
                         .register_module_augmentation_symbol_def_if_enabled(symbol.0, def_id);
                 }
-                factory.object_with_shape_metadata(merged_properties, &base_shape)
+                self.ctx
+                    .types
+                    .factory()
+                    .object_with_shape_metadata(merged_properties, &base_shape)
             }
             AugmentationTargetKind::Callable(shape_id) => {
                 let base_shape = self.ctx.types.callable_shape(shape_id);
@@ -1348,28 +1276,28 @@ impl<'a> CheckerState<'a> {
                     }
                     properties
                 };
-                factory.callable(CallableShape {
-                    call_signatures: base_shape.call_signatures.clone(),
-                    construct_signatures: base_shape.construct_signatures.clone(),
+                module_augmentation_boundary::augmented_callable_type(
+                    self.ctx.types,
+                    base_shape.call_signatures.clone(),
+                    base_shape.construct_signatures.clone(),
                     properties,
-                    string_index: base_shape.string_index,
-                    number_index: base_shape.number_index,
                     // Preserve the callable's nominal identity and abstractness
                     // so the augmented class/namespace keeps its declaration name.
-                    symbol: base_shape.symbol,
-                    is_abstract: base_shape.is_abstract,
-                })
+                    base_shape.string_index,
+                    base_shape.number_index,
+                    base_shape.symbol,
+                    base_shape.is_abstract,
+                )
             }
             AugmentationTargetKind::Other => {
                 // For types that still can't be decomposed after evaluation (e.g.
                 // intrinsics, intersections), create an intersection of the base type
                 // and a new object with the augmentation members.
-                if !augmentation_members.is_empty() {
-                    let aug_object = factory.object(augmentation_members);
-                    factory.intersection2(base_type, aug_object)
-                } else {
-                    base_type
-                }
+                module_augmentation_boundary::other_target_with_augmentation_members(
+                    self.ctx.types,
+                    base_type,
+                    augmentation_members,
+                )
             }
         };
 
