@@ -52,6 +52,9 @@
 //! - `binding_pattern_construction_boundary_scans`: binding/destructuring
 //!   pattern callers route contextual tuple/object/property/union construction
 //!   through `query_boundaries::binding_patterns`.
+//! - `type_query_construction_boundary_scans`: const value/type-query callers
+//!   route literal/property/object/tuple construction through
+//!   `query_boundaries::type_query_construction`.
 
 #[path = "arch_source_scans/binding_pattern_construction_boundary_scans.rs"]
 mod binding_pattern_construction_boundary_scans;
@@ -95,5 +98,7 @@ mod spelling_suggestion_gateway_scans;
 mod strict_bind_call_apply_construction_boundary_scans;
 #[path = "arch_source_scans/type_guard_walk_state.rs"]
 mod type_guard_walk_state;
+#[path = "arch_source_scans/type_query_construction_boundary_scans.rs"]
+mod type_query_construction_boundary_scans;
 #[path = "arch_source_scans/type_reference_depth_session_scans.rs"]
 mod type_reference_depth_session_scans;
