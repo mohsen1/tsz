@@ -1176,6 +1176,15 @@ pub(crate) fn generalized_literal_source_for_display(
     }
 }
 
+/// Whether a relation target could hold a top-level singleton (unit) type —
+/// tsc's `typeCouldHaveTopLevelSingletonTypes`. Exposed for display decisions
+/// that need the target gate separately from
+/// [`generalized_literal_source_for_display`] (e.g. enum-member sources whose
+/// base-enum widening needs the checker's enum environment).
+pub(crate) fn relation_target_could_hold_singleton(db: &dyn TypeDatabase, target: TypeId) -> bool {
+    tsz_solver::type_queries::type_could_have_top_level_singleton_types(db, target)
+}
+
 /// Apparent type of an element-access receiver for the implicit-any index
 /// diagnostic (`TS7053`). `tsc` renders `typeToString(getApparentType(objectType))`,
 /// so the `object` intrinsic prints as its apparent type `{}` and a bare

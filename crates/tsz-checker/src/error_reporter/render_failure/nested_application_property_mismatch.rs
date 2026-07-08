@@ -259,18 +259,43 @@ impl<'a> CheckerState<'a> {
             let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth);
             Self::push_nested_chain(diag, leaf_diag, depth);
         } else {
-            let s = self.format_type_diagnostic(leaf_src);
-            let t = self.format_type_diagnostic(leaf_tgt);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&s, &t],
-            );
+            let message = self.generalized_leaf_mismatch_message(leaf_src, leaf_tgt);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 depth,
             );
         }
+    }
+
+    /// Shared core of the two leaf-message helpers: generalize the literal
+    /// source ([`Self::generalize_nested_relation_source_for_display`]) and
+    /// format both sides. Returns the generalized source id so callers that
+    /// disambiguate the pair pass the type actually rendered.
+    fn generalized_leaf_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (TypeId, String, String) {
+        let display_source = self.generalize_nested_relation_source_for_display(source, target);
+        let source_str = self.format_type_diagnostic(display_source);
+        let target_str = self.format_type_diagnostic(target);
+        (display_source, source_str, target_str)
+    }
+
+    /// Format the plain `Type 'S' is not assignable to type 'T'.` leaf line
+    /// for a nested relation pair. Unlike [`Self::element_mismatch_message`]
+    /// this variant skips the same-name pair disambiguation, preserving the
+    /// exact output of the leaf sites it factored out — whether tsc
+    /// disambiguates same-named nominal pairs at these particular leaves is
+    /// unverified; converging the two helpers needs a tsc witness first
+    /// (#15628).
+    fn generalized_leaf_mismatch_message(&mut self, source: TypeId, target: TypeId) -> String {
+        let (_, source_str, target_str) = self.generalized_leaf_pair(source, target);
+        format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        )
     }
 
     pub(super) fn render_property_type_mismatch(
@@ -662,22 +687,12 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(inner, source_return, target_return, idx, leaf_depth);
             Self::push_rebased_subdiagnostic(diag, sub, leaf_depth, leaf_depth);
         } else {
-            let source_str = self.format_type_diagnostic(source_return);
-            let target_str = self.format_type_diagnostic(target_return);
-            let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                source_return,
-                target_return,
-                source_str,
-                target_str,
-            );
+            let message = self.element_mismatch_message(source_return, target_return);
             let (start, length) = (diag.start, diag.length);
             diag.push_elaboration_in_span(
                 start,
                 length,
-                format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                ),
+                message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 leaf_depth,
             );
@@ -852,14 +867,8 @@ impl<'a> CheckerState<'a> {
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
         let depth = ctx.depth;
-        let element_message = {
-            let source_str = self.format_type_diagnostic(source_element);
-            let target_str = self.format_type_diagnostic(target_element);
-            format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            )
-        };
+        let element_message =
+            self.generalized_leaf_mismatch_message(source_element, target_element);
         let needs_header = nested_reason.is_some_and(Self::tuple_element_nested_needs_header);
 
         // Deeper levels (`depth > 0`) whose element self-heads: the nested
@@ -1554,12 +1563,7 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
             Self::push_nested_chain(diag, nested_diag, depth + 1);
         } else {
-            let source_str = self.format_type_diagnostic(source_element);
-            let target_str = self.format_type_diagnostic(target_element);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            );
+            let message = self.generalized_leaf_mismatch_message(source_element, target_element);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1785,10 +1789,10 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
     ) -> String {
-        let source_str = self.format_type_diagnostic(source_element);
-        let target_str = self.format_type_diagnostic(target_element);
+        let (display_source, source_str, target_str) =
+            self.generalized_leaf_pair(source_element, target_element);
         let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-            source_element,
+            display_source,
             target_element,
             source_str,
             target_str,

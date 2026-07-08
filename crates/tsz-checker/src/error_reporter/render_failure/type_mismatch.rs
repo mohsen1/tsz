@@ -60,7 +60,14 @@ impl<'a> CheckerState<'a> {
                 display
             }
         } else {
-            self.format_nested_assignment_source_type_for_diagnostic(source, target, idx)
+            // Nested relation leaf: generalize a literal source to its base
+            // type when the target has no singleton capacity (tsc
+            // `reportRelationError`). When the source generalizes, the
+            // anchor-expression display path inside no longer applies (the
+            // anchor's type is the raw literal), so the plain structural
+            // formatter renders the widened form.
+            let display_source = self.generalize_nested_relation_source_for_display(source, target);
+            self.format_nested_assignment_source_type_for_diagnostic(display_source, target, idx)
         };
         let mut target_str = if depth == 0 {
             self.format_top_level_assignability_message_types_at(source, target, idx)
