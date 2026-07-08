@@ -1081,12 +1081,20 @@ impl<'a> CheckerState<'a> {
 
         // Per-candidate relation reason chains (#15387), computed before the
         // type formatter takes its borrow of the checker context (failure
-        // analysis needs `&mut self`).
+        // analysis needs `&mut self`). The chain anchors at the candidate's
+        // failing *argument* node — exactly like the single-signature TS2345
+        // path — never at the call node: the renderer's display probes climb
+        // from their anchor to enclosing initializers and would type the
+        // surrounding expression mid-flight.
         let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = if wrap_overloads {
             failures
                 .iter()
                 .map(|failure| {
-                    self.overload_candidate_reason_chain(failure, anchor.node_idx, &span)
+                    self.overload_failure_argument_node(idx, failure)
+                        .map(|arg_idx| {
+                            self.overload_candidate_reason_chain(failure, arg_idx, &span)
+                        })
+                        .unwrap_or_default()
                 })
                 .collect()
         } else {
@@ -1192,6 +1200,27 @@ impl<'a> CheckerState<'a> {
     /// cross-location pointers. Candidates whose pending diagnostic already
     /// carries a related payload keep it (the caller renders it); arity and
     /// `this` failures carry no chain, matching tsc.
+    /// The argument node one overload candidate's failure describes: the
+    /// logical argument containing the failure's span, or the sole argument
+    /// when the failure carries no span (solver-resolved candidates).
+    fn overload_failure_argument_node(
+        &self,
+        idx: NodeIndex,
+        failure: &tsz_solver::PendingDiagnostic,
+    ) -> Option<NodeIndex> {
+        let arg_nodes = self.logical_call_argument_nodes(idx)?;
+        let Some(span) = failure.span.as_ref() else {
+            return match arg_nodes.as_slice() {
+                [only] => Some(*only),
+                _ => None,
+            };
+        };
+        arg_nodes.into_iter().find(|&arg_idx| {
+            self.get_source_location(arg_idx)
+                .is_some_and(|loc| span.start >= loc.start && span.start < loc.end)
+        })
+    }
+
     fn overload_candidate_reason_chain(
         &mut self,
         failure: &tsz_solver::PendingDiagnostic,

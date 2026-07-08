@@ -479,6 +479,41 @@ pair(t);
     );
 }
 
+/// Chain rendering must not perturb checking of the enclosing expression:
+/// rendering a nested call's overload failure runs display recovery, which
+/// may only *read* already-computed node types. Forcing a fresh computation
+/// re-entered the still-unresolved outer `.map(...)` call and typed its
+/// callback without a contextual type, leaking a spurious `TS7006`
+/// (regressed `arrayConcatMap.ts` in conformance).
+#[test]
+fn chain_rendering_does_not_leak_diagnostics_into_enclosing_call() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Out {
+    pick(cb: (value: string) => void): Out;
+}
+declare function make(items: { tag: number }[]): Out;
+declare function make(items: { tag: string }[]): Out;
+declare const seed: { other: boolean }[];
+var r = make(seed).pick(v => {});
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "chain rendering must not leak TS7006 into the enclosing call, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2769),
+        "the nested no-overload-match itself must still report, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// More than three failing candidates keep tsc's distinct top-level shape:
 /// tsz leaves them as the flat fallback (no `TS2772` wrappers), and the
 /// top-level `TS2769` is unchanged.
