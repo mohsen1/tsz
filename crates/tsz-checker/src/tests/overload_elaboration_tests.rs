@@ -1,18 +1,22 @@
-//! Regression tests for tsc's per-overload `TS2772` elaboration under a
-//! `TS2769` ("No overload matches this call.") diagnostic.
+//! Regression tests for tsc's per-overload `TS2772`/`TS2770` elaboration under
+//! a `TS2769` ("No overload matches this call.") diagnostic.
 //!
-//! When a call matches no overload and 2 or 3 candidate signatures reached
-//! argument checking, tsc wraps each candidate's applicability error in a
-//! `Overload {n} of {total}, '{signature}', gave the following error.` chain
-//! node (`TS2772`) — in declaration order, with the applicability error nested
-//! one level deeper. A single failing candidate collapses to a plain `TS2345`
-//! (no `TS2769`), and `>3` candidates use tsc's distinct "last overload" shape,
-//! left as the flat fallback here.
+//! When a call matches no overload, tsc elaborates the candidates that matched
+//! arity but failed argument checks (`candidatesForArgumentError`): 2 or 3
+//! such candidates each get an `Overload {i} of {N}, '{signature}', gave the
+//! following error.` chain node (`TS2772`) — in declaration order, with the
+//! applicability error nested one level deeper — and four or more collapse to
+//! a single `The last overload gave the following error.` node (`TS2770`)
+//! wrapping only the last candidate. `{i}` is the candidate's 1-based position
+//! among the argument-error candidates while `{N}` counts every overload;
+//! arity-failing overloads never appear in the chain but still count toward
+//! `{N}`. A single argument-error candidate collapses to a plain `TS2345`
+//! (no `TS2769`).
 //!
-//! Before the fix tsz defined the `TS2772` string but never emitted it: it
-//! flattened every candidate's argument error directly under `TS2769` and, due
-//! to the related-info `(file, start, depth, message)` sort, rendered them out
-//! of declaration order.
+//! Before the fix tsz defined the `TS2772`/`TS2770` strings but never emitted
+//! them: it flattened every candidate's argument error directly under `TS2769`
+//! and, due to the related-info `(file, start, depth, message)` sort, rendered
+//! them out of declaration order.
 //!
 //! See `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`
 //! (`error_no_overload_matches_at`) and
@@ -514,34 +518,203 @@ var r = make(seed).pick(v => {});
     );
 }
 
-/// More than three failing candidates keep tsc's distinct top-level shape:
-/// tsz leaves them as the flat fallback (no `TS2772` wrappers), and the
-/// top-level `TS2769` is unchanged.
+/// Assert the `TS2770` collapse shape: exactly one header line plus the last
+/// candidate's `TS2345` naming `last_param_ty` — no `TS2772` headers, no
+/// lines from the earlier candidates (differential-verified against
+/// tsc 6.0.2).
+fn assert_last_overload_collapse(source: &str, last_param_ty: &str) {
+    let chain = overload_chain(source);
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                format!(
+                    "Argument of type 'symbol' is not assignable to parameter of type '{last_param_ty}'."
+                )
+            ),
+        ],
+        "expected a single TS2770 chain holding only the last candidate's error"
+    );
+}
+
+/// Four or more argument-error candidates collapse to a single `TS2770`
+/// header wrapping only the *last* candidate's error.
 #[test]
-fn more_than_three_overloads_stay_flat() {
-    let diags = check_source_diagnostics(
+fn four_or_more_overloads_collapse_to_last_overload_header() {
+    assert_last_overload_collapse(
         r#"
 declare function f(x: number): number;
 declare function f(x: string): string;
-declare function f(x: boolean): boolean;
-declare function f(x: symbol): symbol;
-f({});
+declare function f(x: boolean[]): boolean;
+declare function f(x: object): symbol;
+declare const sym: symbol;
+f(sym);
+"#,
+        "object",
+    );
+}
+
+/// Shared scenario for the arity-exclusion rule: a `string`/arity/`boolean`
+/// overload triple called with a `symbol` argument. The arity candidate is
+/// excluded from the chain but still counts toward `{N}`, so the third
+/// declaration renders as `Overload 2 of 3` and the arity error line
+/// disappears entirely (differential-verified against tsc 6.0.2). Invoked
+/// with two distinct binder-name sets so the rule is proven structural.
+fn assert_arity_exclusion_chain(callee: &str, param: &str, extra: &str) {
+    let chain = overload_chain(&format!(
+        r#"
+declare function {callee}({param}: string): void;
+declare function {callee}({param}: number, {extra}: number): void;
+declare function {callee}({param}: boolean): void;
+declare const sym: symbol;
+{callee}(sym);
+"#
+    ));
+
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                2772,
+                format!("Overload 1 of 3, '({param}: string): void', gave the following error.")
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'symbol' is not assignable to parameter of type 'string'."
+                    .to_string()
+            ),
+            (
+                0,
+                2772,
+                format!("Overload 2 of 3, '({param}: boolean): void', gave the following error.")
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'symbol' is not assignable to parameter of type 'boolean'."
+                    .to_string()
+            ),
+        ],
+        "expected the arity candidate dropped from the chain yet counted in {{N}}"
+    );
+}
+
+/// An arity-failing overload interleaved among argument-error candidates is
+/// excluded from the chain but still counts toward `{N}`.
+#[test]
+fn arity_failing_overload_is_excluded_from_chain_but_counted_in_total() {
+    assert_arity_exclusion_chain("g", "a", "b");
+}
+
+/// Anti-hardcoding: the exclusion and numbering are structural — renaming the
+/// callee and every binder changes nothing but the rendered signature text.
+#[test]
+fn collapse_and_exclusion_are_independent_of_binder_names() {
+    assert_arity_exclusion_chain("visitNode", "entry", "extra");
+}
+
+/// The `TS2770` collapse keys on the *argument-error* candidate count, not the
+/// raw failure count: four argument-error candidates plus an interleaved
+/// arity failure still collapse, and the last *argument-error* candidate in
+/// declaration order is the one shown.
+#[test]
+fn four_argument_error_candidates_plus_arity_still_collapse() {
+    assert_last_overload_collapse(
+        r#"
+declare function r(a: string): void;
+declare function r(a: number, b: number): void;
+declare function r(a: boolean): void;
+declare function r(a: object): void;
+declare function r(a: number[]): void;
+declare const sym: symbol;
+r(sym);
+"#,
+        "number[]",
+    );
+}
+
+/// The collapsed last candidate keeps its relation reason chain nested under
+/// its applicability error, exactly as a `TS2772`-wrapped candidate does
+/// (differential-verified against tsc 6.0.2).
+#[test]
+fn last_overload_collapse_nests_reason_chain() {
+    let chain = chain_lines(
+        r#"
+declare function q(cb: (x: string) => void): void;
+declare function q(cb: (x: number) => void): void;
+declare function q(cb: (x: boolean) => void): void;
+declare function q(cb: (x: object) => void): void;
+q((x: symbol) => {});
 "#,
     );
 
-    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
     assert_eq!(
-        ts2769.len(),
-        1,
-        "expected the top-level TS2769 to be unchanged"
+        as_pairs(&chain),
+        vec![
+            (0, "The last overload gave the following error."),
+            (
+                1,
+                "Argument of type '(x: symbol) => void' is not assignable to parameter of type '(x: object) => void'."
+            ),
+            (2, "Types of parameters 'x' and 'x' are incompatible."),
+            (3, "Type 'object' is not assignable to type 'symbol'."),
+        ],
+        "expected the last candidate's reason chain under the TS2770 header"
+    );
+}
+
+/// Constructor (`new`) overload sets collapse through the same policy.
+#[test]
+fn constructor_overloads_collapse_to_last_overload_header() {
+    assert_last_overload_collapse(
+        r#"
+interface Maker {
+    new (a: string): object;
+    new (a: number): object;
+    new (a: boolean[]): object;
+    new (a: object): object;
+}
+declare const Maker: Maker;
+declare const sym: symbol;
+new Maker(sym);
+"#,
+        "object",
+    );
+}
+
+/// A lone argument-error candidate among arity-failing overloads still
+/// collapses to a plain `TS2345` (tsc reports the single applicability error
+/// directly, with no `TS2769` head), regardless of how many overloads failed
+/// on arity.
+#[test]
+fn lone_argument_error_candidate_with_arity_failures_stays_plain_ts2345() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function p(a: string): void;
+declare function p(a: number, b: number): void;
+declare function p(a: boolean, b: boolean, c: boolean): void;
+declare const sym: symbol;
+p(sym);
+"#,
+    );
+
+    assert!(
+        diags.iter().any(|d| d.code == 2345),
+        "expected a plain TS2345, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
     assert!(
-        !ts2769[0].related_information.iter().any(|r| r.code == 2772),
-        "the >3-candidate case must not emit TS2772 wrappers, got: {:?}",
-        ts2769[0]
-            .related_information
-            .iter()
-            .map(|r| (r.code, &r.message_text))
-            .collect::<Vec<_>>()
+        !diags.iter().any(|d| d.code == 2769),
+        "a lone argument-error candidate must not produce TS2769, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

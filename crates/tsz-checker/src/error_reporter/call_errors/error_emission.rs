@@ -757,6 +757,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report "No overload matches this call" with related overload failures.
+    ///
+    /// Contract: `failures` carries exactly one entry per failed overload
+    /// candidate, in declaration order — the `Overload {i} of {N}` total
+    /// renders its length.
     pub fn error_no_overload_matches_at(
         &mut self,
         idx: NodeIndex,
@@ -844,13 +848,9 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let remaining_failures_are_count_mismatches = remaining_failures.iter().all(|failure| {
-            matches!(
-                failure.code,
-                diagnostic_codes::EXPECTED_ARGUMENTS_BUT_GOT
-                    | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
-            )
-        });
+        let remaining_failures_are_count_mismatches = remaining_failures
+            .iter()
+            .all(|failure| failure.is_arity_failure());
         let all_failures_are_argument_mismatches = !failures.is_empty()
             && failures.iter().all(|failure| {
                 failure.code
@@ -1065,19 +1065,52 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
-        // gave the following error.` (TS2772) chain per candidate — in
-        // declaration order — when 2 or 3 candidates reached argument checking
-        // (`resolveCall`). A single candidate collapses to a plain TS2345 (no
-        // TS2769 at all, handled upstream), and >3 candidates use tsc's distinct
-        // "last overload" shape, left as the historical flat rendering. Each
-        // candidate failure carries its declared signature; a 2-3 set whose
-        // failures all have one wraps, otherwise we fall back to the flat list
-        // (e.g. callback-body sets whose failures carry no signature).
-        let wrap_overloads = matches!(failures.len(), 2 | 3)
-            && failures
-                .iter()
-                .all(|failure| failure.overload_signature.is_some());
+        // tsc's `resolveCall` partitions the failed candidates: overloads that
+        // matched arity but failed argument checks (`candidatesForArgumentError`)
+        // are elaborated, while arity failures never appear in the chain yet
+        // still count toward the `{N}` of `Overload {i} of {N}`. Two or three
+        // argument-error candidates each get a TS2772 header in declaration
+        // order (`{i}` is the candidate's 1-based position among the
+        // argument-error candidates); four or more collapse to a single
+        // `The last overload gave the following error.` (TS2770) header
+        // wrapping only the last candidate. A lone argument-error candidate
+        // collapses to a plain TS2345 upstream (no TS2769 at all). Candidate
+        // sets whose failures carry no declared signature (e.g. callback-body
+        // sets) keep the historical flat rendering.
+        let chain_candidates: Vec<&tsz_solver::PendingDiagnostic> = failures
+            .iter()
+            .filter(|failure| !failure.is_arity_failure())
+            .collect();
+        // Signature presence is the provenance proxy for "one failure per
+        // candidate from real overload resolution" (callback-body sets carry
+        // none and stay flat), so it gates both wrapped shapes.
+        let every_candidate_signed = chain_candidates
+            .iter()
+            .all(|failure| failure.overload_signature.is_some());
+        enum ChainShape {
+            /// Fewer than 2 argument-error candidates, or a candidate without
+            /// a declared signature: historical flat rendering.
+            Flat,
+            /// 2-3 argument-error candidates: one `TS2772` header each.
+            PerOverload,
+            /// 4+ argument-error candidates: one `TS2770` header wrapping only
+            /// the last candidate.
+            LastOverload,
+        }
+        let shape = if !every_candidate_signed {
+            ChainShape::Flat
+        } else {
+            match chain_candidates.len() {
+                0 | 1 => ChainShape::Flat,
+                2 | 3 => ChainShape::PerOverload,
+                _ => ChainShape::LastOverload,
+            }
+        };
+        let wrapped_candidates: &[&tsz_solver::PendingDiagnostic] = match shape {
+            ChainShape::Flat => &[],
+            ChainShape::PerOverload => &chain_candidates,
+            ChainShape::LastOverload => &chain_candidates[chain_candidates.len() - 1..],
+        };
 
         // Per-candidate relation reason chains (#15387), computed before the
         // type formatter takes its borrow of the checker context (failure
@@ -1086,20 +1119,14 @@ impl<'a> CheckerState<'a> {
         // path — never at the call node: the renderer's display probes climb
         // from their anchor to enclosing initializers and would type the
         // surrounding expression mid-flight.
-        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = if wrap_overloads {
-            failures
-                .iter()
-                .map(|failure| {
-                    self.overload_failure_argument_node(idx, failure)
-                        .map(|arg_idx| {
-                            self.overload_candidate_reason_chain(failure, arg_idx, &span)
-                        })
-                        .unwrap_or_default()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = wrapped_candidates
+            .iter()
+            .map(|failure| {
+                self.overload_failure_argument_node(idx, failure)
+                    .map(|arg_idx| self.overload_candidate_reason_chain(failure, arg_idx, &span))
+                    .unwrap_or_default()
+            })
+            .collect();
 
         let mut related = Vec::new();
         let mut formatter = self.ctx.create_type_formatter();
@@ -1118,30 +1145,48 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
-        let related_policy = if wrap_overloads {
-            let total = failures.len();
-            for (ordinal, (failure, chain)) in failures.iter().zip(candidate_chains).enumerate() {
-                let signature = failure
-                    .overload_signature
-                    .expect("wrap_overloads requires every failure to carry a signature");
-                // signatureToString colon form (`(x: number): number`); fall
-                // back to the plain render only if the type is not a signature.
-                let signature_display = formatter
-                    .format_overload_signature(signature)
-                    .unwrap_or_else(|| formatter.format(signature).into_owned());
-                related.push(related_line(
-                    &span,
-                    format_message(
-                        diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
-                        &[
-                            &(ordinal + 1).to_string(),
-                            &total.to_string(),
-                            &signature_display,
-                        ],
-                    ),
-                    diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
-                    0,
-                ));
+        let related_policy = if matches!(shape, ChainShape::Flat) {
+            for failure in failures {
+                let pending = self.overload_failure_generalized_pending(failure, &span);
+                let diag = formatter.render(&pending);
+                if let Some(diag_span) = diag.span.as_ref() {
+                    related.push(related_line(diag_span, diag.message, diag.code, 0));
+                }
+            }
+            RelatedInformationPolicy::OVERLOAD_FAILURES
+        } else {
+            for (ordinal, (failure, chain)) in
+                wrapped_candidates.iter().zip(candidate_chains).enumerate()
+            {
+                let (header_message, header_code) = if matches!(shape, ChainShape::LastOverload) {
+                    (
+                        diagnostic_messages::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR.to_string(),
+                        diagnostic_codes::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR,
+                    )
+                } else {
+                    let signature = failure
+                        .overload_signature
+                        .expect("wrapped shapes require every candidate to carry a signature");
+                    // signatureToString colon form (`(x: number): number`); fall
+                    // back to the plain render only if the type is not a signature.
+                    let signature_display = formatter
+                        .format_overload_signature(signature)
+                        .unwrap_or_else(|| formatter.format(signature).into_owned());
+                    (
+                        format_message(
+                            diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                            &[
+                                &(ordinal + 1).to_string(),
+                                // `{N}` counts every failed overload, arity
+                                // failures included.
+                                &failures.len().to_string(),
+                                &signature_display,
+                            ],
+                        ),
+                        diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                    )
+                };
+                related.push(related_line(&span, header_message, header_code, 0));
                 let pending = self.overload_failure_generalized_pending(failure, &span);
                 let diag = formatter.render(&pending);
                 let diag_span = diag.span.as_ref().unwrap_or(&span);
@@ -1163,15 +1208,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
             RelatedInformationPolicy::OVERLOAD_CHAINS
-        } else {
-            for failure in failures {
-                let pending = self.overload_failure_generalized_pending(failure, &span);
-                let diag = formatter.render(&pending);
-                if let Some(diag_span) = diag.span.as_ref() {
-                    related.push(related_line(diag_span, diag.message, diag.code, 0));
-                }
-            }
-            RelatedInformationPolicy::OVERLOAD_FAILURES
         };
 
         self.emit_render_request_at_anchor(

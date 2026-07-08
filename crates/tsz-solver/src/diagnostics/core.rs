@@ -595,6 +595,18 @@ impl PendingDiagnostic {
         self
     }
 
+    /// Whether this diagnostic reports an argument-arity failure
+    /// (`TS2554`/`TS2555`), tsc's `candidatesForArgumentError` exclusion.
+    /// Owned here so the code set stays beside the builders that assign it;
+    /// the rendering policy it feeds lives in the checker's
+    /// `error_no_overload_matches_at`.
+    pub const fn is_arity_failure(&self) -> bool {
+        matches!(
+            self.code,
+            codes::ARG_COUNT_MISMATCH | codes::ARG_COUNT_AT_LEAST_MISMATCH
+        )
+    }
+
     /// The `(source, target)` pair of a two-type diagnostic (e.g. `TS2345`
     /// argument-not-assignable), when the first two message args are types.
     /// Owns the positional arg encoding so consumers do not.
@@ -757,6 +769,7 @@ pub mod codes {
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_BUN_TRY_NPM_I_SAVE_2 as CANNOT_FIND_NAME_BUN;
     pub use dc::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2 as CANNOT_FIND_NAME_NODE;
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
+    pub use dc::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT as ARG_COUNT_AT_LEAST_MISMATCH;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
     pub use dc::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE as THIS_TYPE_MISMATCH;
