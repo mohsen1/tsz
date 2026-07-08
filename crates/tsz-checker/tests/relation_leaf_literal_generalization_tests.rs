@@ -515,15 +515,17 @@ const so: { a: string } = s1;
             .any(|t| t == "Type 'Solo' is not assignable to type 'Pair.L'."),
         "single-member enum renders as the enum name; got: {texts:?}"
     );
-    // The relation LEAF also renders the identity form. (The *object property
-    // display* `{ a: Solo.Only; }` still shows the annotation spelling — that
-    // provenance path is a separate display owner, tracked in #15628's
-    // remaining notes.)
+    // The relation leaf and the object property display both render the
+    // identity form — `Solo.Only` never appears.
     assert!(
         texts
             .iter()
             .any(|t| t == "Type 'Solo' is not assignable to type 'string'."),
         "the lone member's leaf renders the enum name; got: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("Solo.Only")),
+        "the lone member never renders qualified; got: {texts:?}"
     );
 }
 

@@ -271,14 +271,10 @@ impl<'a> CheckerState<'a> {
             // binder symbol carries `ENUM_MEMBER`; the alias-name fallthrough
             // below would leak the bare member name (`X`). Route it through
             // the enum naming so it renders qualified (`E.X`) — or as the
-            // bare enum name for a single-member enum (tsc identity).
-            if def
-                .symbol_id
-                .map(tsz_binder::SymbolId)
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
-                && let Some(name) = self.format_qualified_enum_name_for_message(ty)
-            {
+            // bare enum name for a single-member enum (tsc identity). The
+            // helper answers `None` for every non-enum lazy ref, so no extra
+            // gate is needed here.
+            if let Some(name) = self.format_qualified_enum_name_for_message(ty) {
                 return name;
             }
             if let Some(body) = def.body {
@@ -1412,28 +1408,21 @@ impl<'a> CheckerState<'a> {
         let enum_data_def = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty);
         let def_id = enum_data_def
             .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty))?;
-        // Definition-store parent edge first: it covers member defs whose
-        // binder symbol is not wired (`def_to_symbol_id_with_fallback` fails
-        // and the bare member name would leak), and it encodes tsc's
-        // single-member identity — a single-member enum's member type IS the
-        // enum type and renders as the bare enum name.
+        // Parent-edge path first: it covers member defs whose binder symbol is
+        // not wired (`def_to_symbol_id_with_fallback` fails and the bare
+        // member name would leak), and it encodes tsc's single-member
+        // identity — a single-member enum's member type IS the enum type and
+        // renders as the bare enum name. The environment lookup already falls
+        // back to the shared definition store; the resolver's symbol-based
+        // lookup covers canonicalized twins of the decl-site def that neither
+        // map saw.
         if let Some(parent_id) = self
             .ctx
-            .definition_store
-            .get_enum_parent(def_id)
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_enum_parent(def_id))
             .or_else(|| {
-                // The per-file environment map covers member defs the shared
-                // store never saw (the widening paths already read it).
-                self.ctx
-                    .type_env
-                    .try_borrow()
-                    .ok()
-                    .and_then(|env| env.get_enum_parent(def_id))
-            })
-            .or_else(|| {
-                // Relation-level member refs can carry a canonicalized twin of
-                // the decl-site def that the shared parent map never saw; the
-                // resolver's symbol-based lookup covers those.
                 tsz_solver::resolver::TypeResolver::get_enum_parent_def_id(&self.ctx, def_id)
             })
             && let Some(parent) = self.ctx.definition_store.get(parent_id)
@@ -1447,16 +1436,7 @@ impl<'a> CheckerState<'a> {
                 return Some(format!("{parent_name}.{member_name}"));
             }
         }
-        let sym_id = self
-            .ctx
-            .def_to_symbol_id_with_fallback(def_id)
-            .or_else(|| {
-                self.ctx
-                    .definition_store
-                    .get(def_id)
-                    .and_then(|def| def.symbol_id)
-                    .map(tsz_binder::SymbolId)
-            })?;
+        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             let parent = self.ctx.binder.get_symbol(symbol.parent)?;

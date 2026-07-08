@@ -744,12 +744,41 @@ pub fn type_could_have_top_level_singleton_types_resolved<R: TypeResolver>(
     type_could_have_top_level_singleton_types_inner(db, resolver, type_id, 0)
 }
 
+/// Whether `type_id` is one of the deferred instantiable/semantic-ref forms
+/// whose singleton-capacity answer requires constraint computation or resolver
+/// evaluation ([`type_could_have_top_level_singleton_types_resolved`]) rather
+/// than direct shape inspection. Owned here, next to the predicate's match
+/// arms, so the variant list cannot drift from the predicate.
+pub fn singleton_capacity_needs_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::IndexAccess(_, _)
+                | TypeData::Conditional(_)
+                | TypeData::Substitution { .. }
+                | TypeData::Application(_)
+                | TypeData::Lazy(_)
+        )
+    )
+}
+
 fn type_could_have_top_level_singleton_types_inner<R: TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
     type_id: TypeId,
     depth: u32,
 ) -> bool {
+    // A computed constraint answers for its type only when it made progress
+    // and did not collapse to the error sentinel; otherwise fall back toward
+    // "no singleton capacity" (the caller's `is_unit_type` arm).
+    let recurse_if_progress = |constraint: TypeId, depth: u32| {
+        constraint != type_id
+            && constraint != TypeId::ERROR
+            && type_could_have_top_level_singleton_types_inner(db, resolver, constraint, depth + 1)
+    };
     // Fuel exhaustion answers "no singleton capacity", failing toward
     // *generalizing* a literal source in the diagnostic — the direction that
     // loses precision rather than inventing a literal-vs-literal contrast.
@@ -790,61 +819,54 @@ fn type_could_have_top_level_singleton_types_inner<R: TypeResolver>(
         // Remaining `Instantiable` forms answer through their computed
         // constraint (tsc `getConstraintOfType`); no progress falls back to
         // the unit check, i.e. "no singleton capacity".
-        Some(TypeData::Substitution { .. }) => {
-            let constraint = crate::type_queries::get_base_constraint_of_type(db, type_id);
-            constraint != type_id
-                && type_could_have_top_level_singleton_types_inner(
-                    db,
-                    resolver,
-                    constraint,
-                    depth + 1,
-                )
-        }
+        Some(TypeData::Substitution { .. }) => recurse_if_progress(
+            crate::type_queries::get_base_constraint_of_type(db, type_id),
+            depth,
+        ),
         Some(TypeData::IndexAccess(_, _)) => {
             // Reduce contained type parameters to their constraints, then
             // evaluate the access (tsc `getConstraintOfIndexedAccess`):
             // `Cfg[K]` with `K extends keyof Cfg` answers through the union
-            // of `Cfg`'s property types.
+            // of `Cfg`'s property types. (This reduces the *index*'s type
+            // parameters too, unlike `reduce_index_access_to_base_constraint`,
+            // which only reduces the object side for the comparability
+            // relation.)
             let substituted = instantiate_type_params_to_constraints_uncached(db, type_id);
-            let constraint = evaluate_type_with_resolver(db, resolver, substituted);
-            constraint != type_id
-                && constraint != TypeId::ERROR
-                && type_could_have_top_level_singleton_types_inner(
-                    db,
-                    resolver,
-                    constraint,
-                    depth + 1,
-                )
+            recurse_if_progress(
+                evaluate_type_with_resolver(db, resolver, substituted),
+                depth,
+            )
         }
         Some(TypeData::Conditional(_)) => {
             // tsc `getDefaultConstraintOfConditionalType`: the union of the
             // (inferred) true branch and the false branch.
             match crate::type_queries::get_conditional_default_constraint(db, type_id) {
-                Some(constraint) if constraint != type_id => {
-                    type_could_have_top_level_singleton_types_inner(
-                        db,
-                        resolver,
-                        constraint,
-                        depth + 1,
-                    )
-                }
-                _ => is_unit_type(db, type_id),
+                Some(constraint) => recurse_if_progress(constraint, depth),
+                None => is_unit_type(db, type_id),
             }
         }
-        Some(TypeData::Lazy(_) | TypeData::Application(_)) => {
-            // A still-deferred semantic ref (alias/enum/interface reference or
-            // generic alias application). tsc holds the evaluated type here;
-            // resolve it and re-ask. An enum reference evaluates to its union
-            // of enum-literal members, which has singleton capacity.
-            let evaluated = evaluate_type_with_resolver(db, resolver, type_id);
-            evaluated != type_id
-                && evaluated != TypeId::ERROR
-                && type_could_have_top_level_singleton_types_inner(
-                    db,
-                    resolver,
-                    evaluated,
-                    depth + 1,
-                )
+        Some(TypeData::Lazy(def_id)) => {
+            // A still-deferred semantic ref. Structural def kinds
+            // (interface/class/function/...) can never evaluate to a unit
+            // type, so answer without the evaluator; enums (union of
+            // enum-literal members), type aliases, and unknown kinds resolve
+            // and re-ask.
+            match resolver.get_def_kind(def_id) {
+                Some(
+                    crate::def::DefKind::Interface
+                    | crate::def::DefKind::Class
+                    | crate::def::DefKind::ClassConstructor
+                    | crate::def::DefKind::Namespace
+                    | crate::def::DefKind::Function
+                    | crate::def::DefKind::Variable,
+                ) => false,
+                _ => recurse_if_progress(evaluate_type_with_resolver(db, resolver, type_id), depth),
+            }
+        }
+        Some(TypeData::Application(_)) => {
+            // A deferred generic alias application (`Cond<T>`): tsc holds the
+            // evaluated type here, so resolve it and re-ask.
+            recurse_if_progress(evaluate_type_with_resolver(db, resolver, type_id), depth)
         }
         _ => is_unit_type(db, type_id),
     }

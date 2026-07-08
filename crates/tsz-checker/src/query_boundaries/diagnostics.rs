@@ -662,40 +662,16 @@ pub(crate) fn literal_base_type_for_display(db: &dyn TypeDatabase, source: TypeI
     }
 }
 
-/// Union of the member-wise generalized bases of an all-unit union source
-/// (tsc `getBaseTypeOfLiteralTypeUnion`): the caller maps each member through
-/// its base (`literal_base_type_for_display` / enum-member widening) and this
-/// boundary interns the reduced union (`"x" | "y"` -> `string`,
-/// `true | 1` -> `number | boolean`).
-pub(crate) fn union_of_generalized_literal_members(
-    db: &dyn TypeDatabase,
-    members: Vec<TypeId>,
-) -> TypeId {
-    db.union(members)
-}
-
 /// Whether `target` is one of the deferred instantiable/semantic-ref forms
-/// (`IndexAccess`, `Conditional`, `Substitution`, `Application`, `Lazy`) whose
-/// literal-sensitivity answer requires constraint computation or resolver
-/// evaluation ([`relation_target_could_hold_singleton`]) rather than direct
-/// shape inspection.
+/// whose literal-sensitivity answer requires constraint computation or
+/// resolver evaluation ([`relation_target_could_hold_singleton`]) rather than
+/// direct shape inspection. The variant list is owned by the solver next to
+/// the predicate itself so the two cannot drift.
 pub(crate) fn is_deferred_instantiable_display_target(
     db: &dyn TypeDatabase,
     target: TypeId,
 ) -> bool {
-    if target.is_intrinsic() {
-        return false;
-    }
-    matches!(
-        db.lookup(target),
-        Some(
-            tsz_solver::TypeData::IndexAccess(_, _)
-                | tsz_solver::TypeData::Conditional(_)
-                | tsz_solver::TypeData::Substitution { .. }
-                | tsz_solver::TypeData::Application(_)
-                | tsz_solver::TypeData::Lazy(_)
-        )
-    )
+    tsz_solver::type_queries::singleton_capacity_needs_constraint(db, target)
 }
 
 /// Whether a relation target could hold a top-level singleton (unit) type —

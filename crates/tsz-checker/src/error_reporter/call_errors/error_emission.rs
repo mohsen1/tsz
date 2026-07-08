@@ -231,14 +231,13 @@ impl<'a> CheckerState<'a> {
         // `sip(g)` with `g: EG.A` against `boolean` renders `EG`, while a
         // literal/template/enum parameter preserves `EG.A`.
         if self.should_widen_enum_member_assignment_source(arg_type, param_type) {
+            // The gate already proved the widening makes progress. Plain
+            // structural render: the `CallArgument` role would repaint the
+            // display from the argument expression's declared annotation
+            // (`EG.A`), undoing the widening.
             let widened = self.widen_enum_member_type(arg_type);
-            if widened != arg_type {
-                // Plain structural render: the `CallArgument` role would
-                // repaint the display from the argument expression's declared
-                // annotation (`EG.A`), undoing the widening.
-                arg_str = self.format_type_for_assignability_message(widened);
-                arg_display_type = Some(widened);
-            }
+            arg_str = self.format_type_for_assignability_message(widened);
+            arg_display_type = Some(widened);
         }
         // Widen a fresh boolean-literal array source (`true[]`/`false[]`) to
         // `boolean[]` against a `boolean` parameter. The decision is structural;

@@ -48,12 +48,11 @@ impl<'a> CheckerState<'a> {
     /// (`"no"` vs `"yes"`, literal-union targets, singleton-constrained type
     /// parameters).
     ///
-    /// tsc applies this in every relation-error report. tsz's top-level
-    /// assignability messages already generalize through their display roles,
-    /// so this entry serves the nested chain leaves — property / array-element
-    /// / tuple-position / return frames — and the TS2769 overload elaboration
-    /// (`overload_failure_generalized_pending`), which previously leaked the
-    /// raw literal source (#15626).
+    /// tsc applies this in every relation-error report. This entry serves the
+    /// nested chain leaves — property / array-element / tuple-position /
+    /// return frames — the TS2769 overload elaboration
+    /// (`overload_failure_generalized_pending`), and the top-level
+    /// union-of-literals surface in `render_type_mismatch` (#15626, #15628).
     ///
     /// An all-unit union source maps member-wise through the same bases
     /// (tsc `getBaseTypeOfLiteralTypeUnion`): `"x" | "y"` -> `string`,
@@ -63,6 +62,13 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> TypeId {
+        // Source side first: it is a cheap shape check for the overwhelmingly
+        // common non-literal sources, while the target gate may need
+        // resolver-backed constraint evaluation for deferred targets.
+        let generalized = self.relation_literal_source_base_for_display(source);
+        if generalized == source {
+            return source;
+        }
         if crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
             self.ctx.types,
             &self.ctx,
@@ -70,7 +76,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return source;
         }
-        self.relation_literal_source_base_for_display(source)
+        generalized
     }
 
     /// tsc's `getBaseTypeOfLiteralType` over the checker environment: a scalar
@@ -101,11 +107,8 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|&member| self.relation_literal_source_base_for_display(member))
                 .collect();
-            if mapped.iter().zip(members.iter()).any(|(a, b)| a != b) {
-                return crate::query_boundaries::diagnostics::union_of_generalized_literal_members(
-                    self.ctx.types,
-                    mapped,
-                );
+            if mapped != members {
+                return crate::query_boundaries::flow_analysis::union_types(self.ctx.types, mapped);
             }
         }
         source

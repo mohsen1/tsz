@@ -268,21 +268,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Shared core of the two leaf-message helpers: generalize the literal
-    /// source ([`Self::generalize_nested_relation_source_for_display`]) and
-    /// format both sides. Returns the generalized source id so callers that
-    /// disambiguate the pair pass the type actually rendered.
-    fn generalized_leaf_pair(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> (TypeId, String, String) {
-        let display_source = self.generalize_nested_relation_source_for_display(source, target);
-        let source_str = self.format_type_diagnostic(display_source);
-        let target_str = self.format_type_diagnostic(target);
-        (display_source, source_str, target_str)
-    }
-
     pub(super) fn render_property_type_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -1792,8 +1777,13 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
     ) -> String {
-        let (display_source, source_str, target_str) =
-            self.generalized_leaf_pair(source_element, target_element);
+        // Generalize the literal source (tsc `reportRelationError`), format
+        // both sides, and disambiguate same-named nominal pairs like the top
+        // level does — the disambiguator gets the type actually rendered.
+        let display_source =
+            self.generalize_nested_relation_source_for_display(source_element, target_element);
+        let source_str = self.format_type_diagnostic(display_source);
+        let target_str = self.format_type_diagnostic(target_element);
         let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
             display_source,
             target_element,
