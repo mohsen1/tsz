@@ -729,6 +729,9 @@ fn type_could_have_top_level_singleton_types_inner(
     type_id: TypeId,
     depth: u32,
 ) -> bool {
+    // Fuel exhaustion answers "no singleton capacity", failing toward
+    // *generalizing* a literal source in the diagnostic — the direction that
+    // loses precision rather than inventing a literal-vs-literal contrast.
     if depth > 16 {
         return false;
     }

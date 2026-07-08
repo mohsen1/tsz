@@ -268,16 +268,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Format the plain `Type 'S' is not assignable to type 'T'.` leaf line
-    /// for a nested relation pair, applying the literal-source generalization
-    /// ([`Self::generalize_nested_relation_source_for_display`]) before
-    /// rendering. Unlike [`Self::element_mismatch_message`] this variant skips
-    /// the same-name pair disambiguation, preserving the exact output of the
-    /// leaf sites it factored out.
-    fn generalized_leaf_mismatch_message(&mut self, source: TypeId, target: TypeId) -> String {
+    /// Shared core of the two leaf-message helpers: generalize the literal
+    /// source ([`Self::generalize_nested_relation_source_for_display`]) and
+    /// format both sides. Returns the generalized source id so callers that
+    /// disambiguate the pair pass the type actually rendered.
+    fn generalized_leaf_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (TypeId, String, String) {
         let display_source = self.generalize_nested_relation_source_for_display(source, target);
         let source_str = self.format_type_diagnostic(display_source);
         let target_str = self.format_type_diagnostic(target);
+        (display_source, source_str, target_str)
+    }
+
+    /// Format the plain `Type 'S' is not assignable to type 'T'.` leaf line
+    /// for a nested relation pair. Unlike [`Self::element_mismatch_message`]
+    /// this variant skips the same-name pair disambiguation, preserving the
+    /// exact output of the leaf sites it factored out — whether tsc
+    /// disambiguates same-named nominal pairs at these particular leaves is
+    /// unverified; converging the two helpers needs a tsc witness first
+    /// (#15628).
+    fn generalized_leaf_mismatch_message(&mut self, source: TypeId, target: TypeId) -> String {
+        let (_, source_str, target_str) = self.generalized_leaf_pair(source, target);
         format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
@@ -673,24 +687,12 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(inner, source_return, target_return, idx, leaf_depth);
             Self::push_rebased_subdiagnostic(diag, sub, leaf_depth, leaf_depth);
         } else {
-            let display_return =
-                self.generalize_nested_relation_source_for_display(source_return, target_return);
-            let source_str = self.format_type_diagnostic(display_return);
-            let target_str = self.format_type_diagnostic(target_return);
-            let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                display_return,
-                target_return,
-                source_str,
-                target_str,
-            );
+            let message = self.element_mismatch_message(source_return, target_return);
             let (start, length) = (diag.start, diag.length);
             diag.push_elaboration_in_span(
                 start,
                 length,
-                format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    &[&source_str, &target_str],
-                ),
+                message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 leaf_depth,
             );
@@ -1787,12 +1789,10 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
     ) -> String {
-        let source_element =
-            self.generalize_nested_relation_source_for_display(source_element, target_element);
-        let source_str = self.format_type_diagnostic(source_element);
-        let target_str = self.format_type_diagnostic(target_element);
+        let (display_source, source_str, target_str) =
+            self.generalized_leaf_pair(source_element, target_element);
         let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-            source_element,
+            display_source,
             target_element,
             source_str,
             target_str,

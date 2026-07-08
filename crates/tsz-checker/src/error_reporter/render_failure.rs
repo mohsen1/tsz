@@ -57,8 +57,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// The top-level assignment surface keeps its own, older enum-member
     /// policy (`should_widen_enum_member_assignment_source`) with a different
-    /// target gate; migrating it onto this tsc-shaped gate is tracked
-    /// follow-up work, not silently changed here.
+    /// target gate; migrating it onto this tsc-shaped gate is tracked as
+    /// follow-up in #15628, not silently changed here.
     pub(in crate::error_reporter) fn generalize_nested_relation_source_for_display(
         &mut self,
         source: TypeId,

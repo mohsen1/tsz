@@ -17,17 +17,8 @@
 //! leaves, and the preservation gates. Binder names vary across cases so the
 //! behavior is proven structural.
 
-use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source_strict as check_strict;
 use tsz_common::diagnostics::Diagnostic;
-
-fn check_strict(source: &str) -> Vec<Diagnostic> {
-    let options = CheckerOptions {
-        strict: true,
-        strict_null_checks: true,
-        ..Default::default()
-    };
-    tsz_checker::test_utils::check_source(source, "test.ts", options)
-}
 
 fn one(diags: &[Diagnostic], code: u32) -> &Diagnostic {
     let matches: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == code).collect();

@@ -311,6 +311,27 @@ impl<'a> CheckerState<'a> {
         Some((start_loc.start, end_loc.end.saturating_sub(start_loc.start)))
     }
 
+    /// Generalize the literal source (tsc `reportRelationError`, via
+    /// `generalize_nested_relation_source_for_display`) and produce the
+    /// finalized `(source, target)` display pair with the `DefaultDiagnostic`
+    /// role — the shared shape of the hand-rolled TS2345 related-info arms
+    /// below. The finalizer receives the generalized source so same-name
+    /// disambiguation sees the pair actually rendered.
+    fn generalized_default_role_pair_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> (String, String) {
+        let display_source = self.generalize_nested_relation_source_for_display(source, target);
+        let source_str = self.format_type_for_diagnostic_role(
+            display_source,
+            DiagnosticTypeDisplayRole::DefaultDiagnostic,
+        );
+        let target_str = self
+            .format_type_for_diagnostic_role(target, DiagnosticTypeDisplayRole::DefaultDiagnostic);
+        self.finalize_pair_display_for_diagnostic(display_source, target, source_str, target_str)
+    }
+
     pub(crate) fn related_from_failure_reason(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,
@@ -512,26 +533,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *target_property_type
                 };
-                // Nested relation leaf: generalize a literal source to its base
-                // type when the target has no singleton capacity (tsc
-                // `reportRelationError`), matching the TS2322 chain renderers.
-                let display_property_type = self.generalize_nested_relation_source_for_display(
+                let (source_str, target_str) = self.generalized_default_role_pair_display(
                     *source_property_type,
                     target_property_type,
-                );
-                let source_str = self.format_type_for_diagnostic_role(
-                    display_property_type,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let target_str = self.format_type_for_diagnostic_role(
-                    target_property_type,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                    display_property_type,
-                    target_property_type,
-                    source_str,
-                    target_str,
                 );
 
                 let mut items = vec![
@@ -613,25 +617,8 @@ impl<'a> CheckerState<'a> {
                 target_return,
                 nested_reason,
             } => {
-                // Nested relation leaf: generalize a literal return source to
-                // its base type when the target has no singleton capacity (tsc
-                // `reportRelationError`).
-                let display_return = self
-                    .generalize_nested_relation_source_for_display(*source_return, *target_return);
-                let source_str = self.format_type_for_diagnostic_role(
-                    display_return,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let target_str = self.format_type_for_diagnostic_role(
-                    *target_return,
-                    DiagnosticTypeDisplayRole::DefaultDiagnostic,
-                );
-                let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                    display_return,
-                    *target_return,
-                    source_str,
-                    target_str,
-                );
+                let (source_str, target_str) =
+                    self.generalized_default_role_pair_display(*source_return, *target_return);
                 // tsc's elaboration shape for TS2345 function-return-type
                 // mismatches goes straight from the top-level message into
                 // the inner mismatch line:

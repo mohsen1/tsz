@@ -1102,10 +1102,10 @@ impl<'a> CheckerState<'a> {
 
         let related_policy = if wrap_overloads {
             let total = failures.len();
-            for (ordinal, (failure, pending)) in
-                failures.iter().zip(&generalized_pendings).enumerate()
-            {
-                let signature = failure
+            // The pendings are struct-update clones of the failures, so they
+            // carry the same `overload_signature`.
+            for (ordinal, pending) in generalized_pendings.iter().enumerate() {
+                let signature = pending
                     .overload_signature
                     .expect("wrap_overloads requires every failure to carry a signature");
                 // signatureToString colon form (`(x: number): number`); fall
