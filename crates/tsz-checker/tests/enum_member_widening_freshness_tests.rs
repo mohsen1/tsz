@@ -31,11 +31,13 @@ fn direct_member_access_widens_to_enum() {
 enum E { A, B }
 let x = E.A;
 x = E.B;
+declare function wantsE(v: E): void;
+wantsE(x);
 "#,
     );
     assert!(
         codes.is_empty(),
-        "fresh member access must widen `x` to `E`, got: {codes:?}"
+        "fresh member access must widen `x` to `E` and satisfy `E` positions, got: {codes:?}"
     );
 }
 
@@ -295,23 +297,6 @@ const bad: Names = "Nope";
 // ---------------------------------------------------------------------------
 // Direct assignment across members keeps compiling after the target fix.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn direct_reassignment_across_members_allowed() {
-    let codes = get_error_codes(
-        r#"
-enum Signal { Go, Stop }
-let current = Signal.Go;
-current = Signal.Stop;
-declare function wantsSignal(s: Signal): void;
-wantsSignal(current);
-"#,
-    );
-    assert!(
-        codes.is_empty(),
-        "widened binding must accept every member and satisfy `Signal` positions, got: {codes:?}"
-    );
-}
 
 #[test]
 fn widened_binding_rejects_other_enum_and_raw_string() {

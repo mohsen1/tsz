@@ -65,15 +65,15 @@ impl<'a> CheckerState<'a> {
     }
 
     /// [`Self::enum_namespace_type_for_value_symbol`] keyed by a `typeof`
-    /// query's entity name; falls back to the type-based conversion when the
-    /// entity does not resolve to a symbol (e.g. global-like chains resolved
-    /// purely through property access).
-    fn enum_namespace_type_for_type_query_entity(
+    /// query's pre-resolved entity symbol; falls back to the type-based
+    /// conversion when the entity did not resolve to a symbol (e.g.
+    /// global-like chains resolved purely through property access).
+    fn enum_namespace_type_for_resolved_entity(
         &mut self,
-        expr_name: NodeIndex,
+        entity_sym: Option<tsz_binder::SymbolId>,
         type_id: TypeId,
     ) -> TypeId {
-        match self.resolve_qualified_symbol(expr_name) {
+        match entity_sym {
             Some(sym_id) => self.enum_namespace_type_for_value_symbol(sym_id, type_id),
             None => self.get_enum_namespace_type_for_value(type_id),
         }
@@ -313,6 +313,11 @@ impl<'a> CheckerState<'a> {
                     // whose deferral does not depend on member-materialization order.
                     let mut deferred_value_member_access: Option<TypeId> = None;
 
+                    // Resolve the qualified entity once; the merged-ns probe, the
+                    // enum-namespace gates below, and the binder-exports fallback
+                    // all key off the same resolution.
+                    let qualified_sym = self.resolve_qualified_symbol(type_query.expr_name);
+
                     // For merged namespace+interface symbols (e.g., `typeof M2.Point`
                     // where Point is both a namespace and an interface), resolve via
                     // the binder's export tables FIRST. Property access on the parent
@@ -320,7 +325,7 @@ impl<'a> CheckerState<'a> {
                     // path which can return the interface type instead of the namespace
                     // value type. Direct symbol resolution via get_type_of_symbol returns
                     // the correct value-position type.
-                    if let Some(sym_id) = self.resolve_qualified_symbol(type_query.expr_name) {
+                    if let Some(sym_id) = qualified_sym {
                         let sym_flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
                         let is_merged_ns_interface = (sym_flags
                             & (tsz_binder::symbol_flags::NAMESPACE_MODULE
@@ -381,8 +386,8 @@ impl<'a> CheckerState<'a> {
                                 left_idx, &prop_name, right_idx,
                             )
                         {
-                            let resolved = self.enum_namespace_type_for_type_query_entity(
-                                type_query.expr_name,
+                            let resolved = self.enum_namespace_type_for_resolved_entity(
+                                qualified_sym,
                                 global_like_type,
                             );
                             return if use_flow_sensitive_query {
@@ -431,8 +436,8 @@ impl<'a> CheckerState<'a> {
                                     // property result so that `typeof k.foo` where
                                     // `foo: typeof I` yields the resolved value type.
                                     let property_type = self.resolve_type_query_type(type_id);
-                                    let resolved = self.enum_namespace_type_for_type_query_entity(
-                                        type_query.expr_name,
+                                    let resolved = self.enum_namespace_type_for_resolved_entity(
+                                        qualified_sym,
                                         property_type,
                                     );
                                     let resolved = self.apply_type_query_instantiation_arguments(
@@ -470,7 +475,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     // Fall back: resolve via binder symbol exports for namespace members
-                    if let Some(sym_id) = self.resolve_qualified_symbol(type_query.expr_name) {
+                    if let Some(sym_id) = qualified_sym {
                         let member_type = self.get_type_of_symbol(sym_id);
                         trace!(sym_id = ?sym_id, member_type = ?member_type, "type_query qualified: resolved via binder exports");
                         if member_type != TypeId::ERROR {
@@ -534,10 +539,9 @@ impl<'a> CheckerState<'a> {
                     let expr_type = query_expr_type(self, use_flow_sensitive_query);
                     let is_lazy = lazy_def_id(self.ctx.types, expr_type).is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
-                        let expr_type = self.enum_namespace_type_for_type_query_entity(
-                            type_query.expr_name,
-                            expr_type,
-                        );
+                        let entity_sym = self.resolve_qualified_symbol(type_query.expr_name);
+                        let expr_type =
+                            self.enum_namespace_type_for_resolved_entity(entity_sym, expr_type);
                         return self.apply_type_query_instantiation_arguments(
                             expr_type,
                             &type_argument_nodes,
