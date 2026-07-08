@@ -981,6 +981,57 @@ impl<'a> CheckerState<'a> {
         Some(display_type)
     }
 
+    /// Whether a resolved union member carries `prop_name` for drill-in
+    /// purposes — a named property or an applicable index signature (tsc's
+    /// `getIndexedAccessTypeOrUndefined` on the member).
+    pub(crate) fn union_member_has_property_for_drill_in(
+        &mut self,
+        member: TypeId,
+        prop_name: &str,
+    ) -> bool {
+        if member.is_nullish() {
+            return false;
+        }
+        if matches!(
+            self.resolve_property_access_with_env(member, prop_name),
+            tsz_solver::operations::property::PropertyAccessResult::Success { .. }
+        ) {
+            return true;
+        }
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member).is_some_and(
+            |shape| {
+                shape.string_index_signature().is_some()
+                    || (tsz_solver::utils::is_numeric_literal_name(prop_name)
+                        && shape.number_index.is_some())
+            },
+        )
+    }
+
+    /// The resolved member list of `target` when it is a (multi-member)
+    /// union, for the drill-in gate. Resolves the target and each member
+    /// through lazy aliases so classification sees structural members.
+    fn drill_in_union_view(&mut self, target: TypeId) -> Option<Vec<TypeId>> {
+        let resolved = self.resolve_lazy_type(target);
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, resolved)?;
+        if members.len() < 2 {
+            return None;
+        }
+        Some(
+            members
+                .iter()
+                .map(|&member| self.resolve_lazy_type(member))
+                .collect(),
+        )
+    }
+
+    /// tsc `findBestTypeForObjectLiteral` over a drill-in union view: the
+    /// first non-array-like member in relation order, when the union carries
+    /// an array-like member.
+    pub(crate) fn drill_in_best_union_member(&mut self, target: TypeId) -> Option<TypeId> {
+        let members = self.drill_in_union_view(target)?;
+        crate::query_boundaries::common::first_non_array_like_union_member(self.ctx.types, &members)
+    }
+
     pub(in crate::error_reporter) fn object_literal_target_property_type(
         &mut self,
         target_type: TypeId,
@@ -990,6 +1041,41 @@ impl<'a> CheckerState<'a> {
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let evaluated_target = self.judge_evaluate(resolved_target);
         let contextual_target = self.evaluate_contextual_type(target_type);
+
+        // Union drill-in gate (tsc `getBestMatchIndexedAccessTypeOrUndefined`
+        // -> `findBestTypeForObjectLiteral`, issue #15403): when the target is
+        // a union whose property is NOT present on every member, the drill-in
+        // target resolves through the best-matching member only. With an
+        // array-like member in the union, the best match for an
+        // object-literal source is the first non-array-like member in tsc's
+        // relation order — which may be a primitive without the property, in
+        // which case the property is skipped (no drill-in) and the caller
+        // reports the outer relation error with the union per-property chain.
+        let union_view = [
+            contextual_target,
+            evaluated_target,
+            resolved_target,
+            target_type,
+        ]
+        .into_iter()
+        .find_map(|candidate| self.drill_in_union_view(candidate));
+        if let Some(members) = union_view
+            && !members
+                .iter()
+                .all(|&member| self.union_member_has_property_for_drill_in(member, prop_name))
+            && let Some(best) = crate::query_boundaries::common::first_non_array_like_union_member(
+                self.ctx.types,
+                &members,
+            )
+        {
+            if best.is_nullish() {
+                // A nullish best member carries no properties: skip the
+                // drill-in entirely (tsc elaborates nothing for it).
+                return None;
+            }
+            return self.object_literal_target_property_type(best, prop_name_idx, prop_name);
+        }
+
         let mut contextual_property_type = None;
         let mut env_property_type = None;
         let mut mapped_property_display_type = None;

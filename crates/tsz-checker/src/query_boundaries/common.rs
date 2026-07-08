@@ -1712,6 +1712,17 @@ pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     tsz_solver::visitor::is_primitive_type(db, type_id)
 }
 
+/// tsc `findBestTypeForObjectLiteral`: the first non-array-like member of a
+/// union (in tsc's relation order) when the union contains an array-like
+/// member; `None` when the rule does not apply. Used to gate object-literal
+/// property drill-in against union targets (issue #15403).
+pub(crate) fn first_non_array_like_union_member(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<TypeId> {
+    tsz_solver::visitor::first_non_array_like_union_member(db, members)
+}
+
 pub(crate) fn is_literal_type_through_type_constraints(
     db: &dyn TypeDatabase,
     type_id: TypeId,

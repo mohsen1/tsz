@@ -176,6 +176,12 @@ impl<'a> CheckerState<'a> {
                 target_value_type,
                 ..
             } => (*source_value_type, *target_value_type),
+            // An excess property carries the member it is excess AGAINST; its
+            // message must name that member (`'q' does not exist in type 'B'`),
+            // not the parent-supplied union.
+            tsz_solver::SubtypeFailureReason::ExcessProperty { target_type, .. } => {
+                (fallback_source, *target_type)
+            }
             _ => (fallback_source, fallback_target),
         }
     }
@@ -503,6 +509,19 @@ impl<'a> CheckerState<'a> {
                     Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
                 }
             }
+            // tsc anchors a chain that terminates in a NESTED literal's excess
+            // property at that property's name (`reportParentSkippedError`
+            // rebinds `errorNode` to the offending property declaration).
+            if let Some((path, excess_prop)) = Self::terminal_excess_property_of(reason)
+                && let Some(expr_idx) = self
+                    .direct_diagnostic_source_expression(idx)
+                    .or_else(|| self.assignment_source_expression(idx))
+                && let Some((excess_start, excess_length)) =
+                    self.excess_property_anchor_along_path(expr_idx, &path, excess_prop)
+            {
+                diag.start = excess_start;
+                diag.length = excess_length;
+            }
             return diag;
         }
 
@@ -527,6 +546,35 @@ impl<'a> CheckerState<'a> {
             Self::push_nested_chain(&mut diag, nested_diag, depth + 1);
         }
         diag
+    }
+
+    /// The property path to (and name of) the excess property an elaboration
+    /// chain terminates in, if any: walks `PropertyTypeMismatch` /
+    /// `UnionTargetMismatch` links to the leaf, collecting the property names
+    /// along the way, and reports the leaf's `ExcessProperty` name.
+    fn terminal_excess_property_of(
+        reason: &tsz_solver::SubtypeFailureReason,
+    ) -> Option<(Vec<tsz_common::interner::Atom>, tsz_common::interner::Atom)> {
+        match reason {
+            tsz_solver::SubtypeFailureReason::ExcessProperty { property_name, .. } => {
+                Some((Vec::new(), *property_name))
+            }
+            tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
+                property_name,
+                nested_reason,
+                ..
+            } => {
+                let (mut path, excess) = nested_reason
+                    .as_deref()
+                    .and_then(Self::terminal_excess_property_of)?;
+                path.insert(0, *property_name);
+                Some((path, excess))
+            }
+            tsz_solver::SubtypeFailureReason::UnionTargetMismatch { nested_reason, .. } => {
+                Self::terminal_excess_property_of(nested_reason)
+            }
+            _ => None,
+        }
     }
 
     /// Render a member whose two call signatures differ only in their RETURN

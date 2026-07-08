@@ -1328,7 +1328,20 @@ impl<'a> CheckerState<'a> {
         other: TypeId,
     ) -> Option<TypeId> {
         match self.nullish_stripped_members(ty, other)?.as_slice() {
-            [only] => Some(*only),
+            [only] => {
+                // tsc's nullable-target reduction counts the FLAT normalized
+                // union — `Json | undefined` is seven members to `isRelatedTo`,
+                // not two — so a sole survivor that itself resolves to a
+                // multi-member union keeps the original union display
+                // (`Json | undefined`), never the collapsed alias.
+                let resolved = self.resolve_lazy_type(*only);
+                if crate::query_boundaries::common::union_members(self.ctx.types, resolved)
+                    .is_some_and(|members| members.len() >= 2)
+                {
+                    return None;
+                }
+                Some(*only)
+            }
             _ => None,
         }
     }

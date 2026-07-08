@@ -584,6 +584,61 @@ pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool
     matches!(types.lookup(type_id), Some(TypeData::Application(_)))
 }
 
+/// tsc `isArrayLikeType` for union best-member selection: arrays, readonly
+/// arrays, and tuples, resolving `readonly` wrappers, applications, and
+/// substitution/constraint indirection through
+/// [`crate::type_queries::classify_array_like`]. Callers resolve lazy
+/// aliases before asking.
+fn is_array_like_for_union_best_match(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    use crate::type_queries::extended::{ArrayLikeKind, classify_array_like};
+    match classify_array_like(types, type_id) {
+        ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple => true,
+        ArrayLikeKind::Readonly(inner) => matches!(
+            classify_array_like(types, inner),
+            ArrayLikeKind::Array(_) | ArrayLikeKind::Tuple
+        ),
+        ArrayLikeKind::Union(_) | ArrayLikeKind::Intersection(_) | ArrayLikeKind::Other => false,
+    }
+}
+
+/// tsc `findBestTypeForObjectLiteral`: for an object-literal source failing
+/// against a union that contains an array-like member, the best-matching
+/// member is the first non-array-like member in tsc's relation order.
+///
+/// tsc iterates `union.types` in ascending type-id order: `undefined`/`null`
+/// first, then the remaining intrinsics and literal types (interned before
+/// any user object type in practice), then object-like members in stored
+/// order. Returns `None` when no member is array-like (the rule does not
+/// apply) or every member is array-like.
+pub fn first_non_array_like_union_member(
+    types: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<TypeId> {
+    let relation_rank = |m: TypeId| match m {
+        TypeId::UNDEFINED => 0,
+        TypeId::NULL => 1,
+        _ if is_intrinsic_or_literal_type(types, m) => 2,
+        _ => 3,
+    };
+    let mut saw_array_like = false;
+    let mut best: Option<(u32, TypeId)> = None;
+    for &member in members {
+        if is_array_like_for_union_best_match(types, member) {
+            saw_array_like = true;
+        } else {
+            let rank = relation_rank(member);
+            // Strictly-less keeps the FIRST member of the minimal rank.
+            if best.is_none_or(|(best_rank, _)| rank < best_rank) {
+                best = Some((rank, member));
+            }
+        }
+    }
+    if !saw_array_like {
+        return None;
+    }
+    best.map(|(_, member)| member)
+}
+
 mod content;
 
 pub use content::{

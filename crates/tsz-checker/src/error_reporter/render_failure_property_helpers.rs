@@ -672,6 +672,41 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// The span of the excess property that terminates a union `checkTypes`
+    /// chain, located by walking the SOURCE literal along the chain's
+    /// recorded property path (`{ z: { q: 1 } }` with path `["z"]` and excess
+    /// `q` anchors at the nested `q` — tsc's `reportParentSkippedError`
+    /// rebinding, issue #15403). Following the recorded path (rather than
+    /// scanning for the name) keeps same-named properties in sibling values
+    /// unambiguous.
+    pub(crate) fn excess_property_anchor_along_path(
+        &self,
+        expr_idx: NodeIndex,
+        path: &[tsz_common::interner::Atom],
+        excess_property: tsz_common::interner::Atom,
+    ) -> Option<(u32, u32)> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = self.ctx.arena.skip_parenthesized(expr_idx);
+        for &segment in path {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            let literal = self.ctx.arena.get_literal_expr(node)?;
+            let value = literal.elements.nodes.iter().find_map(|&elem_idx| {
+                let elem_node = self.ctx.arena.get(elem_idx)?;
+                if elem_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    return None;
+                }
+                let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                self.property_name_matches_atom(prop.name, segment)
+                    .then_some(prop.initializer)
+            })?;
+            current = self.ctx.arena.skip_parenthesized(value);
+        }
+        self.excess_property_name_span_in_literal(current, excess_property)
+    }
+
     pub(super) fn excess_property_name_span_in_literal(
         &self,
         literal_idx: NodeIndex,

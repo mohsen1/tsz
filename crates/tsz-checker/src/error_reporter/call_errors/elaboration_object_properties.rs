@@ -40,6 +40,15 @@ impl<'a> CheckerState<'a> {
         let overall_target_is_union =
             crate::query_boundaries::common::union_members(self.ctx.types, param_type).is_some();
 
+        // tsc's drill-in gate operates on the ORIGINAL union — nullish members
+        // included, since `findBestTypeForObjectLiteral` can pick `null` as the
+        // best member — so compute it before the nullish-wrapper split below
+        // (issue #15403). `Some(best)` only when the union carries an
+        // array-like member; the loop then skips any property the best member
+        // does not carry, leaving the outer relation error to report tsc's
+        // union per-property chain.
+        let drill_gate_best_member = self.drill_in_best_union_member(param_type);
+
         // Normalize optional/nullish wrappers (e.g., `{...} | undefined`).
         let mut effective_param_type = if let (Some(non_nullish), Some(_nullish_cause)) =
             self.split_nullish_type(param_type)
@@ -113,7 +122,16 @@ impl<'a> CheckerState<'a> {
         // → `string`) does not produce a spurious mismatch against a `'name'`
         // target — the false positive a prior up-front bail tried to avoid.
         let diagnostics_before_epc = self.ctx.diagnostics.len();
-        self.check_object_literal_excess_properties(source_type, effective_param_type, arg_idx);
+        // When the drill-in gate is active (union target with an array-like
+        // member), the excess pass must see the RAW union — its per-property
+        // index-value check gates on the same best member, and the nullish
+        // members the wrapper split strips can be that best member.
+        let excess_check_target = if drill_gate_best_member.is_some() {
+            param_type
+        } else {
+            effective_param_type
+        };
+        self.check_object_literal_excess_properties(source_type, excess_check_target, arg_idx);
         // `check_object_literal_excess_properties` can trigger a contextual-type
         // refresh that retains/drops earlier implicit-any diagnostics (see
         // object_literal_support.rs). `recent_diagnostics` clamps its start, so
@@ -272,6 +290,20 @@ impl<'a> CheckerState<'a> {
                 }
                 None => continue,
             };
+            if !narrowed_by_discriminant
+                && let Some(best) = drill_gate_best_member
+                && !self.union_member_has_property_for_drill_in(best, &prop_name)
+            {
+                // The union's best-matching member (first non-array-like)
+                // does not carry this property: tsc skips the drill-in and
+                // reports the outer relation error instead.
+                continue;
+            }
+            // A did-you-mean-to-call hint applies only to property-assignment
+            // VALUES — methods and shorthand properties carry no inner
+            // expression in tsc's object-literal iterator, and both have
+            // their own syntax kinds.
+            let did_you_mean_candidate = elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT;
             let Some((target_prop_type, target_prop_type_for_diagnostic)) = self
                 .object_literal_target_property_type(
                     effective_param_type,
@@ -520,6 +552,23 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(prop_value_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION);
+                // tsc `elaborateDidYouMeanToCallOrConstruct`: a property-assignment
+                // value whose call-signature return type is assignable to the
+                // target property type anchors the TS2322 at the VALUE expression
+                // with a `Did you mean to call this expression?` hint. Methods and
+                // shorthand properties carry no inner expression in tsc's
+                // object-literal iterator, so they keep the property-name anchor.
+                if did_you_mean_candidate
+                    && self.emit_did_you_mean_to_call_property_value_error(
+                        source_prop_type_for_diagnostic,
+                        target_for_diag,
+                        target_prop_type,
+                        prop_value_idx,
+                    )
+                {
+                    elaborated = true;
+                    continue;
+                }
                 if is_method {
                     self.error_type_not_assignable_at_with_anchor(
                         source_prop_type_for_diagnostic,
@@ -692,6 +741,21 @@ impl<'a> CheckerState<'a> {
                 .call_arg_relation_outcome(source_prop_type, target_prop_type)
                 .related;
             if !prop_assignable {
+                // tsc's `elaborateError` runs `elaborateDidYouMeanToCallOrConstruct`
+                // before any node-kind elaboration: a property-assignment value of
+                // ANY expression kind whose call/construct return type is
+                // assignable anchors the TS2322 at the value with the hint.
+                if did_you_mean_candidate
+                    && self.emit_did_you_mean_to_call_property_value_error(
+                        source_prop_type,
+                        target_prop_type_for_diagnostic,
+                        target_prop_type,
+                        prop_value_idx,
+                    )
+                {
+                    elaborated = true;
+                    continue;
+                }
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
                     continue;
@@ -883,6 +947,82 @@ impl<'a> CheckerState<'a> {
         }
 
         elaborated
+    }
+
+    /// tsc `elaborateDidYouMeanToCallOrConstruct` for object-literal property
+    /// values: when the value's call-signature return type (not `any`/`never`)
+    /// is assignable to the target property type, the TS2322 anchors at the
+    /// value expression with a `Did you mean to call this expression?` hint.
+    /// Emits and reports `true` on that shape; emits nothing otherwise.
+    fn emit_did_you_mean_to_call_property_value_error(
+        &mut self,
+        source_display: TypeId,
+        target_display: TypeId,
+        target_prop_type: TypeId,
+        prop_value_idx: NodeIndex,
+    ) -> bool {
+        // tsc checks construct signatures before call signatures: any
+        // construct signature's (non-`any`, non-`never`) return type
+        // assignable to the target wins; the call side inspects the first
+        // call signature (`first_callable_return_type`).
+        let return_relates = |this: &mut Self, return_type: TypeId| {
+            return_type != TypeId::ANY
+                && return_type != TypeId::NEVER
+                && this
+                    .call_arg_relation_outcome(return_type, target_prop_type)
+                    .related
+        };
+        let resolved_source = self.resolve_lazy_type(source_display);
+        let construct_hit = crate::query_boundaries::common::get_construct_signatures(
+            self.ctx.types,
+            resolved_source,
+        )
+        .is_some_and(|sigs| sigs.iter().any(|sig| return_relates(self, sig.return_type)));
+        let (hint_message, hint_code) = if construct_hit {
+            (
+                diagnostic_messages::DID_YOU_MEAN_TO_USE_NEW_WITH_THIS_EXPRESSION,
+                diagnostic_codes::DID_YOU_MEAN_TO_USE_NEW_WITH_THIS_EXPRESSION,
+            )
+        } else {
+            let call_hit = self
+                .first_callable_return_type(resolved_source)
+                .is_some_and(|return_type| return_relates(self, return_type));
+            if !call_hit {
+                return false;
+            }
+            (
+                diagnostic_messages::DID_YOU_MEAN_TO_CALL_THIS_EXPRESSION,
+                diagnostic_codes::DID_YOU_MEAN_TO_CALL_THIS_EXPRESSION,
+            )
+        };
+        let anchor_idx =
+            self.resolve_diagnostic_anchor_node(prop_value_idx, DiagnosticAnchorKind::Exact);
+        let Some(anchor) = self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+        else {
+            return false;
+        };
+        let src_str = self.format_type_for_assignability_message(source_display);
+        let tgt_str = self.format_type_for_assignability_message(target_display);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&src_str, &tgt_str],
+        );
+        let related = vec![crate::diagnostics::DiagnosticRelatedInformation {
+            category: tsz_common::diagnostics::DiagnosticCategory::Message,
+            code: hint_code,
+            file: self.ctx.file_name.clone(),
+            start: anchor.start,
+            length: anchor.length,
+            message_text: hint_message.to_string(),
+            depth: 0,
+        }];
+        self.error_at_node_with_related(
+            anchor_idx,
+            &message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            related,
+        );
+        true
     }
 
     fn object_literal_numeric_members_assign_to_mapped_target(

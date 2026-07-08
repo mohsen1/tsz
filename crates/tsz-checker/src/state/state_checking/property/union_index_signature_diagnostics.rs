@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn try_union_index_signature_value_check(
@@ -11,6 +12,7 @@ impl<'a> CheckerState<'a> {
         obj_literal_idx: NodeIndex,
         union_shapes: &[std::sync::Arc<tsz_solver::ObjectShape>],
         explicit_property_names: Option<&HashSet<Atom>>,
+        best_union_member: Option<TypeId>,
     ) -> bool {
         let diag_count_before = self.ctx.diagnostics.len();
 
@@ -36,6 +38,19 @@ impl<'a> CheckerState<'a> {
             }
 
             let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+
+            // tsc drills a union-target property through the best-matching
+            // member only (`getBestMatchIndexedAccessTypeOrUndefined`). When
+            // the union carries an array-like member, that is the first
+            // non-array-like member (`findBestTypeForObjectLiteral`); a
+            // property it does not carry is never checked at the property
+            // level — the outer relation error reports tsc's union
+            // per-property chain instead (issue #15403).
+            if let Some(best) = best_union_member
+                && !self.union_member_has_property_for_drill_in(best, &prop_name)
+            {
+                continue;
+            }
             let is_numeric_name = tsz_solver::utils::is_numeric_literal_name(&prop_name);
             let mut applicable_index_value_types = Vec::new();
             let mut accepted_by_index = false;

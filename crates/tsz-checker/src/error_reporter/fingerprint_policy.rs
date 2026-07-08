@@ -875,9 +875,10 @@ impl<'a> CheckerState<'a> {
     /// *deeper or differently shaped* than a single property leaf — nested
     /// property chains (dotted-path collapse), tuple positions, array/index
     /// drill, and missing-property frames. Returns `false` for self-heading
-    /// leaves (scalar/literal/intrinsic mismatches) and for union/conditional
-    /// members, which the surrounding arm already surfaces via
-    /// [`Self::union_member_related_line`]; those keep their established shape.
+    /// leaves (scalar/literal/intrinsic mismatches) and for union-source/
+    /// conditional-branch members, which the surrounding arm already surfaces
+    /// via [`Self::union_member_related_line`]; those keep their established
+    /// shape.
     const fn property_nested_reason_needs_full_drill(
         reason: &tsz_solver::SubtypeFailureReason,
     ) -> bool {
@@ -896,11 +897,19 @@ impl<'a> CheckerState<'a> {
                 | R::IndexSignatureMismatch { .. }
                 | R::ReturnTypeMismatch { .. }
                 | R::ParameterTypeMismatch { .. }
+                // The union checkTypes chain (issue #15403) frames a nested
+                // fresh-literal relation (`Type '{…}' is not assignable to
+                // type 'M | undefined'.` + its own property drill) or a
+                // nested excess-property line; both are deeper than the
+                // hand-rolled pair.
+                | R::UnionTargetMismatch { .. }
+                | R::ExcessProperty { .. }
         )
         // Scalar/intrinsic/literal leaves self-head with the same
         // `Type 'sp' … 'tp'.` line the hand-rolled pair already emits, and
-        // union/conditional members are handled by the surrounding arm's
-        // `union_member_related_line`; those stay on the hand-rolled path.
+        // union-source/conditional-branch members are handled by the
+        // surrounding arm's `union_member_related_line`; those stay on the
+        // hand-rolled path.
     }
 
     /// Build the child-relation elaboration line (`Type 'C' is not assignable

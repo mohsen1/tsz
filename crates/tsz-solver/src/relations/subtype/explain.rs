@@ -63,6 +63,23 @@ fn reorder_union_members_nullish_first(members: &[TypeId]) -> Vec<TypeId> {
     ordered
 }
 
+/// Outcome of the fresh-object-literal union `checkTypes` pass
+/// (tsc `hasExcessProperties`, issue #15403).
+enum FreshLiteralUnionCheck {
+    /// A present, target-known source property failed the per-member
+    /// property-type union relation; the carried reason is the
+    /// `Types of property 'x' are incompatible.` chain.
+    FailingProperty(SubtypeFailureReason),
+    /// Every present source property is known in the target union and passes
+    /// its per-member property-type relation, so the failure elaborates
+    /// against the best-matching member instead.
+    AllPropertiesPass,
+    /// The pass does not apply: non-fresh source, no object shape, or the
+    /// first problematic property is unknown in every member (an excess
+    /// property, owned by the excess-property machinery).
+    NotApplicable,
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Array element type, transparently peeling a single `readonly` array
     /// wrapper (`readonly T[]` / `ReadonlyArray<T>`).
@@ -985,6 +1002,40 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if union_list_id(self.interner, resolved_target).is_some() {
+            // Fresh object-literal source vs union target: tsc's
+            // `hasExcessProperties` checkTypes pass runs before any
+            // best-member selection (`typeRelatedToSomeType`), relating each
+            // present source property against the union of per-member
+            // property-or-index types and reporting the first failing one as
+            // `Types of property 'x' are incompatible.` with the inner
+            // relation nested (issue #15403). When every property passes, the
+            // relation error elaborates against the best-matching member —
+            // for an object-literal source vs a union containing an
+            // array-like member, the first non-array-like member in tsc's
+            // relation order (`findBestTypeForObjectLiteral`).
+            match self.explain_fresh_literal_union_check_types(resolved_source, target) {
+                FreshLiteralUnionCheck::FailingProperty(reason) => return Some(reason),
+                FreshLiteralUnionCheck::AllPropertiesPass => {
+                    if let Some(best) =
+                        self.first_non_array_like_union_member_in_relation_order(resolved_target)
+                    {
+                        let nested = self
+                            .explain_failure_guarded(resolved_source, best)
+                            .unwrap_or(SubtypeFailureReason::TypeMismatch {
+                                source_type: source,
+                                target_type: best,
+                            });
+                        return Some(SubtypeFailureReason::UnionTargetMismatch {
+                            source_type: source,
+                            target_type: target,
+                            member_type: best,
+                            nested_reason: Box::new(nested),
+                        });
+                    }
+                }
+                FreshLiteralUnionCheck::NotApplicable => {}
+            }
+
             // Prefer the original target's union members so member display keeps
             // user-facing aliases (e.g. an identity mapped type `Mapped<B>` that
             // structurally simplifies to `B` in `resolved_target` must still
@@ -2022,5 +2073,390 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         None
+    }
+
+    /// tsc `hasExcessProperties` union `checkTypes` pass (issue #15403).
+    ///
+    /// For a FRESH object-literal source failing against a union target, tsc
+    /// relates each present source property against the union of per-member
+    /// property-or-index types (`getTypeOfPropertyInTypes`): a member with a
+    /// named property contributes that property's type, a member whose index
+    /// signature applies contributes the index value type, and every other
+    /// member contributes `undefined`. The first failing property reports
+    /// `Types of property 'x' are incompatible.` with the inner relation
+    /// nested. Properties unknown in every member are excess properties and
+    /// belong to the excess-property machinery, so the pass defers to it.
+    fn explain_fresh_literal_union_check_types(
+        &mut self,
+        resolved_source: TypeId,
+        target: TypeId,
+    ) -> FreshLiteralUnionCheck {
+        use crate::relations::freshness::is_fresh_object_type;
+
+        if !is_fresh_object_type(self.interner, resolved_source) {
+            return FreshLiteralUnionCheck::NotApplicable;
+        }
+        let Some(shape_id) = object_shape_id(self.interner, resolved_source)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved_source))
+        else {
+            return FreshLiteralUnionCheck::NotApplicable;
+        };
+        let Some(check_members) = self.flattened_resolved_union_members(target) else {
+            return FreshLiteralUnionCheck::NotApplicable;
+        };
+
+        let shape = self.interner.object_shape(shape_id);
+        let mut per_member = Vec::with_capacity(check_members.len());
+        for prop in shape.properties.iter() {
+            let name_str = self.interner.resolve_atom_ref(prop.name);
+            per_member.clear();
+            let mut known = false;
+            for &member in &check_members {
+                match self.member_property_or_index_type(member, prop.name, name_str.as_ref()) {
+                    Some(member_prop_type) => {
+                        known = true;
+                        per_member.push(member_prop_type);
+                    }
+                    None => per_member.push(TypeId::UNDEFINED),
+                }
+            }
+            if !known {
+                // A property unknown in every member is an excess property;
+                // tsc reports the excess error before any property-type
+                // chain, so the whole pass defers to the excess machinery.
+                return FreshLiteralUnionCheck::NotApplicable;
+            }
+            let prop_union = self.interner.union_from_slice(&per_member);
+            if self.check_subtype(prop.type_id, prop_union).is_true() {
+                continue;
+            }
+            // tsc's reported property type is post-widening (`() => 1`
+            // contextually kept alive in tsz renders as tsc's `() => number`);
+            // the relation above already ran on the raw type.
+            let display_prop_type = self.widen_check_types_property_display(prop.type_id);
+            let nested = self.check_types_inner_reason(display_prop_type, prop_union);
+            return FreshLiteralUnionCheck::FailingProperty(
+                SubtypeFailureReason::PropertyTypeMismatch {
+                    property_name: prop.name,
+                    source_property_type: display_prop_type,
+                    target_property_type: prop_union,
+                    nested_reason: Some(Box::new(nested)),
+                },
+            );
+        }
+        FreshLiteralUnionCheck::AllPropertiesPass
+    }
+
+    /// Widen a fresh-literal property type for the reported `checkTypes`
+    /// reason: scalar literals to their primitives and a function's literal
+    /// return to its primitive (`() => 1` renders as tsc's `() => number` —
+    /// tsc's mutable-location widening has already generalized the property
+    /// type by the time its relation reports it). Display-only; the relation
+    /// verdict runs on the raw type.
+    fn widen_check_types_property_display(&self, ty: TypeId) -> TypeId {
+        let widened = crate::operations::widening::widen_literal_type(self.interner, ty);
+        if widened != ty {
+            return widened;
+        }
+        let return_type = crate::type_queries::get_function_return_type(self.interner, ty);
+        if return_type != TypeId::ERROR {
+            let widened_return =
+                crate::operations::widening::widen_literal_type(self.interner, return_type);
+            if widened_return == return_type {
+                return ty;
+            }
+            return crate::type_queries::replace_function_return_type(
+                self.interner,
+                ty,
+                widened_return,
+            );
+        }
+        // A nested object-literal property displays its own property types
+        // one level deep (`{ inner: () => 1 }` renders as tsc's
+        // `{ inner: () => number; }`); deeper levels re-widen at their own
+        // recursion step.
+        if let Some(shape_id) = object_shape_id(self.interner, ty)
+            .or_else(|| object_with_index_shape_id(self.interner, ty))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            let mut changed = false;
+            let new_props: Vec<crate::types::PropertyInfo> = shape
+                .properties
+                .iter()
+                .map(|prop| {
+                    let widened_type = self.widen_check_types_property_display(prop.type_id);
+                    changed |= widened_type != prop.type_id;
+                    let mut widened_prop = prop.clone();
+                    widened_prop.type_id = widened_type;
+                    widened_prop
+                })
+                .collect();
+            if !changed {
+                return ty;
+            }
+            return crate::operations::widening::rebuild_object_with_shape_metadata(
+                self.interner,
+                ty,
+                &shape,
+                new_props,
+            );
+        }
+        ty
+    }
+
+    /// The inner relation reason beneath a `Types of property 'x' are
+    /// incompatible.` line of the union `checkTypes` pass.
+    ///
+    /// Mirrors tsc's inner `isRelatedTo(sourcePropType, propUnion)` error
+    /// reporting: a definitely-non-nullable source against a union of one
+    /// non-nullish member plus one or two nullish members is related (and
+    /// displayed) against the non-nullish member alone (tsc `isRelatedTo`'s
+    /// nullable-target reduction); a fresh object-literal source recurses
+    /// through the checkTypes pass itself; anything else is the plain
+    /// `Type 'S' is not assignable to type 'U'.` leaf.
+    fn check_types_inner_reason(
+        &mut self,
+        source_prop: TypeId,
+        prop_union: TypeId,
+    ) -> SubtypeFailureReason {
+        let leaf = |target: TypeId| SubtypeFailureReason::TypeMismatch {
+            source_type: source_prop,
+            target_type: target,
+        };
+        let Some(flat) = self.flattened_resolved_union_members(prop_union) else {
+            return leaf(prop_union);
+        };
+
+        let mut sole_non_nullish = None;
+        let mut non_nullish_count = 0usize;
+        for &member in &flat {
+            if !member.is_nullish() {
+                non_nullish_count += 1;
+                sole_non_nullish = Some(member);
+            }
+        }
+        let nullish_count = flat.len() - non_nullish_count;
+        if let Some(reduced) = sole_non_nullish
+            && non_nullish_count == 1
+            && (1..=2).contains(&nullish_count)
+            && self.is_definitely_non_nullable(source_prop)
+        {
+            return self.reduced_member_inner_reason(source_prop, reduced);
+        }
+
+        let resolved_prop = self.resolve_lazy_type(source_prop);
+        if let FreshLiteralUnionCheck::FailingProperty(inner) =
+            self.explain_fresh_literal_union_check_types(resolved_prop, prop_union)
+        {
+            return Self::framed_inner_reason(source_prop, prop_union, inner);
+        }
+
+        leaf(prop_union)
+    }
+
+    /// The inner reason for the reduced relation `S` vs the union's sole
+    /// non-nullish member (tsc `isRelatedTo`'s nullable-target reduction).
+    ///
+    /// tsc's inner `isRelatedTo(S, reduced)` runs `hasExcessProperties`
+    /// before any structural property check, so for a fresh object-literal
+    /// source the first source property unknown in the reduced member wins —
+    /// even over a present-property type mismatch (no elaboration pass runs
+    /// inside a nested relation).
+    fn reduced_member_inner_reason(
+        &mut self,
+        source_prop: TypeId,
+        reduced: TypeId,
+    ) -> SubtypeFailureReason {
+        if let Some(excess) = self.first_excess_property_against_member(source_prop, reduced) {
+            return SubtypeFailureReason::ExcessProperty {
+                property_name: excess,
+                target_type: reduced,
+            };
+        }
+        let Some(inner) = self.explain_failure_guarded(source_prop, reduced) else {
+            return SubtypeFailureReason::TypeMismatch {
+                source_type: source_prop,
+                target_type: reduced,
+            };
+        };
+        if Self::reason_carries_own_headline(&inner) {
+            inner
+        } else {
+            Self::framed_inner_reason(source_prop, reduced, inner)
+        }
+    }
+
+    /// Frame `inner` beneath its own `Type 'S' is not assignable to type
+    /// 'T'.` line (rendered via the `UnionTargetMismatch` parent-with-child
+    /// shape; the member field carries the same target — there is no separate
+    /// member to name).
+    fn framed_inner_reason(
+        source: TypeId,
+        target: TypeId,
+        inner: SubtypeFailureReason,
+    ) -> SubtypeFailureReason {
+        SubtypeFailureReason::UnionTargetMismatch {
+            source_type: source,
+            target_type: target,
+            member_type: target,
+            nested_reason: Box::new(inner),
+        }
+    }
+
+    /// `true` when the rendered form of `reason` already begins with its own
+    /// full first line (a `Type 'S' is not assignable ...`, missing-property,
+    /// or excess-property message), so no extra relation frame is needed
+    /// above it.
+    const fn reason_carries_own_headline(reason: &SubtypeFailureReason) -> bool {
+        matches!(
+            reason,
+            SubtypeFailureReason::TypeMismatch { .. }
+                | SubtypeFailureReason::IntrinsicTypeMismatch { .. }
+                | SubtypeFailureReason::LiteralTypeMismatch { .. }
+                | SubtypeFailureReason::MissingProperty { .. }
+                | SubtypeFailureReason::MissingProperties { .. }
+                | SubtypeFailureReason::ExcessProperty { .. }
+                | SubtypeFailureReason::UnionTargetMismatch { .. }
+                | SubtypeFailureReason::NoUnionMemberMatches { .. }
+        )
+    }
+
+    /// The union member list of `ty` after resolving lazy aliases, with one
+    /// level of nested-union flattening — the member list tsc's normalized
+    /// union carries (`Json | undefined` is the seven flat members, not a
+    /// nested alias pair).
+    fn flattened_resolved_union_members(&self, ty: TypeId) -> Option<Vec<TypeId>> {
+        let resolved = self.resolve_lazy_type(ty);
+        let list_id = union_list_id(self.interner, resolved)?;
+        let members = self.interner.type_list(list_id);
+        let mut flat = Vec::with_capacity(members.len());
+        let mut seen = rustc_hash::FxHashSet::default();
+        for &member in members.iter() {
+            let resolved_member = self.resolve_lazy_type(member);
+            if let Some(sub_id) = union_list_id(self.interner, resolved_member) {
+                let sub_members: Vec<TypeId> = self.interner.type_list(sub_id).to_vec();
+                flat.extend(
+                    sub_members
+                        .into_iter()
+                        .map(|sub| self.resolve_lazy_type(sub))
+                        .filter(|&sub| seen.insert(sub)),
+                );
+            } else if seen.insert(resolved_member) {
+                flat.push(resolved_member);
+            }
+        }
+        Some(flat)
+    }
+
+    /// Per-member contribution to the union `checkTypes` property type
+    /// (tsc `getTypeOfPropertyInTypes`): the named property's type (optional
+    /// properties gain `| undefined` under strict null checks, matching the
+    /// optional property symbol's type), else the applicable index
+    /// signature's value type, else `None` (the property is not known on
+    /// this member and it contributes `undefined`).
+    fn member_property_or_index_type(
+        &self,
+        member: TypeId,
+        prop_name: tsz_common::interner::Atom,
+        name_str: &str,
+    ) -> Option<TypeId> {
+        let resolved = self.resolve_lazy_type(member);
+        let shape_id = object_shape_id(self.interner, resolved)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved))?;
+        let shape = self.interner.object_shape(shape_id);
+        if let Some(prop) =
+            utils::lookup_property(self.interner, &shape.properties, Some(shape_id), prop_name)
+        {
+            return Some(self.optional_property_type(prop));
+        }
+        if utils::is_numeric_literal_name(name_str)
+            && let Some(number_index) = shape.number_index.as_ref()
+        {
+            return Some(number_index.value_type);
+        }
+        shape
+            .string_index
+            .as_ref()
+            .map(|string_index| string_index.value_type)
+    }
+
+    /// First source property that is excess against a single reduced target
+    /// member: a fresh object-literal source property named nowhere in the
+    /// member's shape and not accepted by an applicable index signature.
+    /// Mirrors the per-property excess pass tsc's `hasExcessProperties` runs
+    /// ahead of structural property checks. `None` when the member is not a
+    /// plain object shape (primitives and arrays route through other reasons).
+    fn first_excess_property_against_member(
+        &self,
+        source: TypeId,
+        member: TypeId,
+    ) -> Option<tsz_common::interner::Atom> {
+        let resolved_source = self.resolve_lazy_type(source);
+        if !crate::relations::freshness::is_fresh_object_type(self.interner, resolved_source) {
+            return None;
+        }
+        let source_shape_id = object_shape_id(self.interner, resolved_source)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved_source))?;
+        let resolved_member = self.resolve_lazy_type(member);
+        object_shape_id(self.interner, resolved_member)
+            .or_else(|| object_with_index_shape_id(self.interner, resolved_member))?;
+        let source_shape = self.interner.object_shape(source_shape_id);
+        source_shape
+            .properties
+            .iter()
+            .find(|prop| {
+                // Excess iff the member carries the property neither as a
+                // named member nor through an applicable index signature.
+                self.member_property_or_index_type(
+                    resolved_member,
+                    prop.name,
+                    self.interner.resolve_atom_ref(prop.name).as_ref(),
+                )
+                .is_none()
+            })
+            .map(|prop| prop.name)
+    }
+
+    /// `true` for definitely-non-nullable sources (tsc
+    /// `TypeFlags.DefinitelyNonNullable`): concrete value types that can
+    /// never hold `null`/`undefined`. Nullish types, `void`, `any`/`unknown`,
+    /// type parameters, and unions carrying a nullish member are excluded.
+    fn is_definitely_non_nullable(&self, ty: TypeId) -> bool {
+        let resolved = self.resolve_lazy_type(ty);
+        if resolved.is_nullish()
+            || resolved == TypeId::VOID
+            || resolved.is_any_or_unknown()
+            || resolved.is_never()
+            || is_type_parameter(self.interner, resolved)
+        {
+            return false;
+        }
+        if let Some(list_id) = union_list_id(self.interner, resolved) {
+            return self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .all(|&m| self.is_definitely_non_nullable(m));
+        }
+        true
+    }
+
+    /// tsc `findBestTypeForObjectLiteral`: the best-matching member of a
+    /// union target containing an array-like member — the first
+    /// non-array-like member in tsc's relation order. Members are lazily
+    /// resolved before classification so aliased array members participate.
+    /// (Callers have already established the fresh object-literal source.)
+    fn first_non_array_like_union_member_in_relation_order(
+        &self,
+        resolved_target: TypeId,
+    ) -> Option<TypeId> {
+        let list_id = union_list_id(self.interner, resolved_target)?;
+        let members: Vec<TypeId> = self
+            .interner
+            .type_list(list_id)
+            .iter()
+            .map(|&m| self.resolve_lazy_type(m))
+            .collect();
+        crate::visitor::first_non_array_like_union_member(self.interner, &members)
     }
 }

@@ -330,11 +330,28 @@ impl<'a> CheckerState<'a> {
                 .map(|(_, shape)| shape.clone())
                 .collect::<Vec<_>>();
 
+            // Classify members from the ORIGINAL declared union — nullish
+            // members included, since tsc's `findBestTypeForObjectLiteral`
+            // can pick `null` as the best member. The `target` reaching this
+            // check can be nullish-stripped/pruned, so fall back to the
+            // literal's tracked contextual target when `target` is not a
+            // union view.
+            let tracked_contextual_target = self
+                .ctx
+                .object_literal_tracking
+                .contextual_targets
+                .get(&object_literal_idx)
+                .copied();
+            let best_union_member = [Some(target), tracked_contextual_target]
+                .into_iter()
+                .flatten()
+                .find_map(|candidate| self.drill_in_best_union_member(candidate));
             if self.try_union_index_signature_value_check(
                 source_props,
                 idx,
                 &target_shapes,
                 explicit_property_names.as_ref(),
+                best_union_member,
             ) {
                 return;
             }
@@ -796,6 +813,7 @@ impl<'a> CheckerState<'a> {
                     idx,
                     std::slice::from_ref(&target_shape),
                     explicit_property_names.as_ref(),
+                    None,
                 ) {
                     return;
                 }
