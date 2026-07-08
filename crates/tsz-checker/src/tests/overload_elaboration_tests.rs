@@ -530,7 +530,8 @@ declare function f(x: number): number;
 declare function f(x: string): string;
 declare function f(x: boolean[]): boolean;
 declare function f(x: object): symbol;
-f(Symbol());
+declare const sym: symbol;
+f(sym);
 "#,
     );
 
@@ -565,7 +566,8 @@ fn arity_failing_overload_is_excluded_from_chain_but_counted_in_total() {
 declare function g(a: string): void;
 declare function g(a: number, b: number): void;
 declare function g(a: boolean): void;
-g(Symbol());
+declare const sym: symbol;
+g(sym);
 "#,
     );
 
@@ -612,7 +614,8 @@ declare function r(a: number, b: number): void;
 declare function r(a: boolean): void;
 declare function r(a: object): void;
 declare function r(a: number[]): void;
-r(Symbol());
+declare const sym: symbol;
+r(sym);
 "#,
     );
 
@@ -677,7 +680,8 @@ interface Maker {
     new (a: object): object;
 }
 declare const Maker: Maker;
-new Maker(Symbol());
+declare const sym: symbol;
+new Maker(sym);
 "#,
     );
 
@@ -707,7 +711,8 @@ fn lone_argument_error_candidate_with_arity_failures_stays_plain_ts2345() {
 declare function p(a: string): void;
 declare function p(a: number, b: number): void;
 declare function p(a: boolean, b: boolean, c: boolean): void;
-p(Symbol());
+declare const sym: symbol;
+p(sym);
 "#,
     );
 
@@ -733,7 +738,8 @@ fn collapse_and_exclusion_are_independent_of_binder_names() {
 declare function visitNode(entry: string): void;
 declare function visitNode(entry: number, extra: number): void;
 declare function visitNode(entry: boolean): void;
-visitNode(Symbol());
+declare const sym: symbol;
+visitNode(sym);
 "#,
     );
 
