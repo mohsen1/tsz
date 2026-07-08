@@ -686,17 +686,21 @@ new Maker(sym);
     );
 
     assert_eq!(
-        lines_at_depth_with_codes(&chain, 0),
-        vec![(2770, "The last overload gave the following error.")],
-        "expected the constructor set to collapse to one TS2770 header, got: {chain:?}"
-    );
-    assert_eq!(
-        lines_at_depth_with_codes(&chain, 1),
-        vec![(
-            2345,
-            "Argument of type 'symbol' is not assignable to parameter of type 'object'."
-        )],
-        "expected only the last constructor candidate's error, got: {chain:?}"
+        chain,
+        vec![
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'symbol' is not assignable to parameter of type 'object'."
+                    .to_string()
+            ),
+        ],
+        "expected the constructor set to collapse to only the last candidate's error"
     );
 }
 
@@ -744,26 +748,31 @@ visitNode(sym);
     );
 
     assert_eq!(
-        lines_at_depth_with_codes(&chain, 0),
+        chain,
         vec![
             (
+                0,
                 2772,
-                "Overload 1 of 3, '(entry: string): void', gave the following error."
+                "Overload 1 of 3, '(entry: string): void', gave the following error.".to_string()
             ),
             (
+                1,
+                2345,
+                "Argument of type 'symbol' is not assignable to parameter of type 'string'."
+                    .to_string()
+            ),
+            (
+                0,
                 2772,
-                "Overload 2 of 3, '(entry: boolean): void', gave the following error."
+                "Overload 2 of 3, '(entry: boolean): void', gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'symbol' is not assignable to parameter of type 'boolean'."
+                    .to_string()
             ),
         ],
-        "expected renamed binders to change only the signature text, got: {chain:?}"
+        "expected renamed binders to change only the signature text"
     );
-}
-
-/// The `(code, message)` pairs of every chain line at exactly `depth`.
-fn lines_at_depth_with_codes(chain: &[(u8, u32, String)], depth: u8) -> Vec<(u32, &str)> {
-    chain
-        .iter()
-        .filter(|(d, _, _)| *d == depth)
-        .map(|(_, code, m)| (*code, m.as_str()))
-        .collect()
 }

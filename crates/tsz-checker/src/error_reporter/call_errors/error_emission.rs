@@ -844,13 +844,9 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let remaining_failures_are_count_mismatches = remaining_failures.iter().all(|failure| {
-            matches!(
-                failure.code,
-                diagnostic_codes::EXPECTED_ARGUMENTS_BUT_GOT
-                    | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
-            )
-        });
+        let remaining_failures_are_count_mismatches = remaining_failures
+            .iter()
+            .all(|failure| failure.is_arity_failure());
         let all_failures_are_argument_mismatches = !failures.is_empty()
             && failures.iter().all(|failure| {
                 failure.code
@@ -1079,13 +1075,7 @@ impl<'a> CheckerState<'a> {
         // sets) keep the historical flat rendering.
         let chain_candidates: Vec<&tsz_solver::PendingDiagnostic> = failures
             .iter()
-            .filter(|failure| {
-                !matches!(
-                    failure.code,
-                    diagnostic_codes::EXPECTED_ARGUMENTS_BUT_GOT
-                        | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
-                )
-            })
+            .filter(|failure| !failure.is_arity_failure())
             .collect();
         let wrap_overloads = chain_candidates.len() >= 2
             && chain_candidates
@@ -1135,7 +1125,7 @@ impl<'a> CheckerState<'a> {
 
         let related_policy = if wrap_overloads {
             // `{N}` counts every failed overload, arity failures included.
-            let total = failures.len();
+            let total = failures.len().to_string();
             for (ordinal, (failure, chain)) in
                 wrapped_candidates.iter().zip(candidate_chains).enumerate()
             {
@@ -1156,11 +1146,7 @@ impl<'a> CheckerState<'a> {
                     (
                         format_message(
                             diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
-                            &[
-                                &(ordinal + 1).to_string(),
-                                &total.to_string(),
-                                &signature_display,
-                            ],
+                            &[&(ordinal + 1).to_string(), &total, &signature_display],
                         ),
                         diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
                     )
