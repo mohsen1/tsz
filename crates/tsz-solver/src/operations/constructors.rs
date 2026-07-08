@@ -199,7 +199,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
                         )
-                        .with_overload_signature(self.interner.function(func.clone())),
+                        .with_overload_signature(self.interner.function(func)),
                     );
                 }
                 CallResult::ArgumentCountMismatch {
@@ -221,7 +221,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             max,
                             actual,
                         )
-                        .with_overload_signature(self.interner.function(func.clone())),
+                        .with_overload_signature(self.interner.function(func)),
                     );
                 }
                 // Track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
@@ -243,7 +243,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             expected_this,
                             actual_this,
                         )
-                        .with_overload_signature(self.interner.function(func.clone())),
+                        .with_overload_signature(self.interner.function(func)),
                     );
                 }
                 _ => {

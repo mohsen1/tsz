@@ -251,6 +251,269 @@ f(true);
     );
 }
 
+/// The `(depth, message)` pairs of the chain, for tests that assert shape
+/// and text but not per-line codes.
+fn chain_lines(source: &str) -> Vec<(u8, String)> {
+    overload_chain(source)
+        .into_iter()
+        .map(|(depth, _, message)| (depth, message))
+        .collect()
+}
+
+/// Borrowing view of a chain for comparison against literal expectations.
+fn as_pairs(chain: &[(u8, String)]) -> Vec<(u8, &str)> {
+    chain.iter().map(|(d, m)| (*d, m.as_str())).collect()
+}
+
+/// The messages of every chain line at exactly `depth`.
+fn lines_at_depth(chain: &[(u8, String)], depth: u8) -> Vec<&str> {
+    chain
+        .iter()
+        .filter(|(d, _)| *d == depth)
+        .map(|(_, m)| m.as_str())
+        .collect()
+}
+
+/// The witness from #15387: a callback parameter incompatibility nests the
+/// full relation reason chain under each candidate's `TS2772` header — the
+/// `Types of parameters 'a' and 'x' are incompatible.` frame and the
+/// contravariant leaf — exactly as the single-signature `TS2345` path
+/// renders them (differential-verified against tsc 6.0.2).
+#[test]
+fn callback_parameter_mismatch_nests_reason_chain_per_candidate() {
+    let chain = chain_lines(
+        r#"
+declare function each(cb: (x: string) => void): void;
+declare function each(cb: (x: number, i: number) => void): void;
+each((a: boolean) => {});
+"#,
+    );
+
+    assert_eq!(
+        as_pairs(&chain),
+        vec![
+            (
+                0,
+                "Overload 1 of 2, '(cb: (x: string) => void): void', gave the following error."
+            ),
+            (
+                1,
+                "Argument of type '(a: boolean) => void' is not assignable to parameter of type '(x: string) => void'."
+            ),
+            (2, "Types of parameters 'a' and 'x' are incompatible."),
+            (3, "Type 'string' is not assignable to type 'boolean'."),
+            (
+                0,
+                "Overload 2 of 2, '(cb: (x: number, i: number) => void): void', gave the following error."
+            ),
+            (
+                1,
+                "Argument of type '(a: boolean) => void' is not assignable to parameter of type '(x: number, i: number) => void'."
+            ),
+            (2, "Types of parameters 'a' and 'x' are incompatible."),
+            (3, "Type 'number' is not assignable to type 'boolean'."),
+        ],
+        "expected the full per-candidate reason chain under each TS2772 header"
+    );
+}
+
+/// A missing-property failure nests its `Property 'p' is missing …` line
+/// under each candidate, and the two candidates keep their distinct leaves
+/// (dedupe is off under `OVERLOAD_CHAINS`).
+#[test]
+fn missing_property_reason_chain_nests_under_each_header() {
+    let chain = chain_lines(
+        r#"
+declare function take(o: { alpha: string }): void;
+declare function take(o: { beta: number }): void;
+declare const arg: { gamma: boolean };
+take(arg);
+"#,
+    );
+
+    assert_eq!(
+        lines_at_depth(&chain, 2),
+        vec![
+            "Property 'alpha' is missing in type '{ gamma: boolean; }' but required in type '{ alpha: string; }'.",
+            "Property 'beta' is missing in type '{ gamma: boolean; }' but required in type '{ beta: number; }'.",
+        ],
+        "expected one missing-property leaf under each header, got: {chain:?}"
+    );
+}
+
+/// Constructor (`new`) overload candidates nest the same reason chains as
+/// call overloads.
+#[test]
+fn constructor_overloads_nest_reason_chains() {
+    let chain = chain_lines(
+        r#"
+declare class Widget {
+    constructor(cb: (x: string) => void);
+    constructor(cb: (x: number) => void);
+}
+new Widget((a: boolean) => {});
+"#,
+    );
+
+    let depth2plus: Vec<(u8, &str)> = as_pairs(&chain)
+        .into_iter()
+        .filter(|(depth, _)| *depth >= 2)
+        .collect();
+    assert_eq!(
+        depth2plus,
+        vec![
+            (2, "Types of parameters 'a' and 'x' are incompatible."),
+            (3, "Type 'string' is not assignable to type 'boolean'."),
+            (2, "Types of parameters 'a' and 'x' are incompatible."),
+            (3, "Type 'number' is not assignable to type 'boolean'."),
+        ],
+        "expected reason chains under both constructor candidates, got: {chain:?}"
+    );
+}
+
+/// Overloaded *call signatures on an interface* resolve through the solver's
+/// callable path; its candidate failures now carry their declared signature
+/// too, so the set wraps and chains identically to declared function
+/// overloads.
+#[test]
+fn callable_interface_overloads_wrap_and_chain() {
+    let chain = chain_lines(
+        r#"
+interface Callable {
+    (cb: (x: string) => void): void;
+    (cb: (x: number, i: number) => void): void;
+}
+declare const invoke: Callable;
+invoke((a: boolean) => {});
+"#,
+    );
+
+    assert_eq!(
+        lines_at_depth(&chain, 0),
+        vec![
+            "Overload 1 of 2, '(cb: (x: string) => void): void', gave the following error.",
+            "Overload 2 of 2, '(cb: (x: number, i: number) => void): void', gave the following error.",
+        ],
+        "expected TS2772 headers on the callable-interface path, got: {chain:?}"
+    );
+    assert!(
+        chain
+            .iter()
+            .any(|(depth, m)| *depth == 2
+                && m == "Types of parameters 'a' and 'x' are incompatible."),
+        "expected the parameter-incompatibility frame on the callable-interface path, got: {chain:?}"
+    );
+}
+
+/// A scalar leaf mismatch has no deeper elaboration in tsc; the wrapped
+/// candidates must not grow synthetic chain lines below depth 1.
+#[test]
+fn scalar_leaf_candidates_carry_no_extra_chain() {
+    let chain = chain_lines(
+        r#"
+declare function s(x: string): void;
+declare function s(x: number): void;
+s(true);
+"#,
+    );
+
+    assert!(
+        chain.iter().all(|(depth, _)| *depth <= 1),
+        "scalar leaf candidates must not carry a reason chain, got: {chain:?}"
+    );
+}
+
+/// Anti-hardcoding: the chain is structural — renaming the callee, callback
+/// parameters, and target parameters only changes the rendered names.
+#[test]
+fn reason_chain_is_independent_of_binder_names() {
+    let chain = chain_lines(
+        r#"
+declare function visit(handler: (item: string) => void): void;
+declare function visit(handler: (entry: number, pos: number) => void): void;
+visit((row: boolean) => {});
+"#,
+    );
+
+    assert!(
+        chain.iter().any(|(depth, m)| *depth == 2
+            && m == "Types of parameters 'row' and 'item' are incompatible."),
+        "expected the renamed-binder parameter frame, got: {chain:?}"
+    );
+    assert!(
+        chain
+            .iter()
+            .any(|(depth, m)| *depth == 3
+                && m == "Type 'string' is not assignable to type 'boolean'."),
+        "expected the contravariant leaf under the renamed frame, got: {chain:?}"
+    );
+}
+
+/// Tuple-argument candidates drill to the offending position under each
+/// header, mirroring the single-signature TS2345 positional chain.
+#[test]
+fn tuple_argument_candidates_nest_positional_chains() {
+    let chain = chain_lines(
+        r#"
+declare function pair(a: [string, number]): void;
+declare function pair(a: [number, string]): void;
+declare const t: [boolean, boolean];
+pair(t);
+"#,
+    );
+
+    assert_eq!(
+        lines_at_depth(&chain, 2),
+        vec![
+            "Type at position 0 in source is not compatible with type at position 0 in target.",
+            "Type at position 0 in source is not compatible with type at position 0 in target.",
+        ],
+        "expected a positional disambiguator under each header, got: {chain:?}"
+    );
+    assert!(
+        chain
+            .iter()
+            .any(|(depth, m)| *depth == 3
+                && m == "Type 'boolean' is not assignable to type 'string'."),
+        "expected the position-0 leaf under the first header, got: {chain:?}"
+    );
+}
+
+/// Chain rendering must not perturb checking of the enclosing expression:
+/// rendering a nested call's overload failure runs display recovery, which
+/// may only *read* already-computed node types. Forcing a fresh computation
+/// re-entered the still-unresolved outer `.map(...)` call and typed its
+/// callback without a contextual type, leaking a spurious `TS7006`
+/// (regressed `arrayConcatMap.ts` in conformance).
+#[test]
+fn chain_rendering_does_not_leak_diagnostics_into_enclosing_call() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Out {
+    pick(cb: (value: string) => void): Out;
+}
+declare function make(items: { tag: number }[]): Out;
+declare function make(items: { tag: string }[]): Out;
+declare const seed: { other: boolean }[];
+var r = make(seed).pick(v => {});
+"#,
+    );
+
+    assert!(
+        !diags.iter().any(|d| d.code == 7006),
+        "chain rendering must not leak TS7006 into the enclosing call, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2769),
+        "the nested no-overload-match itself must still report, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
 /// More than three failing candidates keep tsc's distinct top-level shape:
 /// tsz leaves them as the flat fallback (no `TS2772` wrappers), and the
 /// top-level `TS2769` is unchanged.
