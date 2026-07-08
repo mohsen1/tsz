@@ -54,6 +54,11 @@ fn defines_fn(source: &str, name: &str) -> bool {
 }
 
 #[test]
+#[ignore = "boundary routing reverted: the routed reconstruction changed the \
+interned surface shape (`object_with_flags_and_symbol` vs `object_with_index`, \
+derived-shape flag copying) and regressed interface-extends-class member \
+visibility (TS2341/TS2445 conformance: interfaceExtendingClassWithPrivates \
+family). Re-enable when the routing is re-landed value-identically."]
 fn interface_merge_reconstruction_routes_solver_construction_through_boundary() {
     let source =
         fs::read_to_string(checker_path(INTERFACE_TYPE)).expect("failed to read interface_type.rs");

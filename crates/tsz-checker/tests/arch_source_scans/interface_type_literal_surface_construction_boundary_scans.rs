@@ -62,6 +62,10 @@ fn defines_fn(source: &str, name: &str) -> bool {
 }
 
 #[test]
+#[ignore = "boundary routing reverted in interface_type.rs: the routed \
+reconstruction regressed interface-extends-class member visibility \
+(TS2341/TS2445 conformance). Re-enable when the routing is re-landed \
+value-identically."]
 fn interface_and_type_literal_own_surfaces_route_solver_construction_through_boundaries() {
     let interface_source =
         fs::read_to_string(checker_path(INTERFACE_TYPE)).expect("failed to read interface_type.rs");

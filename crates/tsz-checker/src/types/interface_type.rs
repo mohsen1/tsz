@@ -9,11 +9,6 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
-use crate::query_boundaries::{
-    construct_signatures as signature_boundary,
-    interface_merge::{self as interface_merge_boundary, MergedCallableSurface},
-    signature_building as signature_building_boundary, type_construction as construction_boundary,
-};
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
@@ -25,6 +20,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::IndexSignature;
 use tsz_solver::TypeId;
+use tsz_solver::Visibility;
 
 // =============================================================================
 // Interface Type Resolution
@@ -242,7 +238,10 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::{
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
-        use tsz_solver::{CallSignature as SolverCallSignature, IndexSignature, PropertyInfo};
+        use tsz_solver::{
+            CallSignature as SolverCallSignature, CallableShape, IndexSignature, ObjectShape,
+            PropertyInfo,
+        };
         let factory = self.ctx.types.factory();
 
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -363,14 +362,14 @@ impl<'a> CheckerState<'a> {
                     };
                     self.pop_typeof_param_scope(&params);
 
-                    call_signatures.push(signature_building_boundary::call_signature(
+                    call_signatures.push(SolverCallSignature {
                         type_params,
                         params,
                         this_type,
                         return_type,
                         type_predicate,
-                        false,
-                    ));
+                        is_method: false,
+                    });
                     self.pop_type_parameters(type_param_updates);
                 }
             } else if member_node.kind == CONSTRUCT_SIGNATURE {
@@ -405,14 +404,14 @@ impl<'a> CheckerState<'a> {
                     };
                     self.pop_typeof_param_scope(&params);
 
-                    construct_signatures.push(signature_building_boundary::call_signature(
+                    construct_signatures.push(SolverCallSignature {
                         type_params,
                         params,
                         this_type,
                         return_type,
                         type_predicate,
-                        false,
-                    ));
+                        is_method: false,
+                    });
                     self.pop_type_parameters(type_param_updates);
                 }
             } else if member_node.kind == PROPERTY_SIGNATURE {
@@ -444,20 +443,22 @@ impl<'a> CheckerState<'a> {
                         };
 
                         member_order += 1;
-                        properties.push(construction_boundary::declared_surface_property(
-                            construction_boundary::DeclaredSurfaceProperty {
-                                name: name_atom,
-                                type_id,
-                                write_type,
-                                optional: sig.question_token,
-                                readonly: self.has_readonly_modifier(&sig.modifiers),
-                                is_method: false,
-                                declaration_order: member_order,
-                                is_string_named,
-                                is_symbol_named,
-                                single_quoted_name,
-                            },
-                        ));
+                        properties.push(PropertyInfo {
+                            name: name_atom,
+                            type_id,
+                            write_type,
+                            optional: sig.question_token,
+                            readonly: self.has_readonly_modifier(&sig.modifiers),
+                            is_method: false,
+                            is_class_prototype: false,
+                            visibility: Visibility::Public,
+                            parent_id: None,
+                            declaration_order: member_order,
+                            is_string_named,
+                            is_symbol_named,
+                            single_quoted_name,
+                            non_widening: false,
+                        });
                     }
                 }
             } else if member_node.kind == METHOD_SIGNATURE {
@@ -500,14 +501,14 @@ impl<'a> CheckerState<'a> {
                         self.pop_typeof_param_scope(&params);
                         self.pop_type_parameters(type_param_updates);
 
-                        let call_sig = signature_building_boundary::call_signature(
+                        let call_sig = SolverCallSignature {
                             type_params,
                             params,
                             this_type,
                             return_type,
                             type_predicate,
-                            true,
-                        );
+                            is_method: true,
+                        };
 
                         member_order += 1;
                         let optional = sig.question_token;
@@ -637,9 +638,12 @@ impl<'a> CheckerState<'a> {
                     .get(param_data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .map(|name_ident| self.ctx.types.intern_string(&name_ident.escaped_text));
-                let info = construction_boundary::declared_index_signature(
-                    key_type, value_type, readonly, param_name,
-                );
+                let info = IndexSignature {
+                    key_type,
+                    value_type,
+                    readonly,
+                    param_name,
+                };
                 if is_valid_index_type {
                     if key_type == TypeId::NUMBER {
                         Self::merge_index_signature(&mut number_index, info);
@@ -670,34 +674,44 @@ impl<'a> CheckerState<'a> {
                     .into_iter()
                     .next()
                     .expect("single signature confirmed by len check");
-                signature_boundary::declared_method_function_type(self.ctx.types, sig)
+                factory.function(tsz_solver::FunctionShape {
+                    type_params: sig.type_params,
+                    params: sig.params,
+                    this_type: sig.this_type,
+                    return_type: sig.return_type,
+                    type_predicate: sig.type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                })
             } else {
                 // Multiple overloads: create a Callable type with all signatures
-                signature_boundary::declared_callable_surface_type(
-                    self.ctx.types,
-                    entry.signatures,
-                    Vec::new(),
-                    Vec::new(),
-                    None,
-                    None,
-                    None,
-                    false,
-                )
+                let shape = CallableShape {
+                    call_signatures: entry.signatures,
+                    construct_signatures: Vec::new(),
+                    properties: Vec::new(),
+                    string_index: None,
+                    number_index: None,
+                    symbol: None,
+                    is_abstract: false,
+                };
+                factory.callable(shape)
             };
-            properties.push(construction_boundary::declared_surface_property(
-                construction_boundary::DeclaredSurfaceProperty {
-                    name,
-                    type_id,
-                    write_type: type_id,
-                    optional: entry.optional,
-                    readonly: entry.readonly,
-                    is_method: true,
-                    declaration_order: entry.declaration_order,
-                    is_string_named: entry.is_string_named,
-                    is_symbol_named: entry.is_symbol_named,
-                    single_quoted_name: entry.single_quoted_name,
-                },
-            ));
+            properties.push(PropertyInfo {
+                name,
+                type_id,
+                write_type: type_id,
+                optional: entry.optional,
+                readonly: entry.readonly,
+                is_method: true,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: entry.declaration_order,
+                is_string_named: entry.is_string_named,
+                is_symbol_named: entry.is_symbol_named,
+                single_quoted_name: entry.single_quoted_name,
+                non_widening: false,
+            });
         }
 
         // Convert accessors to properties
@@ -714,50 +728,48 @@ impl<'a> CheckerState<'a> {
                 .or(accessor.getter)
                 .unwrap_or(read_type);
             let readonly = accessor.getter.is_some() && accessor.setter.is_none();
-            properties.push(construction_boundary::declared_surface_property(
-                construction_boundary::DeclaredSurfaceProperty {
-                    name,
-                    type_id: read_type,
-                    write_type,
-                    optional: false,
-                    readonly,
-                    is_method: false,
-                    declaration_order: accessor.declaration_order,
-                    is_string_named: accessor.is_string_named,
-                    is_symbol_named: accessor.is_symbol_named,
-                    single_quoted_name: accessor.single_quoted_name,
-                },
-            ));
+            properties.push(PropertyInfo {
+                name,
+                type_id: read_type,
+                write_type,
+                optional: false,
+                readonly,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: accessor.declaration_order,
+                is_string_named: accessor.is_string_named,
+                is_symbol_named: accessor.is_symbol_named,
+                single_quoted_name: accessor.single_quoted_name,
+                non_widening: false,
+            });
         }
 
         let result = if !call_signatures.is_empty() || !construct_signatures.is_empty() {
             // `CallableShape` keeps the single-slot index convention: a `symbol`
             // index rides in `string_index` (its `key_type` discriminates it).
-            signature_boundary::declared_callable_surface_type(
-                self.ctx.types,
+            let shape = CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index.or(symbol_index),
+                string_index: string_index.or(symbol_index),
                 number_index,
-                interface_symbol,
-                false,
-            )
+                symbol: interface_symbol,
+                is_abstract: false,
+            };
+            factory.callable(shape)
         } else if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
-            construction_boundary::declared_object_with_indexes(
-                self.ctx.types,
+            factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 symbol_index,
-                interface_symbol,
-            )
+                symbol: interface_symbol,
+                ..ObjectShape::default()
+            })
         } else if !properties.is_empty() {
-            construction_boundary::declared_object_with_symbol(
-                self.ctx.types,
-                properties,
-                interface_symbol,
-            )
+            factory.object_with_symbol(properties, interface_symbol)
         } else {
             TypeId::ANY
         };
@@ -1281,12 +1293,26 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Merge two interface types structurally.
+    ///
+    /// This function merges a derived interface type with a base interface type,
+    /// combining their call signatures, construct signatures, properties, and index signatures.
+    /// Derived members take precedence over base members.
+    ///
+    /// # Arguments
+    /// * `derived` - The derived interface type
+    /// * `base` - The base interface type
+    ///
+    /// # Returns
+    /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Declaration)
     }
 
     /// Heritage (`extends`) variant of [`Self::merge_interface_types`]: a
-    /// derived named member overrides its base counterpart.
+    /// derived member that shares a name with a base member overrides
+    /// (replaces) it rather than accumulating an overload set. See
+    /// [`InterfaceMergeMode`] for the structural rule and why anonymous call
+    /// signatures still accumulate.
     pub(crate) fn merge_interface_types_heritage(
         &mut self,
         derived: TypeId,
@@ -1328,15 +1354,23 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
         use tracing::trace;
+        use tsz_solver::{CallableShape, ObjectShape};
 
-        // Avoid hanging on expensive augmented-module interface merges.
+        // Bail out if type resolution fuel is exhausted to prevent
+        // expensive merges from hanging on augmented module interfaces
+        // (e.g., react + create-emotion-styled cross-referencing).
         if !self.ctx.consume_fuel() {
             return derived;
         }
 
         trace!(derived_id = %derived.0, base_id = %base.0, "merge_interface_types called");
+        let factory = self.ctx.types.factory();
 
-        // Resolve Application/Lazy wrappers so classification sees structural members.
+        // Resolve Application/Lazy types before classification.
+        // When an interface extends a type alias (e.g., `interface TaggedPair<T> extends Pair<T>`
+        // where `type Pair<T> = AB<T, T>`), the instantiated base type may be an Application
+        // (e.g., `AB<number, number>`) which classify_for_interface_merge cannot structurally
+        // merge. Evaluating it first resolves it to an Object type with the actual properties.
         let derived_resolved = self.resolve_type_for_interface_merge(derived);
         let base_resolved = self.resolve_type_for_interface_merge(base);
 
@@ -1360,30 +1394,32 @@ impl<'a> CheckerState<'a> {
                 );
                 let mut call_signatures = derived_shape.call_signatures.clone();
                 call_signatures.extend(base_shape.call_signatures.iter().cloned());
-                // Diamond inheritance can duplicate shared base signatures; keep
-                // the last occurrence so derived-specific overloads stay first.
+                // Deduplicate inherited call signatures from diamond inheritance.
+                // When C extends C1 and C2, and both inherit from B (which has a
+                // catch-all like `(x: string): void`), that catch-all appears in
+                // both C1's and C2's chains. Without deduplication, it appears
+                // before C2's specific overloads, causing wrong overload resolution.
+                // Keep the LAST occurrence so shared base signatures sort after
+                // all derived-specific overloads.
                 dedup_call_signatures_keep_last(&mut call_signatures);
                 let mut construct_signatures = derived_shape.construct_signatures.clone();
                 construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
                 dedup_call_signatures_keep_last(&mut construct_signatures);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_callable_type(
-                    self.ctx.types,
-                    MergedCallableSurface::new(
-                        call_signatures,
-                        construct_signatures,
-                        properties,
-                        derived_shape
-                            .string_index
-                            .or_else(|| base_shape.string_index),
-                        derived_shape
-                            .number_index
-                            .or_else(|| base_shape.number_index),
-                        derived_shape.symbol,
-                        derived_shape.is_abstract || base_shape.is_abstract,
-                    ),
-                )
+                factory.callable(CallableShape {
+                    call_signatures,
+                    construct_signatures,
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract || base_shape.is_abstract,
+                })
             }
             (
                 InterfaceMergeKind::Callable(derived_shape_id),
@@ -1393,18 +1429,15 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_callable_type(
-                    self.ctx.types,
-                    MergedCallableSurface::new(
-                        derived_shape.call_signatures.clone(),
-                        derived_shape.construct_signatures.clone(),
-                        properties,
-                        derived_shape.string_index,
-                        derived_shape.number_index,
-                        derived_shape.symbol,
-                        derived_shape.is_abstract,
-                    ),
-                )
+                factory.callable(CallableShape {
+                    call_signatures: derived_shape.call_signatures.clone(),
+                    construct_signatures: derived_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract,
+                })
             }
             (
                 InterfaceMergeKind::Callable(derived_shape_id),
@@ -1414,22 +1447,19 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_callable_type(
-                    self.ctx.types,
-                    MergedCallableSurface::new(
-                        derived_shape.call_signatures.clone(),
-                        derived_shape.construct_signatures.clone(),
-                        properties,
-                        derived_shape
-                            .string_index
-                            .or_else(|| base_shape.string_index),
-                        derived_shape
-                            .number_index
-                            .or_else(|| base_shape.number_index),
-                        derived_shape.symbol,
-                        derived_shape.is_abstract,
-                    ),
-                )
+                factory.callable(CallableShape {
+                    call_signatures: derived_shape.call_signatures.clone(),
+                    construct_signatures: derived_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: derived_shape.is_abstract,
+                })
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -1439,18 +1469,15 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_callable_type(
-                    self.ctx.types,
-                    MergedCallableSurface::new(
-                        base_shape.call_signatures.clone(),
-                        base_shape.construct_signatures.clone(),
-                        properties,
-                        base_shape.string_index,
-                        base_shape.number_index,
-                        derived_shape.symbol,
-                        base_shape.is_abstract,
-                    ),
-                )
+                factory.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
+                    symbol: derived_shape.symbol,
+                    is_abstract: base_shape.is_abstract,
+                })
             }
             (
                 InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
@@ -1460,22 +1487,19 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.callable_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_callable_type(
-                    self.ctx.types,
-                    MergedCallableSurface::new(
-                        base_shape.call_signatures.clone(),
-                        base_shape.construct_signatures.clone(),
-                        properties,
-                        derived_shape
-                            .string_index
-                            .or_else(|| base_shape.string_index),
-                        derived_shape
-                            .number_index
-                            .or_else(|| base_shape.number_index),
-                        derived_shape.symbol,
-                        base_shape.is_abstract,
-                    ),
-                )
+                factory.callable(CallableShape {
+                    call_signatures: base_shape.call_signatures.clone(),
+                    construct_signatures: base_shape.construct_signatures.clone(),
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol: derived_shape.symbol,
+                    is_abstract: base_shape.is_abstract,
+                })
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -1485,11 +1509,7 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                interface_merge_boundary::merged_object_type(
-                    self.ctx.types,
-                    properties,
-                    derived_shape.symbol,
-                )
+                factory.object_with_symbol(properties, derived_shape.symbol)
             }
             (
                 InterfaceMergeKind::Object(derived_shape_id),
@@ -1506,17 +1526,14 @@ impl<'a> CheckerState<'a> {
                 );
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                let result = self
-                    .ctx
-                    .types
-                    .factory()
-                    .object_with_shape_metadata_and_index_signatures(
-                        properties,
-                        &derived_shape,
-                        base_shape.string_index_signature().copied(),
-                        base_shape.number_index,
-                        base_shape.symbol_index_signature().copied(),
-                    );
+                let result = factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: base_shape.string_index,
+                    number_index: base_shape.number_index,
+                    symbol_index: base_shape.symbol_index,
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                });
                 tracing::trace!(result_type = %result.0, "merge_interface_types: created merged type");
                 result
             }
@@ -1528,10 +1545,14 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                self.ctx
-                    .types
-                    .factory()
-                    .object_with_shape_metadata(properties, &derived_shape)
+                factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: derived_shape.string_index,
+                    number_index: derived_shape.number_index,
+                    symbol_index: derived_shape.symbol_index,
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                })
             }
             (
                 InterfaceMergeKind::ObjectWithIndex(derived_shape_id),
@@ -1541,27 +1562,26 @@ impl<'a> CheckerState<'a> {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
-                self.ctx
-                    .types
-                    .factory()
-                    .object_with_shape_metadata_and_index_signatures(
-                        properties,
-                        &derived_shape,
-                        derived_shape
-                            .string_index_signature()
-                            .copied()
-                            .or_else(|| base_shape.string_index_signature().copied()),
-                        derived_shape
-                            .number_index
-                            .or_else(|| base_shape.number_index),
-                        derived_shape
-                            .symbol_index_signature()
-                            .copied()
-                            .or_else(|| base_shape.symbol_index_signature().copied()),
-                    )
+                factory.object_with_index(ObjectShape {
+                    properties,
+                    string_index: derived_shape
+                        .string_index
+                        .or_else(|| base_shape.string_index),
+                    number_index: derived_shape
+                        .number_index
+                        .or_else(|| base_shape.number_index),
+                    symbol_index: derived_shape
+                        .symbol_index
+                        .or_else(|| base_shape.symbol_index),
+                    symbol: derived_shape.symbol,
+                    ..ObjectShape::default()
+                })
             }
-            // Decompose intersections so callable/object cores merge structurally
-            // before augmentation members are rewrapped.
+            // When one side is an intersection (e.g., from global augmentation merging
+            // an interface with additional properties), decompose it and merge the
+            // callable/object parts properly so that construct signatures are preserved.
+            // Use resolved types so that Lazy wrappers (e.g., type aliases) are
+            // expanded to their structural intersection form before decomposition.
             (_, InterfaceMergeKind::Intersection) | (InterfaceMergeKind::Intersection, _) => self
                 .merge_with_intersection(
                     derived_resolved,
@@ -1572,18 +1592,20 @@ impl<'a> CheckerState<'a> {
                 ),
             // When the derived interface has no own members (TypeId::ANY), just use the base.
             (InterfaceMergeKind::Other, _) if derived == TypeId::ANY => base,
-            // Preserve array/tuple base nature with an intersection, and track it
-            // so weak-type/no-common-property checks do not treat it as plain object.
+            // When the base is an Array or Tuple type (e.g., `interface MyTuple extends [] { ... }`),
+            // create an intersection of derived & base. This preserves the array/tuple nature
+            // of the base in the resulting type, which is critical for:
+            // - Weak type detection (TS2559): the intersection prevents false weak-type violations
+            //   because the target is not a standalone object.
+            // - Assignability: array/tuple sources can be checked against the tuple base.
+            // Track the result so the checker can also suppress false NoCommonProperties failures.
             (_, InterfaceMergeKind::Other)
                 if crate::query_boundaries::common::is_array_or_tuple_type(
                     self.ctx.types,
                     base_resolved,
                 ) && derived != TypeId::ANY =>
             {
-                let result = interface_merge_boundary::merged_intersection_type(
-                    self.ctx.types,
-                    vec![derived, base],
-                );
+                let result = factory.intersection(vec![derived, base]);
                 self.ctx.types_extending_array.insert(result);
                 result
             }
@@ -1595,11 +1617,7 @@ impl<'a> CheckerState<'a> {
                 .is_some()
                     && derived != TypeId::ANY =>
             {
-                interface_merge_boundary::merged_intersection_pair_type(
-                    self.ctx.types,
-                    derived,
-                    base_resolved,
-                )
+                factory.intersection2(derived, base_resolved)
             }
             (_, InterfaceMergeKind::Other)
                 if crate::query_boundaries::common::is_generic_application(
@@ -1607,14 +1625,17 @@ impl<'a> CheckerState<'a> {
                     base_resolved,
                 ) && derived != TypeId::ANY =>
             {
-                interface_merge_boundary::merged_intersection_pair_type(
-                    self.ctx.types,
-                    derived,
-                    base_resolved,
-                )
+                factory.intersection2(derived, base_resolved)
             }
-            // #14101 part-4: when an `Other` base still exposes object members,
-            // inherit them conservatively instead of dropping them at fallthrough.
+            // #14101 part-4: a base classified `Other` that nonetheless has an
+            // extractable object shape (constrained type-parameter through its
+            // constraint, or a function-with-properties) drops the base's members
+            // at the `_ => derived` fallthrough below. Incorporate them (derived
+            // overrides base by name, via Heritage-mode `merge_properties`) so
+            // inherited members are not lost. Conservative: ONLY when both sides
+            // have object shapes; non-object bases (Union/Enum/Function) keep the
+            // legacy `derived` (no broad intersection). Gated by
+            // `heritage_base_member_incorp_disabled`.
             (_, InterfaceMergeKind::Other)
                 if mode == InterfaceMergeMode::Heritage
                     && derived != TypeId::ANY
@@ -1636,24 +1657,13 @@ impl<'a> CheckerState<'a> {
                             &base_shape.properties,
                             mode,
                         );
-                        self.ctx
-                            .types
-                            .factory()
-                            .object_with_shape_metadata_and_index_signatures(
-                                properties,
-                                &derived_shape,
-                                derived_shape
-                                    .string_index_signature()
-                                    .copied()
-                                    .or_else(|| base_shape.string_index_signature().copied()),
-                                derived_shape
-                                    .number_index
-                                    .or_else(|| base_shape.number_index),
-                                derived_shape
-                                    .symbol_index_signature()
-                                    .copied()
-                                    .or_else(|| base_shape.symbol_index_signature().copied()),
-                            )
+                        factory.object_with_index(ObjectShape {
+                            properties,
+                            string_index: derived_shape.string_index,
+                            number_index: derived_shape.number_index,
+                            symbol: derived_shape.symbol,
+                            ..ObjectShape::default()
+                        })
                     }
                     _ => derived,
                 }
@@ -1683,8 +1693,16 @@ impl<'a> CheckerState<'a> {
         type_id
     }
 
-    /// Merge an interface type with an intersection base/derived, preserving the
-    /// best callable/object core and rewrapping remaining intersection members.
+    /// Merge an interface type with an intersection base/derived.
+    ///
+    /// When a lib interface is augmented (e.g., `ErrorConstructor` gets `captureStackTrace`
+    /// from user code), the resolved type is an intersection like
+    /// `Callable(call_sigs, construct_sigs, props) & Object(captureStackTrace)`.
+    ///
+    /// When a derived interface (e.g., `RangeErrorConstructor extends ErrorConstructor`)
+    /// needs to merge with this intersection base, we must decompose the intersection,
+    /// find the callable member, merge it properly with the derived callable (preserving
+    /// construct signatures), and then re-wrap with the remaining intersection members.
     fn merge_with_intersection(
         &mut self,
         derived: TypeId,
@@ -1696,6 +1714,8 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::intersection_members;
         use crate::query_boundaries::common::{InterfaceMergeKind, classify_for_interface_merge};
 
+        let factory = self.ctx.types.factory();
+
         // Determine which side is the intersection and which is the "other" type
         let (intersection_id, other_id, other_is_derived) =
             if matches!(base_kind, InterfaceMergeKind::Intersection) {
@@ -1706,11 +1726,7 @@ impl<'a> CheckerState<'a> {
 
         // Get the intersection members
         let Some(members) = intersection_members(self.ctx.types, intersection_id) else {
-            return interface_merge_boundary::merged_intersection_pair_type(
-                self.ctx.types,
-                derived,
-                base,
-            );
+            return factory.intersection2(derived, base);
         };
 
         // Find the best structurally mergeable member in the intersection.
@@ -1770,11 +1786,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 let mut all = vec![merged];
                 all.extend(other_members);
-                interface_merge_boundary::merged_intersection_type(self.ctx.types, all)
+                factory.intersection(all)
             }
         } else {
             // No mergeable member found - fall back to plain intersection
-            interface_merge_boundary::merged_intersection_pair_type(self.ctx.types, derived, base)
+            factory.intersection2(derived, base)
         }
     }
 
