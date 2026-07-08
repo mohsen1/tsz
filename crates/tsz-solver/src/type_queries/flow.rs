@@ -12,7 +12,11 @@ pub(super) use comparability::types_are_comparable_for_assertion_inner;
 pub use comparability::{types_are_comparable, types_are_comparable_for_assertion};
 
 use crate::construction::TypeDatabase;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::def::resolver::{NoopResolver, TypeResolver};
+use crate::evaluation::evaluate::evaluate_type_with_resolver;
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_params_to_constraints_uncached,
+};
 use crate::type_queries::{
     StringLiteralKeyKind, classify_for_string_literal_keys, get_string_literal_value,
     get_union_members, is_invokable_type,
@@ -721,14 +725,60 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// hold a singleton (a literal/union-of-literals target makes the literal vs
 /// literal mismatch meaningful) and widened to its base otherwise.
 pub fn type_could_have_top_level_singleton_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_could_have_top_level_singleton_types_inner(db, type_id, 0)
+    type_could_have_top_level_singleton_types_inner(db, &NoopResolver, type_id, 0)
 }
 
-fn type_could_have_top_level_singleton_types_inner(
+/// [`type_could_have_top_level_singleton_types`] with a resolver, so deferred
+/// semantic refs answer through their constraints the way tsc's
+/// `getConstraintOfType` does for every `Instantiable` type: an indexed access
+/// `Cfg[K]` or conditional `Cond<T>` target whose constraint contains a unit
+/// type preserves a literal source, while one whose constraint is all
+/// primitives generalizes it. `Lazy`/`Application` refs are resolver-evaluated
+/// first — in tsc they are already evaluated types, so this restores the same
+/// answer surface.
+pub fn type_could_have_top_level_singleton_types_resolved<R: TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    type_could_have_top_level_singleton_types_inner(db, resolver, type_id, 0)
+}
+
+/// Whether `type_id` is one of the deferred instantiable/semantic-ref forms
+/// whose singleton-capacity answer requires constraint computation or resolver
+/// evaluation ([`type_could_have_top_level_singleton_types_resolved`]) rather
+/// than direct shape inspection. Owned here, next to the predicate's match
+/// arms, so the variant list cannot drift from the predicate.
+pub fn singleton_capacity_needs_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::IndexAccess(_, _)
+                | TypeData::Conditional(_)
+                | TypeData::Substitution { .. }
+                | TypeData::Application(_)
+                | TypeData::Lazy(_)
+        )
+    )
+}
+
+fn type_could_have_top_level_singleton_types_inner<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
     depth: u32,
 ) -> bool {
+    // A computed constraint answers for its type only when it made progress
+    // and did not collapse to the error sentinel; otherwise fall back toward
+    // "no singleton capacity" (the caller's `is_unit_type` arm).
+    let recurse_if_progress = |constraint: TypeId, depth: u32| {
+        constraint != type_id
+            && constraint != TypeId::ERROR
+            && type_could_have_top_level_singleton_types_inner(db, resolver, constraint, depth + 1)
+    };
     // Fuel exhaustion answers "no singleton capacity", failing toward
     // *generalizing* a literal source in the diagnostic — the direction that
     // loses precision rather than inventing a literal-vs-literal contrast.
@@ -739,20 +789,85 @@ fn type_could_have_top_level_singleton_types_inner(
         return false;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
-            .type_list(list_id)
-            .iter()
-            .any(|&member| type_could_have_top_level_singleton_types_inner(db, member, depth + 1)),
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            db.type_list(list_id).iter().any(|&member| {
+                // tsc stores `boolean` inside a union as its two literal
+                // members (`true | false`), so a union containing `boolean`
+                // has top-level singleton capacity there. tsz may keep the
+                // `boolean` intrinsic as the member; treat it as the
+                // `true | false` pair it denotes rather than re-applying the
+                // top-level `TypeFlags.Boolean` carve-out.
+                member == TypeId::BOOLEAN
+                    || type_could_have_top_level_singleton_types_inner(
+                        db,
+                        resolver,
+                        member,
+                        depth + 1,
+                    )
+            })
+        }
         Some(TypeData::TemplateLiteral(_)) => true,
         // tsc's `Instantiable` branch: a type parameter (or `infer` binder)
         // answers through its constraint when it has one — a target `T extends
         // "a" | "b"` can hold a singleton, `T extends string` cannot.
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => match info.constraint {
             Some(constraint) if constraint != type_id => {
-                type_could_have_top_level_singleton_types_inner(db, constraint, depth + 1)
+                type_could_have_top_level_singleton_types_inner(db, resolver, constraint, depth + 1)
             }
             _ => is_unit_type(db, type_id),
         },
+        // Remaining `Instantiable` forms answer through their computed
+        // constraint (tsc `getConstraintOfType`); no progress falls back to
+        // the unit check, i.e. "no singleton capacity".
+        Some(TypeData::Substitution { .. }) => recurse_if_progress(
+            crate::type_queries::get_base_constraint_of_type(db, type_id),
+            depth,
+        ),
+        Some(TypeData::IndexAccess(_, _)) => {
+            // Reduce contained type parameters to their constraints, then
+            // evaluate the access (tsc `getConstraintOfIndexedAccess`):
+            // `Cfg[K]` with `K extends keyof Cfg` answers through the union
+            // of `Cfg`'s property types. (This reduces the *index*'s type
+            // parameters too, unlike `reduce_index_access_to_base_constraint`,
+            // which only reduces the object side for the comparability
+            // relation.)
+            let substituted = instantiate_type_params_to_constraints_uncached(db, type_id);
+            recurse_if_progress(
+                evaluate_type_with_resolver(db, resolver, substituted),
+                depth,
+            )
+        }
+        Some(TypeData::Conditional(_)) => {
+            // tsc `getDefaultConstraintOfConditionalType`: the union of the
+            // (inferred) true branch and the false branch.
+            match crate::type_queries::get_conditional_default_constraint(db, type_id) {
+                Some(constraint) => recurse_if_progress(constraint, depth),
+                None => is_unit_type(db, type_id),
+            }
+        }
+        Some(TypeData::Lazy(def_id)) => {
+            // A still-deferred semantic ref. Structural def kinds
+            // (interface/class/function/...) can never evaluate to a unit
+            // type, so answer without the evaluator; enums (union of
+            // enum-literal members), type aliases, and unknown kinds resolve
+            // and re-ask.
+            match resolver.get_def_kind(def_id) {
+                Some(
+                    crate::def::DefKind::Interface
+                    | crate::def::DefKind::Class
+                    | crate::def::DefKind::ClassConstructor
+                    | crate::def::DefKind::Namespace
+                    | crate::def::DefKind::Function
+                    | crate::def::DefKind::Variable,
+                ) => false,
+                _ => recurse_if_progress(evaluate_type_with_resolver(db, resolver, type_id), depth),
+            }
+        }
+        Some(TypeData::Application(_)) => {
+            // A deferred generic alias application (`Cond<T>`): tsc holds the
+            // evaluated type here, so resolve it and re-ask.
+            recurse_if_progress(evaluate_type_with_resolver(db, resolver, type_id), depth)
+        }
         _ => is_unit_type(db, type_id),
     }
 }
@@ -1136,6 +1251,60 @@ mod tests {
         assert!(type_could_have_top_level_singleton_types(
             &interner,
             mixed_union
+        ));
+    }
+
+    #[test]
+    fn singleton_predicate_boolean_union_member_counts_as_singleton() {
+        let interner = TypeInterner::new();
+        // tsc stores `boolean` in a union as `true | false` (unit members), so
+        // `string | boolean` has singleton capacity even though a bare
+        // `boolean` target does not. Build the member list explicitly so the
+        // interner's union normalization cannot pre-flatten the intrinsic
+        // away and mask the member-level rule.
+        let with_boolean = interner.union(vec![TypeId::STRING, TypeId::BOOLEAN]);
+        assert!(type_could_have_top_level_singleton_types(
+            &interner,
+            with_boolean
+        ));
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner,
+            TypeId::BOOLEAN
+        ));
+    }
+
+    #[test]
+    fn singleton_predicate_conditional_answers_through_default_constraint() {
+        let interner = TypeInterner::new();
+        let check = interner.type_param(crate::types::TypeParamInfo::simple(
+            interner.intern_string("T"),
+        ));
+        // `T extends string ? "a" | "b" : number` — default constraint
+        // contains units -> singleton-capable.
+        let unit_branch = interner.union(vec![
+            interner.literal_string("a"),
+            interner.literal_string("b"),
+        ]);
+        let cond_unit = interner.conditional(crate::types::ConditionalType {
+            check_type: check,
+            extends_type: TypeId::STRING,
+            true_type: unit_branch,
+            false_type: TypeId::NUMBER,
+            is_distributive: true,
+        });
+        assert!(type_could_have_top_level_singleton_types(
+            &interner, cond_unit
+        ));
+        // `T extends string ? string : number` — all-primitive constraint.
+        let cond_prim = interner.conditional(crate::types::ConditionalType {
+            check_type: check,
+            extends_type: TypeId::STRING,
+            true_type: TypeId::STRING,
+            false_type: TypeId::NUMBER,
+            is_distributive: true,
+        });
+        assert!(!type_could_have_top_level_singleton_types(
+            &interner, cond_prim
         ));
     }
 

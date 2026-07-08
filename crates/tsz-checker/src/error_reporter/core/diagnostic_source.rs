@@ -1433,26 +1433,54 @@ impl<'a> CheckerState<'a> {
                 .type_list(list)
                 .iter()
                 .copied()
-                .any(|member| self.is_literal_sensitive_assignment_target_inner(member));
+                .any(|member| {
+                    // tsc stores `boolean` inside a union as `true | false`, whose
+                    // members are singletons, so a `string | boolean` target keeps
+                    // a literal source (`5` stays `5`).
+                    member == TypeId::BOOLEAN
+                        || self.is_literal_sensitive_assignment_target_inner(member)
+                });
+        }
+        // Deferred instantiable targets (`Cfg[K]`, `Cond<T>`, alias/enum refs)
+        // answer through their constraints, mirroring tsc's
+        // `typeCouldHaveTopLevelSingletonTypes` -> `getConstraintOfType`.
+        if crate::query_boundaries::diagnostics::is_deferred_instantiable_display_target(
+            self.ctx.types,
+            target,
+        ) {
+            return crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+                self.ctx.types,
+                &self.ctx,
+                target,
+            );
         }
         target == TypeId::NEVER
     }
 
-    fn should_widen_enum_member_assignment_source(
+    /// The parent-enum display type of an enum-member assignment source when
+    /// the top-level display widens it, mirroring tsc's `reportRelationError`
+    /// gate: the member generalizes exactly when the target could not hold a
+    /// top-level singleton type. A literal, template-literal, enum, or
+    /// singleton-capable union/instantiable target preserves the member
+    /// spelling (`EM.X`, returns `None`); a primitive or all-primitive
+    /// union/intersection target widens it (`Some(EM)`).
+    pub(in crate::error_reporter) fn widened_enum_member_assignment_source(
         &mut self,
         source: TypeId,
         target: TypeId,
-    ) -> bool {
+    ) -> Option<TypeId> {
         let widened_source = self.widen_enum_member_type(source);
         if widened_source == source {
-            return false;
+            return None;
         }
 
         let target = self.evaluate_type_for_assignability(target);
-        crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_none()
-            && crate::query_boundaries::common::union_members(self.ctx.types, target).is_none()
-            && crate::query_boundaries::common::intersection_members(self.ctx.types, target)
-                .is_none()
+        (!crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ))
+        .then_some(widened_source)
     }
 
     pub(in crate::error_reporter) fn unresolved_unused_renaming_property_in_type_query(

@@ -49,41 +49,70 @@ impl<'a> CheckerState<'a> {
     /// (`"no"` vs `"yes"`, literal-union targets, singleton-constrained type
     /// parameters).
     ///
-    /// tsc applies this in every relation-error report. tsz's top-level
-    /// assignability messages already generalize through their display roles,
-    /// so this entry serves the nested chain leaves — property / array-element
-    /// / tuple-position / return frames — and the TS2769 overload elaboration
-    /// (`overload_failure_generalized_pending`), which previously leaked the
-    /// raw literal source (#15626).
+    /// tsc applies this in every relation-error report. This entry serves the
+    /// nested chain leaves — property / array-element / tuple-position /
+    /// return frames — the TS2769 overload elaboration
+    /// (`overload_failure_generalized_pending`), and the top-level
+    /// union-of-literals surface in `render_type_mismatch` (#15626, #15628).
     ///
-    /// The top-level assignment surface keeps its own, older enum-member
-    /// policy (`should_widen_enum_member_assignment_source`) with a different
-    /// target gate; migrating it onto this tsc-shaped gate is tracked as
-    /// follow-up in #15628, not silently changed here.
+    /// An all-unit union source maps member-wise through the same bases
+    /// (tsc `getBaseTypeOfLiteralTypeUnion`): `"x" | "y"` -> `string`,
+    /// `true | 1` -> `number | boolean` (#15628).
     pub(in crate::error_reporter) fn generalize_nested_relation_source_for_display(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> TypeId {
-        let generalized =
-            crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                self.ctx.types,
-                source,
-                target,
-            );
+        // Source side first: it is a cheap shape check for the overwhelmingly
+        // common non-literal sources, while the target gate may need
+        // resolver-backed constraint evaluation for deferred targets.
+        let generalized = self.relation_literal_source_base_for_display(source);
+        if generalized == source {
+            return source;
+        }
+        if crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ) {
+            return source;
+        }
+        generalized
+    }
+
+    /// tsc's `getBaseTypeOfLiteralType` over the checker environment: a scalar
+    /// literal widens to its primitive base, an enum member (including a
+    /// still-deferred `Lazy` member ref) to its parent enum, and an all-unit
+    /// union maps member-wise (`getBaseTypeOfLiteralTypeUnion`). Every other
+    /// type is returned unchanged. The target gate is the caller's job.
+    fn relation_literal_source_base_for_display(&mut self, source: TypeId) -> TypeId {
+        let generalized = crate::query_boundaries::diagnostics::literal_base_type_for_display(
+            self.ctx.types,
+            source,
+        );
         if generalized != source {
             return generalized;
         }
         // Enum members widen to their parent enum (tsc's
         // `getBaseTypeOfLiteralType` EnumLike branch). The parent lookup needs
-        // the checker's enum environment, so it sits outside the pure query.
-        if self.is_enum_member_type_for_widening(source)
-            && !crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
-                self.ctx.types,
-                target,
-            )
+        // the checker's enum environment, so it sits outside the pure query;
+        // the widen is a no-op for non-members.
+        let enum_widened = self.widen_enum_member_type(source);
+        if enum_widened != source {
+            return enum_widened;
+        }
+        if crate::query_boundaries::common::is_unit_type(self.ctx.types, source)
+            && let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, source)
         {
-            return self.widen_enum_member_type(source);
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&member| self.relation_literal_source_base_for_display(member))
+                .collect();
+            if mapped != members {
+                return crate::query_boundaries::flow_analysis::union_types(self.ctx.types, mapped);
+            }
         }
         source
     }
@@ -1694,7 +1723,7 @@ impl<'a> CheckerState<'a> {
                 // instead of the mismatched property type).  Use the plain
                 // structural formatter instead so the rendered type matches the
                 // solver's `source` TypeId.
-                let source_str = if depth > 0 {
+                let mut source_str = if depth > 0 {
                     // Nested relation leaf: generalize a literal source to its
                     // base type when the target has no singleton capacity
                     // (tsc `reportRelationError`).
@@ -1719,6 +1748,13 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     target_str = display;
+                }
+                if depth > 0 {
+                    // Same-named nominal pairs at nested leaves disambiguate
+                    // like the top level (tsc `getTypeNamesForErrorDisplay`).
+                    (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                        source, target, source_str, target_str,
+                    );
                 }
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,

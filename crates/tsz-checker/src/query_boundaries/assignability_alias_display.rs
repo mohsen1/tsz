@@ -170,7 +170,13 @@ pub(crate) fn has_optional_parameter_undefined_surface(
 }
 
 pub(crate) fn is_literal_for_alias_display(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_literal_or_literal_union_type(db, type_id)
+    // Unit-literal check first: the boolean literals `true`/`false` are
+    // intrinsic `TypeId`s that the shared union predicate's intrinsic
+    // fast-path skips, but they are literal sources for display purposes (tsc
+    // widens a declared `true` to `boolean` against a non-literal target;
+    // repainting it with the annotation text would undo that).
+    is_unit_literal_type(db, type_id)
+        || tsz_solver::type_queries::is_literal_or_literal_union_type(db, type_id)
         || common::is_template_literal_type(db, type_id)
 }
 

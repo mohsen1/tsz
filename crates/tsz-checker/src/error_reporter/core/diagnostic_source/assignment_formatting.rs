@@ -472,12 +472,9 @@ impl<'a> CheckerState<'a> {
                     }
                     return self.format_declared_annotation_for_diagnostic(&annotation_text);
                 }
-                let display_type =
-                    if self.should_widen_enum_member_assignment_source(expr_display_type, target) {
-                        self.widen_enum_member_type(expr_display_type)
-                    } else {
-                        expr_display_type
-                    };
+                let display_type = self
+                    .widened_enum_member_assignment_source(expr_display_type, target)
+                    .unwrap_or(expr_display_type);
                 let display_type = self.widen_function_like_display_type(display_type);
                 let display_type = if self.is_literal_sensitive_assignment_target(target)
                     || preserve_literal_surface
@@ -666,11 +663,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.widen_type_for_display(expr_display_type)
                 };
-                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
-                    self.widen_enum_member_type(widened_expr_type)
-                } else {
-                    widened_expr_type
-                }
+                self.widened_enum_member_assignment_source(widened_expr_type, target)
+                    .unwrap_or(widened_expr_type)
             } else {
                 self.widen_type_for_display(source)
             };
@@ -1597,12 +1591,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.widen_type_for_display(expr_type)
                 };
-                let display_type =
-                    if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
-                        self.widen_enum_member_type(widened_expr_type)
-                    } else {
-                        widened_expr_type
-                    };
+                let display_type = self
+                    .widened_enum_member_assignment_source(widened_expr_type, target)
+                    .unwrap_or(widened_expr_type);
                 let display_type = self.widen_function_like_display_type(display_type);
                 if let Some(display) =
                     self.new_expression_nominal_source_display(expr_idx, display_type)
@@ -1645,11 +1636,8 @@ impl<'a> CheckerState<'a> {
                 } else {
                     self.widen_type_for_display(expr_type)
                 };
-                if self.should_widen_enum_member_assignment_source(widened_expr_type, target) {
-                    self.widen_enum_member_type(widened_expr_type)
-                } else {
-                    widened_expr_type
-                }
+                self.widened_enum_member_assignment_source(widened_expr_type, target)
+                    .unwrap_or(widened_expr_type)
             } else {
                 self.widen_type_for_display(source)
             };

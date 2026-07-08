@@ -1157,32 +1157,43 @@ pub(crate) fn widen_argument_type_for_display(db: &dyn TypeDatabase, type_id: Ty
     tsz_solver::operations::widening::widen_argument_type_for_display(db, type_id)
 }
 
-/// Generalize a fresh literal assignment/argument `source` to its base type for
-/// diagnostic display, mirroring tsc's `reportRelationError`: a literal source
-/// is widened to its base (`true` -> `boolean`, `1` -> `number`) when the
-/// `target` could not hold a top-level singleton type, and preserved otherwise
-/// (`true` vs `1`, `"a"` vs `"b"`). Non-literal sources are returned unchanged.
-pub(crate) fn generalized_literal_source_for_display(
-    db: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-) -> TypeId {
-    if tsz_solver::type_queries::is_literal_type(db, source)
-        && !tsz_solver::type_queries::type_could_have_top_level_singleton_types(db, target)
-    {
+/// Widen a scalar literal relation source to its base type for diagnostic
+/// display (tsc `getBaseTypeOfLiteralType` on the non-enum arms): `"no"` ->
+/// `string`, `1` -> `number`, `true` -> `boolean`, `1n` -> `bigint`. Non-literal
+/// types (including enum members, whose parent lookup needs the checker's enum
+/// environment) are returned unchanged.
+pub(crate) fn literal_base_type_for_display(db: &dyn TypeDatabase, source: TypeId) -> TypeId {
+    if tsz_solver::type_queries::is_literal_type(db, source) {
         tsz_solver::operations::widening::widen_type(db, source)
     } else {
         source
     }
 }
 
+/// Whether `target` is one of the deferred instantiable/semantic-ref forms
+/// whose literal-sensitivity answer requires constraint computation or
+/// resolver evaluation ([`relation_target_could_hold_singleton`]) rather than
+/// direct shape inspection. The variant list is owned by the solver next to
+/// the predicate itself so the two cannot drift.
+pub(crate) fn is_deferred_instantiable_display_target(
+    db: &dyn TypeDatabase,
+    target: TypeId,
+) -> bool {
+    tsz_solver::type_queries::singleton_capacity_needs_constraint(db, target)
+}
+
 /// Whether a relation target could hold a top-level singleton (unit) type —
-/// tsc's `typeCouldHaveTopLevelSingletonTypes`. Exposed for display decisions
-/// that need the target gate separately from
-/// [`generalized_literal_source_for_display`] (e.g. enum-member sources whose
-/// base-enum widening needs the checker's enum environment).
-pub(crate) fn relation_target_could_hold_singleton(db: &dyn TypeDatabase, target: TypeId) -> bool {
-    tsz_solver::type_queries::type_could_have_top_level_singleton_types(db, target)
+/// tsc's `typeCouldHaveTopLevelSingletonTypes`. Resolver-aware so deferred
+/// semantic refs (`Cfg[K]`, `Cond<T>`, enum/alias references) answer through
+/// their constraints the way tsc's `getConstraintOfType` does.
+pub(crate) fn relation_target_could_hold_singleton<R: tsz_solver::resolver::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    target: TypeId,
+) -> bool {
+    tsz_solver::type_queries::type_could_have_top_level_singleton_types_resolved(
+        db, resolver, target,
+    )
 }
 
 /// Apparent type of an element-access receiver for the implicit-any index

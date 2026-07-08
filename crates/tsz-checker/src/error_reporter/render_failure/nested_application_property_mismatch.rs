@@ -259,43 +259,13 @@ impl<'a> CheckerState<'a> {
             let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth);
             Self::push_nested_chain(diag, leaf_diag, depth);
         } else {
-            let message = self.generalized_leaf_mismatch_message(leaf_src, leaf_tgt);
+            let message = self.element_mismatch_message(leaf_src, leaf_tgt);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 depth,
             );
         }
-    }
-
-    /// Shared core of the two leaf-message helpers: generalize the literal
-    /// source ([`Self::generalize_nested_relation_source_for_display`]) and
-    /// format both sides. Returns the generalized source id so callers that
-    /// disambiguate the pair pass the type actually rendered.
-    fn generalized_leaf_pair(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> (TypeId, String, String) {
-        let display_source = self.generalize_nested_relation_source_for_display(source, target);
-        let source_str = self.format_type_diagnostic(display_source);
-        let target_str = self.format_type_diagnostic(target);
-        (display_source, source_str, target_str)
-    }
-
-    /// Format the plain `Type 'S' is not assignable to type 'T'.` leaf line
-    /// for a nested relation pair. Unlike [`Self::element_mismatch_message`]
-    /// this variant skips the same-name pair disambiguation, preserving the
-    /// exact output of the leaf sites it factored out — whether tsc
-    /// disambiguates same-named nominal pairs at these particular leaves is
-    /// unverified; converging the two helpers needs a tsc witness first
-    /// (#15628).
-    fn generalized_leaf_mismatch_message(&mut self, source: TypeId, target: TypeId) -> String {
-        let (_, source_str, target_str) = self.generalized_leaf_pair(source, target);
-        format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_str, &target_str],
-        )
     }
 
     pub(super) fn render_property_type_mismatch(
@@ -867,8 +837,7 @@ impl<'a> CheckerState<'a> {
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
         let depth = ctx.depth;
-        let element_message =
-            self.generalized_leaf_mismatch_message(source_element, target_element);
+        let element_message = self.element_mismatch_message(source_element, target_element);
         let needs_header = nested_reason.is_some_and(Self::tuple_element_nested_needs_header);
 
         // Deeper levels (`depth > 0`) whose element self-heads: the nested
@@ -1193,7 +1162,11 @@ impl<'a> CheckerState<'a> {
         let mut diag = if depth == 0 {
             self.render_type_mismatch(ctx)
         } else {
-            let source_str = self.format_type_diagnostic(source_type);
+            // Nested union line: generalize an all-unit union source to its
+            // base (tsc `reportRelationError` / `getBaseTypeOfLiteralTypeUnion`).
+            let display_source =
+                self.generalize_nested_relation_source_for_display(source_type, target_type);
+            let source_str = self.format_type_diagnostic(display_source);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 &[&source_str, &target_str],
@@ -1218,7 +1191,9 @@ impl<'a> CheckerState<'a> {
         let header_depth = if depth == 0 { 0 } else { depth + 1 };
         let drill_depth = header_depth + 1;
 
-        let member_str = self.format_type_diagnostic(member_type);
+        let display_member =
+            self.generalize_nested_relation_source_for_display(member_type, target_type);
+        let member_str = self.format_type_diagnostic(display_member);
         diag.push_elaboration_in_span(
             ctx.start,
             ctx.length,
@@ -1316,7 +1291,12 @@ impl<'a> CheckerState<'a> {
         let mut diag = if depth == 0 {
             self.render_type_mismatch(ctx)
         } else {
-            let source_str = self.format_type_diagnostic(source_type);
+            // Nested relation line: generalize a literal / all-unit-union
+            // source to its base when the target has no singleton capacity
+            // (tsc `reportRelationError`).
+            let display_source =
+                self.generalize_nested_relation_source_for_display(source_type, target_type);
+            let source_str = self.format_type_diagnostic(display_source);
             let target_str = self.format_type_diagnostic(target_type);
             let base = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1343,8 +1323,12 @@ impl<'a> CheckerState<'a> {
                 // Plain leaf relation (e.g. `undefined` vs `number`): render
                 // the child source/target structurally so the displayed
                 // source is the failing branch/member, not the enclosing
-                // assignment's RHS expression.
-                let source_str = self.format_type_diagnostic(nested_source);
+                // assignment's RHS expression. The leaf generalizes the same
+                // way as the outer line (tsc runs `reportRelationError` on
+                // every relation line).
+                let display_source = self
+                    .generalize_nested_relation_source_for_display(nested_source, nested_target);
+                let source_str = self.format_type_diagnostic(display_source);
                 let target_str = self.format_type_diagnostic(nested_target);
                 diag.push_elaboration_in_span(
                     start,
@@ -1479,8 +1463,12 @@ impl<'a> CheckerState<'a> {
 
         // Otherwise emit the constituent frame `Type 'S' is not assignable to
         // type 'Ci'.` (structural display, so the constituent — not the merged
-        // intersection — is named) one level beneath the headline.
-        let frame_source = self.format_type_diagnostic(source_type);
+        // intersection — is named) one level beneath the headline. The frame is
+        // a nested relation line, so its literal source generalizes against
+        // the constituent (tsc `reportRelationError`).
+        let display_source =
+            self.generalize_nested_relation_source_for_display(source_type, constituent_type);
+        let frame_source = self.format_type_diagnostic(display_source);
         let frame_target = self.format_type_diagnostic(constituent_type);
         let frame_message = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1563,7 +1551,7 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
             Self::push_nested_chain(diag, nested_diag, depth + 1);
         } else {
-            let message = self.generalized_leaf_mismatch_message(source_element, target_element);
+            let message = self.element_mismatch_message(source_element, target_element);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1789,8 +1777,13 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
     ) -> String {
-        let (display_source, source_str, target_str) =
-            self.generalized_leaf_pair(source_element, target_element);
+        // Generalize the literal source (tsc `reportRelationError`), format
+        // both sides, and disambiguate same-named nominal pairs like the top
+        // level does — the disambiguator gets the type actually rendered.
+        let display_source =
+            self.generalize_nested_relation_source_for_display(source_element, target_element);
+        let source_str = self.format_type_diagnostic(display_source);
+        let target_str = self.format_type_diagnostic(target_element);
         let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
             display_source,
             target_element,

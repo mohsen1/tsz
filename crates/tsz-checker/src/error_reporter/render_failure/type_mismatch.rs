@@ -79,6 +79,14 @@ impl<'a> CheckerState<'a> {
         } else {
             self.format_assignability_type_for_message(target, source)
         };
+        if depth > 0 {
+            // tsc runs `getTypeNamesForErrorDisplay` on every relation line, so
+            // a same-named nominal pair at a nested leaf disambiguates the same
+            // way the top level does (`NA.Crate` vs `NB.Crate`, not
+            // `Crate` vs `Crate`).
+            (source_str, target_str) =
+                self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
+        }
         if depth == 0 {
             let source_enum_symbol = self.enum_symbol_from_enumish_type(source);
             let target_enum_symbol = self.enum_symbol_from_enumish_type(target);
@@ -500,6 +508,17 @@ impl<'a> CheckerState<'a> {
             &target_str,
         ) {
             source_str = restored;
+        }
+        // An all-unit union source generalizes member-wise to its base when
+        // the target has no singleton capacity (tsc `reportRelationError` ->
+        // `getBaseTypeOfLiteralTypeUnion`): `"x" | "y"` vs `boolean` renders
+        // `string`. Scalar literal sources are already handled by the display
+        // pipeline above; this covers only the union form it preserves.
+        if crate::query_boundaries::common::union_members(self.ctx.types, source).is_some() {
+            let display_source = self.generalize_nested_relation_source_for_display(source, target);
+            if display_source != source {
+                source_str = self.format_type_for_assignability_message(display_source);
+            }
         }
         let base = format_message(
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,

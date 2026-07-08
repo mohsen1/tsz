@@ -231,6 +231,18 @@ impl<'a> CheckerState<'a> {
         // produced from `arg_type` (overrides render their own types and
         // carry no literal annotations to widen).
         let mut arg_display_type = Some(arg_type);
+        // An enum-member argument generalizes to its parent enum when the
+        // parameter could not hold a top-level singleton type (tsc
+        // `reportRelationError`), mirroring the TS2322 assignment surface:
+        // `sip(g)` with `g: EG.A` against `boolean` renders `EG`, while a
+        // literal/template/enum parameter preserves `EG.A`.
+        if let Some(widened) = self.widened_enum_member_assignment_source(arg_type, param_type) {
+            // Plain structural render: the `CallArgument` role would repaint
+            // the display from the argument expression's declared annotation
+            // (`EG.A`), undoing the widening.
+            arg_str = self.format_type_for_assignability_message(widened);
+            arg_display_type = Some(widened);
+        }
         // Widen a fresh boolean-literal array source (`true[]`/`false[]`) to
         // `boolean[]` against a `boolean` parameter. The decision is structural;
         // the output string is plain rendering (no rendered-text decision, §25).
