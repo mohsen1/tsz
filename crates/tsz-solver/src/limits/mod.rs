@@ -175,6 +175,27 @@ pub(crate) const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = 50;
 /// evaluator with empty per-instance guards.
 pub(crate) const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
 
+/// Maximum concurrent (in-flight) expansions of one `Application` node across
+/// every `TypeEvaluator` instance in an evaluation session.
+///
+/// A single evaluator's `RecursionGuard<TypeId>` already collapses same-node
+/// re-entry within that instance, but relation probes and infer-pattern
+/// matching spin up *fresh* evaluators mid-expansion whose per-instance guards
+/// start empty. On a mutually-recursive conditional-alias graph (the typebox
+/// `type/engine` `TInstantiateType` interpreter, issue #13508 root cause B)
+/// each fresh evaluator re-expands the same in-flight `Application(DefId,
+/// args)` from scratch, so the work multiplies per relation level until the
+/// depth caps fire — and the caps then block every application-eval cache
+/// write (the limit ↔ sharing circularity).
+///
+/// `tsc` never re-enters an in-flight instantiation: `getTypeAliasInstantiation`
+/// returns the in-progress type (`resolvingType` semantics) and lets the
+/// outermost expansion own the result. A value of `2` mirrors that while
+/// still allowing one nested cross-evaluator re-expansion for shapes whose
+/// convergence tsz derives through a relation probe of the partially-expanded
+/// form (a fresh-evaluator idiom tsc does not share).
+pub(crate) const MAX_CROSS_EVAL_APPLICATION_EXPANSION: u32 = 2;
+
 /// Maximum checker lazy-resolution fuel across all top-level calls in one
 /// shared evaluation session.
 pub(crate) const MAX_CHECKER_LAZY_RESOLUTION_FUEL: u32 = 50_000;

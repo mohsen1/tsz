@@ -167,6 +167,15 @@ pub struct EvaluationSession {
     cross_eval_active: RefCell<FxHashSet<TypeId>>,
     /// Per-top-level-query memo for stable fresh-evaluator results.
     query_memo: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    /// In-flight expansion count per `Application` node across every
+    /// evaluator instance in this session. A fresh evaluator re-entering a
+    /// node that [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`] instances are
+    /// already expanding must defer to the in-flight owner instead of
+    /// re-walking the alias graph (issue #13508 root cause B).
+    ///
+    /// [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`]:
+    /// crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION
+    application_expansion_active: RefCell<FxHashMap<TypeId, u32>>,
 }
 
 /// RAII entry for one conditional-subtype relation probe in an
@@ -264,6 +273,7 @@ impl EvaluationSession {
             type_reference_resolution_depth: Cell::new(0),
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
+            application_expansion_active: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -566,6 +576,42 @@ impl EvaluationSession {
         self.cross_eval_active.borrow_mut().remove(&type_id);
     }
 
+    /// Enter one cross-evaluator expansion of an `Application` node.
+    ///
+    /// Returns `false` when [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`]
+    /// evaluator instances in this session are already expanding the same
+    /// node — the caller must then defer (keep the application opaque) and
+    /// let the in-flight owner produce the result. A `true` return records
+    /// the entry and must be balanced by
+    /// [`leave_application_expansion`](Self::leave_application_expansion).
+    ///
+    /// [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`]:
+    /// crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION
+    #[inline]
+    pub(crate) fn enter_application_expansion(&self, node: TypeId) -> bool {
+        let mut active = self.application_expansion_active.borrow_mut();
+        let count = active.entry(node).or_insert(0);
+        if *count >= crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    /// Leave one cross-evaluator expansion of an `Application` node.
+    /// Balanced with a successful
+    /// [`enter_application_expansion`](Self::enter_application_expansion).
+    #[inline]
+    pub(crate) fn leave_application_expansion(&self, node: TypeId) {
+        let mut active = self.application_expansion_active.borrow_mut();
+        if let Some(count) = active.get_mut(&node) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                active.remove(&node);
+            }
+        }
+    }
+
     /// Look up a stable fresh-evaluator result for the current top-level query.
     #[inline]
     pub(crate) fn query_memo_get(&self, key: EvaluationCacheKey) -> Option<TypeId> {
@@ -811,6 +857,57 @@ mod tests {
         assert_eq!(session.query_memo_get(default_key), None);
         assert_eq!(session.query_memo_get(no_unchecked_key), None);
         assert_eq!(session.query_memo_get(exact_optional_key), None);
+    }
+
+    #[test]
+    fn application_expansion_sentinel_defers_at_limit_and_rebalances() {
+        let session = EvaluationSession::new();
+        let node = TypeId(4321);
+
+        let mut entered = 0;
+        while session.enter_application_expansion(node) {
+            entered += 1;
+            assert!(
+                entered <= crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION,
+                "enter must deny past the in-flight expansion limit"
+            );
+        }
+        assert_eq!(entered, crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION);
+        assert!(
+            !session.enter_application_expansion(node),
+            "an at-limit node must keep deferring until an owner leaves"
+        );
+
+        session.leave_application_expansion(node);
+        assert!(
+            session.enter_application_expansion(node),
+            "leaving one expansion frees one re-entry slot"
+        );
+        for _ in 0..entered {
+            session.leave_application_expansion(node);
+        }
+        assert!(
+            session.enter_application_expansion(node),
+            "a fully-unwound node is enterable again"
+        );
+        session.leave_application_expansion(node);
+    }
+
+    #[test]
+    fn application_expansion_sentinel_tracks_nodes_independently() {
+        let session = EvaluationSession::new();
+        let hot = TypeId(11);
+        let other = TypeId(12);
+
+        while session.enter_application_expansion(hot) {}
+        assert!(
+            session.enter_application_expansion(other),
+            "an at-limit node must not defer expansions of a different node"
+        );
+        session.leave_application_expansion(other);
+        for _ in 0..crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION {
+            session.leave_application_expansion(hot);
+        }
     }
 
     #[test]
