@@ -1065,19 +1065,40 @@ impl<'a> CheckerState<'a> {
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
-        // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
-        // gave the following error.` (TS2772) chain per candidate — in
-        // declaration order — when 2 or 3 candidates reached argument checking
-        // (`resolveCall`). A single candidate collapses to a plain TS2345 (no
-        // TS2769 at all, handled upstream), and >3 candidates use tsc's distinct
-        // "last overload" shape, left as the historical flat rendering. Each
-        // candidate failure carries its declared signature; a 2-3 set whose
-        // failures all have one wraps, otherwise we fall back to the flat list
-        // (e.g. callback-body sets whose failures carry no signature).
-        let wrap_overloads = matches!(failures.len(), 2 | 3)
-            && failures
+        // tsc's `resolveCall` partitions the failed candidates: overloads that
+        // matched arity but failed argument checks (`candidatesForArgumentError`)
+        // are elaborated, while arity failures never appear in the chain yet
+        // still count toward the `{N}` of `Overload {i} of {N}`. Two or three
+        // argument-error candidates each get a TS2772 header in declaration
+        // order (`{i}` is the candidate's 1-based position among the
+        // argument-error candidates); four or more collapse to a single
+        // `The last overload gave the following error.` (TS2770) header
+        // wrapping only the last candidate. A lone argument-error candidate
+        // collapses to a plain TS2345 upstream (no TS2769 at all). Candidate
+        // sets whose failures carry no declared signature (e.g. callback-body
+        // sets) keep the historical flat rendering.
+        let chain_candidates: Vec<&tsz_solver::PendingDiagnostic> = failures
+            .iter()
+            .filter(|failure| {
+                !matches!(
+                    failure.code,
+                    diagnostic_codes::EXPECTED_ARGUMENTS_BUT_GOT
+                        | diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT
+                )
+            })
+            .collect();
+        let wrap_overloads = chain_candidates.len() >= 2
+            && chain_candidates
                 .iter()
                 .all(|failure| failure.overload_signature.is_some());
+        let collapse_to_last_overload = wrap_overloads && chain_candidates.len() > 3;
+        let wrapped_candidates: &[&tsz_solver::PendingDiagnostic] = if !wrap_overloads {
+            &[]
+        } else if collapse_to_last_overload {
+            &chain_candidates[chain_candidates.len() - 1..]
+        } else {
+            &chain_candidates
+        };
 
         // Per-candidate relation reason chains (#15387), computed before the
         // type formatter takes its borrow of the checker context (failure
@@ -1086,20 +1107,14 @@ impl<'a> CheckerState<'a> {
         // path — never at the call node: the renderer's display probes climb
         // from their anchor to enclosing initializers and would type the
         // surrounding expression mid-flight.
-        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = if wrap_overloads {
-            failures
-                .iter()
-                .map(|failure| {
-                    self.overload_failure_argument_node(idx, failure)
-                        .map(|arg_idx| {
-                            self.overload_candidate_reason_chain(failure, arg_idx, &span)
-                        })
-                        .unwrap_or_default()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = wrapped_candidates
+            .iter()
+            .map(|failure| {
+                self.overload_failure_argument_node(idx, failure)
+                    .map(|arg_idx| self.overload_candidate_reason_chain(failure, arg_idx, &span))
+                    .unwrap_or_default()
+            })
+            .collect();
 
         let mut related = Vec::new();
         let mut formatter = self.ctx.create_type_formatter();
@@ -1119,29 +1134,38 @@ impl<'a> CheckerState<'a> {
             };
 
         let related_policy = if wrap_overloads {
+            // `{N}` counts every failed overload, arity failures included.
             let total = failures.len();
-            for (ordinal, (failure, chain)) in failures.iter().zip(candidate_chains).enumerate() {
-                let signature = failure
-                    .overload_signature
-                    .expect("wrap_overloads requires every failure to carry a signature");
-                // signatureToString colon form (`(x: number): number`); fall
-                // back to the plain render only if the type is not a signature.
-                let signature_display = formatter
-                    .format_overload_signature(signature)
-                    .unwrap_or_else(|| formatter.format(signature).into_owned());
-                related.push(related_line(
-                    &span,
-                    format_message(
-                        diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
-                        &[
-                            &(ordinal + 1).to_string(),
-                            &total.to_string(),
-                            &signature_display,
-                        ],
-                    ),
-                    diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
-                    0,
-                ));
+            for (ordinal, (failure, chain)) in
+                wrapped_candidates.iter().zip(candidate_chains).enumerate()
+            {
+                let (header_message, header_code) = if collapse_to_last_overload {
+                    (
+                        diagnostic_messages::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR.to_string(),
+                        diagnostic_codes::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR,
+                    )
+                } else {
+                    let signature = failure
+                        .overload_signature
+                        .expect("wrap_overloads requires every candidate to carry a signature");
+                    // signatureToString colon form (`(x: number): number`); fall
+                    // back to the plain render only if the type is not a signature.
+                    let signature_display = formatter
+                        .format_overload_signature(signature)
+                        .unwrap_or_else(|| formatter.format(signature).into_owned());
+                    (
+                        format_message(
+                            diagnostic_messages::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                            &[
+                                &(ordinal + 1).to_string(),
+                                &total.to_string(),
+                                &signature_display,
+                            ],
+                        ),
+                        diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
+                    )
+                };
+                related.push(related_line(&span, header_message, header_code, 0));
                 let pending = self.overload_failure_generalized_pending(failure, &span);
                 let diag = formatter.render(&pending);
                 let diag_span = diag.span.as_ref().unwrap_or(&span);
