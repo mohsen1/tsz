@@ -1123,13 +1123,10 @@ impl<'a> CheckerState<'a> {
         func_idx: NodeIndex,
         func: &tsz_parser::parser::node::FunctionData,
     ) {
-        let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-
-        let inferred_yield = if yield_types.is_empty() {
-            TypeId::NEVER // No yields -> never
-        } else {
-            self.ctx.types.factory().union(yield_types)
-        };
+        // Literal widening is irrelevant here — only the `any` outcome matters
+        // for TS7055, and literal→base widening never produces `any`. The real
+        // widening policy lives in `check_generator_body_return`.
+        let (_, inferred_yield) = self.take_generator_yield_union();
 
         let widened = self.widen_literal_type(inferred_yield);
         // When strictNullChecks is off, tsc widens null/undefined yield types
