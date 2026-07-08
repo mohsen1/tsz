@@ -112,6 +112,17 @@ def main() -> int:
         action="store_true",
         help="Print the CheckerContext lifetime manifest as a markdown table.",
     )
+    parser.add_argument(
+        "--size-only",
+        action="store_true",
+        help=(
+            "Run ONLY the physical-line-count checks (the per-crate LOC cap and "
+            "per-file size ratchets) and skip the #8225 quarantine and other "
+            "architecture-health metrics. Used by the CI size gate so a file "
+            "crossing its size ceiling fails without redding main on pre-existing "
+            "quarantine debt (which carries arch-owner-domain baselines)."
+        ),
+    )
     args = parser.parse_args()
 
     if args.checker_context_lifetime_table:
@@ -127,6 +138,55 @@ def main() -> int:
                 print(f"  {hit}")
             return 1
         print(checker_context_lifetime_markdown(struct_path, struct_name, manifest_path))
+        return 0
+
+    if args.size_only:
+        # CI size gate: run ONLY the physical-line-count checks (the per-crate
+        # LOC cap in LINE_LIMIT_CHECKS + the per-file size ratchets in
+        # FILE_LINE_LIMIT_CHECKS). This lets a merge_group/push CI job block a
+        # file crossing its size ceiling — the gap that let context/mod.rs land
+        # at 2030 lines with all jobs green — without failing on the #8225
+        # quarantine and other health metrics, whose baselines are arch-owner
+        # domain and are tracked/paid down separately.
+        size_failures = []
+        size_total = 0
+        for name, base, limit, *rest in LINE_LIMIT_CHECKS:
+            if not base.exists():
+                continue
+            exclude_files = rest[0] if rest else None
+            hits = scan_line_limits(base, limit, exclude_files)
+            size_total += len(hits)
+            if hits:
+                size_failures.append((name, hits))
+        for name, path, limit in FILE_LINE_LIMIT_CHECKS:
+            # The #8225 common-quarantine ratchets carry their own arch-owner
+            # green-campaign headroom policy and are tracked as debt separately;
+            # the campaign does not bump or pay them down. The CI size gate
+            # enforces the general per-file size ceilings, not the quarantine, so
+            # skip #8225 entries — the gate still blocks ordinary size growth (the
+            # per-crate LOC cap plus non-quarantine ratchets) and stays green on
+            # main instead of failing on pre-existing quarantine debt.
+            if "#8225" in name:
+                continue
+            hits = scan_file_line_limit(path, limit)
+            size_total += len(hits)
+            if hits:
+                size_failures.append((name, hits))
+
+        payload = build_json_payload(size_failures, size_total)
+        if args.json_report:
+            write_json_report(Path(args.json_report), payload)
+        if args.json:
+            print(json.dumps(payload, indent=2))
+            return 0 if not size_failures else 1
+        if size_failures:
+            print("ARCH GUARD FAILURES (size-only):")
+            for name, hits in size_failures:
+                print(f"- {name}:")
+                for hit in hits:
+                    print(f"  - {hit}")
+            return 1
+        print("Architecture size guardrails passed (size-only).")
         return 0
 
     failures = []
