@@ -785,19 +785,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Run `f` against this evaluator's owning session, falling back to the
-    /// thread's current session when none was threaded in — the same session
-    /// choice the fresh-evaluator boundaries make, so cross-evaluator state
-    /// (in-flight expansion sentinels, per-query memos) is shared with every
-    /// evaluator this one transitively spawns.
+    /// thread's current session when none was threaded in (see
+    /// [`crate::evaluation::session::with_session_or_current`]).
     #[inline]
     pub(crate) fn with_evaluation_session_scope<T>(
         &self,
         f: impl FnOnce(&EvaluationSession) -> T,
     ) -> T {
-        match self.eval_session {
-            Some(session) => f(session),
-            None => crate::evaluation::session::with_current_session(f),
-        }
+        crate::evaluation::session::with_session_or_current(self.eval_session, f)
     }
 
     /// PERF: Look up a cached subtype result from conditional type evaluation.

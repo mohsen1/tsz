@@ -670,6 +670,21 @@ pub(crate) fn with_current_session<T>(f: impl FnOnce(&EvaluationSession) -> T) -
     CURRENT_SESSION.with(f)
 }
 
+/// Run `f` against `session` when one was threaded in, falling back to the
+/// thread's current session otherwise — the single definition of the session
+/// choice every fresh-evaluator boundary makes, so cross-evaluator state
+/// (in-flight expansion sentinels, per-query memos) is shared regardless of
+/// which boundary spawned the evaluator.
+pub(crate) fn with_session_or_current<T>(
+    session: Option<&EvaluationSession>,
+    f: impl FnOnce(&EvaluationSession) -> T,
+) -> T {
+    match session {
+        Some(session) => f(session),
+        None => with_current_session(f),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -928,7 +943,10 @@ mod tests {
         let hot = TypeId(11);
         let other = TypeId(12);
 
-        while session.enter_application_expansion(hot) {}
+        for _ in 0..MAX_CROSS_EVAL_APPLICATION_EXPANSION {
+            assert!(session.enter_application_expansion(hot));
+        }
+        assert!(!session.enter_application_expansion(hot));
         assert!(
             session.enter_application_expansion(other),
             "an at-limit node must not defer expansions of a different node"

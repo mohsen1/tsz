@@ -1,5 +1,5 @@
 use crate::evaluation::request::EvaluationRequest;
-use crate::evaluation::session::{EvaluationSession, with_current_session};
+use crate::evaluation::session::EvaluationSession;
 use crate::relations::subtype::{RelationEvaluationResult, SubtypeChecker, TypeResolver};
 use crate::types::TypeId;
 
@@ -45,11 +45,10 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
             *fuel -= 1;
         }
 
-        let memo_result = if let Some(session) = self.eval_session {
-            self.evaluate_type_with_session(request, session)
-        } else {
-            with_current_session(|session| self.evaluate_type_with_session(request, session))
-        };
+        let memo_result =
+            crate::evaluation::session::with_session_or_current(self.eval_session, |session| {
+                self.evaluate_type_with_session(request, session)
+            });
         let Some(memo_result) = memo_result else {
             return RelationEvaluationResult::unstable(type_id);
         };

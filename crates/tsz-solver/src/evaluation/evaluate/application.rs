@@ -140,20 +140,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         // Phase 4.5 — cross-evaluator in-flight sentinel (issue #13508 root
-        // cause B). A single evaluator's `RecursionGuard<TypeId>` collapses
-        // same-node re-entry within that instance, but relation probes and
-        // infer-pattern matching spin up fresh evaluators mid-expansion whose
-        // per-instance guards start empty. On a mutually-recursive
-        // conditional-alias graph each fresh evaluator re-expands the same
-        // in-flight `Application` from scratch, multiplying the work per
-        // relation level until the depth caps fire — and the caps then block
-        // every application-eval cache write (the limit ↔ sharing
-        // circularity). `tsc` never re-enters an in-flight instantiation (its
-        // `resolvingType` marker); tsz mirrors that by deferring the re-entry:
-        // the application stays opaque and the in-flight owner produces the
-        // real result. The deferral is a registration-window-class artifact —
-        // a later pass (or the owner's completed expansion, via the
-        // application-eval cache) resolves it — so it taints the run through
+        // cause B; rationale on `crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION`).
+        // A re-entry past the in-flight allowance defers: the application
+        // stays opaque and the in-flight owner produces the real result. The
+        // deferral is a registration-window-class artifact — a later pass (or
+        // the owner's completed expansion, via the application-eval cache)
+        // resolves it — so it taints the run through
         // `mark_unresolved_def_seen`, keeping every enclosing partial result
         // out of the persistent caches. The TS2589 depth-detection pass is
         // exempt: it must re-walk the expansion the sentinel would skip.
