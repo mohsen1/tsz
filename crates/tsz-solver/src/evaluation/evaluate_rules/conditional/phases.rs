@@ -762,11 +762,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             ConditionalBranchProbeResult::new(relation, cache_stability)
         };
-        let probe = if let Some(session) = self.evaluation_session() {
-            run_probe(session)
-        } else {
-            crate::evaluation::session::with_current_session(run_probe)
-        };
+        let probe = self.with_evaluation_session_scope(run_probe);
         // An `Undetermined` false consumed an unregistered `Lazy` body: do not
         // cache it and do not let it take the false branch — defer so a later
         // resolved pass decides the conditional (issue #14238). Definitive

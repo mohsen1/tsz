@@ -157,24 +157,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // `mark_unresolved_def_seen`, keeping every enclosing partial result
         // out of the persistent caches. The TS2589 depth-detection pass is
         // exempt: it must re-walk the expansion the sentinel would skip.
-        let sentinel_entered =
-            !self.flag_depth_on_app_cycle && cross_eval_application_sentinel_enabled() && {
-                let entered = self.with_evaluation_session_scope(|session| {
-                    session.enter_application_expansion(original_type_id)
-                });
-                if !entered {
-                    tracing::trace!(
-                        ?def_id,
-                        node = original_type_id.0,
-                        "evaluate_application: deferring cross-evaluator re-entry \
-                         of an in-flight application"
-                    );
-                    self.mark_unresolved_def_seen();
-                    self.decrement_def_depth(def_id);
-                    return original_type_id;
-                }
-                true
-            };
+        let sentinel_active =
+            !self.flag_depth_on_app_cycle && cross_eval_application_sentinel_enabled();
+        if sentinel_active
+            && !self.with_evaluation_session_scope(|session| {
+                session.enter_application_expansion(original_type_id)
+            })
+        {
+            tracing::trace!(
+                ?def_id,
+                node = original_type_id.0,
+                "evaluate_application: deferring cross-evaluator re-entry \
+                 of an in-flight application"
+            );
+            self.mark_unresolved_def_seen();
+            self.decrement_def_depth(def_id);
+            return original_type_id;
+        }
 
         // Phase 5 — evaluate the body under fresh application-body epoch
         // snapshots. Any `application_eval_cache` write made while finalizing
@@ -189,7 +188,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
         self.app_body_limit_epoch = saved_app_body_epoch;
         self.app_body_unresolved_def_epoch = saved_app_body_unresolved_def_epoch;
-        if sentinel_entered {
+        if sentinel_active {
             self.with_evaluation_session_scope(|session| {
                 session.leave_application_expansion(original_type_id);
             });
