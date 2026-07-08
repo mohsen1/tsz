@@ -200,6 +200,36 @@ pub enum PendingImplicitAnyKind {
     EvolvingArray,
 }
 
+/// One `yield` operand's contribution to an unannotated generator's inferred
+/// yield type.
+///
+/// `tsc` widens the aggregated yield type only when it is a single literal that
+/// is *fresh* (`getWidenedLiteralType` inside
+/// `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded`). tsz does not
+/// carry freshness on types, so each collection site records whether its
+/// operand expression was a widenable (fresh) literal contribution; the
+/// aggregation site widens the collapsed literal union only when every
+/// contribution agreed.
+#[derive(Clone, Copy, Debug)]
+pub struct GeneratorYieldContribution {
+    /// The yielded value type (element type for `yield*`).
+    pub type_id: TypeId,
+    /// Whether the operand was a fresh literal expression (or fresh enum-member
+    /// access) with no `const`-assertion pinning — i.e. `tsc` would widen it.
+    pub widenable: bool,
+}
+
+impl CheckerContext<'_> {
+    /// Record one `yield` operand's contribution to the enclosing unannotated
+    /// generator's inferred yield type. Pass `widenable: false` for delegated
+    /// (`yield*`) element types — they come from another iterator's declared
+    /// type, never a fresh literal.
+    pub fn push_generator_yield_contribution(&mut self, type_id: TypeId, widenable: bool) {
+        self.generator_yield_operand_types
+            .push(GeneratorYieldContribution { type_id, widenable });
+    }
+}
+
 /// Deferred implicit-any diagnostic state for a variable declaration.
 #[derive(Clone, Copy, Debug)]
 pub struct PendingImplicitAnyVar {
@@ -1523,7 +1553,7 @@ pub struct CheckerContext<'a> {
     pub generator_next_type_stack: Vec<Option<TypeId>>,
     /// Collected yield operand types during body check for unannotated generators.
     /// After body check, the union determines the inferred yield type for TS7055/TS7025 vs TS7057.
-    pub generator_yield_operand_types: Vec<TypeId>,
+    pub generator_yield_operand_types: Vec<GeneratorYieldContribution>,
     /// Whether TS7057 was emitted for any yield in the current generator.
     /// When true, TS7055 is suppressed (tsc emits one or the other, not both).
     pub generator_had_ts7057: bool,

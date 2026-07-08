@@ -534,6 +534,33 @@ impl<'a> CheckerState<'a> {
         type_id
     }
 
+    /// Whether a single `yield` operand contribution would be widened by the
+    /// generator yield-type aggregation in `check_generator_body_return` — the
+    /// yield-path sibling of [`Self::return_contribution_is_widenable`].
+    ///
+    /// Deliberate differences from the return predicate: the contextual gate is
+    /// applied at the aggregation site against the contextual *yield* type
+    /// (`contextual_type_allows_literal`, tsc `isLiteralOfContextualType`), not
+    /// per contribution; and there is no conditional-expression carve-out —
+    /// tsc widens `yield cond ? 1 : 1` to `number` (the branches collapse to a
+    /// single fresh literal), which `is_fresh_literal_expression`'s
+    /// either-branch-fresh rule reproduces. The cheap type-shape check runs
+    /// first so the AST freshness walk is skipped for the common non-literal
+    /// operand.
+    pub(crate) fn yield_contribution_is_widenable(
+        &mut self,
+        expr_idx: NodeIndex,
+        type_id: TypeId,
+    ) -> bool {
+        if expr_idx.is_none() || self.ctx.preserve_literal_types {
+            return false;
+        }
+        if crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id) {
+            return self.is_fresh_literal_expression(expr_idx);
+        }
+        self.is_enum_member_type_for_widening(type_id)
+    }
+
     /// Whether a single return-expression contribution would be widened by
     /// `maybe_widen_return_contribution` — i.e. it is a fresh literal expression
     /// with none of the per-expression carve-outs (contextual return type,
