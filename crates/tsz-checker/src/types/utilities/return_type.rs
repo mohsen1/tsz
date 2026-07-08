@@ -555,9 +555,10 @@ impl<'a> CheckerState<'a> {
         if expr_idx.is_none() || self.ctx.preserve_literal_types {
             return false;
         }
-        (crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
-            || self.is_enum_member_type_for_widening(type_id))
-            && self.is_fresh_widening_source(expr_idx, type_id)
+        let enum_member_like = self.is_enum_member_like_type(type_id);
+        (enum_member_like
+            || crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id))
+            && self.is_fresh_widening_source_with_enum_arm(expr_idx, enum_member_like)
     }
 
     /// Whether a single return-expression contribution would be widened by

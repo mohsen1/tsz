@@ -33,6 +33,19 @@ use tsz_solver::TypeId;
 /// recursive walk in this module carries a depth and stops here.
 const MAX_FRESH_LITERAL_DEPTH: u8 = 16;
 
+/// Lazily-evaluated state of the enum-member-access arm of the freshness
+/// walk. The arm's shape test only matters when the walk actually reaches a
+/// property/element access, so `Lazy` defers it to that single consumption
+/// point — `let x = 1` or `return f()` never pay it.
+enum EnumMemberArm {
+    /// Arm disabled: plain literal freshness (no type observation available).
+    Off,
+    /// Arm enabled iff the observed type turns out enum-member shaped.
+    Lazy(TypeId),
+    /// Shape already computed (memo, or supplied by the caller).
+    Known(bool),
+}
+
 impl<'a> CheckerState<'a> {
     /// Widen a mutable-binding-like observation of `init_type` inferred from
     /// the initializer expression `expr_idx`.
@@ -58,13 +71,26 @@ impl<'a> CheckerState<'a> {
     /// enum-member shaped.
     ///
     /// The enum arm resolves symbols (a scope-chain walk), so it must not run
-    /// for ordinary property reads like `let x = obj.prop`; the cheap type
-    /// gate keeps the non-enum common case on the zero-cost AST fall-through.
+    /// for ordinary property reads like `let x = obj.prop`. The shape test is
+    /// evaluated lazily at the arm itself, so initializers the walk decides
+    /// without reaching a property/element access (`let x = 1`, `let x = f()`)
+    /// pay no type-shape work at all.
     pub(crate) fn is_fresh_widening_source(&self, expr_idx: NodeIndex, init_type: TypeId) -> bool {
+        self.is_fresh_literal_expression_inner(expr_idx, 0, &mut EnumMemberArm::Lazy(init_type))
+    }
+
+    /// [`Self::is_fresh_widening_source`] with the enum-member shape already
+    /// computed by the caller — avoids re-deriving it when a predicate gate
+    /// (e.g. the yield-contribution gate) needed the same answer first.
+    pub(crate) fn is_fresh_widening_source_with_enum_arm(
+        &self,
+        expr_idx: NodeIndex,
+        enum_member_like: bool,
+    ) -> bool {
         self.is_fresh_literal_expression_inner(
             expr_idx,
             0,
-            self.is_enum_member_like_type(init_type),
+            &mut EnumMemberArm::Known(enum_member_like),
         )
     }
 
@@ -74,7 +100,7 @@ impl<'a> CheckerState<'a> {
     /// `ENUM_MEMBER` flag (the shape some resolution orders observe before the
     /// member's def-backed type is interned). Tag reads and map lookups only —
     /// no symbol scope walk, no type computation.
-    fn is_enum_member_like_type(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_enum_member_like_type(&self, type_id: TypeId) -> bool {
         if self.is_enum_member_type_for_widening(type_id) {
             return true;
         }
@@ -188,7 +214,7 @@ impl<'a> CheckerState<'a> {
     /// let n = c;              // c's type is non-fresh → n: E.A (not widened)
     /// ```
     pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
-        self.is_fresh_literal_expression_inner(idx, 0, false)
+        self.is_fresh_literal_expression_inner(idx, 0, &mut EnumMemberArm::Off)
     }
 
     /// `enum_member_arm` enables the enum-member-access case; callers turn it
@@ -199,7 +225,7 @@ impl<'a> CheckerState<'a> {
         &self,
         idx: NodeIndex,
         depth: u8,
-        enum_member_arm: bool,
+        enum_member_arm: &mut EnumMemberArm,
     ) -> bool {
         if depth > MAX_FRESH_LITERAL_DEPTH {
             return false;
@@ -282,10 +308,10 @@ impl<'a> CheckerState<'a> {
         // a primitive literal token mints a fresh primitive literal. Property
         // reads whose base is not the enum object (`o.p` where `p: E.A`)
         // resolve to `None` here and stay non-fresh.
-        if enum_member_arm
-            && (kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-            && self.enum_member_access_symbol(idx, depth).is_some()
+        if (kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && self.enum_member_arm_enabled(enum_member_arm)
+            && self.is_direct_enum_member_access(idx, depth)
         {
             return true;
         }
@@ -316,10 +342,29 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// The enum-*member* symbol denoted by a direct member access expression
-    /// (`E.A`, `Ns.E.A`, `E["A"]`), or `None` when the access does not read a
-    /// member off the enum object itself.
-    fn enum_member_access_symbol(&self, idx: NodeIndex, depth: u8) -> Option<SymbolId> {
+    /// Resolve (and memoize) whether the enum-member-access arm is enabled
+    /// for this walk. `Lazy` computes the shape test on first consultation so
+    /// walks that never reach an access expression never pay it.
+    fn enum_member_arm_enabled(&self, arm: &mut EnumMemberArm) -> bool {
+        match *arm {
+            EnumMemberArm::Off => false,
+            EnumMemberArm::Known(enabled) => enabled,
+            EnumMemberArm::Lazy(type_id) => {
+                let enabled = self.is_enum_member_like_type(type_id);
+                *arm = EnumMemberArm::Known(enabled);
+                enabled
+            }
+        }
+    }
+
+    /// Whether `idx` is a direct member access on an enum object (`E.A`,
+    /// `Ns.E.A`, `E["A"]`) — the accesses that mint a fresh enum literal.
+    /// Property reads whose base is not the enum object (`o.p`) are not.
+    fn is_direct_enum_member_access(&self, idx: NodeIndex, depth: u8) -> bool {
+        self.direct_enum_member_access(idx, depth).is_some()
+    }
+
+    fn direct_enum_member_access(&self, idx: NodeIndex, depth: u8) -> Option<()> {
         let node = self.ctx.arena.get(idx)?;
         let access = self.ctx.arena.get_access_expr(node)?;
         if access.question_dot_token {
@@ -352,7 +397,7 @@ impl<'a> CheckerState<'a> {
         let member_symbol = self.checker_symbol(member_sym_id)?;
         member_symbol
             .has_any_flags(symbol_flags::ENUM_MEMBER)
-            .then_some(member_sym_id)
+            .then_some(())
     }
 
     /// Resolve an entity-shaped value expression (identifier or dotted chain,

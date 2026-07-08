@@ -56,8 +56,8 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.checker_symbol(sym_id) else {
             return type_id;
         };
-        if symbol.flags & tsz_binder::symbol_flags::ENUM == 0
-            || (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+            || symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
         {
             return type_id;
         }

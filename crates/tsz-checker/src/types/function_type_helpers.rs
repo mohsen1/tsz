@@ -330,7 +330,7 @@ impl<'a> CheckerState<'a> {
         // per-property `as const`.
         let is_widenable_literal =
             crate::query_boundaries::common::is_literal_type(self.ctx.types, inferred_yield)
-                || self.is_enum_member_type_for_widening(inferred_yield);
+                || self.is_enum_member_like_type(inferred_yield);
         // Term order matters: `is_widenable_literal` is the cheap, selective
         // gate (an empty contribution set collapses to `never` and fails it);
         // the contribution scan runs only for a collapsed unit literal; and the
