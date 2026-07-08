@@ -136,20 +136,19 @@ fn test_enum_arithmetic_and_widening_facts_use_enum_analysis_boundary() {
             "src/types/computation/binary.rs",
             "enum_query::is_enum_type(",
         ),
+        // The literal-freshness boundary (#15390/#15445) now owns the
+        // widening *timing*: binding/return/parameter-default sites call
+        // `widen_mutable_binding_initializer_type` / freshness predicates
+        // instead of consulting enum facts directly. The enum *facts*
+        // themselves still come from `enum_analysis`, consumed inside
+        // `types/utilities/core.rs` (the fresh enum-member-access probe and
+        // the member-to-parent `DefId` resolution the widening helpers share).
         (
             "src/types/utilities/core.rs",
-            "enum_query::enum_member_parent_symbol_for_widening(",
+            "enum_query::enum_member_parent_def_id(",
         ),
         (
-            "src/state/variable_checking/initializer_policy.rs",
-            "enum_query::is_enum_member_for_widening(",
-        ),
-        (
-            "src/types/function_type.rs",
-            "enum_query::is_enum_member_for_widening(",
-        ),
-        (
-            "src/types/utilities/return_type.rs",
+            "src/types/utilities/core.rs",
             "enum_query::is_enum_member_for_widening(",
         ),
         (

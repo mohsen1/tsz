@@ -121,6 +121,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 cached.is_some(),
             );
             if let Some(cached) = cached {
+                tracing::trace!(
+                    def_id = ?def_id,
+                    ?cached,
+                    "evaluate_application raw-args cache hit"
+                );
                 self.decrement_def_depth(def_id);
                 return cached;
             }
@@ -1297,19 +1302,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
         }
 
-        if self.instantiation_directly_grows_same_application(def_id, expanded_args, instantiated) {
-            return self.finish_instantiated_application(
-                original_type_id,
-                ApplicationFinalizeContext {
-                    original_args,
-                    expanded_args,
-                    body: instantiated,
-                    type_params,
-                    prefer_application_display_alias,
-                    record_structural_back_reference,
-                    no_unchecked_indexed_access,
-                },
-            );
+        match self.classify_same_alias_expansion(
+            def_id,
+            original_type_id,
+            expanded_args,
+            instantiated,
+        ) {
+            SameAliasExpansion::DefDepthOwned => {
+                return self.finish_instantiated_application(
+                    original_type_id,
+                    ApplicationFinalizeContext {
+                        original_args,
+                        expanded_args,
+                        body: instantiated,
+                        type_params,
+                        prefer_application_display_alias,
+                        record_structural_back_reference,
+                        no_unchecked_indexed_access,
+                    },
+                );
+            }
+            SameAliasExpansion::DivergentConditional => {
+                self.mark_depth_exceeded_for_request();
+                return TypeId::ERROR;
+            }
+            SameAliasExpansion::None => {}
         }
 
         self.with_meta_rereduce_recursion_identity(
@@ -1380,6 +1397,41 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
         evaluated
+    }
+
+    /// Classify one instantiation step that left the same alias still to be
+    /// expanded, so the meta-rereduce identity guard neither preempts the
+    /// per-`DefId` `def_depth` accounting that owns `TS2589` nor lets a
+    /// divergent conditional re-entry terminate silently — see
+    /// [`SameAliasExpansion`] for the verdicts.
+    fn classify_same_alias_expansion(
+        &self,
+        def_id: DefId,
+        original_type_id: TypeId,
+        expanded_args: &[TypeId],
+        instantiated: TypeId,
+    ) -> SameAliasExpansion {
+        if self.instantiation_directly_grows_same_application(def_id, expanded_args, instantiated) {
+            return SameAliasExpansion::DefDepthOwned;
+        }
+        // The wrapper-shape probes below only run on the rare about-to-defer
+        // path, so the common convergent case pays nothing.
+        if !self.meta_rereduce_recursion_identity_would_exceed_with_seen(original_type_id, &[])
+            || !crate::visitor::contains_lazy_def_id(self.interner, instantiated, def_id)
+        {
+            return SameAliasExpansion::None;
+        }
+        // Only a fully *concrete* self-recursive expansion escapes to
+        // `def_depth`: a still-generic application (an `Awaited`-shaped
+        // distribution over a free-parameter union member) must stay behind
+        // the identity wrapper and defer, resuming on instantiation.
+        if expanded_args
+            .iter()
+            .any(|&arg| crate::type_queries::contains_type_parameters_db(self.interner, arg))
+        {
+            return SameAliasExpansion::None;
+        }
+        SameAliasExpansion::DefDepthOwned
     }
 
     fn instantiation_directly_grows_same_application(
@@ -1769,4 +1821,30 @@ mod tests {
             1
         );
     }
+}
+
+/// How one instantiation step that left the same alias still to be expanded
+/// should be bounded — see `classify_same_alias_expansion`.
+///
+/// `def_depth` (`MAX_DEF_DEPTH`, escalated through
+/// `REAL_INSTANTIATION_BAILOUT_THRESHOLD`) is the tsz analogue of tsc's
+/// `instantiationDepth`: divergent self-recursive aliases must reach it (or an
+/// equivalent depth verdict) so the checker can surface `TS2589`, while
+/// convergent ones terminate on their own. A silent iteration bail from the
+/// meta-rereduce identity guard at depth 5 would return the deferred
+/// application with no limit verdict the checker maps to `TS2589` — losing
+/// parity for shapes like
+/// `type Foo<T extends "true", B> = { "true": Foo<T, Foo<T, B>> }[T]`, where
+/// the growth hides behind an object property feeding an index access rather
+/// than sitting in direct tail position.
+enum SameAliasExpansion {
+    /// Direct tail-position growth or a non-conditional self-recursive
+    /// wrapper: skip the identity guard and let `def_depth` own the bound.
+    DefDepthOwned,
+    /// A fully concrete conditional-bodied self-recursive alias at the
+    /// identity ceiling: non-convergent growth whose conditional re-entry
+    /// would otherwise terminate silently — report the depth verdict now.
+    DivergentConditional,
+    /// Convergent or still-generic: keep the meta-rereduce identity wrapper.
+    None,
 }

@@ -143,9 +143,11 @@ function f<Output>(): void {
 }
 "#;
     // Only the deliberately-unrelated `bad` assignment errors; the positive
-    // `ok` assignment must NOT (no spurious raw-conditional TS2322).
+    // `ok` assignment must NOT (no spurious raw-conditional TS2322). tsc
+    // drills the single-missing-property failure to TS2741, so accept either
+    // the drilled form or the plain TS2322.
     assert_eq!(
-        error_count(src, 2322),
+        error_count(src, 2322) + error_count(src, 2741),
         1,
         "only the unrelated `bad` assignment errors; got: {:?}",
         check_source_diagnostics(src)
@@ -171,6 +173,8 @@ function g<Elem>(): void {
   const bad: { mismatch: true } = settled;
 }
 "#;
-    assert_eq!(error_count(src, 2322), 1);
+    // tsc drills the single-missing-property failure to TS2741; accept either
+    // the drilled form or the plain TS2322.
+    assert_eq!(error_count(src, 2322) + error_count(src, 2741), 1);
     assert_eq!(total_errors(src), 1);
 }

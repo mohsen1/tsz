@@ -3,8 +3,8 @@ use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
-    CallSignature, CallableShape, MappedTypeId, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo,
-    TypeId, TypeParamInfo, TypeParamOrigin,
+    CallSignature, CallableShape, MappedTypeId, ObjectShape, ParamInfo, PropertyInfo, TypeId,
+    TypeParamInfo, TypeParamOrigin,
 };
 
 pub(crate) use super::super::common::{
@@ -69,14 +69,12 @@ pub(crate) const fn js_expando_property(
 }
 
 pub(crate) fn global_this_surface_object(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     properties: Vec<PropertyInfo>,
 ) -> TypeId {
-    db.object_with_index(ObjectShape {
-        properties,
-        flags: ObjectFlags::GLOBAL_THIS_SURFACE,
-        ..ObjectShape::default()
-    })
+    // The solver factory owns the `GLOBAL_THIS_SURFACE` flag policy so checker
+    // boundaries do not name `ObjectFlags` directly.
+    db.factory().global_this_surface_object(properties)
 }
 
 pub(crate) fn mapped_result_object(db: &dyn TypeDatabase, properties: Vec<PropertyInfo>) -> TypeId {
@@ -739,15 +737,13 @@ pub(crate) fn evaluate_type_with_cache<R: tsz_solver::relations::subtype::TypeRe
         evaluator.seed_cache(seed);
     }
     let result = evaluator.evaluate(type_id);
+    let cache_entry_collection = options.cache_entry_collection;
     EvalWithCacheResult {
         result,
         depth_exceeded: evaluator.is_depth_exceeded(),
         silent_depth_bailed: evaluator.is_silent_depth_bailed(),
         unresolved_def_seen: evaluator.is_unresolved_def_seen(),
-        cache_entries: if matches!(
-            options.cache_entry_collection,
-            CacheEntryCollection::Collect
-        ) {
+        cache_entries: if matches!(cache_entry_collection, CacheEntryCollection::Collect) {
             evaluator.drain_cache().collect()
         } else {
             Vec::new()

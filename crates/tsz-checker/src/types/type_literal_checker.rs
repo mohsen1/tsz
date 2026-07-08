@@ -1137,7 +1137,7 @@ impl<'a> CheckerState<'a> {
             type_literal_callable_type,
         };
         use crate::query_boundaries::type_construction::{
-            type_literal_extra_number_index_object, type_literal_object,
+            raw_intersection_pair, type_literal_extra_number_index_object, type_literal_object,
             type_literal_object_with_index,
         };
         use tsz_parser::parser::syntax_kind_ext::{
@@ -1710,7 +1710,7 @@ impl<'a> CheckerState<'a> {
             );
             for idx in extra_number_indices {
                 let member = type_literal_extra_number_index_object(self.ctx.types, idx);
-                result = self.ctx.types.intersect_types_raw2(result, member);
+                result = raw_intersection_pair(self.ctx.types, result, member);
             }
             return result;
         }
@@ -1730,7 +1730,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types.mark_literal_object_annotation(result);
             for idx in extra_number_indices {
                 let member = type_literal_extra_number_index_object(self.ctx.types, idx);
-                result = self.ctx.types.intersect_types_raw2(result, member);
+                result = raw_intersection_pair(self.ctx.types, result, member);
             }
             return result;
         }

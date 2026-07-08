@@ -450,8 +450,6 @@ impl<'a> CheckerState<'a> {
                     &mut display_props,
                 );
                 let obj = if !drop_spread_index_signatures && has_branch_index_signatures {
-                    use tsz_solver::ObjectShape;
-
                     let mut string_index_types = Vec::new();
                     let mut number_index_types = Vec::new();
                     let mut symbol_index_types = Vec::new();
@@ -466,86 +464,28 @@ impl<'a> CheckerState<'a> {
                             branch.symbol_index_signatures,
                         );
 
-                    if !string_index_types.is_empty() {
-                        let prop_types = branch_props.iter().map(|prop| prop.type_id);
-                        if self.ctx.in_const_assertion {
-                            string_index_types = prop_types.chain(string_index_types).collect();
-                        } else {
-                            string_index_types.extend(prop_types);
-                        }
-                    }
-
-                    let string_index = if !string_index_types.is_empty() {
-                        let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(
-                                self.ctx.types.as_type_database(),
-                                string_index_types,
-                            )
-                        } else {
-                            self.ctx.types.factory().union(string_index_types)
-                        };
-                        Some(IndexSignature {
-                            key_type: TypeId::STRING,
-                            value_type,
-                            readonly: false,
-                            param_name: string_index_param_name,
-                        })
-                    } else {
-                        None
-                    };
-                    let number_index = if !number_index_types.is_empty() {
-                        let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(
-                                self.ctx.types.as_type_database(),
-                                number_index_types,
-                            )
-                        } else {
-                            self.ctx.types.factory().union(number_index_types)
-                        };
-                        Some(IndexSignature {
-                            key_type: TypeId::NUMBER,
-                            value_type,
-                            readonly: false,
-                            param_name: number_index_param_name,
-                        })
-                    } else {
-                        None
-                    };
-                    let symbol_index = if !symbol_index_types.is_empty() {
-                        let value_type = if self.ctx.in_const_assertion {
-                            object_literals::order_preserving_union(
-                                self.ctx.types.as_type_database(),
-                                symbol_index_types,
-                            )
-                        } else {
-                            self.ctx.types.factory().union(symbol_index_types)
-                        };
-                        Some(IndexSignature {
-                            key_type: TypeId::SYMBOL,
-                            value_type,
-                            readonly: false,
-                            param_name: None,
-                        })
-                    } else {
-                        None
-                    };
-
-                    let mut shape = ObjectShape {
-                        properties: branch_props,
-                        string_index,
-                        number_index,
-                        symbol_index,
-                        ..ObjectShape::default()
-                    };
-                    shape.mark_preserve_declaration_order();
-                    self.ctx.types.factory().object_with_index(shape)
+                    object_literals::indexed_object_type(
+                        self.ctx.types.as_type_database(),
+                        object_literals::ObjectLiteralIndexedType {
+                            properties: branch_props,
+                            string_index_types,
+                            number_index_types,
+                            symbol_index_types,
+                            string_index_param_name,
+                            number_index_param_name,
+                            in_const_assertion: self.ctx.in_const_assertion,
+                            has_spread: true,
+                            all_properties_context_sensitive: false,
+                            display_properties: Some(display_props),
+                        },
+                    )
                 } else {
-                    self.ctx
-                        .types
-                        .factory()
-                        .object_preserve_declaration_order(branch_props)
+                    object_literals::spread_object_type(
+                        self.ctx.types.as_type_database(),
+                        branch_props,
+                        display_props,
+                    )
                 };
-                self.ctx.types.store_display_properties(obj, display_props);
                 union_members.push(obj);
             }
             object_literals::union_type(self.ctx.types, union_members)

@@ -1056,6 +1056,59 @@ impl<'a> CheckerState<'a> {
         else {
             return;
         };
+        // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
+        // gave the following error.` (TS2772) chain per candidate — in
+        // declaration order — when 2 or 3 candidates reached argument checking
+        // (`resolveCall`). A single candidate collapses to a plain TS2345 (no
+        // TS2769 at all, handled upstream), and >3 candidates use tsc's distinct
+        // "last overload" shape, left as the historical flat rendering. Each
+        // candidate failure carries its declared signature; a 2-3 set whose
+        // failures all have one wraps, otherwise we fall back to the flat list
+        // (e.g. callback-body sets whose failures carry no signature).
+        let wrap_overloads = matches!(failures.len(), 2 | 3)
+            && failures
+                .iter()
+                .all(|failure| failure.overload_signature.is_some());
+
+        // For each wrapped candidate, precompute the relation failure-reason
+        // chain its argument line elaborates to. tsc nests the same
+        // `checkTypeRelatedToAndOptionallyElaborate` chain the single-signature
+        // TS2345 path renders beneath each candidate's argument line
+        // (`getSignatureApplicabilityError` reuses the single-signature relation
+        // elaboration), so the chain is built through the shared
+        // `related_from_failure_reason` gateway from the *original*
+        // (pre-generalization) argument/parameter pair — the nested chain must
+        // reflect the real relation, not the display-widened source. Computed
+        // up front because the gateway needs `&mut self`, which the type
+        // formatter below locks out by borrowing `self.ctx`.
+        let candidate_reason_chains: Vec<Option<Vec<DiagnosticRelatedInformation>>> =
+            if wrap_overloads {
+                failures
+                    .iter()
+                    .map(|failure| {
+                        if failure.code
+                            != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                        {
+                            return None;
+                        }
+                        let (
+                            Some(tsz_solver::DiagnosticArg::Type(source)),
+                            Some(tsz_solver::DiagnosticArg::Type(target)),
+                        ) = (failure.args.first(), failure.args.get(1))
+                        else {
+                            return None;
+                        };
+                        let (source, target) = (*source, *target);
+                        let reason = self
+                            .analyze_assignability_failure(source, target)
+                            .failure_reason?;
+                        self.related_from_failure_reason(&reason, source, target, anchor_idx)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
         let mut related = Vec::new();
         let mut formatter = self.ctx.create_type_formatter();
         let span =
@@ -1076,20 +1129,6 @@ impl<'a> CheckerState<'a> {
                     depth,
                 }
             };
-
-        // tsc reports a no-overload-match as one `Overload N of M, '<signature>',
-        // gave the following error.` (TS2772) chain per candidate — in
-        // declaration order — when 2 or 3 candidates reached argument checking
-        // (`resolveCall`). A single candidate collapses to a plain TS2345 (no
-        // TS2769 at all, handled upstream), and >3 candidates use tsc's distinct
-        // "last overload" shape, left as the historical flat rendering. Each
-        // candidate failure carries its declared signature; a 2-3 set whose
-        // failures all have one wraps, otherwise we fall back to the flat list
-        // (e.g. callback-body sets whose failures carry no signature).
-        let wrap_overloads = matches!(failures.len(), 2 | 3)
-            && failures
-                .iter()
-                .all(|failure| failure.overload_signature.is_some());
 
         let related_policy = if wrap_overloads {
             let total = failures.len();
@@ -1128,6 +1167,22 @@ impl<'a> CheckerState<'a> {
                         0,
                         nested.depth.saturating_add(2),
                     ));
+                }
+                // A pre-built solver failure carries no reason chain of its
+                // own; complete it with the precomputed gateway chain, re-seated
+                // two levels down (header 0, argument line 1, chain 2+) and
+                // re-anchored onto the shared candidate span like its siblings.
+                if diag.related.is_empty()
+                    && let Some(Some(chain)) = candidate_reason_chains.get(ordinal)
+                {
+                    for item in chain {
+                        related.push(DiagnosticRelatedInformation {
+                            file: span.file.to_string(),
+                            start: span.start,
+                            length: span.length,
+                            ..item.clone().with_depth_shift(2)
+                        });
+                    }
                 }
             }
             RelatedInformationPolicy::OVERLOAD_CHAINS

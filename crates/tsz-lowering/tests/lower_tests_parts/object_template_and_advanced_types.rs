@@ -444,20 +444,19 @@ fn test_template_literal_consecutive_text_normalization() {
 
 #[test]
 fn test_template_literal_only_interpolation() {
+    // tsc reduces `${string}` — one `string` placeholder, no literal text —
+    // to plain `string` (`getTemplateLiteralType` returns `stringType`).
     let (arena, template_idx) = parse_template_literal_type("type T = `${string}`;");
     let interner = TypeInterner::new();
     let lowering = TypeLowering::new(&arena, &interner);
 
     let type_id = lowering.lower_type(template_idx);
-    let key = interner.lookup(type_id).expect("Type should exist");
-    match key {
-        TypeData::TemplateLiteral(spans) => {
-            let spans = interner.template_list(spans);
-            assert_eq!(spans.len(), 1);
-            assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
-        }
-        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
-    }
+    assert_eq!(
+        type_id,
+        TypeId::STRING,
+        "`${{string}}` must reduce to `string`, got {:?}",
+        interner.lookup(type_id)
+    );
 }
 
 #[test]

@@ -1227,21 +1227,23 @@ fn test_explain_tuple_arity_takes_priority_over_element_mismatch() {
 
     assert!(!checker.is_assignable(source, target));
 
-    // Both sides are closed (no rest element), so the arity-family classifier is
-    // intentionally not consulted: the closed-tuple length mismatch keeps its
-    // established `TupleElementMismatch` reason, which still takes priority over
-    // the inner element-type mismatch.
+    // Closed tuples route through the same tsc-mirroring `classify_tuple_arity`
+    // gate as variadic ones (`tupleTypesRelated` runs its length gate before any
+    // element comparison). All five source elements are required, so the
+    // classifier reports `SourceTooMany { source_min: 5, target_arity: 3 }`
+    // (TS2619, "Source has 5 element(s) but target allows only 3."), and that
+    // arity reason takes priority over the inner element-type mismatch.
     match checker.explain_failure(source, target) {
-        Some(SubtypeFailureReason::TupleElementMismatch {
-            source_count,
-            target_count,
-        }) => {
-            assert_eq!(source_count, 5);
-            assert_eq!(target_count, 3);
+        Some(SubtypeFailureReason::TupleArityMismatch(crate::TupleArity::SourceTooMany {
+            source_min,
+            target_arity,
+        })) => {
+            assert_eq!(source_min, 5);
+            assert_eq!(target_arity, 3);
         }
         other => panic!(
-            "Expected TupleElementMismatch (arity) to take priority over an inner \
-             TupleElementTypeMismatch, got: {other:?}"
+            "Expected TupleArityMismatch(SourceTooMany) (arity) to take priority over an \
+             inner TupleElementTypeMismatch, got: {other:?}"
         ),
     }
 }

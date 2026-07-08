@@ -84,7 +84,11 @@ const r: MaybeRec = { a: 1 };
 "#;
     // tsc displays the underlying member `Rec0`, not the alias `MaybeRec`.
     assert_eq!(codes(src), vec![2741]);
-    assert!(has_code_message(src, 2741, "but required in type 'Rec0'."));
+    assert!(
+        has_code_message(src, 2741, "but required in type 'Rec0'."),
+        "{:?}",
+        check_source_code_messages(src)
+    );
 }
 
 #[test]
@@ -139,7 +143,11 @@ type Node0 = { next: Node0 | null; val: number };
 const n: Node0 = { next: { val: 2 }, val: 1 };
 "#;
     assert_eq!(codes(src), vec![2741]);
-    assert!(has_code_message(src, 2741, "but required in type 'Node0'."));
+    assert!(
+        has_code_message(src, 2741, "but required in type 'Node0'."),
+        "{:?}",
+        check_source_code_messages(src)
+    );
 }
 
 // ---- return position promotes; argument position stays TS2345 ----

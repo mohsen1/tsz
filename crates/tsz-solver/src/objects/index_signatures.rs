@@ -66,9 +66,17 @@ fn merge_intersection_index_signature(
 ) {
     let Some(index) = incoming else { return };
     if let Some(existing) = slot {
-        existing.value_type = db.intersect_types_raw2(existing.value_type, index.value_type);
-        existing.readonly &= index.readonly;
-        existing.param_name = None;
+        // Only same-key signatures merge into one composite slot. Distinct
+        // key domains (two different template-literal patterns) are separate
+        // applicable signatures in tsc — a read matches each pattern
+        // independently, and the per-member iteration owns those lookups —
+        // so collapsing them here would repaint one pattern's key over the
+        // other's value space.
+        if existing.key_type == index.key_type {
+            existing.value_type = db.intersect_types_raw2(existing.value_type, index.value_type);
+            existing.readonly &= index.readonly;
+            existing.param_name = None;
+        }
     } else {
         *slot = Some(IndexSignature {
             param_name: None,

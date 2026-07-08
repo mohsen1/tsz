@@ -777,23 +777,31 @@ impl<'a> CheckerState<'a> {
         ) && let Some(member) =
             self.single_non_nullish_union_member(target)
         {
-            // The rebind is skipped when the target carries a type-alias
-            // surface (`UnionAlias<{ u: string }>`, `type NullableObj = T |
-            // undefined`): tsc's `reportErrorResults` restores the original
-            // target whenever it carried an `aliasSymbol`, so the alias-named
-            // union renders whole. The annotation AST is authoritative when
-            // present — a structurally identical anonymous annotation interns
-            // to the same `TypeId` as the alias body, so only the syntax can
-            // tell the two references apart.
-            let restores_alias = self
-                .assignment_target_annotation_alias_reference_verdict(idx)
-                .unwrap_or_else(|| {
-                    crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
-                        self.ctx.types.as_type_database(),
-                        &self.ctx.definition_store,
-                        target,
-                    )
-                });
+            // The rebind splits on the SOURCE kind, mirroring tsc's two report
+            // paths for a missing property against a nullable union:
+            // * An object-like source fails through `elaborateError`, which
+            //   reports the inner failure against the sole non-nullish member
+            //   directly — the alias surface never survives (`x: MaybeRec`
+            //   where `type MaybeRec = Rec0 | null` shows `Rec0`), so the
+            //   member always replaces the union.
+            // * A primitive source fails the whole relation and
+            //   `reportErrorResults` restores the original target whenever it
+            //   carried an `aliasSymbol`, so an alias-named union renders
+            //   whole (`x: MaybeBox = 5` shows `MaybeBox`). The annotation AST
+            //   is authoritative when present — a structurally identical
+            //   anonymous annotation interns to the same `TypeId` as the alias
+            //   body, so only the syntax can tell the two references apart.
+            let restores_alias =
+                crate::query_boundaries::common::is_primitive_type(self.ctx.types, source)
+                    && self
+                        .assignment_target_annotation_alias_reference_verdict(idx)
+                        .unwrap_or_else(|| {
+                            crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+                                self.ctx.types.as_type_database(),
+                                &self.ctx.definition_store,
+                                target,
+                            )
+                        });
             if restores_alias { target } else { member }
         } else {
             target

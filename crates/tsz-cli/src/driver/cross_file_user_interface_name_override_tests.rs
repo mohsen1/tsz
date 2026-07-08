@@ -35,6 +35,10 @@ use tsz_common::diagnostics::Diagnostic;
 /// "X is not assignable to X" false-positive family.
 const TS2322: u32 = 2322;
 const TS2719: u32 = 2719;
+/// "Property 'p' is missing in type 'S' but required in type 'T'." — the
+/// drilled form tsc reports when an assignability failure reduces to one
+/// missing property.
+const TS2741_PROPERTY_MISSING: u32 = 2741;
 
 /// Write `files` plus a strict `noEmit` tsconfig into a fresh temp dir and run
 /// the project-mode compile. Returns every emitted diagnostic.
@@ -150,8 +154,11 @@ export function setup(reg: Registry) {
 }
 
 /// Negative case: a genuinely incompatible value (missing the `add` method and a
-/// wrong call-signature parameter) must still report `TS2322`. The fix must not
-/// blanket-suppress real mismatches that flow through the same path.
+/// wrong call-signature parameter) must still error. The fix must not
+/// blanket-suppress real mismatches that flow through the same path. tsc
+/// drills the assignment failure to the specific missing property (`TS2741`
+/// "Property 'add' is missing …"); the generic `TS2322` is accepted too so the
+/// guard stays shape-agnostic.
 #[test]
 fn cross_file_genuine_mismatch_still_reports_ts2322() {
     let diags = compile_project(&[
@@ -177,8 +184,10 @@ export function setup(reg: Reg) {
         ),
     ]);
     assert!(
-        diags.iter().any(|d| d.code == TS2322),
-        "expected a real TS2322 for the genuinely incompatible assignment, got {:#?}",
+        diags
+            .iter()
+            .any(|d| d.code == TS2322 || d.code == TS2741_PROPERTY_MISSING),
+        "expected a real assignability error (TS2322 or drilled TS2741) for the genuinely incompatible assignment, got {:#?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))

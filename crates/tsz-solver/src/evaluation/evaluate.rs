@@ -1507,7 +1507,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 self.guard.clear_exceeded();
                 self.mark_silent_depth_bailed();
-                self.memo_insert(limit_epoch_at_entry, type_id, type_id);
+                // #12101 registration-window rule: a silent bail computed while
+                // a consumed `DefId` had no resolvable body is a function of
+                // the registration window, not of `type_id`. Memoizing the
+                // opaque form would keep serving it from this long-lived
+                // evaluator after the def registers, shadowing the real
+                // expansion (and with it the `def_depth` divergence verdict
+                // that surfaces `TS2589`).
+                if !self.is_unresolved_def_seen() {
+                    self.memo_insert(limit_epoch_at_entry, type_id, type_id);
+                }
                 return type_id;
             }
             RecursionResult::IterationExceeded => {

@@ -2,6 +2,7 @@
 //! for `CheckerState`.
 
 use super::heritage_walk_state::HeritageSymbolWalkState;
+use crate::query_boundaries::enum_analysis as enum_query;
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind};
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -501,26 +502,7 @@ impl<'a> CheckerState<'a> {
     /// `getBaseTypeOfEnumLikeType` widens an enum-member literal to the enum
     /// type, never its static/object shape.
     fn enum_member_parent_def_id(&mut self, type_id: TypeId) -> Option<tsz_solver::DefId> {
-        // Primary: nominal `DefId` path — the member type carries its own DefId
-        // whose parent edge points at the enum.
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-            && let Some(parent) = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id))
-        {
-            return Some(parent);
-        }
-
-        // Fallback: symbol-flags path for members whose type lost its DefId.
-        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
-            return None;
-        }
-        Some(self.ctx.get_or_create_def_id(symbol.parent))
+        enum_query::enum_member_parent_def_id(&self.ctx, type_id)
     }
 
     /// The parent enum type `E` for an enum-member type as a **binding** type: a
@@ -716,15 +698,36 @@ impl<'a> CheckerState<'a> {
         // the type is not yet cached, fall through to the resolve so freshness is
         // never under-reported.
         if kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && self.ctx.node_types.get(&idx.0).copied().is_none_or(|t| {
-                crate::query_boundaries::enum_analysis::is_enum_member_for_widening(&self.ctx, t)
-            })
             && self
+                .ctx
+                .node_types
+                .get(&idx.0)
+                .copied()
+                .is_none_or(|t| enum_query::is_enum_member_for_widening(&self.ctx, t))
+        {
+            if self
                 .resolve_qualified_symbol(idx)
                 .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                 .is_some_and(|sym| sym.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
-        {
-            return true;
+            {
+                return true;
+            }
+            // The entity-name walk cannot follow a *value* receiver
+            // (`m.Color.Blue` where `m: typeof NS`). The access is still a
+            // genuine enum-member read — and therefore fresh — when the
+            // receiver's checked type is the parent enum's namespace-object
+            // surface (`typeof Color`). A property read off a plain object
+            // that merely *declares* an enum-member type (`o.p` with
+            // `o: { p: E.A }`) fails this receiver probe and stays non-fresh.
+            if let Some(member_type) = self.ctx.node_types.get(&idx.0).copied()
+                && let Some(access) = self.ctx.arena.get_access_expr_at(idx)
+                && let Some(receiver_type) = self.ctx.node_types.get(&access.expression.0).copied()
+                && let Some(parent_sym) =
+                    enum_query::enum_member_parent_symbol_for_widening(&self.ctx, member_type)
+            {
+                return self.ctx.enum_namespace_types.get(&parent_sym).copied()
+                    == Some(receiver_type);
+            }
         }
 
         // Everything else (identifiers, call expressions, binary expressions, etc.)

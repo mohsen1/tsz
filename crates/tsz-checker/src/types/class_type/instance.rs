@@ -1005,6 +1005,7 @@ impl<'a> CheckerState<'a> {
                     partial_props.push(class_type::class_member_property(
                         class_type::ClassMemberProperty::new(deferred.name_atom, TypeId::ANY)
                             .with_write_type(TypeId::UNKNOWN)
+                            .class_prototype(true)
                             .visibility(deferred.visibility)
                             .parent(current_sym)
                             .declaration_order(deferred.declaration_order)
@@ -1222,6 +1223,7 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::ANY);
                     props.push(class_type::class_member_property(
                         class_type::ClassMemberProperty::new(ad.name_atom, resolved)
+                            .class_prototype(true)
                             .visibility(ad.visibility)
                             .parent(current_sym)
                             .declaration_order(ad.declaration_order)
@@ -1387,6 +1389,7 @@ impl<'a> CheckerState<'a> {
                     class_type::ClassMemberProperty::new(name, read_type)
                         .with_write_type(write_type)
                         .readonly(readonly)
+                        .class_prototype(true)
                         .visibility(accessor.visibility)
                         .parent(current_sym)
                         .declaration_order(accessor.declaration_order)

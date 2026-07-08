@@ -100,6 +100,7 @@ pub(crate) fn memoized_eval_with_stability(
 ) -> Option<EvaluationMemoResult> {
     let key = request.cache_key();
     if let Some(cached) = query_memo_get(session, key) {
+        tracing::trace!(?key, ?cached, "per-query memo hit");
         // Reconstruct from the stored result so a retained boundary-intrinsic
         // partial keeps its incomplete verdict on the way out (and thus stays
         // out of durable caches), while a converged result round-trips stable.

@@ -12,9 +12,26 @@ use std::path::{Path, PathBuf};
 const OBJECT_FLAG_BOUNDARIES: &[&str] = &[
     "src/query_boundaries/type_construction.rs",
     "src/query_boundaries/lib_augmentations.rs",
+    // Named per-surface construction boundaries. Their companion scans
+    // (declaration_export/interface_merge/js_constructor/object_literal
+    // *_construction_boundary_scans) pin the flag policy they own.
+    "src/query_boundaries/declaration_exports.rs",
+    "src/query_boundaries/interface_merge.rs",
+    "src/query_boundaries/type_computation/complex.rs",
+    "src/query_boundaries/type_computation/object_literals.rs",
 ];
 
-const OBJECT_FLAG_FACTORY_BOUNDARIES: &[&str] = &["src/query_boundaries/type_construction.rs"];
+const OBJECT_FLAG_FACTORY_BOUNDARIES: &[&str] = &[
+    "src/query_boundaries/type_construction.rs",
+    // Named per-surface construction boundaries required by their companion
+    // scans to own `db.object_with_flags_and_symbol(` for their surfaces.
+    "src/query_boundaries/binding_patterns.rs",
+    "src/query_boundaries/declaration_exports.rs",
+    "src/query_boundaries/interface_merge.rs",
+    "src/query_boundaries/module_augmentation.rs",
+    "src/query_boundaries/type_computation/complex.rs",
+    "src/query_boundaries/type_computation/object_literals.rs",
+];
 
 const RAW_OBJECT_FLAG_PATTERNS: &[&str] = &[
     "ObjectFlags::",

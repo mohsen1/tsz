@@ -1266,12 +1266,25 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use crate::query_boundaries::common::{NamespaceMemberKind, classify_namespace_member};
 
-        // Only applies to enum types
-        if !matches!(
-            classify_namespace_member(self.ctx.types, object_type),
-            NamespaceMemberKind::Enum(_)
-        ) {
-            return false;
+        // Only applies to enum types. A binding widened from a fresh
+        // enum-member initializer carries the enum as a still-unresolved
+        // `Lazy(def)` semantic ref (see `enum_member_widened_binding_type`),
+        // which must classify as the enum *type* here — otherwise the
+        // namespace-value fast path resolves sibling members off the enum
+        // *object* and a bogus `x.Member` read never reaches TS2339.
+        match classify_namespace_member(self.ctx.types, object_type) {
+            NamespaceMemberKind::Enum(_) => {}
+            NamespaceMemberKind::Lazy(def_id) => {
+                let lazy_is_enum_type = self
+                    .ctx
+                    .def_to_symbol_id(def_id)
+                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ENUM));
+                if !lazy_is_enum_type {
+                    return false;
+                }
+            }
+            _ => return false,
         }
 
         // Check if the expression is a direct reference to an enum declaration

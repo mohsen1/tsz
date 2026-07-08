@@ -226,6 +226,15 @@ impl ClassMemberProperty {
         self
     }
 
+    /// Mark the member as a class prototype member without marking it a
+    /// method. Used for instance accessors (getters/setters), which live on
+    /// the prototype and are excluded from object-rest spreads
+    /// (`Omit<T, K>` keys) like methods, but are not callable members.
+    pub(crate) const fn class_prototype(mut self, is_class_prototype: bool) -> Self {
+        self.set_flag(Self::IS_CLASS_PROTOTYPE, is_class_prototype);
+        self
+    }
+
     pub(crate) const fn visibility(mut self, visibility: Visibility) -> Self {
         self.visibility = visibility;
         self

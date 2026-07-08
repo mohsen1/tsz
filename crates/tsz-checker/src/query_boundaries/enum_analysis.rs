@@ -57,15 +57,29 @@ pub(crate) fn is_unresolved_lazy_type(db: &dyn TypeDatabase, type_id: TypeId) ->
 }
 
 /// DefId for the parent enum when `type_id` is an enum member type.
+///
+/// Primary path: the member type carries its own `DefId` whose parent edge
+/// points at the enum. Fallback: the symbol-flags path for legacy lazy member
+/// aliases whose type lost its `DefId`. Both widening entry points resolve
+/// this `DefId` to the enum *type* `E` — never `get_type_of_symbol(parent)`,
+/// which in value context yields the enum *object* type (`typeof E`).
 pub(crate) fn enum_member_parent_def_id(
     ctx: &CheckerContext<'_>,
     type_id: TypeId,
 ) -> Option<DefId> {
-    let def_id = enum_def_id(ctx.types, type_id)?;
-    ctx.type_env
-        .try_borrow()
-        .ok()
-        .and_then(|env| env.get_enum_parent(def_id))
+    if let Some(def_id) = enum_def_id(ctx.types, type_id)
+        && let Some(parent) = ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_enum_parent(def_id))
+    {
+        return Some(parent);
+    }
+
+    let sym_id = enum_symbol_with_flags(ctx, type_id, symbol_flags::ENUM_MEMBER)?;
+    let symbol = ctx.binder.get_symbol(sym_id)?;
+    Some(ctx.get_or_create_def_id(symbol.parent))
 }
 
 /// Binder symbol for the parent enum when a type should widen from an enum

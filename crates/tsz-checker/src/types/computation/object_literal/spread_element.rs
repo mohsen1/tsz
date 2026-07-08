@@ -8,6 +8,7 @@ use super::computation_support::{
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::index_signature::IndexSignature;
+use crate::query_boundaries::type_computation::object_literals::spread_fallback_index_signature;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
@@ -519,12 +520,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             resolved_spread,
         )
-        .map(|value_type| IndexSignature {
-            key_type: TypeId::STRING,
-            value_type,
-            readonly: false,
-            param_name: None,
-        });
+        .map(|value_type| spread_fallback_index_signature(TypeId::STRING, value_type));
         if let Some(string_index) =
             crate::query_boundaries::index_signature::string_index_signature(
                 self.ctx.types,
@@ -539,12 +535,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             resolved_spread,
         )
-        .map(|value_type| IndexSignature {
-            key_type: TypeId::NUMBER,
-            value_type,
-            readonly: false,
-            param_name: None,
-        });
+        .map(|value_type| spread_fallback_index_signature(TypeId::NUMBER, value_type));
         if let Some(number_index) =
             crate::query_boundaries::index_signature::number_index_signature(
                 self.ctx.types,
@@ -559,12 +550,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             resolved_spread,
         )
-        .map(|value_type| IndexSignature {
-            key_type: TypeId::SYMBOL,
-            value_type,
-            readonly: false,
-            param_name: None,
-        });
+        .map(|value_type| spread_fallback_index_signature(TypeId::SYMBOL, value_type));
         if let Some(symbol_index) =
             crate::query_boundaries::index_signature::symbol_index_signature(
                 self.ctx.types,
