@@ -71,8 +71,10 @@ impl RelatedInformationPolicy {
         preserve_order: false,
     };
 
-    /// Flat overload-failure list (1 or >3 candidates, or callback-body sets):
-    /// one related line per failure, deduped and sorted as before.
+    /// Flat overload-failure list (fewer than 2 argument-error candidates, or
+    /// candidate sets whose failures carry no declared signature, e.g.
+    /// callback-body sets): one related line per failure, deduped and sorted
+    /// as before.
     pub(crate) const OVERLOAD_FAILURES: Self = Self {
         include_primary: false,
         dedupe: false,
@@ -80,10 +82,12 @@ impl RelatedInformationPolicy {
         preserve_order: false,
     };
 
-    /// Per-overload `TS2772` elaboration (the 2-3 candidate case): each
-    /// candidate contributes a depth-0 `Overload N of M, '...', gave the
-    /// following error.` header immediately followed by its applicability
-    /// error at depth 1+. Insertion order is declaration order and must be
+    /// Per-overload elaboration for 2+ argument-error candidates: with 2 or 3,
+    /// each candidate contributes a depth-0 `Overload N of M, '...', gave the
+    /// following error.` (`TS2772`) header immediately followed by its
+    /// applicability error at depth 1+; with four or more, a single `The last
+    /// overload gave the following error.` (`TS2770`) header wraps only the
+    /// last candidate. Insertion order is declaration order and must be
     /// preserved; dedupe is off so two overloads that fail identically still
     /// each keep their own nested body under their distinct header.
     pub(crate) const OVERLOAD_CHAINS: Self = Self {
@@ -817,8 +821,24 @@ impl<'a> CheckerState<'a> {
         start: u32,
         length: u32,
     ) -> Vec<DiagnosticRelatedInformation> {
-        self.render_failure_reason(reason, source, target, anchor_idx, 0)
-            .related_information
+        Self::reanchor_chain_lines(
+            self.render_failure_reason(reason, source, target, anchor_idx, 0)
+                .related_information,
+            start,
+            length,
+        )
+    }
+
+    /// Re-anchor elaboration chain lines onto a primary diagnostic surface:
+    /// category reset to `Message`, anchor rewritten to (`start`, `length`).
+    /// Chain lines are message-chain text, not cross-location pointers, so
+    /// they always carry the primary diagnostic's position.
+    pub(crate) fn reanchor_chain_lines(
+        lines: Vec<DiagnosticRelatedInformation>,
+        start: u32,
+        length: u32,
+    ) -> Vec<DiagnosticRelatedInformation> {
+        lines
             .into_iter()
             .map(|mut rel| {
                 rel.category = DiagnosticCategory::Message;

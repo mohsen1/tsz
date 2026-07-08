@@ -35,6 +35,19 @@ fn genuine_unknown_alias_reduction_enabled() -> bool {
     })
 }
 
+/// Debug kill-switch for the cross-evaluator in-flight application sentinel
+/// (issue #13508 root cause B). Set
+/// `TSZ_DISABLE_CROSS_EVAL_APPLICATION_SENTINEL=1` to restore the prior
+/// behavior, where a fresh evaluator re-expanded an in-flight `Application`
+/// node from scratch. Used only to bisect regressions; defaults to enabled.
+fn cross_eval_application_sentinel_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        !std::env::var("TSZ_DISABLE_CROSS_EVAL_APPLICATION_SENTINEL").is_ok_and(|v| v == "1")
+    })
+}
+
 struct ApplicationFinalizeContext<'a> {
     original_args: &'a [TypeId],
     expanded_args: &'a [TypeId],
@@ -131,6 +144,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        // Phase 4.5 — cross-evaluator in-flight sentinel (issue #13508 root
+        // cause B; rationale on `crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION`).
+        // A re-entry past the in-flight allowance defers: the application
+        // stays opaque and the in-flight owner produces the real result. The
+        // deferral is a registration-window-class artifact — a later pass (or
+        // the owner's completed expansion, via the application-eval cache)
+        // resolves it — so it taints the run through
+        // `mark_unresolved_def_seen`, keeping every enclosing partial result
+        // out of the persistent caches. The TS2589 depth-detection pass is
+        // exempt: it must re-walk the expansion the sentinel would skip.
+        let sentinel_active =
+            !self.flag_depth_on_app_cycle && cross_eval_application_sentinel_enabled();
+        if sentinel_active
+            && !self.with_evaluation_session_scope(|session| {
+                session.enter_application_expansion(original_type_id)
+            })
+        {
+            tracing::trace!(
+                ?def_id,
+                node = original_type_id.0,
+                "evaluate_application: deferring cross-evaluator re-entry \
+                 of an in-flight application"
+            );
+            self.mark_unresolved_def_seen();
+            self.decrement_def_depth(def_id);
+            return original_type_id;
+        }
+
         // Phase 5 — evaluate the body under fresh application-body epoch
         // snapshots. Any `application_eval_cache` write made while finalizing
         // THIS application (or a nested one, which saves/restores these fields
@@ -144,6 +185,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let outcome = self.evaluate_application_body(def_id, original_type_id, &app.args, &ctx);
         self.app_body_limit_epoch = saved_app_body_epoch;
         self.app_body_unresolved_def_epoch = saved_app_body_unresolved_def_epoch;
+        if sentinel_active {
+            self.with_evaluation_session_scope(|session| {
+                session.leave_application_expansion(original_type_id);
+            });
+        }
 
         // Phase 6 — outcome-dependent cleanup. ShortCircuit matches the
         // historical decrement-and-return shape; Computed restores the

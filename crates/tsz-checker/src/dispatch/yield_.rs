@@ -460,7 +460,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // generator yield type must come from actual body yields, not context
                     // (see function_type.rs comment on final_generator_yield_type).
                     if async_info.is_some() {
-                        self.checker.ctx.generator_yield_operand_types.push(element);
+                        self.checker
+                            .ctx
+                            .push_generator_yield_contribution(element, false);
                         // When yield* delegates to an async iterable with `any` element
                         // type, suppress TS7055 at the function level (see sync path).
                         if element == TypeId::ANY {
@@ -510,8 +512,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         };
                         self.checker
                             .ctx
-                            .generator_yield_operand_types
-                            .push(effective_yield_type);
+                            .push_generator_yield_contribution(effective_yield_type, false);
                         // When yield* delegates to an iterable with `any` element type
                         // (e.g. `any[]`), suppress TS7055 at the function level.
                         // tsc considers the `any` yield type to be "explained" by
@@ -547,10 +548,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     .get(yield_expr.expression)
                     .is_some_and(|n| n.kind == syntax_kind_ext::YIELD_EXPRESSION);
             if !operand_is_yield {
+                let widenable = self
+                    .checker
+                    .yield_contribution_is_widenable(yield_expr.expression, yielded_type);
                 self.checker
                     .ctx
-                    .generator_yield_operand_types
-                    .push(yielded_type);
+                    .push_generator_yield_contribution(yielded_type, widenable);
             }
             // When the yield operand is an explicit type assertion (`<any>expr`
             // or `expr as any`) that produces `any`, the resulting yield type is

@@ -1184,18 +1184,30 @@ impl<'a> CheckerState<'a> {
             && tuple_target_elements.is_some();
         let mut saw_elision = false;
 
-        // For variadic-rest tuple targets (e.g. `[number, ...string[]]` or
+        // For rest-tuple targets (e.g. `[number, ...string[]]` or
         // `[number, ...string[], number]`), element positions can only be
         // reliably matched against the leading fixed section. Rest-covered and
-        // trailing fixed positions cannot be mapped to a fixed source index, so
-        // tsc emits element-level errors only for leading fixed failures and
-        // falls back to the whole-tuple relation (`Type at position(s) … in
-        // source …`) for the rest. Cap element drill-in to the leading fixed
-        // count to mirror that.
+        // trailing fixed positions have no fixed source index, so tsc emits
+        // element-level errors only for leading fixed failures and falls back
+        // to the whole-tuple relation (`Type at position(s) … in source …`)
+        // for the rest. Cap element drill-in to the leading fixed count.
         let max_elaborate_index: Option<usize> =
             tuple_target_elements.as_deref().and_then(|elements| {
                 crate::query_boundaries::common::tuple_leading_fixed_drill_cap(elements)
             });
+
+        // tsc's `elaborateElementwise` reports an unelaborated element mismatch
+        // with the *source tuple's* element type
+        // (`getIndexedAccessTypeOrUndefined(source, getNumberLiteralType(i))`,
+        // which reduces to the fixed slot's type), not a context-free retype
+        // of the element expression. Recover that tuple once; element
+        // index i maps to slot i only when the literal is hole/spread-free
+        // (equal lengths, all fixed slots — checked per element below).
+        let source_tuple_elements = crate::query_boundaries::common::tuple_elements(
+            self.ctx.types,
+            self.get_type_of_node(arg_idx),
+        )
+        .filter(|elements| elements.len() == arr.elements.nodes.len());
 
         let mut elaborated = false;
 
@@ -1416,6 +1428,30 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // For a nested (possibly parenthesized) array literal the
+                // context-free retype is an open array, which mis-classifies
+                // the sub-reason (arity family instead of the positional
+                // chain), so use the source tuple's slot type recovered above.
+                // tsc applies the slot-type rule to *every* reported element;
+                // gating on array literals is conservative staging — other
+                // element kinds keep the display baselines tuned to
+                // `elem_type` until their parity witnesses surface.
+                let elem_is_array_literal = self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(elem_idx))
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                let relation_elem_type = if elem_is_array_literal {
+                    source_tuple_elements
+                        .as_deref()
+                        .and_then(|elements| elements.get(index))
+                        .filter(|element| element.is_required())
+                        .map(|element| element.type_id)
+                        .filter(|&source_element| !source_element.is_any_unknown_or_error())
+                        .unwrap_or(elem_type)
+                } else {
+                    elem_type
+                };
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
                     elem_type,
@@ -1424,13 +1460,13 @@ impl<'a> CheckerState<'a> {
                 );
                 if widen_source_display {
                     self.error_type_not_assignable_at_with_widened_source_display(
-                        elem_type,
+                        relation_elem_type,
                         display_target_element_type,
                         elem_idx,
                     );
                 } else {
                     self.error_type_not_assignable_at_with_anchor(
-                        elem_type,
+                        relation_elem_type,
                         display_target_element_type,
                         elem_idx,
                     );

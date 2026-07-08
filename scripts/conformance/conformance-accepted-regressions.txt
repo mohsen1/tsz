@@ -198,8 +198,23 @@
 # both relative and package JSDoc import-types resolve like tsc. Covered by
 # jsdoc_import_type_specifier_collection_tests.
 
+# generatorTypeCheck63.ts: RESOLVED. The first TS2345 rendered the argument as
+# `(state: State) => Generator<1, State, any>` where tsc widens the yielded
+# fresh literal to `Generator<number, State, any>`. Root cause: the
+# unannotated-generator yield-type gate suppressed literal widening whenever
+# ANY contextual yield type existed and widened freshness-blind. It now mirrors
+# tsc's getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded: each yield
+# contribution records AST-derived freshness at the collection site, and the
+# aggregation widens a collapsed literal union only when every contribution is
+# fresh and the contextual yield type does not itself admit the literal
+# (contextual_type_allows_literal). `yield 1 as const`, annotated-binding
+# references, and multi-literal unions stay literal; fresh enum-member yields
+# widen to the parent enum. Covered by generator_yield_literal_widening_tests
+# (12 cases) and verified 1/1 by the conformance runner against the pinned
+# 6.0.3 cache. See #15631; the sibling yield*-delegation inference gap is
+# tracked in #15632.
+
 # PR #15375 run 28571773361 at b675fbc17d recovered the core PR CI aggregate
 # and found these exact current-main rows still failing. Keep them listed as
 # path-based runway so the aggregate rejects any new unlisted conformance drift.
 TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
-TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck63.ts

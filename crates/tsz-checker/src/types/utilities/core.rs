@@ -567,6 +567,23 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(type_id)
     }
 
+    /// Whether `type_id` is a specific enum *member* (has a parent enum), as
+    /// opposed to a whole enum type — the widening gate for inferred generator
+    /// yield types (#15634).
+    pub(crate) fn is_enum_member_type_for_widening(&self, type_id: TypeId) -> bool {
+        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+        {
+            // A member DefId has a parent enum; the whole enum type does not.
+            return self
+                .ctx
+                .type_env
+                .try_borrow()
+                .ok()
+                .is_some_and(|env| env.get_enum_parent(def_id).is_some());
+        }
+        false
+    }
+
     /// Check if an expression produces a "fresh" literal type that should be widened.
     ///
     /// In TypeScript, literal types created from literal expressions are "fresh" and get

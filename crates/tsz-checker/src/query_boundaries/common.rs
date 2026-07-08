@@ -1439,19 +1439,21 @@ pub(crate) fn get_fixed_tuple_length(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// argument elaboration may report per-element against a tuple *target* that
 /// contains a rest element.
 ///
-/// tsc's `generateLimitedTupleElements` skips any source element whose index has
-/// no *fixed* slot in the tuple-like target (`isTupleLikeType(target) &&
-/// !getPropertyOfType(target, `${i}`)`), so only the leading fixed prefix before
-/// the first rest element is ever drilled into at the element level. Positions
-/// covered by the rest element — and any trailing fixed elements, whose position
-/// depends on the source length — fall back to the whole-type tuple relation,
-/// which renders the `Type at position(s) i[ through j] in source …` chain.
+/// tsc's `generateLimitedTupleElements` skips any source element whose index
+/// has no *fixed* slot in the tuple-like target (`isTupleLikeType(target) &&
+/// !getPropertyOfType(target, `${i}`)`), so only the leading fixed prefix
+/// (required or optional slots) before the first rest element is ever drilled
+/// into at the element level. Positions covered by the rest element — and any
+/// trailing fixed elements, whose position depends on the source length — fall
+/// back to the whole-tuple relation, which renders the
+/// `Type at position(s) i[ through j] in source …` chain.
 ///
-/// Returns `Some(leading_fixed_count)` when the target tuple pairs a rest element
-/// with at least one other element, capping element drill-in to that prefix.
-/// Returns `None` when there is no rest element (a closed tuple — every position
-/// is a fixed slot and drills in) or when the tuple is a lone rest element
-/// (`[...T[]]`, which is array-like — tsc drills into each element).
+/// Returns `Some(leading_fixed_count)` when the target tuple pairs a rest
+/// element with at least one fixed element, capping element drill-in to that
+/// prefix. Returns `None` when there is no rest element (a closed tuple —
+/// every position is a fixed slot and drills in) or when the tuple is a lone
+/// rest element (`[...T[]]`, which tsc normalizes to the array `T[]` — not
+/// tuple-like, so every element drills in).
 ///
 /// For `[number, ...string[]]`: returns `Some(1)`.
 /// For `[number, ...string[], number]`: returns `Some(1)`.
@@ -1462,14 +1464,10 @@ pub(crate) fn tuple_leading_fixed_drill_cap(
     elements: &[tsz_solver::TupleElement],
 ) -> Option<usize> {
     // Fixed-length tuple spreads (`[a, ...[b, c]]`) are flattened into fixed
-    // elements before interning, so a `rest` marker denotes only a genuine
-    // variable-length rest. `first_rest_pos` is therefore the flattened count of
-    // leading fixed slots, with no nested-tuple flattening left to do.
+    // elements before interning, so a `rest` marker here is always a genuine
+    // variable-length rest.
     let first_rest_pos = elements.iter().position(|e| e.rest)?;
-    // A lone rest element `[...T[]]` is array-like: tsc reports each element
-    // individually rather than deferring to the whole-tuple relation, so it is
-    // never capped.
-    if elements.len() == 1 {
+    if elements.iter().all(|e| e.rest) {
         return None;
     }
     Some(first_rest_pos)

@@ -835,6 +835,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.eval_session
     }
 
+    /// Run `f` against this evaluator's owning session, falling back to the
+    /// thread's current session when none was threaded in (see
+    /// [`crate::evaluation::session::with_session_or_current`]).
+    #[inline]
+    pub(crate) fn with_evaluation_session_scope<T>(
+        &self,
+        f: impl FnOnce(&EvaluationSession) -> T,
+    ) -> T {
+        crate::evaluation::session::with_session_or_current(self.eval_session, f)
+    }
+
     /// PERF: Look up a cached subtype result from conditional type evaluation.
     #[inline]
     pub(crate) fn cached_conditional_subtype(

@@ -283,6 +283,9 @@ mod generator_union_return_type_tests;
 #[path = "tests/generator_yield_identity_tests.rs"]
 mod generator_yield_identity_tests;
 #[cfg(test)]
+#[path = "tests/generator_yield_literal_widening_tests.rs"]
+mod generator_yield_literal_widening_tests;
+#[cfg(test)]
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
 mod generic_call_non_fresh_object_widening_tests;
 #[cfg(test)]

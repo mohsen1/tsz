@@ -220,6 +220,18 @@ jobs:
       - name: Aggregate fourslash results
         run: scripts/ci/github-suite.sh fourslash-aggregate
 
+  arch-size:
+    name: arch-size
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+      - name: Run architecture size guard (LOC caps + non-#8225 size ratchets)
+        run: python3 scripts/arch/arch_guard.py --size-only
+
   ci-summary:
     name: CI Summary
     needs:
@@ -231,6 +243,7 @@ jobs:
       - emit-aggregate
       - fourslash
       - fourslash-aggregate
+      - arch-size
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -255,6 +268,7 @@ jobs:
               "emit-aggregate",
               "fourslash",
               "fourslash-aggregate",
+              "arch-size",
           }
 
           # On pull_request the heavy jobs are intentionally skipped: the merge

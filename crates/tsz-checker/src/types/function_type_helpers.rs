@@ -277,6 +277,24 @@ impl<'a> CheckerState<'a> {
         (None, None, None, false)
     }
 
+    /// Drain the collected `yield` contributions of the just-checked generator
+    /// body and collapse them to the unwidened inferred yield type (`never`
+    /// when the body has no yields). Shared by the yield-type aggregation here
+    /// and the TS7055 implicit-any check in `function_declaration_checks.rs` so
+    /// the two sites cannot drift on how contributions collapse.
+    pub(crate) fn take_generator_yield_union(
+        &mut self,
+    ) -> (Vec<crate::context::GeneratorYieldContribution>, TypeId) {
+        let contributions = std::mem::take(&mut self.ctx.generator_yield_operand_types);
+        let inferred = if contributions.is_empty() {
+            TypeId::NEVER
+        } else {
+            let types: Vec<TypeId> = contributions.iter().map(|c| c.type_id).collect();
+            self.ctx.types.factory().union(types)
+        };
+        (contributions, inferred)
+    }
+
     pub(crate) fn check_generator_body_return(
         &mut self,
         ctx: GeneratorBodyReturnCheckCtx<'_>,
@@ -302,25 +320,37 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-        let inferred_yield = if yield_types.is_empty() {
-            TypeId::NEVER
+        let (yield_contributions, inferred_yield) = self.take_generator_yield_union();
+        // tsc's `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded` +
+        // `getWidenedType(getUnionType(...))`: widen only a union collapsed to a
+        // single *fresh* literal (or enum member) that the contextual yield
+        // type does not itself admit. A non-literal contextual yield type does
+        // NOT suppress widening — with a `(a: T) => IterableIterator<T |
+        // undefined, void>` contextual signature, `yield 1` still widens to
+        // `number` (generatorTypeCheck63). Per-contribution freshness policy
+        // lives in `yield_contribution_is_widenable`. The blanket
+        // `widen_literal_type` is safe here (unlike the return path, which
+        // needs `widen_return_contribution_preserving_const`): only unit
+        // literals reach the widener, never object-literal shapes with
+        // per-property `as const`.
+        let is_widenable_literal =
+            crate::query_boundaries::common::is_literal_type(self.ctx.types, inferred_yield)
+                || self.is_enum_member_type_for_widening(inferred_yield);
+        // Term order matters: `is_widenable_literal` is the cheap, selective
+        // gate (an empty contribution set collapses to `never` and fails it);
+        // the contribution scan runs only for a collapsed unit literal; and the
+        // contextual gate runs last because it resolves lazy types in the
+        // environment — evaluating it for every generator perturbs in-flight
+        // inference state on speculative re-checks.
+        let widened = if is_widenable_literal
+            && yield_contributions.iter().all(|c| c.widenable)
+            && !ctx.early_yield_type.is_some_and(|ctx_yield| {
+                self.contextual_type_allows_literal(ctx_yield, inferred_yield)
+            }) {
+            let widened_literal = self.widen_literal_type(inferred_yield);
+            self.widen_enum_member_type(widened_literal)
         } else {
-            return_type_construction::function_return_union(self.ctx.types, yield_types)
-        };
-        // tsc computes the inferred yield type as `getWidenedType(getUnionType(...))`:
-        // a single literal is widened (`yield 1` -> `number`), but a multi-member
-        // literal union is preserved (`yield 1; yield 2` -> `1 | 2`) because a union
-        // is not itself a widenable literal. Mirror that by widening only when the
-        // reduced union is a single literal type — the same gate the regular
-        // return-type inference uses in `return_type.rs`. (The yield operands reach
-        // here unwidened for bare literals, so the union keeps its members.)
-        let widened = if ctx.early_yield_type.is_some()
-            || !crate::query_boundaries::common::is_literal_type(self.ctx.types, inferred_yield)
-        {
             inferred_yield
-        } else {
-            self.widen_literal_type(inferred_yield)
         };
         let final_yield = if !self.ctx.strict_null_checks()
             && crate::query_boundaries::common::is_only_null_or_undefined(self.ctx.types, widened)

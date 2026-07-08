@@ -54,7 +54,14 @@ impl<'a> CheckerState<'a> {
                 return source;
             };
 
-            let first_arg_type = self.get_type_of_node(first_arg);
+            // Display recovery must only *read* already-computed node types.
+            // Forcing a fresh computation here can re-enter checking of an
+            // expression whose enclosing chain is still mid-resolution (e.g.
+            // rendering a nested call's overload failure), typing a callback
+            // without its contextual type and leaking its diagnostics.
+            let Some(first_arg_type) = self.ctx.node_types.get(&first_arg.0).copied() else {
+                return source;
+            };
             if matches!(first_arg_type, TypeId::ERROR | TypeId::UNKNOWN) {
                 return source;
             }
