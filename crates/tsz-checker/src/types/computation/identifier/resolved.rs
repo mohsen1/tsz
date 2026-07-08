@@ -1395,8 +1395,9 @@ impl CheckerState<'_> {
                 // above applies. This matters across re-export hops
                 // (`export { E } from "..."`), where the local symbol is an
                 // alias rather than the enum itself. No-op for aliases that
-                // resolve to non-enum targets.
-                self.get_enum_namespace_type_for_value(base)
+                // resolve to non-enum targets — including imported *variables*
+                // whose type is the enum instance type, which must keep it.
+                self.enum_namespace_type_for_value_symbol(sym_id, base)
             } else {
                 base
             }

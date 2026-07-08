@@ -32,6 +32,53 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Enum-namespace conversion gated on the queried *entity symbol*.
+    ///
+    /// A value reference denotes the static enum object (`typeof E`) only when
+    /// the referenced entity (after alias resolution) *is* the enum symbol. A
+    /// variable whose type merely is the enum instance type keeps it:
+    /// `let stage = Phase.Init; typeof stage` is `Phase`, not `typeof Phase`.
+    /// The type-based [`Self::get_enum_namespace_type_for_value`] cannot make
+    /// that distinction — both entities observe the same instance `TypeId`.
+    pub(crate) fn enum_namespace_type_for_value_symbol(
+        &mut self,
+        queried_sym: tsz_binder::SymbolId,
+        type_id: TypeId,
+    ) -> TypeId {
+        use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+        let mut sym_id = queried_sym;
+        if let Some(symbol) = self.checker_symbol(sym_id)
+            && symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+            && let Some(resolved) = self.resolve_alias_symbol(sym_id, &mut AliasCycleTracker::new())
+        {
+            sym_id = resolved;
+        }
+        let Some(symbol) = self.checker_symbol(sym_id) else {
+            return type_id;
+        };
+        if symbol.flags & tsz_binder::symbol_flags::ENUM == 0
+            || (symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER) != 0
+        {
+            return type_id;
+        }
+        self.get_enum_namespace_type_for_value(type_id)
+    }
+
+    /// [`Self::enum_namespace_type_for_value_symbol`] keyed by a `typeof`
+    /// query's entity name; falls back to the type-based conversion when the
+    /// entity does not resolve to a symbol (e.g. global-like chains resolved
+    /// purely through property access).
+    fn enum_namespace_type_for_type_query_entity(
+        &mut self,
+        expr_name: NodeIndex,
+        type_id: TypeId,
+    ) -> TypeId {
+        match self.resolve_qualified_symbol(expr_name) {
+            Some(sym_id) => self.enum_namespace_type_for_value_symbol(sym_id, type_id),
+            None => self.get_enum_namespace_type_for_value(type_id),
+        }
+    }
+
     /// Build the deferred `typeof` representation of a value entity name as a
     /// chain of indexed accesses over a base `TypeQuery`.
     ///
@@ -289,7 +336,8 @@ impl<'a> CheckerState<'a> {
                                 "type_query qualified: resolved merged ns+interface via binder"
                             );
                             if member_type != TypeId::ERROR {
-                                return self.get_enum_namespace_type_for_value(member_type);
+                                return self
+                                    .enum_namespace_type_for_value_symbol(sym_id, member_type);
                             }
                         }
                     }
@@ -333,7 +381,10 @@ impl<'a> CheckerState<'a> {
                                 left_idx, &prop_name, right_idx,
                             )
                         {
-                            let resolved = self.get_enum_namespace_type_for_value(global_like_type);
+                            let resolved = self.enum_namespace_type_for_type_query_entity(
+                                type_query.expr_name,
+                                global_like_type,
+                            );
                             return if use_flow_sensitive_query {
                                 self.apply_flow_narrowing(type_query.expr_name, resolved)
                             } else {
@@ -380,8 +431,10 @@ impl<'a> CheckerState<'a> {
                                     // property result so that `typeof k.foo` where
                                     // `foo: typeof I` yields the resolved value type.
                                     let property_type = self.resolve_type_query_type(type_id);
-                                    let resolved =
-                                        self.get_enum_namespace_type_for_value(property_type);
+                                    let resolved = self.enum_namespace_type_for_type_query_entity(
+                                        type_query.expr_name,
+                                        property_type,
+                                    );
                                     let resolved = self.apply_type_query_instantiation_arguments(
                                         resolved,
                                         &type_argument_nodes,
@@ -421,7 +474,8 @@ impl<'a> CheckerState<'a> {
                         let member_type = self.get_type_of_symbol(sym_id);
                         trace!(sym_id = ?sym_id, member_type = ?member_type, "type_query qualified: resolved via binder exports");
                         if member_type != TypeId::ERROR {
-                            let member_type = self.get_enum_namespace_type_for_value(member_type);
+                            let member_type =
+                                self.enum_namespace_type_for_value_symbol(sym_id, member_type);
                             return self.apply_type_query_instantiation_arguments(
                                 member_type,
                                 &type_argument_nodes,
@@ -480,7 +534,10 @@ impl<'a> CheckerState<'a> {
                     let expr_type = query_expr_type(self, use_flow_sensitive_query);
                     let is_lazy = lazy_def_id(self.ctx.types, expr_type).is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
-                        let expr_type = self.get_enum_namespace_type_for_value(expr_type);
+                        let expr_type = self.enum_namespace_type_for_type_query_entity(
+                            type_query.expr_name,
+                            expr_type,
+                        );
                         return self.apply_type_query_instantiation_arguments(
                             expr_type,
                             &type_argument_nodes,
@@ -518,7 +575,10 @@ impl<'a> CheckerState<'a> {
                     && let Some(declared_type) =
                         self.declared_value_type_for_type_query_symbol(tsz_binder::SymbolId(sym_id))
                 {
-                    return self.get_enum_namespace_type_for_value(declared_type);
+                    return self.enum_namespace_type_for_value_symbol(
+                        tsz_binder::SymbolId(sym_id),
+                        declared_type,
+                    );
                 }
                 if use_flow_sensitive_query {
                     let flow_resolved = query_expr_type(self, true);
@@ -528,7 +588,10 @@ impl<'a> CheckerState<'a> {
                         && !flow_is_lazy
                         && !is_self_referential
                     {
-                        let flow_resolved = self.get_enum_namespace_type_for_value(flow_resolved);
+                        let flow_resolved = self.enum_namespace_type_for_value_symbol(
+                            tsz_binder::SymbolId(sym_id),
+                            flow_resolved,
+                        );
                         trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
                         return flow_resolved;
                     }
@@ -539,7 +602,10 @@ impl<'a> CheckerState<'a> {
                     && !resolved_is_lazy
                     && !is_self_referential
                 {
-                    let resolved = self.get_enum_namespace_type_for_value(resolved);
+                    let resolved = self.enum_namespace_type_for_value_symbol(
+                        tsz_binder::SymbolId(sym_id),
+                        resolved,
+                    );
                     // Fall back to symbol type when flow result is unavailable.
                     trace!("=> returning symbol-resolved type directly");
                     return resolved;

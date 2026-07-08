@@ -1306,6 +1306,9 @@ path = "tests/enum_member_cache_tests.rs"
 name = "enum_merge_tests"
 path = "tests/enum_merge_tests.rs"
 [[test]]
+name = "enum_member_widening_freshness_tests"
+path = "tests/enum_member_widening_freshness_tests.rs"
+[[test]]
 name = "const_enum_merge_ts2567_tests"
 path = "tests/const_enum_merge_ts2567_tests.rs"
 [[test]]

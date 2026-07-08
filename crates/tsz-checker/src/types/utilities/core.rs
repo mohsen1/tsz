@@ -500,31 +500,10 @@ impl<'a> CheckerState<'a> {
     /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
     /// specific member.
     pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            // Check if this DefId is an enum member (has a parent enum)
-            let parent_def_id = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id {
-                // This is an enum member - widen to parent enum type
-                if let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id) {
-                    return self.get_type_of_symbol(parent_sym_id);
-                }
-            }
-        }
-
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-        {
-            return self.get_type_of_symbol(symbol.parent);
+        // An enum member widens to the parent enum's instance type (`E`),
+        // never the enum's static object shape (`typeof E`).
+        if let Some(parent_type) = self.enum_member_parent_instance_type(type_id) {
+            return parent_type;
         }
         // Use the mutable-binding widening entry so fresh array/object members
         // nested inside a top-level union widen too. tsc collapses a conditional
@@ -540,29 +519,10 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
-        if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
-        {
-            let parent_def_id = self
-                .ctx
-                .type_env
-                .try_borrow()
-                .ok()
-                .and_then(|env| env.get_enum_parent(def_id));
-
-            if let Some(parent_def_id) = parent_def_id
-                && let Some(parent_sym_id) = self.ctx.def_to_symbol_id(parent_def_id)
-            {
-                return self.get_type_of_symbol(parent_sym_id);
-            }
-        }
-
-        // Fallback: check via symbol flags (legacy path)
-        if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
-        {
-            return self.get_type_of_symbol(symbol.parent);
+        // An enum member widens to the parent enum's instance type (`E`),
+        // never the enum's static object shape (`typeof E`).
+        if let Some(parent_type) = self.enum_member_parent_instance_type(type_id) {
+            return parent_type;
         }
 
         // Do NOT widen literal types - return as-is
@@ -584,125 +544,6 @@ impl<'a> CheckerState<'a> {
                 .ok()
                 .is_some_and(|env| env.get_enum_parent(def_id).is_some());
         }
-        false
-    }
-
-    /// Check if an expression produces a "fresh" literal type that should be widened.
-    ///
-    /// In TypeScript, literal types created from literal expressions are "fresh" and get
-    /// widened when assigned to mutable bindings (let/var). Literal types from other
-    /// sources (variable references, type annotations, narrowing) are "non-fresh" and
-    /// should NOT be widened.
-    ///
-    /// An identifier referring to an unannotated `const` declaration whose initializer
-    /// is itself a fresh literal expression is also treated as fresh: tsc tracks
-    /// such bindings as widening literal types and widens them when copied into a
-    /// mutable binding.
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// let x = "foo";          // "foo" is fresh → widened to string
-    /// let a: "foo" = "foo";
-    /// let y = a;              // a's type is non-fresh → y: "foo" (not widened)
-    /// let z = a || "bar";     // result from || is non-fresh → z: "foo" (not widened)
-    ///
-    /// const tag = "start";    // unannotated const literal → widening literal type
-    /// let m = tag;            // tag is fresh-by-reference → widened to string
-    /// ```
-    pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
-        self.is_fresh_literal_expression_inner(idx, 0)
-    }
-
-    fn is_fresh_literal_expression_inner(&self, idx: NodeIndex, depth: u8) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        use tsz_scanner::SyntaxKind;
-
-        // Cycle / runaway-recursion guard. Identifier-following can in principle
-        // reach itself through pathological forward references like
-        // `const a = a;`. Bound the chain so the structural recursion always
-        // terminates.
-        const MAX_FRESH_LITERAL_DEPTH: u8 = 16;
-        if depth > MAX_FRESH_LITERAL_DEPTH {
-            return false;
-        }
-
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-
-        let kind = node.kind;
-
-        // Direct literal tokens are always fresh
-        if kind == SyntaxKind::StringLiteral as u16
-            || kind == SyntaxKind::NumericLiteral as u16
-            || kind == SyntaxKind::BigIntLiteral as u16
-            || kind == SyntaxKind::TrueKeyword as u16
-            || kind == SyntaxKind::FalseKeyword as u16
-            || kind == SyntaxKind::NullKeyword as u16
-            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-        {
-            return true;
-        }
-
-        // Parenthesized expressions inherit freshness from inner expression
-        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-        {
-            return self.is_fresh_literal_expression_inner(paren.expression, depth + 1);
-        }
-
-        // Prefix unary (+/-) on numeric/bigint literals are fresh
-        if kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && let Some(prefix) = self.ctx.arena.get_unary_expr(node)
-        {
-            let op = prefix.operator;
-            if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
-                return self.is_fresh_literal_expression_inner(prefix.operand, depth + 1);
-            }
-        }
-
-        // Conditional expressions: fresh if either branch produces a fresh type.
-        // E.g., `cond ? true : undefined` has a fresh `true` branch, so the
-        // result type `true | undefined` should be widened to `boolean | undefined`.
-        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
-        {
-            return self.is_fresh_literal_expression_inner(cond.when_true, depth + 1)
-                || self.is_fresh_literal_expression_inner(cond.when_false, depth + 1);
-        }
-
-        // Object and array literals need widening (property types get widened)
-        if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            || kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-        {
-            return true;
-        }
-
-        // Template expressions (with substitutions) produce string, which doesn't need widening
-        // but we mark them fresh for consistency
-        if kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
-            return true;
-        }
-
-        // Identifier referencing an unannotated `const` declaration whose
-        // initializer is itself a fresh literal expression. tsc tracks these
-        // bindings as widening literal types, so copying them into a `let`/`var`
-        // binding must still widen.
-        if kind == SyntaxKind::Identifier as u16
-            && let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx)
-            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && let Some(decl_idx) = symbol.primary_declaration()
-            && self.ctx.arena.is_const_variable_declaration(decl_idx)
-            && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
-            && var_decl.type_annotation.is_none()
-            && var_decl.initializer.is_some()
-        {
-            return self.is_fresh_literal_expression_inner(var_decl.initializer, depth + 1);
-        }
-
-        // Everything else (identifiers, call expressions, binary expressions, etc.)
-        // produces non-fresh types that should NOT be widened
         false
     }
 
