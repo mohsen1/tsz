@@ -1140,17 +1140,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // For `.call`/`.apply`, `tsc` fixes the rest-arg tuple from the
-        // target's original signature, collapsing type parameters whose
-        // constraint references the `this`-type parameter (e.g. `K extends
-        // keyof T` -> `never`). `.bind` defers the rest-arg check to the bound
-        // function's later invocation, so it keeps the un-collapsed target.
-        if matches!(property_name, "call" | "apply") {
-            for sig in &mut call_targets {
-                if let Some(collapsed) = self.collapse_this_dependent_type_params(sig) {
-                    *sig = collapsed;
-                }
-            }
+        // `tsc` resolves `.call`/`.apply`/`.bind` on a value with call
+        // signatures through the lib `CallableFunction` members;
+        // `NewableFunction` only applies when the receiver has construct
+        // signatures and no call signatures, so construct signatures never
+        // contribute method candidates alongside call signatures.
+        if !call_targets.is_empty() {
+            construct_targets.clear();
         }
 
         let mut method_signatures = Vec::new();
@@ -1170,7 +1166,6 @@ impl<'a> CheckerState<'a> {
         // ...)` calls still fall through to the per-signature overloads below.
         if property_name == "bind"
             && call_targets.len() > 1
-            && construct_targets.is_empty()
             && call_targets.iter().all(|sig| sig.this_type.is_none())
         {
             let full_receiver =
@@ -1193,6 +1188,38 @@ impl<'a> CheckerState<'a> {
                     false,
                 ),
             );
+        }
+
+        // `CallableFunction`/`NewableFunction` expose ONE generic method
+        // signature per operation, and `tsc`'s signature-list inference
+        // aligns source and target signatures from the end, so an overloaded
+        // receiver is modeled by its LAST overload only (the documented
+        // `strictBindCallApply` caveat). Synthesizing one candidate per
+        // receiver overload instead reports TS2769 where `tsc` reports a
+        // single TS2345 against the last overload's parameters, and silently
+        // accepts arguments that only match earlier overloads. The
+        // `.bind(thisArg)` identity method above is the one exception
+        // (`OmitThisParameter<T> = T`), which is why it is synthesized from
+        // the full set before this truncation. The alignment rule itself is
+        // owned by the solver (`constrain_matching_signatures` in
+        // `tsz_solver::operations::constraints::signatures`); this synthesis
+        // emulates its single-target outcome.
+        call_targets.drain(..call_targets.len().saturating_sub(1));
+        construct_targets.drain(..construct_targets.len().saturating_sub(1));
+
+        // For `.call`/`.apply`, `tsc` fixes the rest-arg tuple from the
+        // target's original signature, collapsing type parameters whose
+        // constraint references the `this`-type parameter (e.g. `K extends
+        // keyof T` -> `never`). `.bind` defers the rest-arg check to the bound
+        // function's later invocation, so it keeps the un-collapsed target.
+        // (Runs after the truncation so only the surviving signature pays for
+        // the collapse.)
+        if matches!(property_name, "call" | "apply") {
+            for sig in &mut call_targets {
+                if let Some(collapsed) = self.collapse_this_dependent_type_params(sig) {
+                    *sig = collapsed;
+                }
+            }
         }
 
         for (sig, is_constructor) in call_targets
