@@ -371,6 +371,7 @@ run_lint() {
   node scripts/bench/test-measure-protocol.mjs || return $?
   node scripts/bench/test-measure-tsz.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  node scripts/bench/test-check-latest-freshness.mjs || return $?
   node scripts/bench/test-bench-readiness-banner.mjs || return $?
   node scripts/bench/test-ci-health-benchmark-readiness.mjs || return $?
   node scripts/bench/test-benchmark-artifact-selection.mjs || return $?
@@ -391,6 +392,8 @@ run_lint() {
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-check-ci-job-timing.mjs || return $?
   node scripts/ci/test-check-main-red.mjs || return $?
+  node scripts/ci/test-sentinel-issues.mjs || return $?
+  node scripts/ci/test-gh.mjs || return $?
   node scripts/ci/test-known-failures-check.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?

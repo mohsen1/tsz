@@ -319,6 +319,78 @@ test("reconcileIssue finds a sentinel that sank past page 1", () => {
   assert.ok(!calls.some((a) => a[0] === "issue" && a[1] === "create"), "never creates a duplicate");
 });
 
+test("reconcileIssue heals a duplicated sentinel: oldest updated, newer closed", () => {
+  const calls = [];
+  const v = mainCiHealth([run({ id: 5, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" })]);
+  const result = reconcileIssue(v, [], NOW, {
+    repository: "o/r",
+    fetchJson: () => [
+      { number: 90, body: "x <!-- main-red-sentinel --> y" },
+      { number: 77, body: "x <!-- main-red-sentinel --> y" },
+    ],
+    runCommand: (args) => { calls.push(args); return { status: 0, stdout: "", stderr: "" }; },
+  });
+  assert.equal(result.action, "updated");
+  assert.equal(result.number, 77, "the oldest sentinel is canonical");
+  assert.deepEqual(result.closedDuplicates, [90]);
+  assert.ok(!calls.some((a) => a[0] === "issue" && a[1] === "create"), "never creates a third issue");
+  const dupComment = calls.find((a) => a[1] === "comment" && a[2] === "90");
+  assert.match(dupComment[dupComment.length - 1], /#77/, "duplicate close points at the canonical issue");
+});
+
+test("reconcileIssue finds a marker-stripped sentinel by its exact title", () => {
+  const calls = [];
+  const v = mainCiHealth([run({ id: 5, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" })]);
+  const result = reconcileIssue(v, [], NOW, {
+    repository: "o/r",
+    fetchJson: () => [{
+      number: 61,
+      title: "🔴 main CI is red — conformance/parity floor breached",
+      body: "claimed; body rewritten without the marker",
+    }],
+    runCommand: (args) => { calls.push(args); return { status: 0, stdout: "", stderr: "" }; },
+  });
+  assert.equal(result.action, "updated", "title fallback finds the sentinel");
+  assert.equal(result.number, 61);
+  const edit = calls.find((a) => a[1] === "edit");
+  assert.match(edit[edit.length - 1], /main-red-sentinel/, "edit restores the marker");
+});
+
+test("reconcileIssue closes every sentinel on recovery, not just the first", () => {
+  const calls = [];
+  const v = mainCiHealth([run({ id: 6, conclusion: "success", created_at: "2026-06-12T21:00:00Z" })]);
+  const result = reconcileIssue(v, [], NOW, {
+    repository: "o/r",
+    fetchJson: () => [
+      { number: 90, body: "<!-- main-red-sentinel -->" },
+      { number: 77, body: "<!-- main-red-sentinel -->" },
+    ],
+    runCommand: (args) => { calls.push(args); return { status: 0, stdout: "", stderr: "" }; },
+  });
+  assert.equal(result.action, "closed");
+  assert.equal(result.number, 77);
+  assert.deepEqual(result.closedDuplicates, [90]);
+  const closed = calls.filter((a) => a[1] === "close").map((a) => a[2]);
+  assert.deepEqual(closed.sort(), ["77", "90"], "no zombie sentinel survives recovery");
+});
+
+test("reconcileIssue skips a PR that quotes the marker", () => {
+  const calls = [];
+  const v = mainCiHealth([run({ id: 5, conclusion: "failure", created_at: "2026-06-12T21:00:00Z" })]);
+  const result = reconcileIssue(v, [], NOW, {
+    repository: "o/r",
+    fetchJson: () => [{
+      number: 88,
+      title: "fix(ci): sentinel lookup",
+      body: "this PR mentions <!-- main-red-sentinel --> in prose",
+      pull_request: { url: "https://gh.example/pulls/88" },
+    }],
+    runCommand: (args) => { calls.push(args); return { status: 0, stdout: "https://gh/issues/99", stderr: "" }; },
+  });
+  assert.equal(result.action, "created", "a marker-quoting PR is not the sentinel");
+  assert.ok(!calls.some((a) => a[1] === "edit"), "never edits a PR as if it were the sentinel");
+});
+
 test("reconcileIssue noop when green and no issue", () => {
   const v = mainCiHealth([run({ id: 6, conclusion: "success", created_at: "2026-06-12T21:00:00Z" })]);
   const result = reconcileIssue(v, [], NOW, {

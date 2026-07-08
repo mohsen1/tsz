@@ -13,10 +13,17 @@
 // Pure functions (mainCiHealth/formatIssueBody/formatReport) are unit tested;
 // gh I/O lives in main() behind injectable fetchers.
 import fs from "node:fs";
-import { spawnSync } from "node:child_process";
+
+import { runGh, runGhJson } from "./lib/gh.mjs";
+import {
+  collectSentinelIssues,
+  splitSentinels,
+  createSentinelIssue,
+  closeSentinelIssue,
+  closeDuplicateSentinels,
+} from "./lib/sentinel-issues.mjs";
 
 const DEFAULT_MAX_RUNS = 60;
-const DEFAULT_GH_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const WORKFLOW_NAME = "CI";
 const MAIN_EVENTS = new Set(["push", "merge_group"]);
 // Conclusions that do not represent a real verdict on the merged tree.
@@ -95,75 +102,6 @@ function parseArgs(argv) {
     throw new Error(`unknown argument: ${arg}`);
   }
   return options;
-}
-
-// Bounded exponential backoff over transient gh transport failures (5xx,
-// secondary rate limit, transient network errors). This retries only the
-// transport — never a real verdict/finding — so the sentinel's signal is
-// unchanged; it just survives a flaky GitHub API call instead of reddening the
-// advisory ci-health workflow. See issue #13744.
-const GH_RETRY_ATTEMPTS = Math.max(1, Number.parseInt(process.env.GH_RETRY_ATTEMPTS || "", 10) || 4);
-const GH_RETRY_BASE_MS = Math.max(0, Number.parseInt(process.env.GH_RETRY_BASE_MS || "", 10) || 500);
-const GH_RETRY_MAX_MS = 8000;
-const TRANSIENT_NET_CODES = new Set([
-  "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "EPIPE",
-]);
-
-function sleepSync(ms) {
-  if (!(ms > 0)) return;
-  // Synchronous sleep without busy-waiting; spawnSync gives us no async seam.
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function isTransientGhResult(result) {
-  if (result.error) {
-    // ENOBUFS is a hard output-size error, not transient.
-    if (result.error.code === "ENOBUFS") return false;
-    return TRANSIENT_NET_CODES.has(result.error.code);
-  }
-  if ((result.status ?? 0) === 0) return false;
-  const text = `${result.stdout || ""}\n${result.stderr || ""}`;
-  return /\bHTTP\s+(?:408|425|429|5\d\d)\b/i.test(text)
-    || /secondary rate limit/i.test(text)
-    || /\b(?:Bad Gateway|Service Unavailable|Gateway Time-?out|Internal Server Error|Server Error)\b/i.test(text);
-}
-
-function spawnGh(args, spawnOptions) {
-  let result;
-  for (let attempt = 1; attempt <= GH_RETRY_ATTEMPTS; attempt += 1) {
-    result = spawnSync("gh", args, spawnOptions);
-    if (attempt === GH_RETRY_ATTEMPTS || !isTransientGhResult(result)) break;
-    sleepSync(Math.min(GH_RETRY_BASE_MS * 2 ** (attempt - 1), GH_RETRY_MAX_MS));
-  }
-  return result;
-}
-
-function runGhJson(args) {
-  const result = spawnGh(args, {
-    encoding: "utf8",
-    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error([`gh ${args.join(" ")} failed`, result.stdout?.trim(), result.stderr?.trim()]
-      .filter(Boolean).join("\n"));
-  }
-  return JSON.parse(result.stdout);
-}
-
-function runGh(args) {
-  const result = spawnGh(args, {
-    encoding: "utf8",
-    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.error) return { status: 1, stdout: "", stderr: result.error.message };
-  return {
-    status: result.status ?? 1,
-    stdout: (result.stdout || "").trim(),
-    stderr: (result.stderr || "").trim(),
-  };
 }
 
 function normalizeRuns(payload) {
@@ -410,40 +348,18 @@ function lastTrackedSha(issue) {
   return match ? match[1] : "";
 }
 
-const SENTINEL_PER_PAGE = 100;
-// The `/issues` endpoint returns open issues *and* open PRs, so on an active
-// repo the combined list routinely exceeds one 100-item page. A persistent
-// tracking issue (a standing main-red can live for hours) is sorted created-desc
-// and steadily sinks past page 1 as new PRs/issues land, so a single-page scan
-// silently stops finding it — then reconcileIssue re-creates a duplicate every
-// firing and can never close the real one on recovery. Page through open issues
-// until the marker is found or the list is exhausted so the dedup sentinel is
-// always located. The bound caps the walk on a pathological backlog without ever
-// masking a reachable sentinel.
-const SENTINEL_MAX_PAGES = 20;
-
-function findSentinelIssue(repository, fetchJson) {
-  for (let page = 1; page <= SENTINEL_MAX_PAGES; page += 1) {
-    const issues = fetchJson([
-      "api",
-      "-H",
-      "Accept: application/vnd.github+json",
-      `repos/${repository}/issues?state=open&per_page=${SENTINEL_PER_PAGE}&page=${page}`,
-    ]);
-    if (!Array.isArray(issues)) return null;
-    const match = issues.find(
-      (it) => typeof it.body === "string" && it.body.includes(ISSUE_MARKER),
-    );
-    if (match) return match;
-    // A short (or empty) page is the last one — the sentinel is not open.
-    if (issues.length < SENTINEL_PER_PAGE) return null;
-  }
-  return null;
-}
-
+// The oldest open sentinel is canonical; younger matches from a past lookup
+// miss are closed as duplicates (see `./lib/sentinel-issues.mjs` for the
+// healing rules).
 export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
   const { repository, fetchJson = runGhJson, runCommand = runGh } = ctx;
-  const existing = findSentinelIssue(repository, fetchJson);
+  const matches = collectSentinelIssues(repository, fetchJson, {
+    marker: ISSUE_MARKER,
+    title: ISSUE_TITLE,
+  });
+  const { canonical: existing, duplicates } = splitSentinels(matches);
+  const closeDupes = () =>
+    closeDuplicateSentinels(duplicates, existing.number, repository, runCommand, nowIso);
   const body = formatIssueBody(verdict, regressedTests, nowIso);
 
   if (verdict.red) {
@@ -459,20 +375,17 @@ export function reconcileIssue(verdict, regressedTests, nowIso, ctx) {
         runCommand(["issue", "comment", String(existing.number), "--repo", repository,
           "--body", `Still red as of ${nowIso}: \`${currentSha}\` ([run](${verdict.run.url})).`]);
       }
-      return { action: "updated", number: existing.number, commented: headChanged };
+      return { action: "updated", number: existing.number, commented: headChanged, closedDuplicates: closeDupes() };
     }
-    const created = runCommand(["issue", "create", "--repo", repository,
-      "--title", ISSUE_TITLE, "--body", body, "--label", "tech-debt"]);
+    const created = createSentinelIssue(repository, runCommand, { title: ISSUE_TITLE, body });
     return { action: "created", detail: created.stdout || created.stderr };
   }
 
-  // Green: close any open sentinel issue.
+  // Green: close every open sentinel issue (canonical + healed duplicates).
   if (existing) {
-    runCommand(["issue", "comment", String(existing.number), "--repo", repository,
-      "--body", `✅ \`main\` is green again as of ${nowIso} (\`${(verdict.run.sha || "").slice(0, 12)}\`). Closing.`]);
-    runCommand(["issue", "close", String(existing.number), "--repo", repository,
-      "--reason", "completed"]);
-    return { action: "closed", number: existing.number };
+    closeSentinelIssue(existing.number, repository, runCommand,
+      `✅ \`main\` is green again as of ${nowIso} (\`${(verdict.run.sha || "").slice(0, 12)}\`). Closing.`);
+    return { action: "closed", number: existing.number, closedDuplicates: closeDupes() };
   }
   return { action: "noop" };
 }
