@@ -596,11 +596,10 @@ impl PendingDiagnostic {
     }
 
     /// Whether this diagnostic reports an argument-arity failure
-    /// (`TS2554`/`TS2555`). Within a `NoOverloadMatch` failure set these are
-    /// tsc's arity-failing candidates (`resolveCall` keeps them out of
-    /// `candidatesForArgumentError`): never elaborated in the per-overload
-    /// chain, yet still counted toward the `Overload {i} of {N}` total. Owned
-    /// here so the code set stays beside the builders that assign it.
+    /// (`TS2554`/`TS2555`), tsc's `candidatesForArgumentError` exclusion.
+    /// Owned here so the code set stays beside the builders that assign it;
+    /// the rendering policy it feeds lives in the checker's
+    /// `error_no_overload_matches_at`.
     pub const fn is_arity_failure(&self) -> bool {
         matches!(
             self.code,

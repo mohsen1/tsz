@@ -269,6 +269,12 @@ fn as_pairs(chain: &[(u8, String)]) -> Vec<(u8, &str)> {
     chain.iter().map(|(d, m)| (*d, m.as_str())).collect()
 }
 
+/// Borrowing view of a full `(depth, code, message)` chain for comparison
+/// against literal expectations.
+fn as_triples(chain: &[(u8, u32, String)]) -> Vec<(u8, u32, &str)> {
+    chain.iter().map(|(d, c, m)| (*d, *c, m.as_str())).collect()
+}
+
 /// The messages of every chain line at exactly `depth`.
 fn lines_at_depth(chain: &[(u8, String)], depth: u8) -> Vec<&str> {
     chain
@@ -536,40 +542,35 @@ f(sym);
     );
 
     assert_eq!(
-        chain,
+        as_triples(&chain),
         vec![
-            (
-                0,
-                2770,
-                "The last overload gave the following error.".to_string()
-            ),
+            (0, 2770, "The last overload gave the following error."),
             (
                 1,
                 2345,
                 "Argument of type 'symbol' is not assignable to parameter of type 'object'."
-                    .to_string()
             ),
         ],
         "expected a single TS2770 chain holding only the last candidate's error"
     );
 }
 
-/// An arity-failing overload interleaved among argument-error candidates is
-/// excluded from the chain but still counts toward `{N}`: `{i}` numbers the
-/// argument-error candidates, so the third declaration renders as
-/// `Overload 2 of 3` and the arity error line disappears entirely
-/// (differential-verified against tsc 6.0.2).
-#[test]
-fn arity_failing_overload_is_excluded_from_chain_but_counted_in_total() {
-    let chain = overload_chain(
+/// Shared scenario for the arity-exclusion rule: a `string`/arity/`boolean`
+/// overload triple called with a `symbol` argument. The arity candidate is
+/// excluded from the chain but still counts toward `{N}`, so the third
+/// declaration renders as `Overload 2 of 3` and the arity error line
+/// disappears entirely (differential-verified against tsc 6.0.2). Invoked
+/// with two distinct binder-name sets so the rule is proven structural.
+fn assert_arity_exclusion_chain(callee: &str, param: &str, extra: &str) {
+    let chain = overload_chain(&format!(
         r#"
-declare function g(a: string): void;
-declare function g(a: number, b: number): void;
-declare function g(a: boolean): void;
+declare function {callee}({param}: string): void;
+declare function {callee}({param}: number, {extra}: number): void;
+declare function {callee}({param}: boolean): void;
 declare const sym: symbol;
-g(sym);
-"#,
-    );
+{callee}(sym);
+"#
+    ));
 
     assert_eq!(
         chain,
@@ -577,7 +578,7 @@ g(sym);
             (
                 0,
                 2772,
-                "Overload 1 of 3, '(a: string): void', gave the following error.".to_string()
+                format!("Overload 1 of 3, '({param}: string): void', gave the following error.")
             ),
             (
                 1,
@@ -588,7 +589,7 @@ g(sym);
             (
                 0,
                 2772,
-                "Overload 2 of 3, '(a: boolean): void', gave the following error.".to_string()
+                format!("Overload 2 of 3, '({param}: boolean): void', gave the following error.")
             ),
             (
                 1,
@@ -599,6 +600,20 @@ g(sym);
         ],
         "expected the arity candidate dropped from the chain yet counted in {{N}}"
     );
+}
+
+/// An arity-failing overload interleaved among argument-error candidates is
+/// excluded from the chain but still counts toward `{N}`.
+#[test]
+fn arity_failing_overload_is_excluded_from_chain_but_counted_in_total() {
+    assert_arity_exclusion_chain("g", "a", "b");
+}
+
+/// Anti-hardcoding: the exclusion and numbering are structural — renaming the
+/// callee and every binder changes nothing but the rendered signature text.
+#[test]
+fn collapse_and_exclusion_are_independent_of_binder_names() {
+    assert_arity_exclusion_chain("visitNode", "entry", "extra");
 }
 
 /// The `TS2770` collapse keys on the *argument-error* candidate count, not the
@@ -620,18 +635,13 @@ r(sym);
     );
 
     assert_eq!(
-        chain,
+        as_triples(&chain),
         vec![
-            (
-                0,
-                2770,
-                "The last overload gave the following error.".to_string()
-            ),
+            (0, 2770, "The last overload gave the following error."),
             (
                 1,
                 2345,
                 "Argument of type 'symbol' is not assignable to parameter of type 'number[]'."
-                    .to_string()
             ),
         ],
         "expected the TS2770 collapse keyed on argument-error candidates"
@@ -686,18 +696,13 @@ new Maker(sym);
     );
 
     assert_eq!(
-        chain,
+        as_triples(&chain),
         vec![
-            (
-                0,
-                2770,
-                "The last overload gave the following error.".to_string()
-            ),
+            (0, 2770, "The last overload gave the following error."),
             (
                 1,
                 2345,
                 "Argument of type 'symbol' is not assignable to parameter of type 'object'."
-                    .to_string()
             ),
         ],
         "expected the constructor set to collapse to only the last candidate's error"
@@ -729,50 +734,5 @@ p(sym);
         !diags.iter().any(|d| d.code == 2769),
         "a lone argument-error candidate must not produce TS2769, got: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
-    );
-}
-
-/// Anti-hardcoding: the collapse and the arity exclusion are structural —
-/// renaming the callee and every binder changes nothing but the rendered
-/// signature text.
-#[test]
-fn collapse_and_exclusion_are_independent_of_binder_names() {
-    let chain = overload_chain(
-        r#"
-declare function visitNode(entry: string): void;
-declare function visitNode(entry: number, extra: number): void;
-declare function visitNode(entry: boolean): void;
-declare const sym: symbol;
-visitNode(sym);
-"#,
-    );
-
-    assert_eq!(
-        chain,
-        vec![
-            (
-                0,
-                2772,
-                "Overload 1 of 3, '(entry: string): void', gave the following error.".to_string()
-            ),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'string'."
-                    .to_string()
-            ),
-            (
-                0,
-                2772,
-                "Overload 2 of 3, '(entry: boolean): void', gave the following error.".to_string()
-            ),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'boolean'."
-                    .to_string()
-            ),
-        ],
-        "expected renamed binders to change only the signature text"
     );
 }
