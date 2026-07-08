@@ -55,7 +55,14 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(target_index) = interface_shape.number_index.as_ref() {
             checked_index = true;
-            let Some(source_index) = class_shape.number_index.as_ref() else {
+            // A string index signature covers numeric keys: tsc accepts a
+            // class `[x: string]: V` for a required `[x: number]: U` when
+            // `V` is assignable to `U` (subtypingWithNumericIndexer5.ts).
+            let Some(source_index) = class_shape
+                .number_index
+                .as_ref()
+                .or_else(|| class_shape.string_index_signature())
+            else {
                 return false;
             };
             if !self

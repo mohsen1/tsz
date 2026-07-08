@@ -64,6 +64,21 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Priming publishes the merged INSTANCE-side body under the
+            // target's DefId. A class target shares that DefId between its
+            // static (value) and instance sides, so publishing here replaces
+            // the static surface — `Observable.prototype` then misses class
+            // statics (moduleAugmentationExtendFileModule1/2). Classes keep
+            // the demand-driven merge path.
+            if self
+                .ctx
+                .binder
+                .get_symbol(target_sym)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+            {
+                continue;
+            }
+
             let base_type = self.type_reference_symbol_type(target_sym);
             if matches!(base_type, TypeId::ERROR | TypeId::UNKNOWN) {
                 continue;
