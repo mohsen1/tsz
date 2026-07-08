@@ -1462,28 +1462,41 @@ impl<'a> CheckerState<'a> {
         target == TypeId::NEVER
     }
 
-    /// Whether an enum-member assignment source widens to its parent enum in
-    /// the top-level display, mirroring tsc's `reportRelationError` gate: the
-    /// member generalizes exactly when the target could not hold a top-level
-    /// singleton type. A literal, template-literal, enum, or singleton-capable
-    /// union/instantiable target preserves the member spelling (`EM.X`); a
-    /// primitive or all-primitive union/intersection target widens it (`EM`).
+    /// The parent-enum display type of an enum-member assignment source when
+    /// the top-level display widens it, mirroring tsc's `reportRelationError`
+    /// gate: the member generalizes exactly when the target could not hold a
+    /// top-level singleton type. A literal, template-literal, enum, or
+    /// singleton-capable union/instantiable target preserves the member
+    /// spelling (`EM.X`, returns `None`); a primitive or all-primitive
+    /// union/intersection target widens it (`Some(EM)`).
+    pub(in crate::error_reporter) fn widened_enum_member_assignment_source(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<TypeId> {
+        let widened_source = self.widen_enum_member_type(source);
+        if widened_source == source {
+            return None;
+        }
+
+        let target = self.evaluate_type_for_assignability(target);
+        (!crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ))
+        .then_some(widened_source)
+    }
+
+    /// Boolean form of [`Self::widened_enum_member_assignment_source`] for the
+    /// pre-existing display sites that widen separately.
     pub(in crate::error_reporter) fn should_widen_enum_member_assignment_source(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let widened_source = self.widen_enum_member_type(source);
-        if widened_source == source {
-            return false;
-        }
-
-        let target = self.evaluate_type_for_assignability(target);
-        !crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
-            self.ctx.types,
-            &self.ctx,
-            target,
-        )
+        self.widened_enum_member_assignment_source(source, target)
+            .is_some()
     }
 
     pub(in crate::error_reporter) fn unresolved_unused_renaming_property_in_type_query(

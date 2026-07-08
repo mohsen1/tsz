@@ -275,10 +275,9 @@ impl<'a> TypeFormatter<'a> {
         {
             return Some(parent_sym.escaped_name.clone());
         }
-        Some(format!(
-            "{}.{}",
-            parent_sym.escaped_name, sym.escaped_name
-        ))
+        // Qualified `E.X` via the shared symbol-name walk (keeps the
+        // file-module guard and multi-level parent handling in one place).
+        self.format_symbol_name(SymbolId(def.symbol_id?))
     }
 
     pub(super) fn format_symbol_name(&mut self, sym_id: SymbolId) -> Option<String> {

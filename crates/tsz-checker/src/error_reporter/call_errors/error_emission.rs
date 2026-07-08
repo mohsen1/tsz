@@ -230,12 +230,10 @@ impl<'a> CheckerState<'a> {
         // `reportRelationError`), mirroring the TS2322 assignment surface:
         // `sip(g)` with `g: EG.A` against `boolean` renders `EG`, while a
         // literal/template/enum parameter preserves `EG.A`.
-        if self.should_widen_enum_member_assignment_source(arg_type, param_type) {
-            // The gate already proved the widening makes progress. Plain
-            // structural render: the `CallArgument` role would repaint the
-            // display from the argument expression's declared annotation
+        if let Some(widened) = self.widened_enum_member_assignment_source(arg_type, param_type) {
+            // Plain structural render: the `CallArgument` role would repaint
+            // the display from the argument expression's declared annotation
             // (`EG.A`), undoing the widening.
-            let widened = self.widen_enum_member_type(arg_type);
             arg_str = self.format_type_for_assignability_message(widened);
             arg_display_type = Some(widened);
         }

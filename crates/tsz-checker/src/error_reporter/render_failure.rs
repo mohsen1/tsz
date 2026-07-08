@@ -94,9 +94,11 @@ impl<'a> CheckerState<'a> {
         }
         // Enum members widen to their parent enum (tsc's
         // `getBaseTypeOfLiteralType` EnumLike branch). The parent lookup needs
-        // the checker's enum environment, so it sits outside the pure query.
-        if self.is_enum_member_type_for_widening(source) {
-            return self.widen_enum_member_type(source);
+        // the checker's enum environment, so it sits outside the pure query;
+        // the widen is a no-op for non-members.
+        let enum_widened = self.widen_enum_member_type(source);
+        if enum_widened != source {
+            return enum_widened;
         }
         if crate::query_boundaries::common::is_unit_type(self.ctx.types, source)
             && let Some(members) =
@@ -1707,7 +1709,7 @@ impl<'a> CheckerState<'a> {
                 // instead of the mismatched property type).  Use the plain
                 // structural formatter instead so the rendered type matches the
                 // solver's `source` TypeId.
-                let source_str = if depth > 0 {
+                let mut source_str = if depth > 0 {
                     // Nested relation leaf: generalize a literal source to its
                     // base type when the target has no singleton capacity
                     // (tsc `reportRelationError`).
@@ -1723,7 +1725,6 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 };
-                let mut source_str = source_str;
                 let mut target_str = self.format_assignability_type_for_message(target, source);
                 if let Some(display) = self
                     .object_literal_property_literal_union_alias_target_display(
