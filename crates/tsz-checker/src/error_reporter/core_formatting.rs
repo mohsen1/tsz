@@ -1407,7 +1407,7 @@ impl<'a> CheckerState<'a> {
         // alias/interface refs never reach the enum naming.
         let enum_data_def = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty);
         let def_id = enum_data_def
-            .or_else(|| crate::query_boundaries::common::enum_or_lazy_def_id(self.ctx.types, ty))?;
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty))?;
         // Parent-edge path first: it covers member defs whose binder symbol is
         // not wired (`def_to_symbol_id_with_fallback` fails and the bare
         // member name would leak), and it encodes tsc's single-member

@@ -1488,17 +1488,6 @@ impl<'a> CheckerState<'a> {
         .then_some(widened_source)
     }
 
-    /// Boolean form of [`Self::widened_enum_member_assignment_source`] for the
-    /// pre-existing display sites that widen separately.
-    pub(in crate::error_reporter) fn should_widen_enum_member_assignment_source(
-        &mut self,
-        source: TypeId,
-        target: TypeId,
-    ) -> bool {
-        self.widened_enum_member_assignment_source(source, target)
-            .is_some()
-    }
-
     pub(in crate::error_reporter) fn unresolved_unused_renaming_property_in_type_query(
         &self,
         name: &str,

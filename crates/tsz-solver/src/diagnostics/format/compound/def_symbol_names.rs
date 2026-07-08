@@ -262,11 +262,13 @@ impl<'a> TypeFormatter<'a> {
         // No parent edge in the store (a type-position `E.X` ref stabilized as
         // its own def): identify the member through its binder symbol instead.
         let def = def_store.get(def_id)?;
-        let sym = self.symbol_arena?.get(SymbolId(def.symbol_id?))?;
+        let sym_id = SymbolId(def.symbol_id?);
+        let arena = self.symbol_arena?;
+        let sym = arena.get(sym_id)?;
         if !sym.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             return None;
         }
-        let parent_sym = self.symbol_arena?.get(sym.parent)?;
+        let parent_sym = arena.get(sym.parent)?;
         // tsc single-member identity: the lone member's type IS the enum type.
         if parent_sym
             .exports
@@ -277,7 +279,7 @@ impl<'a> TypeFormatter<'a> {
         }
         // Qualified `E.X` via the shared symbol-name walk (keeps the
         // file-module guard and multi-level parent handling in one place).
-        self.format_symbol_name(SymbolId(def.symbol_id?))
+        self.format_symbol_name(sym_id)
     }
 
     pub(super) fn format_symbol_name(&mut self, sym_id: SymbolId) -> Option<String> {

@@ -220,11 +220,9 @@ impl<'a> CheckerState<'a> {
         } else {
             self.widen_type_for_display(expr_display_type)
         };
-        let display_type = if self.should_widen_enum_member_assignment_source(widened, target) {
-            self.widen_enum_member_type(widened)
-        } else {
-            widened
-        };
+        let display_type = self
+            .widened_enum_member_assignment_source(widened, target)
+            .unwrap_or(widened);
 
         Some(self.widen_function_like_display_type(display_type))
     }
