@@ -1591,6 +1591,25 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, object_type);
 
+        // An intersection's applicable index infos are the union of every
+        // member's infos (tsc collects them across constituents): a read is
+        // accepted when ANY member's signature applies. The merged surface
+        // from `get_index_info` deliberately keeps only same-key composites
+        // (distinct template-pattern keys stay per-member), so consulting it
+        // here would test the key against one member's pattern and wrongly
+        // report TS7053 for `` {[x:`foo-${string}`]: ..} & {[x:`${string}-bar`]: ..} ``
+        // reads that match the other member.
+        if let Some(members) = query::get_intersection_members(self.ctx.types, unwrapped_type) {
+            return members.iter().all(|&member| {
+                self.object_reports_no_index_signature(
+                    member,
+                    index_type,
+                    wants_string,
+                    wants_number,
+                )
+            });
+        }
+
         if wants_string
             && let Some(string_index) =
                 crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types)

@@ -1526,11 +1526,15 @@ impl<'a> CheckerState<'a> {
                 );
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
+                // Read index slots through the signature accessors: a `symbol`
+                // index may ride in the `string_index` slot (single-slot
+                // convention), and the raw fields would migrate it into the
+                // merged string slot, dropping the symbol key space (#15508).
                 let result = factory.object_with_index(ObjectShape {
                     properties,
-                    string_index: base_shape.string_index,
+                    string_index: base_shape.string_index_signature().copied(),
                     number_index: base_shape.number_index,
-                    symbol_index: base_shape.symbol_index,
+                    symbol_index: base_shape.symbol_index_signature().copied(),
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 });
@@ -1547,9 +1551,9 @@ impl<'a> CheckerState<'a> {
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.object_with_index(ObjectShape {
                     properties,
-                    string_index: derived_shape.string_index,
+                    string_index: derived_shape.string_index_signature().copied(),
                     number_index: derived_shape.number_index,
-                    symbol_index: derived_shape.symbol_index,
+                    symbol_index: derived_shape.symbol_index_signature().copied(),
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })
@@ -1565,14 +1569,16 @@ impl<'a> CheckerState<'a> {
                 factory.object_with_index(ObjectShape {
                     properties,
                     string_index: derived_shape
-                        .string_index
-                        .or_else(|| base_shape.string_index),
+                        .string_index_signature()
+                        .copied()
+                        .or_else(|| base_shape.string_index_signature().copied()),
                     number_index: derived_shape
                         .number_index
                         .or_else(|| base_shape.number_index),
                     symbol_index: derived_shape
-                        .symbol_index
-                        .or_else(|| base_shape.symbol_index),
+                        .symbol_index_signature()
+                        .copied()
+                        .or_else(|| base_shape.symbol_index_signature().copied()),
                     symbol: derived_shape.symbol,
                     ..ObjectShape::default()
                 })
@@ -1659,8 +1665,17 @@ impl<'a> CheckerState<'a> {
                         );
                         factory.object_with_index(ObjectShape {
                             properties,
-                            string_index: derived_shape.string_index,
-                            number_index: derived_shape.number_index,
+                            string_index: derived_shape
+                                .string_index_signature()
+                                .copied()
+                                .or_else(|| base_shape.string_index_signature().copied()),
+                            number_index: derived_shape
+                                .number_index
+                                .or_else(|| base_shape.number_index),
+                            symbol_index: derived_shape
+                                .symbol_index_signature()
+                                .copied()
+                                .or_else(|| base_shape.symbol_index_signature().copied()),
                             symbol: derived_shape.symbol,
                             ..ObjectShape::default()
                         })

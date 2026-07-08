@@ -775,6 +775,33 @@ impl<'a> CheckerState<'a> {
         let Some(mapped_id) =
             crate::query_boundaries::common::mapped_type_id(self.ctx.types, object_type)
         else {
+            // An intersection receiver (e.g. a `'k' in x` narrowing result
+            // `MappedAlias & Record<"k", unknown>`) reads properties member-by-
+            // member, and a mapped member's key constraint holds the same
+            // unresolved semantic refs a top-level mapped receiver would. The
+            // solver's resolver-less membership probe treats an unresolved
+            // `keyof` constraint permissively (claiming every key), so resolve
+            // each mapped member's constraint here exactly like the top-level
+            // case; only rebuild when a member actually changed.
+            if let Some(members) =
+                crate::query_boundaries::type_checking_utilities::get_intersection_members(
+                    self.ctx.types,
+                    object_type,
+                )
+            {
+                let mut changed = false;
+                let resolved: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let new_member = self.resolve_mapped_constraint_for_property_access(member);
+                        changed |= new_member != member;
+                        new_member
+                    })
+                    .collect();
+                if changed {
+                    return tsz_solver::utils::intersection_or_single(self.ctx.types, resolved);
+                }
+            }
             return object_type;
         };
         let mapped = self.ctx.types.mapped_type(mapped_id);

@@ -794,6 +794,44 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_template_expression_with_request(idx, &TypingRequest::NONE)
     }
 
+    /// Is this node the bracket argument of an element access, looking
+    /// through parentheses? Mirrors the element-access arm of tsc's
+    /// `isTemplateLiteralContext`: `obj[`a-${x}`]` and `obj[(`a-${x}`)]` type
+    /// the template as a template-literal type; other positions default to
+    /// `string`.
+    fn is_element_access_index_context(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ELEMENT_ACCESS_EXPRESSION, PARENTHESIZED_EXPRESSION,
+        };
+        let mut current = idx;
+        // Bounded walk: parenthesized wrappers only, then one decisive parent.
+        for _ in 0..32 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+            if parent_node.kind == ELEMENT_ACCESS_EXPRESSION {
+                return self
+                    .ctx
+                    .arena
+                    .get_access_expr(parent_node)
+                    .is_some_and(|access| access.name_or_argument == current);
+            }
+            return false;
+        }
+        false
+    }
+
     pub(crate) fn get_type_of_template_expression_with_request(
         &mut self,
         idx: NodeIndex,
@@ -902,7 +940,14 @@ impl<'a> CheckerState<'a> {
         // Check if we're in a template literal context:
         // 1. Contextual type is/contains a template literal type or string literal type
         // 2. Inside a const assertion (as const)
-        let in_template_context = self.ctx.in_const_assertion || template_contextual_type.is_some();
+        // 3. The template is the bracket argument of an element access
+        //    (tsc's `isTemplateLiteralContext`): `obj[`foo-${x}`]` types the
+        //    argument as the template-literal type `` `foo-${string}` `` so it
+        //    can match pattern index signatures by shape; a plain `string`
+        //    argument stays TS7053 against pattern-only receivers.
+        let in_template_context = self.ctx.in_const_assertion
+            || template_contextual_type.is_some()
+            || self.is_element_access_index_context(idx);
 
         if in_template_context {
             // Construct a template literal type preserving type parameter shapes
