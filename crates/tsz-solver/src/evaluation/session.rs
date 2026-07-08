@@ -11,7 +11,7 @@
 
 use crate::evaluation::request::EvaluationCacheKey;
 use crate::types::TypeId;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
 
 /// Maximum global instantiation depth — bounds nesting of
@@ -48,6 +48,53 @@ const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = crate::limits::MAX_CONDITIONAL_SUBTYP
 
 /// Maximum infer-match fresh-evaluator expansion depth.
 const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = crate::limits::MAX_INFER_MATCH_EXPANSION_DEPTH;
+
+/// Maximum concurrent (in-flight) expansions of one `Application` node across
+/// evaluator instances.
+const MAX_CROSS_EVAL_APPLICATION_EXPANSION: u32 =
+    crate::limits::MAX_CROSS_EVAL_APPLICATION_EXPANSION;
+
+/// Counted in-flight registry of `TypeId`s being expanded across the
+/// evaluator instances of one session.
+///
+/// One mechanism, two instances: the fresh-evaluator boundary roots
+/// (`cross_eval_active`, limit 1 — the historical membership set) and the
+/// nested `Application` sentinel (`application_expansion_active`, limit
+/// [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`]) share this counter so the two
+/// "defer to the in-flight owner" policies cannot drift apart.
+#[derive(Default)]
+struct InFlightTypeCounter {
+    active: RefCell<FxHashMap<TypeId, u32>>,
+}
+
+impl InFlightTypeCounter {
+    /// Record one in-flight expansion of `node` unless `limit` expansions
+    /// are already active. A `true` return must be balanced by
+    /// [`Self::leave`].
+    fn enter(&self, node: TypeId, limit: u32) -> bool {
+        let mut active = self.active.borrow_mut();
+        let count = active.entry(node).or_insert(0);
+        if *count >= limit {
+            return false;
+        }
+        *count += 1;
+        true
+    }
+
+    /// Balance one successful [`Self::enter`] of `node`. Entries drop out of
+    /// the map at zero so the thread-lifetime default session never
+    /// accumulates dead keys.
+    fn leave(&self, node: TypeId) {
+        use std::collections::hash_map::Entry;
+        if let Entry::Occupied(mut entry) = self.active.borrow_mut().entry(node) {
+            if *entry.get() <= 1 {
+                entry.remove();
+            } else {
+                *entry.get_mut() -= 1;
+            }
+        }
+    }
+}
 
 /// Whether the shared evaluation session can enter another instantiation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -164,9 +211,15 @@ pub struct EvaluationSession {
     /// Checker type-reference alias-forwarding depth.
     type_reference_resolution_depth: Cell<u32>,
     /// `TypeId`s currently expanded by fresh evaluators in this session.
-    cross_eval_active: RefCell<FxHashSet<TypeId>>,
+    cross_eval_active: InFlightTypeCounter,
     /// Per-top-level-query memo for stable fresh-evaluator results.
     query_memo: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
+    /// In-flight expansion count per `Application` node across every
+    /// evaluator instance in this session. A fresh evaluator re-entering a
+    /// node that [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`] instances are
+    /// already expanding must defer to the in-flight owner instead of
+    /// re-walking the alias graph (issue #13508 root cause B).
+    application_expansion_active: InFlightTypeCounter,
 }
 
 /// RAII entry for one conditional-subtype relation probe in an
@@ -262,8 +315,9 @@ impl EvaluationSession {
             conditional_subtype_depth: Cell::new(0),
             infer_match_expansion_depth: Cell::new(0),
             type_reference_resolution_depth: Cell::new(0),
-            cross_eval_active: RefCell::new(FxHashSet::default()),
+            cross_eval_active: InFlightTypeCounter::default(),
             query_memo: RefCell::new(FxHashMap::default()),
+            application_expansion_active: InFlightTypeCounter::default(),
         }
     }
 
@@ -557,13 +611,35 @@ impl EvaluationSession {
     /// Returns `false` when this session is already expanding the same type.
     #[inline]
     pub(crate) fn enter_cross_eval_type(&self, type_id: TypeId) -> bool {
-        self.cross_eval_active.borrow_mut().insert(type_id)
+        self.cross_eval_active.enter(type_id, 1)
     }
 
     /// Leave cross-evaluator expansion of `type_id`.
     #[inline]
     pub(crate) fn leave_cross_eval_type(&self, type_id: TypeId) {
-        self.cross_eval_active.borrow_mut().remove(&type_id);
+        self.cross_eval_active.leave(type_id);
+    }
+
+    /// Enter one cross-evaluator expansion of an `Application` node.
+    ///
+    /// Returns `false` when [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`]
+    /// evaluator instances in this session are already expanding the same
+    /// node — the caller must then defer (keep the application opaque) and
+    /// let the in-flight owner produce the result. A `true` return records
+    /// the entry and must be balanced by
+    /// [`leave_application_expansion`](Self::leave_application_expansion).
+    #[inline]
+    pub(crate) fn enter_application_expansion(&self, node: TypeId) -> bool {
+        self.application_expansion_active
+            .enter(node, MAX_CROSS_EVAL_APPLICATION_EXPANSION)
+    }
+
+    /// Leave one cross-evaluator expansion of an `Application` node.
+    /// Balanced with a successful
+    /// [`enter_application_expansion`](Self::enter_application_expansion).
+    #[inline]
+    pub(crate) fn leave_application_expansion(&self, node: TypeId) {
+        self.application_expansion_active.leave(node);
     }
 
     /// Look up a stable fresh-evaluator result for the current top-level query.
@@ -592,6 +668,21 @@ thread_local! {
 /// Borrow the current thread's default evaluation session.
 pub(crate) fn with_current_session<T>(f: impl FnOnce(&EvaluationSession) -> T) -> T {
     CURRENT_SESSION.with(f)
+}
+
+/// Run `f` against `session` when one was threaded in, falling back to the
+/// thread's current session otherwise — the single definition of the session
+/// choice every fresh-evaluator boundary makes, so cross-evaluator state
+/// (in-flight expansion sentinels, per-query memos) is shared regardless of
+/// which boundary spawned the evaluator.
+pub(crate) fn with_session_or_current<T>(
+    session: Option<&EvaluationSession>,
+    f: impl FnOnce(&EvaluationSession) -> T,
+) -> T {
+    match session {
+        Some(session) => f(session),
+        None => with_current_session(f),
+    }
 }
 
 #[cfg(test)]
@@ -811,6 +902,55 @@ mod tests {
         assert_eq!(session.query_memo_get(default_key), None);
         assert_eq!(session.query_memo_get(no_unchecked_key), None);
         assert_eq!(session.query_memo_get(exact_optional_key), None);
+    }
+
+    #[test]
+    fn application_expansion_sentinel_defers_at_limit_and_rebalances() {
+        let session = EvaluationSession::new();
+        let node = TypeId(4321);
+
+        let mut entered = 0;
+        while session.enter_application_expansion(node) {
+            entered += 1;
+            assert!(
+                entered <= MAX_CROSS_EVAL_APPLICATION_EXPANSION,
+                "enter must deny past the in-flight expansion limit"
+            );
+        }
+        assert_eq!(entered, MAX_CROSS_EVAL_APPLICATION_EXPANSION);
+        assert!(
+            !session.enter_application_expansion(node),
+            "an at-limit node must keep deferring until an owner leaves"
+        );
+
+        session.leave_application_expansion(node);
+        assert!(
+            session.enter_application_expansion(node),
+            "leaving one expansion frees one re-entry slot"
+        );
+        for _ in 0..entered {
+            session.leave_application_expansion(node);
+        }
+        assert!(
+            session.enter_application_expansion(node),
+            "a fully-unwound node is enterable again"
+        );
+    }
+
+    #[test]
+    fn application_expansion_sentinel_tracks_nodes_independently() {
+        let session = EvaluationSession::new();
+        let hot = TypeId(11);
+        let other = TypeId(12);
+
+        for _ in 0..MAX_CROSS_EVAL_APPLICATION_EXPANSION {
+            assert!(session.enter_application_expansion(hot));
+        }
+        assert!(!session.enter_application_expansion(hot));
+        assert!(
+            session.enter_application_expansion(other),
+            "an at-limit node must not defer expansions of a different node"
+        );
     }
 
     #[test]

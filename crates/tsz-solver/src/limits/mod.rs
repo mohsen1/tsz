@@ -41,6 +41,7 @@
 //! | Cross-evaluator stack depth, thread-local (this module) | [`MAX_GLOBAL_EVAL_DEPTH`] = 200 live frames | none (fresh-instance artifact) | silent opaque bail (`mark_silent_depth_bailed`) | deep `implements` chains |
 //! | Conditional subtype relation depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CONDITIONAL_SUBTYPE_DEPTH`] = 50 re-entrant branch probes | `instantiationDepth` adjacent | conservative false, not published to branch cache | recursive conditional subtype probes |
 //! | Infer-match fresh-evaluator expansion depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_INFER_MATCH_EXPANSION_DEPTH`] = 100 nested expansions | `instantiationDepth` | leave source/pattern opaque and skip infer expansion | recursive conditional/`infer` wrappers |
+//! | In-flight `Application` expansion, `EvaluationSession` (`evaluation/session.rs`, enforced in `evaluation/evaluate/application.rs` Phase 4.5) | [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`] = 2 concurrent expansions per node | `resolvingType` in-progress marker | defer re-entry: keep the application opaque, taint via `mark_unresolved_def_seen`; TS2589 detection pass exempt | `cross_eval_application_sentinel_tests`, typebox `type/engine` interpreter (#13508) |
 //! | Checker lazy-resolution fuel, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_LAZY_RESOLUTION_FUEL`] = 50k forced lazy/enum/type-query resolutions | no direct analogue (checker readiness artifact) | stop publishing degraded memo/failure results and leave remaining refs lazy | `lazy_lib_fuel_determinism`, DOM fuel exhaustion tests |
 //! | Checker lazy-readiness guards, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_DEPTH`] = 1, [`MAX_CHECKER_APP_SYMBOL_RESOLUTION_FUEL`] = 200, [`MAX_CHECKER_REFS_RESOLUTION_FUEL`] = 2000, [`MAX_CHECKER_EVAL_ENV_DEPTH`] = 5 | no direct analogue (checker eager-readiness artifact) | stop the local readiness prewalk or leave env-eval root opaque | `lazy_guard_state`, `lazy_resolution_session_scans` |
 //! | Type-reference alias-forwarding depth, `EvaluationSession` (`evaluation/session.rs`) | [`MAX_TYPE_REFERENCE_RESOLUTION_DEPTH`] = 350 nested alias forwards | none (checker alias-resolution artifact) | checker leaves the symbol as its own `Lazy(DefId)` reference | #13212 raw-`SymbolId` alias ping-pong witness, `symbol_types_tests::type_reference_depth_cap_falls_back_to_own_lazy_reference` |
@@ -174,6 +175,27 @@ pub(crate) const MAX_CONDITIONAL_SUBTYPE_DEPTH: u32 = 50;
 /// the source or pattern unchanged instead of recursing through another fresh
 /// evaluator with empty per-instance guards.
 pub(crate) const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
+
+/// Maximum concurrent (in-flight) expansions of one `Application` node across
+/// every `TypeEvaluator` instance in an evaluation session.
+///
+/// A single evaluator's `RecursionGuard<TypeId>` already collapses same-node
+/// re-entry within that instance, but relation probes and infer-pattern
+/// matching spin up *fresh* evaluators mid-expansion whose per-instance guards
+/// start empty. On a mutually-recursive conditional-alias graph (the typebox
+/// `type/engine` `TInstantiateType` interpreter, issue #13508 root cause B)
+/// each fresh evaluator re-expands the same in-flight `Application(DefId,
+/// args)` from scratch, so the work multiplies per relation level until the
+/// depth caps fire — and the caps then block every application-eval cache
+/// write (the limit ↔ sharing circularity).
+///
+/// `tsc` never re-enters an in-flight instantiation: `getTypeAliasInstantiation`
+/// returns the in-progress type (`resolvingType` semantics) and lets the
+/// outermost expansion own the result. A value of `2` mirrors that while
+/// still allowing one nested cross-evaluator re-expansion for shapes whose
+/// convergence tsz derives through a relation probe of the partially-expanded
+/// form (a fresh-evaluator idiom tsc does not share).
+pub(crate) const MAX_CROSS_EVAL_APPLICATION_EXPANSION: u32 = 2;
 
 /// Maximum checker lazy-resolution fuel across all top-level calls in one
 /// shared evaluation session.

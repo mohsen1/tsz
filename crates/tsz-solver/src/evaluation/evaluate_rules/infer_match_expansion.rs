@@ -289,10 +289,7 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
     /// matching, bounded by the owning evaluation session's cross-evaluator
     /// expansion depth.
     pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
-        if let Some(session) = self.evaluation_session() {
-            return self.evaluate_for_infer_match_with_session(type_id, session);
-        }
-        crate::evaluation::session::with_current_session(|session| {
+        self.with_evaluation_session_scope(|session| {
             self.evaluate_for_infer_match_with_session(type_id, session)
         })
     }
