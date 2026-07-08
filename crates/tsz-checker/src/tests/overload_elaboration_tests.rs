@@ -269,12 +269,6 @@ fn as_pairs(chain: &[(u8, String)]) -> Vec<(u8, &str)> {
     chain.iter().map(|(d, m)| (*d, m.as_str())).collect()
 }
 
-/// Borrowing view of a full `(depth, code, message)` chain for comparison
-/// against literal expectations.
-fn as_triples(chain: &[(u8, u32, String)]) -> Vec<(u8, u32, &str)> {
-    chain.iter().map(|(d, c, m)| (*d, *c, m.as_str())).collect()
-}
-
 /// The messages of every chain line at exactly `depth`.
 fn lines_at_depth(chain: &[(u8, String)], depth: u8) -> Vec<&str> {
     chain
@@ -524,13 +518,37 @@ var r = make(seed).pick(v => {});
     );
 }
 
-/// Four or more argument-error candidates collapse to a single `TS2770`
-/// header wrapping only the *last* candidate's error — no `TS2772` headers,
-/// no lines from the earlier candidates (differential-verified against
+/// Assert the `TS2770` collapse shape: exactly one header line plus the last
+/// candidate's `TS2345` naming `last_param_ty` — no `TS2772` headers, no
+/// lines from the earlier candidates (differential-verified against
 /// tsc 6.0.2).
+fn assert_last_overload_collapse(source: &str, last_param_ty: &str) {
+    let chain = overload_chain(source);
+    assert_eq!(
+        chain,
+        vec![
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                format!(
+                    "Argument of type 'symbol' is not assignable to parameter of type '{last_param_ty}'."
+                )
+            ),
+        ],
+        "expected a single TS2770 chain holding only the last candidate's error"
+    );
+}
+
+/// Four or more argument-error candidates collapse to a single `TS2770`
+/// header wrapping only the *last* candidate's error.
 #[test]
 fn four_or_more_overloads_collapse_to_last_overload_header() {
-    let chain = overload_chain(
+    assert_last_overload_collapse(
         r#"
 declare function f(x: number): number;
 declare function f(x: string): string;
@@ -539,19 +557,7 @@ declare function f(x: object): symbol;
 declare const sym: symbol;
 f(sym);
 "#,
-    );
-
-    assert_eq!(
-        as_triples(&chain),
-        vec![
-            (0, 2770, "The last overload gave the following error."),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'object'."
-            ),
-        ],
-        "expected a single TS2770 chain holding only the last candidate's error"
+        "object",
     );
 }
 
@@ -622,7 +628,7 @@ fn collapse_and_exclusion_are_independent_of_binder_names() {
 /// declaration order is the one shown.
 #[test]
 fn four_argument_error_candidates_plus_arity_still_collapse() {
-    let chain = overload_chain(
+    assert_last_overload_collapse(
         r#"
 declare function r(a: string): void;
 declare function r(a: number, b: number): void;
@@ -632,19 +638,7 @@ declare function r(a: number[]): void;
 declare const sym: symbol;
 r(sym);
 "#,
-    );
-
-    assert_eq!(
-        as_triples(&chain),
-        vec![
-            (0, 2770, "The last overload gave the following error."),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'number[]'."
-            ),
-        ],
-        "expected the TS2770 collapse keyed on argument-error candidates"
+        "number[]",
     );
 }
 
@@ -681,7 +675,7 @@ q((x: symbol) => {});
 /// Constructor (`new`) overload sets collapse through the same policy.
 #[test]
 fn constructor_overloads_collapse_to_last_overload_header() {
-    let chain = overload_chain(
+    assert_last_overload_collapse(
         r#"
 interface Maker {
     new (a: string): object;
@@ -693,19 +687,7 @@ declare const Maker: Maker;
 declare const sym: symbol;
 new Maker(sym);
 "#,
-    );
-
-    assert_eq!(
-        as_triples(&chain),
-        vec![
-            (0, 2770, "The last overload gave the following error."),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'object'."
-            ),
-        ],
-        "expected the constructor set to collapse to only the last candidate's error"
+        "object",
     );
 }
 

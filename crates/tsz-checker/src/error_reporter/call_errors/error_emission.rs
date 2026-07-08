@@ -757,6 +757,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report "No overload matches this call" with related overload failures.
+    ///
+    /// Contract: `failures` carries exactly one entry per failed overload
+    /// candidate, in declaration order — the `Overload {i} of {N}` total
+    /// renders its length.
     pub fn error_no_overload_matches_at(
         &mut self,
         idx: NodeIndex,
@@ -1083,7 +1087,6 @@ impl<'a> CheckerState<'a> {
         let every_candidate_signed = chain_candidates
             .iter()
             .all(|failure| failure.overload_signature.is_some());
-        #[derive(PartialEq, Eq)]
         enum ChainShape {
             /// Fewer than 2 argument-error candidates, or a candidate without
             /// a declared signature: historical flat rendering.
@@ -1094,11 +1097,14 @@ impl<'a> CheckerState<'a> {
             /// the last candidate.
             LastOverload,
         }
-        let shape = match chain_candidates.len() {
-            _ if !every_candidate_signed => ChainShape::Flat,
-            0 | 1 => ChainShape::Flat,
-            2 | 3 => ChainShape::PerOverload,
-            _ => ChainShape::LastOverload,
+        let shape = if !every_candidate_signed {
+            ChainShape::Flat
+        } else {
+            match chain_candidates.len() {
+                0 | 1 => ChainShape::Flat,
+                2 | 3 => ChainShape::PerOverload,
+                _ => ChainShape::LastOverload,
+            }
         };
         let wrapped_candidates: &[&tsz_solver::PendingDiagnostic] = match shape {
             ChainShape::Flat => &[],
@@ -1139,7 +1145,7 @@ impl<'a> CheckerState<'a> {
                 }
             };
 
-        let related_policy = if shape == ChainShape::Flat {
+        let related_policy = if matches!(shape, ChainShape::Flat) {
             for failure in failures {
                 let pending = self.overload_failure_generalized_pending(failure, &span);
                 let diag = formatter.render(&pending);
@@ -1152,7 +1158,7 @@ impl<'a> CheckerState<'a> {
             for (ordinal, (failure, chain)) in
                 wrapped_candidates.iter().zip(candidate_chains).enumerate()
             {
-                let (header_message, header_code) = if shape == ChainShape::LastOverload {
+                let (header_message, header_code) = if matches!(shape, ChainShape::LastOverload) {
                     (
                         diagnostic_messages::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR.to_string(),
                         diagnostic_codes::THE_LAST_OVERLOAD_GAVE_THE_FOLLOWING_ERROR,
