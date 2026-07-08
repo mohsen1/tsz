@@ -1059,9 +1059,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let mut related = Vec::new();
-        let mut formatter = self.ctx.create_type_formatter();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), anchor.start, anchor.length);
+        // Generalize every candidate failure's literal source up front: the
+        // generalization needs `&mut self`, which cannot run while the
+        // formatter below borrows the checker context.
+        let generalized_pendings: Vec<tsz_solver::PendingDiagnostic> = failures
+            .iter()
+            .map(|failure| self.overload_failure_generalized_pending(failure, &span))
+            .collect();
+        let mut formatter = self.ctx.create_type_formatter();
 
         tracing::debug!("File name: {}", self.ctx.file_name);
 
@@ -1095,7 +1102,9 @@ impl<'a> CheckerState<'a> {
 
         let related_policy = if wrap_overloads {
             let total = failures.len();
-            for (ordinal, failure) in failures.iter().enumerate() {
+            for (ordinal, (failure, pending)) in
+                failures.iter().zip(&generalized_pendings).enumerate()
+            {
                 let signature = failure
                     .overload_signature
                     .expect("wrap_overloads requires every failure to carry a signature");
@@ -1117,8 +1126,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::OVERLOAD_OF_GAVE_THE_FOLLOWING_ERROR,
                     0,
                 ));
-                let pending = self.overload_failure_generalized_pending(failure, &span);
-                let diag = formatter.render(&pending);
+                let diag = formatter.render(pending);
                 let diag_span = diag.span.as_ref().unwrap_or(&span);
                 // The candidate's applicability error nests one level under its
                 // TS2772 header; any deeper chain it carries nests below that.
@@ -1134,9 +1142,8 @@ impl<'a> CheckerState<'a> {
             }
             RelatedInformationPolicy::OVERLOAD_CHAINS
         } else {
-            for failure in failures {
-                let pending = self.overload_failure_generalized_pending(failure, &span);
-                let diag = formatter.render(&pending);
+            for pending in &generalized_pendings {
+                let diag = formatter.render(pending);
                 if let Some(diag_span) = diag.span.as_ref() {
                     related.push(related_line(diag_span, diag.message, diag.code, 0));
                 }
@@ -1164,7 +1171,7 @@ impl<'a> CheckerState<'a> {
     /// raw literal source, so without this the overload elaboration diverges
     /// from tsc (and from the single-overload TS2345 display).
     fn overload_failure_generalized_pending(
-        &self,
+        &mut self,
         failure: &tsz_solver::PendingDiagnostic,
         span: &tsz_solver::SourceSpan,
     ) -> tsz_solver::PendingDiagnostic {
@@ -1179,12 +1186,7 @@ impl<'a> CheckerState<'a> {
             ) = (pending.args.first(), pending.args.get(1))
         {
             let (source, target) = (*source, *target);
-            let display_source =
-                crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                    self.ctx.types,
-                    source,
-                    target,
-                );
+            let display_source = self.generalize_nested_relation_source_for_display(source, target);
             if display_source != source {
                 pending.args[0] = tsz_solver::DiagnosticArg::Type(display_source);
             }

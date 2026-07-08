@@ -49,11 +49,16 @@ impl<'a> CheckerState<'a> {
     /// parameters).
     ///
     /// tsc applies this in every relation-error report. tsz's top-level
-    /// assignability messages already generalize through their display roles
-    /// (and the TS2769 overload elaboration through
-    /// `overload_failure_generalized_pending`), so this entry serves the
-    /// nested chain leaves — property / array-element / tuple-position frames
-    /// — which previously leaked the raw literal source (#15626).
+    /// assignability messages already generalize through their display roles,
+    /// so this entry serves the nested chain leaves — property / array-element
+    /// / tuple-position / return frames — and the TS2769 overload elaboration
+    /// (`overload_failure_generalized_pending`), which previously leaked the
+    /// raw literal source (#15626).
+    ///
+    /// The top-level assignment surface keeps its own, older enum-member
+    /// policy (`should_widen_enum_member_assignment_source`) with a different
+    /// target gate; migrating it onto this tsc-shaped gate is tracked
+    /// follow-up work, not silently changed here.
     pub(in crate::error_reporter) fn generalize_nested_relation_source_for_display(
         &mut self,
         source: TypeId,

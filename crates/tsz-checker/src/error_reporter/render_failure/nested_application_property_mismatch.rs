@@ -259,20 +259,29 @@ impl<'a> CheckerState<'a> {
             let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth);
             Self::push_nested_chain(diag, leaf_diag, depth);
         } else {
-            let display_src =
-                self.generalize_nested_relation_source_for_display(leaf_src, leaf_tgt);
-            let s = self.format_type_diagnostic(display_src);
-            let t = self.format_type_diagnostic(leaf_tgt);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&s, &t],
-            );
+            let message = self.generalized_leaf_mismatch_message(leaf_src, leaf_tgt);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 depth,
             );
         }
+    }
+
+    /// Format the plain `Type 'S' is not assignable to type 'T'.` leaf line
+    /// for a nested relation pair, applying the literal-source generalization
+    /// ([`Self::generalize_nested_relation_source_for_display`]) before
+    /// rendering. Unlike [`Self::element_mismatch_message`] this variant skips
+    /// the same-name pair disambiguation, preserving the exact output of the
+    /// leaf sites it factored out.
+    fn generalized_leaf_mismatch_message(&mut self, source: TypeId, target: TypeId) -> String {
+        let display_source = self.generalize_nested_relation_source_for_display(source, target);
+        let source_str = self.format_type_diagnostic(display_source);
+        let target_str = self.format_type_diagnostic(target);
+        format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        )
     }
 
     pub(super) fn render_property_type_mismatch(
@@ -669,7 +678,7 @@ impl<'a> CheckerState<'a> {
             let source_str = self.format_type_diagnostic(display_return);
             let target_str = self.format_type_diagnostic(target_return);
             let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                source_return,
+                display_return,
                 target_return,
                 source_str,
                 target_str,
@@ -856,16 +865,8 @@ impl<'a> CheckerState<'a> {
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
     ) -> Diagnostic {
         let depth = ctx.depth;
-        let element_message = {
-            let display_element =
-                self.generalize_nested_relation_source_for_display(source_element, target_element);
-            let source_str = self.format_type_diagnostic(display_element);
-            let target_str = self.format_type_diagnostic(target_element);
-            format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            )
-        };
+        let element_message =
+            self.generalized_leaf_mismatch_message(source_element, target_element);
         let needs_header = nested_reason.is_some_and(Self::tuple_element_nested_needs_header);
 
         // Deeper levels (`depth > 0`) whose element self-heads: the nested
@@ -1560,14 +1561,7 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
             Self::push_nested_chain(diag, nested_diag, depth + 1);
         } else {
-            let display_element =
-                self.generalize_nested_relation_source_for_display(source_element, target_element);
-            let source_str = self.format_type_diagnostic(display_element);
-            let target_str = self.format_type_diagnostic(target_element);
-            let message = format_message(
-                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                &[&source_str, &target_str],
-            );
+            let message = self.generalized_leaf_mismatch_message(source_element, target_element);
             diag.push_elaboration(
                 message,
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
