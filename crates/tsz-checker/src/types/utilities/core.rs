@@ -540,8 +540,13 @@ impl<'a> CheckerState<'a> {
     /// literal types (e.g., `2` stays `2`, not `number`). This is used in operator
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
-        // Check if this is an enum member type that should widen to parent enum
+        // Check if this is an enum member type that should widen to parent
+        // enum. A member reference can still be the deferred `Lazy(DefId)`
+        // semantic ref (e.g. an object-property annotation `{ a: E.X }`), so
+        // fall back to the lazy def id when the ref has not been evaluated to
+        // its `Enum` data yet.
         if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
         {
             let parent_def_id = self
                 .ctx
@@ -574,7 +579,10 @@ impl<'a> CheckerState<'a> {
     /// Enum member types (e.g., `Colors.Red`) should widen to the parent enum type
     /// when assigned to mutable bindings, even if they're not "fresh" literals.
     pub(crate) fn is_enum_member_type_for_widening(&self, type_id: TypeId) -> bool {
+        // Like `widen_enum_member_type`, accept both the evaluated `Enum`
+        // member data and the deferred `Lazy(DefId)` member ref.
         if let Some(def_id) = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
         {
             // Check if this DefId has a parent (meaning it's a member, not the enum itself)
             return self

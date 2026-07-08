@@ -211,6 +211,13 @@ impl<'a> TypeFormatter<'a> {
                 {
                     return self.format(body);
                 }
+                // A still-deferred enum *member* ref (e.g. an object-property
+                // annotation `{ a: E.X }` keeps the member as `Lazy(DefId)`)
+                // renders like the evaluated `Enum` member data: qualified
+                // `E.X`, or the bare enum name for a single-member enum.
+                if let Some(name) = self.format_enum_member_ref(*def_id) {
+                    return name.into();
+                }
                 self.format_def_id_with_type_params(*def_id, "Lazy").into()
             }
             TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
@@ -848,11 +855,18 @@ impl<'a> TypeFormatter<'a> {
                 format!("{}<{}>", kind_name, self.format(*type_arg)).into()
             }
             TypeData::Enum(def_id, _member_type) => {
-                // Enum members should be qualified with their parent enum name
-                // (e.g., `Foo.A` not just `A`). Try the symbol arena first, which
-                // walks the parent chain and qualifies enum members correctly.
-                // Use the definition's stored symbol_id (not the raw def_id) to
-                // find the correct binder symbol.
+                // Enum members render through the shared member-ref display:
+                // qualified with the parent enum (`Foo.A`), except that a
+                // single-member enum's member type IS the enum type in tsc and
+                // renders as the bare enum name (`Foo`).
+                if let Some(name) = self.format_enum_member_ref(*def_id) {
+                    return name.into();
+                }
+                // Not a registered member (the enum type itself, or no parent
+                // edge yet): try the symbol arena, which walks the parent chain
+                // and qualifies enum members correctly. Use the definition's
+                // stored symbol_id (not the raw def_id) to find the correct
+                // binder symbol.
                 if let Some(def_store) = self.def_store
                     && let Some(def) = def_store.get(*def_id)
                     && let Some(sym_raw) = def.symbol_id

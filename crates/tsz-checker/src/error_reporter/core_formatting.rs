@@ -267,6 +267,20 @@ impl<'a> CheckerState<'a> {
             && def.kind == tsz_solver::def::DefKind::TypeAlias
             && def.type_params.is_empty()
         {
+            // A type-position `E.X` reference is stabilized as a def whose
+            // binder symbol carries `ENUM_MEMBER`; the alias-name fallthrough
+            // below would leak the bare member name (`X`). Route it through
+            // the enum naming so it renders qualified (`E.X`) — or as the
+            // bare enum name for a single-member enum (tsc identity).
+            if def
+                .symbol_id
+                .map(tsz_binder::SymbolId)
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER))
+                && let Some(name) = self.format_qualified_enum_name_for_message(ty)
+            {
+                return name;
+            }
             if let Some(body) = def.body {
                 if crate::query_boundaries::common::is_type_query_type(self.ctx.types, body)
                     || self.type_alias_definition_body_is_type_query(&def)
@@ -1390,12 +1404,77 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn format_qualified_enum_name_for_message(&mut self, ty: TypeId) -> Option<String> {
-        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty)?;
-        let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
+        // Accept both the evaluated `Enum` data and a still-deferred
+        // `Lazy(DefId)` member ref (a type-position `E.X` annotation is
+        // stabilized as a def whose binder symbol carries `ENUM_MEMBER`).
+        // The lazy form is gated on the enum symbol flags below so ordinary
+        // alias/interface refs never reach the enum naming.
+        let enum_data_def = crate::query_boundaries::common::enum_def_id(self.ctx.types, ty);
+        let def_id = enum_data_def
+            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty))?;
+        // Definition-store parent edge first: it covers member defs whose
+        // binder symbol is not wired (`def_to_symbol_id_with_fallback` fails
+        // and the bare member name would leak), and it encodes tsc's
+        // single-member identity — a single-member enum's member type IS the
+        // enum type and renders as the bare enum name.
+        if let Some(parent_id) = self
+            .ctx
+            .definition_store
+            .get_enum_parent(def_id)
+            .or_else(|| {
+                // The per-file environment map covers member defs the shared
+                // store never saw (the widening paths already read it).
+                self.ctx
+                    .type_env
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| env.get_enum_parent(def_id))
+            })
+            .or_else(|| {
+                // Relation-level member refs can carry a canonicalized twin of
+                // the decl-site def that the shared parent map never saw; the
+                // resolver's symbol-based lookup covers those.
+                tsz_solver::resolver::TypeResolver::get_enum_parent_def_id(&self.ctx, def_id)
+            })
+            && let Some(parent) = self.ctx.definition_store.get(parent_id)
+        {
+            let parent_name = self.ctx.types.resolve_atom_ref(parent.name).to_string();
+            if parent.enum_members.len() == 1 {
+                return Some(parent_name);
+            }
+            if let Some(def) = self.ctx.definition_store.get(def_id) {
+                let member_name = self.ctx.types.resolve_atom_ref(def.name);
+                return Some(format!("{parent_name}.{member_name}"));
+            }
+        }
+        let sym_id = self
+            .ctx
+            .def_to_symbol_id_with_fallback(def_id)
+            .or_else(|| {
+                self.ctx
+                    .definition_store
+                    .get(def_id)
+                    .and_then(|def| def.symbol_id)
+                    .map(tsz_binder::SymbolId)
+            })?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
             let parent = self.ctx.binder.get_symbol(symbol.parent)?;
+            // tsc single-member identity: the lone member's type IS the enum
+            // type, so it displays as the bare enum name.
+            if parent
+                .exports
+                .as_ref()
+                .is_some_and(|members| members.len() == 1)
+            {
+                return Some(parent.escaped_name.clone());
+            }
             return Some(format!("{}.{}", parent.escaped_name, symbol.escaped_name));
+        }
+        // A lazy ref that is not an enum member (interface/alias/namespace)
+        // must not be renamed by the enum machinery.
+        if enum_data_def.is_none() && !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM) {
+            return None;
         }
         let mut parts = vec![symbol.escaped_name.clone()];
         let decl_idx = symbol.primary_declaration()?;

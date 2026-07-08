@@ -290,3 +290,318 @@ const port: { spin: () => boolean } = gadget;
     assert_has_related(diag, "Type 'string' is not assignable to type 'boolean'.");
     assert_no_related(diag, "Type '\"no\"' is not assignable to type 'boolean'.");
 }
+
+// ── #15628: union-of-literals sources (tsc `getBaseTypeOfLiteralTypeUnion`) ──
+
+/// An all-unit union property source generalizes member-wise: the union line
+/// renders the reduced base (`"x" | "y"` -> `string`).
+#[test]
+fn union_of_string_literals_property_line_generalizes() {
+    let source = r#"
+declare const carton: { a: "x" | "y" };
+const sinkC: { a: boolean } = carton;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_has_related(diag, "Type 'string' is not assignable to type 'boolean'.");
+    assert_no_related(
+        diag,
+        "Type '\"x\" | \"y\"' is not assignable to type 'boolean'.",
+    );
+}
+
+/// Mixed-base unit union maps each member through its base and re-unions
+/// (`true | 1` -> `number | boolean`).
+#[test]
+fn mixed_literal_union_property_line_generalizes_to_base_union() {
+    let source = r#"
+declare const blend: { e: true | 1 };
+const sinkE: { e: string } = blend;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_has_related(
+        diag,
+        "Type 'number | boolean' is not assignable to type 'string'.",
+    );
+}
+
+/// Preservation gate: a literal-union target keeps the literal-union source.
+#[test]
+fn union_of_literals_preserved_against_literal_union_target() {
+    let source = r#"
+declare const duo2: { d: "x" | "y" };
+const sinkD: { d: "w" | "z" } = duo2;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_has_related(
+        diag,
+        "Type '\"x\" | \"y\"' is not assignable to type '\"w\" | \"z\"'.",
+    );
+}
+
+/// Top-level all-unit union source generalizes too (tsc runs the same
+/// `reportRelationError` at every relation line).
+#[test]
+fn top_level_union_of_literals_generalizes() {
+    let source = r#"
+declare const pick2: "x" | "y";
+const bool2: boolean = pick2;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert!(
+        diag.message_text == "Type 'string' is not assignable to type 'boolean'.",
+        "top-level union line must generalize; got: {}",
+        diag.message_text
+    );
+}
+
+// ── #15628: top-level boolean-literal sources ──
+
+/// A declared boolean-literal source widens to `boolean` against a
+/// non-singleton target; string/number literal sources already widened.
+#[test]
+fn top_level_boolean_literal_source_generalizes() {
+    let source = r#"
+declare const flag1: true;
+const s1: string = flag1;
+declare const flag2: false;
+const n2: number = flag2;
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<&str> = diags.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        texts.contains(&"Type 'boolean' is not assignable to type 'string'."),
+        "true must widen to boolean; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Type 'boolean' is not assignable to type 'number'."),
+        "false must widen to boolean; got: {texts:?}"
+    );
+}
+
+/// Preservation gate: a boolean-literal target keeps the boolean literal.
+#[test]
+fn top_level_boolean_literal_preserved_against_literal_target() {
+    let source = r#"
+declare const flag3: true;
+const f3: false = flag3;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_eq!(
+        diag.message_text,
+        "Type 'true' is not assignable to type 'false'."
+    );
+}
+
+// ── #15628: enum members at property leaves and the tsc-shaped top-level gate ──
+
+/// Enum-member property leaves generalize to the parent enum against a
+/// primitive target (previously leaked the bare member name).
+#[test]
+fn enum_member_property_leaf_widens_to_parent_enum() {
+    let source = r#"
+enum Bulk { One = 1, Two = 2 }
+declare const crate1: { a: Bulk.One };
+const sinkA: { a: string } = crate1;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_has_related(diag, "Type 'Bulk' is not assignable to type 'string'.");
+    assert_no_related(diag, "Type 'One' is not assignable to type 'string'.");
+}
+
+/// Preservation gate: an enum-member target is singleton-capable, so the
+/// source member keeps its qualified spelling at the leaf.
+#[test]
+fn enum_member_property_leaf_preserved_against_enum_member_target() {
+    let source = r#"
+enum Left { A = 1, B = 2 }
+enum Right { C = 5, D = 6 }
+declare const holder: { a: Left.A };
+const sinkR: { a: Right.C } = holder;
+"#;
+    let diags = check_strict(source);
+    let diag = one(&diags, 2322);
+    assert_has_related(diag, "Type 'Left.A' is not assignable to type 'Right.C'.");
+    assert_no_related(diag, "Type 'A' is not assignable to type 'C'.");
+}
+
+/// tsc-shaped top-level gate: a literal target preserves the enum member
+/// (the older gate widened whenever the target was not enum/union/intersection).
+#[test]
+fn top_level_enum_member_preserved_against_literal_target() {
+    let source = r#"
+enum Gauge { Lo = 1, Hi = 2 }
+declare const g1: Gauge.Lo;
+const z1: "z" = g1;
+declare const g2: Gauge.Lo;
+const t1: `x${string}` = g2;
+declare const g3: Gauge.Lo;
+const b1: true = g3;
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<&str> = diags.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        texts.contains(&"Type 'Gauge.Lo' is not assignable to type '\"z\"'."),
+        "literal target preserves the member; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Type 'Gauge.Lo' is not assignable to type '`x${string}`'."),
+        "template-literal target preserves the member; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Type 'Gauge.Lo' is not assignable to type 'true'."),
+        "boolean-literal target preserves the member; got: {texts:?}"
+    );
+}
+
+/// TS2345 call-argument surface uses the same gate: an enum-member argument
+/// widens to the parent enum against a primitive parameter and keeps its
+/// spelling against a literal parameter.
+#[test]
+fn call_argument_enum_member_uses_singleton_gate() {
+    let source = r#"
+enum Cargo { A = 1, B = 2 }
+declare const load: Cargo.A;
+declare function sipX(x: boolean): void;
+sipX(load);
+declare const load2: Cargo.A;
+declare function pinX(x: "z"): void;
+pinX(load2);
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<&str> = diags.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        texts.contains(
+            &"Argument of type 'Cargo' is not assignable to parameter of type 'boolean'."
+        ),
+        "primitive parameter widens the member; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(
+            &"Argument of type 'Cargo.A' is not assignable to parameter of type '\"z\"'."
+        ),
+        "literal parameter preserves the member; got: {texts:?}"
+    );
+}
+
+/// A single-member enum's member type IS the enum type in tsc, so it renders
+/// as the bare enum name at every surface.
+#[test]
+fn single_member_enum_member_displays_as_enum_name() {
+    let source = r#"
+enum Solo { Only = 1 }
+enum Pair { L = 1, R = 2 }
+declare const s0: Solo.Only;
+const sp: Pair.L = s0;
+declare const s1: { a: Solo.Only };
+const so: { a: string } = s1;
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<String> = diags
+        .iter()
+        .flat_map(|d| {
+            std::iter::once(d.message_text.clone())
+                .chain(d.related_information.iter().map(|r| r.message_text.clone()))
+        })
+        .collect();
+    assert!(
+        texts
+            .iter()
+            .any(|t| t == "Type 'Solo' is not assignable to type 'Pair.L'."),
+        "single-member enum renders as the enum name; got: {texts:?}"
+    );
+    // The relation LEAF also renders the identity form. (The *object property
+    // display* `{ a: Solo.Only; }` still shows the annotation spelling — that
+    // provenance path is a separate display owner, tracked in #15628's
+    // remaining notes.)
+    assert!(
+        texts
+            .iter()
+            .any(|t| t == "Type 'Solo' is not assignable to type 'string'."),
+        "the lone member's leaf renders the enum name; got: {texts:?}"
+    );
+}
+
+/// tsc gate detail: `boolean` inside a union target flattens to `true | false`
+/// (both units), so the union preserves a literal source.
+#[test]
+fn boolean_in_union_target_preserves_literal_source() {
+    let source = r#"
+declare const five2: 5;
+const mix1: string | boolean = five2;
+declare const five3: 5;
+const mix2: string | symbol = five3;
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<&str> = diags.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        texts.contains(&"Type '5' is not assignable to type 'string | boolean'."),
+        "boolean member makes the union singleton-capable; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Type 'number' is not assignable to type 'string | symbol'."),
+        "no singleton capacity without the boolean member; got: {texts:?}"
+    );
+}
+
+// ── #15628: deferred instantiable targets answer through their constraints ──
+
+/// A deferred conditional-alias target whose default constraint contains
+/// units preserves the literal source; an all-primitive constraint widens it.
+#[test]
+fn deferred_conditional_target_answers_through_constraint() {
+    let source = r#"
+type PickU<T> = T extends string ? "a" | "b" : number;
+type PickP<T> = T extends string ? string : number;
+function scope<T>(x: T) {
+  const u: PickU<T> = "no" as const;
+  const p: PickP<T> = "no" as const;
+}
+"#;
+    let diags = check_strict(source);
+    let texts: Vec<&str> = diags.iter().map(|d| d.message_text.as_str()).collect();
+    assert!(
+        texts.contains(&"Type '\"no\"' is not assignable to type 'PickU<T>'."),
+        "unit-bearing constraint preserves the literal; got: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Type 'string' is not assignable to type 'PickP<T>'."),
+        "all-primitive constraint widens the literal; got: {texts:?}"
+    );
+}
+
+/// An indexed-access target in a generic body answers through the evaluated
+/// key-space union: unit-bearing property types preserve, primitives widen.
+#[test]
+fn deferred_indexed_access_target_answers_through_constraint() {
+    let source = r#"
+interface KnobsU { mode: "on" | "off"; size: number }
+interface KnobsP { mode: string; size: number }
+declare const feedU: { p: "no" };
+function genU<K extends keyof KnobsU>(k: K) {
+  const q: { p: KnobsU[K] } = feedU;
+}
+function genP<K extends keyof KnobsP>(k: K) {
+  const q2: { p: KnobsP[K] } = feedU;
+}
+"#;
+    let diags = check_strict(source);
+    let leaves: Vec<&str> = diags
+        .iter()
+        .flat_map(|d| d.related_information.iter())
+        .map(|r| r.message_text.as_str())
+        .collect();
+    assert!(
+        leaves.contains(&"Type '\"no\"' is not assignable to type 'KnobsU[K]'."),
+        "unit-bearing key space preserves the literal; got: {leaves:?}"
+    );
+    assert!(
+        leaves.contains(&"Type 'string' is not assignable to type 'KnobsP[K]'."),
+        "all-primitive key space widens the literal; got: {leaves:?}"
+    );
+}

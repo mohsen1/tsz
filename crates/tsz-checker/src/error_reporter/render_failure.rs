@@ -55,34 +55,58 @@ impl<'a> CheckerState<'a> {
     /// (`overload_failure_generalized_pending`), which previously leaked the
     /// raw literal source (#15626).
     ///
-    /// The top-level assignment surface keeps its own, older enum-member
-    /// policy (`should_widen_enum_member_assignment_source`) with a different
-    /// target gate; migrating it onto this tsc-shaped gate is tracked as
-    /// follow-up in #15628, not silently changed here.
+    /// An all-unit union source maps member-wise through the same bases
+    /// (tsc `getBaseTypeOfLiteralTypeUnion`): `"x" | "y"` -> `string`,
+    /// `true | 1` -> `number | boolean` (#15628).
     pub(in crate::error_reporter) fn generalize_nested_relation_source_for_display(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> TypeId {
-        let generalized =
-            crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
-                self.ctx.types,
-                source,
-                target,
-            );
+        if crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ) {
+            return source;
+        }
+        self.relation_literal_source_base_for_display(source)
+    }
+
+    /// tsc's `getBaseTypeOfLiteralType` over the checker environment: a scalar
+    /// literal widens to its primitive base, an enum member (including a
+    /// still-deferred `Lazy` member ref) to its parent enum, and an all-unit
+    /// union maps member-wise (`getBaseTypeOfLiteralTypeUnion`). Every other
+    /// type is returned unchanged. The target gate is the caller's job.
+    fn relation_literal_source_base_for_display(&mut self, source: TypeId) -> TypeId {
+        let generalized = crate::query_boundaries::diagnostics::literal_base_type_for_display(
+            self.ctx.types,
+            source,
+        );
         if generalized != source {
             return generalized;
         }
         // Enum members widen to their parent enum (tsc's
         // `getBaseTypeOfLiteralType` EnumLike branch). The parent lookup needs
         // the checker's enum environment, so it sits outside the pure query.
-        if self.is_enum_member_type_for_widening(source)
-            && !crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
-                self.ctx.types,
-                target,
-            )
-        {
+        if self.is_enum_member_type_for_widening(source) {
             return self.widen_enum_member_type(source);
+        }
+        if crate::query_boundaries::common::is_unit_type(self.ctx.types, source)
+            && let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, source)
+        {
+            let members: Vec<TypeId> = members.iter().copied().collect();
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&member| self.relation_literal_source_base_for_display(member))
+                .collect();
+            if mapped.iter().zip(members.iter()).any(|(a, b)| a != b) {
+                return crate::query_boundaries::diagnostics::union_of_generalized_literal_members(
+                    self.ctx.types,
+                    mapped,
+                );
+            }
         }
         source
     }
@@ -1696,6 +1720,7 @@ impl<'a> CheckerState<'a> {
                         },
                     )
                 };
+                let mut source_str = source_str;
                 let mut target_str = self.format_assignability_type_for_message(target, source);
                 if let Some(display) = self
                     .object_literal_property_literal_union_alias_target_display(
@@ -1705,6 +1730,13 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     target_str = display;
+                }
+                if depth > 0 {
+                    // Same-named nominal pairs at nested leaves disambiguate
+                    // like the top level (tsc `getTypeNamesForErrorDisplay`).
+                    (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
+                        source, target, source_str, target_str,
+                    );
                 }
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,

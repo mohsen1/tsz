@@ -225,6 +225,62 @@ impl<'a> TypeFormatter<'a> {
         None
     }
 
+    /// Display for an enum *member* semantic ref (`TypeData::Enum` member data
+    /// or a still-deferred `Lazy(DefId)` member ref), mirroring tsc:
+    ///
+    /// - a single-member enum's member type IS the declared enum type in tsc,
+    ///   so it renders as the bare enum name (`E`, never `E.A`);
+    /// - a multi-member enum's member renders qualified (`E.A`).
+    ///
+    /// Returns `None` when `def_id` is not a registered enum member (no
+    /// parent-enum edge) or no `def_store` is wired.
+    pub(super) fn format_enum_member_ref(&mut self, def_id: crate::def::DefId) -> Option<String> {
+        let def_store = self.def_store?;
+        if let Some(parent_id) = def_store.get_enum_parent(def_id)
+            && let Some(parent) = def_store.get(parent_id)
+        {
+            if parent.enum_members.len() == 1 {
+                if let Some(sym_raw) = parent.symbol_id
+                    && let Some(name) = self.format_symbol_name(SymbolId(sym_raw))
+                {
+                    return Some(name);
+                }
+                return Some(self.format_def_name(&parent));
+            }
+            let def = def_store.get(def_id)?;
+            if let Some(sym_raw) = def.symbol_id
+                && let Some(name) = self.format_symbol_name(SymbolId(sym_raw))
+            {
+                return Some(name);
+            }
+            return Some(format!(
+                "{}.{}",
+                self.format_def_name(&parent),
+                self.format_def_name(&def)
+            ));
+        }
+        // No parent edge in the store (a type-position `E.X` ref stabilized as
+        // its own def): identify the member through its binder symbol instead.
+        let def = def_store.get(def_id)?;
+        let sym = self.symbol_arena?.get(SymbolId(def.symbol_id?))?;
+        if !sym.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER) {
+            return None;
+        }
+        let parent_sym = self.symbol_arena?.get(sym.parent)?;
+        // tsc single-member identity: the lone member's type IS the enum type.
+        if parent_sym
+            .exports
+            .as_ref()
+            .is_some_and(|members| members.len() == 1)
+        {
+            return Some(parent_sym.escaped_name.clone());
+        }
+        Some(format!(
+            "{}.{}",
+            parent_sym.escaped_name, sym.escaped_name
+        ))
+    }
+
     pub(super) fn format_symbol_name(&mut self, sym_id: SymbolId) -> Option<String> {
         let arena = self.symbol_arena?;
         let sym = arena.get(sym_id)?;
