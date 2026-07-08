@@ -363,6 +363,40 @@ impl<'a> NarrowingContext<'a> {
                     break;
                 }
 
+                // Mapped types with a concrete constraint evaluate to their
+                // structural object form. The checker may preserve a mapped
+                // alias's `Mapped` identity for display (#15392), but
+                // narrowing guards (`in`-presence, property probes) must see
+                // the *evaluated* key set — probing the raw mapped node reads
+                // its template type for any key, wrongly reporting a property
+                // present on `{ [K in never]: boolean }`. A still-generic
+                // mapped type evaluates to itself and stays deferred.
+                Some(TypeData::Mapped(mapped_id)) => {
+                    // The constraint may hold unresolved `Lazy` refs
+                    // (`keyof (Left | Right)`), which the resolver-less
+                    // evaluator would leave deferred; resolve it first so the
+                    // key set is concrete.
+                    let mapped = self.db.mapped_type(mapped_id);
+                    let resolved_constraint = self.resolve_type(mapped.constraint);
+                    let eval_input = if resolved_constraint == mapped.constraint {
+                        type_id
+                    } else {
+                        self.db.mapped(crate::types::MappedType {
+                            constraint: resolved_constraint,
+                            ..(*mapped).clone()
+                        })
+                    };
+                    let evaluated = self.db.evaluate_type(eval_input);
+                    if evaluated != type_id && evaluated != eval_input {
+                        type_id = evaluated;
+                        continue;
+                    }
+                    if evaluated != type_id {
+                        type_id = evaluated;
+                    }
+                    break;
+                }
+
                 // 4. KeyOf types
                 Some(TypeData::KeyOf(inner)) => {
                     let resolved_inner = self.resolve_type(inner);
@@ -490,11 +524,28 @@ impl<'a> NarrowingContext<'a> {
                 // 10. Mapped types — evaluate after generic instantiation so
                 // homomorphic mapped types over unions can distribute before
                 // property-presence narrowing filters members.
-                Some(TypeData::Mapped(_)) => {
-                    let evaluated = self.db.evaluate_type(type_id);
-                    if evaluated != type_id {
+                Some(TypeData::Mapped(mapped_id)) => {
+                    // The constraint may hold unresolved `Lazy` refs
+                    // (`keyof (Left | Right)`), which the resolver-less
+                    // evaluator would leave deferred; resolve it first so the
+                    // key set is concrete.
+                    let mapped = self.db.mapped_type(mapped_id);
+                    let resolved_constraint = self.resolve_type(mapped.constraint);
+                    let eval_input = if resolved_constraint == mapped.constraint {
+                        type_id
+                    } else {
+                        self.db.mapped(crate::types::MappedType {
+                            constraint: resolved_constraint,
+                            ..(*mapped).clone()
+                        })
+                    };
+                    let evaluated = self.db.evaluate_type(eval_input);
+                    if evaluated != type_id && evaluated != eval_input {
                         type_id = evaluated;
                         continue;
+                    }
+                    if evaluated != type_id {
+                        type_id = evaluated;
                     }
                     break;
                 }

@@ -403,7 +403,30 @@ impl<'a> PropertyAccessEvaluator<'a> {
                             self.constraint_guarantees_named_property(constraint, prop_name)
                         })
                     }
-                    _ => true,
+                    _ => {
+                        // A `keyof` over concrete named operands (`keyof
+                        // (Left | Right)` reaching here as Lazy refs) has a
+                        // definite key set — resolve it through the ambient
+                        // resolver and re-check membership, so a key outside
+                        // the set (the empty set for a union operand with no
+                        // common keys) is rejected exactly as tsc does. Only
+                        // a `keyof` that stays deferred after resolution
+                        // (free type parameters below the surface) keeps the
+                        // permissive answer.
+                        let keyof_ty = self.interner().keyof(operand);
+                        let resolved = crate::evaluation::evaluate::evaluate_type_with_resolver(
+                            self.interner(),
+                            &self.resolver(),
+                            keyof_ty,
+                        );
+                        if matches!(self.interner().lookup(resolved), Some(TypeData::KeyOf(_))) {
+                            return true;
+                        }
+                        if resolved == TypeId::NEVER {
+                            return false;
+                        }
+                        self.is_key_in_mapped_constraint(resolved, prop_name)
+                    }
                 }
             }
 
