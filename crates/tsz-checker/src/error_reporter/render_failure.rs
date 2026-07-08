@@ -40,6 +40,48 @@ pub(in crate::error_reporter) struct RenderContext {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Apply tsc's `reportRelationError` literal-source generalization to a
+    /// nested relation line's source type: a literal source is displayed as
+    /// its base type (`"no"` -> `string`, `true` -> `boolean`, `E.X` -> `E`)
+    /// when the target could not hold a top-level singleton type, and
+    /// preserved when the literal-vs-literal comparison stays meaningful
+    /// (`"no"` vs `"yes"`, literal-union targets, singleton-constrained type
+    /// parameters).
+    ///
+    /// tsc applies this in every relation-error report. tsz's top-level
+    /// assignability messages already generalize through their display roles
+    /// (and the TS2769 overload elaboration through
+    /// `overload_failure_generalized_pending`), so this entry serves the
+    /// nested chain leaves — property / array-element / tuple-position frames
+    /// — which previously leaked the raw literal source (#15626).
+    pub(in crate::error_reporter) fn generalize_nested_relation_source_for_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> TypeId {
+        let generalized =
+            crate::query_boundaries::diagnostics::generalized_literal_source_for_display(
+                self.ctx.types,
+                source,
+                target,
+            );
+        if generalized != source {
+            return generalized;
+        }
+        // Enum members widen to their parent enum (tsc's
+        // `getBaseTypeOfLiteralType` EnumLike branch). The parent lookup needs
+        // the checker's enum environment, so it sits outside the pure query.
+        if self.is_enum_member_type_for_widening(source)
+            && !crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+                self.ctx.types,
+                target,
+            )
+        {
+            return self.widen_enum_member_type(source);
+        }
+        source
+    }
+
     /// Resolve the parameter name at `param_index` in the first call
     /// signature of `callable_ty` (if any). Used to render TS2328
     /// "Types of parameters '_' and '_' are incompatible." messages.
@@ -1634,7 +1676,12 @@ impl<'a> CheckerState<'a> {
                 // structural formatter instead so the rendered type matches the
                 // solver's `source` TypeId.
                 let source_str = if depth > 0 {
-                    self.format_type_for_assignability_message(source)
+                    // Nested relation leaf: generalize a literal source to its
+                    // base type when the target has no singleton capacity
+                    // (tsc `reportRelationError`).
+                    let display_source =
+                        self.generalize_nested_relation_source_for_display(source, target);
+                    self.format_type_for_assignability_message(display_source)
                 } else {
                     self.format_type_for_diagnostic_role(
                         source,

@@ -721,6 +721,17 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// hold a singleton (a literal/union-of-literals target makes the literal vs
 /// literal mismatch meaningful) and widened to its base otherwise.
 pub fn type_could_have_top_level_singleton_types(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_could_have_top_level_singleton_types_inner(db, type_id, 0)
+}
+
+fn type_could_have_top_level_singleton_types_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> bool {
+    if depth > 16 {
+        return false;
+    }
     if type_id == TypeId::BOOLEAN {
         return false;
     }
@@ -728,8 +739,17 @@ pub fn type_could_have_top_level_singleton_types(db: &dyn TypeDatabase, type_id:
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
             .type_list(list_id)
             .iter()
-            .any(|&member| type_could_have_top_level_singleton_types(db, member)),
+            .any(|&member| type_could_have_top_level_singleton_types_inner(db, member, depth + 1)),
         Some(TypeData::TemplateLiteral(_)) => true,
+        // tsc's `Instantiable` branch: a type parameter (or `infer` binder)
+        // answers through its constraint when it has one — a target `T extends
+        // "a" | "b"` can hold a singleton, `T extends string` cannot.
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => match info.constraint {
+            Some(constraint) if constraint != type_id => {
+                type_could_have_top_level_singleton_types_inner(db, constraint, depth + 1)
+            }
+            _ => is_unit_type(db, type_id),
+        },
         _ => is_unit_type(db, type_id),
     }
 }

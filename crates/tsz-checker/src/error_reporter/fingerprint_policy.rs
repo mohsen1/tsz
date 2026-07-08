@@ -512,8 +512,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     *target_property_type
                 };
-                let source_str = self.format_type_for_diagnostic_role(
+                // Nested relation leaf: generalize a literal source to its base
+                // type when the target has no singleton capacity (tsc
+                // `reportRelationError`), matching the TS2322 chain renderers.
+                let display_property_type = self.generalize_nested_relation_source_for_display(
                     *source_property_type,
+                    target_property_type,
+                );
+                let source_str = self.format_type_for_diagnostic_role(
+                    display_property_type,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
                 let target_str = self.format_type_for_diagnostic_role(
@@ -521,7 +528,7 @@ impl<'a> CheckerState<'a> {
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
                 let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                    *source_property_type,
+                    display_property_type,
                     target_property_type,
                     source_str,
                     target_str,
@@ -606,8 +613,13 @@ impl<'a> CheckerState<'a> {
                 target_return,
                 nested_reason,
             } => {
+                // Nested relation leaf: generalize a literal return source to
+                // its base type when the target has no singleton capacity (tsc
+                // `reportRelationError`).
+                let display_return = self
+                    .generalize_nested_relation_source_for_display(*source_return, *target_return);
                 let source_str = self.format_type_for_diagnostic_role(
-                    *source_return,
+                    display_return,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
                 let target_str = self.format_type_for_diagnostic_role(
@@ -615,7 +627,7 @@ impl<'a> CheckerState<'a> {
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
                 );
                 let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
-                    *source_return,
+                    display_return,
                     *target_return,
                     source_str,
                     target_str,

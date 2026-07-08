@@ -259,7 +259,9 @@ impl<'a> CheckerState<'a> {
             let leaf_diag = self.render_failure_reason(leaf, s, t, idx, depth);
             Self::push_nested_chain(diag, leaf_diag, depth);
         } else {
-            let s = self.format_type_diagnostic(leaf_src);
+            let display_src =
+                self.generalize_nested_relation_source_for_display(leaf_src, leaf_tgt);
+            let s = self.format_type_diagnostic(display_src);
             let t = self.format_type_diagnostic(leaf_tgt);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -662,7 +664,9 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(inner, source_return, target_return, idx, leaf_depth);
             Self::push_rebased_subdiagnostic(diag, sub, leaf_depth, leaf_depth);
         } else {
-            let source_str = self.format_type_diagnostic(source_return);
+            let display_return =
+                self.generalize_nested_relation_source_for_display(source_return, target_return);
+            let source_str = self.format_type_diagnostic(display_return);
             let target_str = self.format_type_diagnostic(target_return);
             let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
                 source_return,
@@ -853,7 +857,9 @@ impl<'a> CheckerState<'a> {
     ) -> Diagnostic {
         let depth = ctx.depth;
         let element_message = {
-            let source_str = self.format_type_diagnostic(source_element);
+            let display_element =
+                self.generalize_nested_relation_source_for_display(source_element, target_element);
+            let source_str = self.format_type_diagnostic(display_element);
             let target_str = self.format_type_diagnostic(target_element);
             format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1554,7 +1560,9 @@ impl<'a> CheckerState<'a> {
                 self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
             Self::push_nested_chain(diag, nested_diag, depth + 1);
         } else {
-            let source_str = self.format_type_diagnostic(source_element);
+            let display_element =
+                self.generalize_nested_relation_source_for_display(source_element, target_element);
+            let source_str = self.format_type_diagnostic(display_element);
             let target_str = self.format_type_diagnostic(target_element);
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -1785,6 +1793,8 @@ impl<'a> CheckerState<'a> {
         source_element: TypeId,
         target_element: TypeId,
     ) -> String {
+        let source_element =
+            self.generalize_nested_relation_source_for_display(source_element, target_element);
         let source_str = self.format_type_diagnostic(source_element);
         let target_str = self.format_type_diagnostic(target_element);
         let (source_str, target_str) = self.finalize_pair_display_for_diagnostic(
