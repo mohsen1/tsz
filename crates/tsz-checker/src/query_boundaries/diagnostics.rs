@@ -141,6 +141,26 @@ pub(crate) fn mapped_property_mismatch_parameter_display_type(
     object_type_from_properties(db, vec![property])
 }
 
+/// Generalize a fresh literal assignment/argument `source` to its base type for
+/// diagnostic display, mirroring tsc's `reportRelationError`: a literal source
+/// is widened to its base (`true` -> `boolean`, `1` -> `number`) when the
+/// `target` could not hold a top-level singleton type, and preserved otherwise
+/// (`true` vs `1`, `"a"` vs `"b"`). Non-literal sources are returned unchanged.
+/// (#15630 / #15633 literal-source generalization at nested relation leaves.)
+pub(crate) fn generalized_literal_source_for_display(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> TypeId {
+    if tsz_solver::type_queries::is_literal_type(db, source)
+        && !tsz_solver::type_queries::type_could_have_top_level_singleton_types(db, target)
+    {
+        tsz_solver::operations::widening::widen_type(db, source)
+    } else {
+        source
+    }
+}
+
 pub(crate) fn display_property_literals_widened_for_related_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,
