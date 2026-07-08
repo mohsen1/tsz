@@ -555,12 +555,9 @@ impl<'a> CheckerState<'a> {
         if expr_idx.is_none() || self.ctx.preserve_literal_types {
             return false;
         }
-        if crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
-            || self.is_enum_member_type_for_widening(type_id)
-        {
-            return self.is_fresh_literal_expression(expr_idx);
-        }
-        false
+        (crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
+            || self.is_enum_member_type_for_widening(type_id))
+            && self.is_fresh_widening_source(expr_idx, type_id)
     }
 
     /// Whether a single return-expression contribution would be widened by
@@ -601,12 +598,12 @@ impl<'a> CheckerState<'a> {
         // A direct enum-member access (`return E.A`) is a fresh enum literal in
         // tsc: `getReturnTypeFromBody` widens it to the parent enum (`E`),
         // exactly as a fresh primitive literal widens to its base (`return "x"`
-        // → `string`). The freshness walk owns that arm, so a non-fresh
-        // enum-member source (`const c: E.A = E.A; return c;`) keeps the member
-        // type. The widen itself runs through `widen_enum_member_type` at each
-        // widenable site, since the primitive literal widener leaves
-        // `TypeData::Enum` untouched.
-        self.is_fresh_literal_expression(expr_idx)
+        // → `string`). The freshness walk owns that arm (enabled only for
+        // enum-member-shaped contributions), so a non-fresh enum-member source
+        // (`const c: E.A = E.A; return c;`) keeps the member type. The widen
+        // itself runs through `widen_enum_member_type` at each widenable site,
+        // since the primitive literal widener leaves `TypeData::Enum` untouched.
+        self.is_fresh_widening_source(expr_idx, type_id)
     }
 
     /// Widen a fresh return-expression contribution while preserving literal

@@ -1003,11 +1003,8 @@ impl<'a> CheckerState<'a> {
             // expressions are "non-fresh" and should NOT be widened.
             // For const bindings, preserve literal types (unless in array/object context)
             if !self.is_const_variable_declaration(idx) {
-                let widened = if self.is_fresh_literal_expression(var_decl.initializer) {
-                    self.widen_initializer_type_for_mutable_binding(init_type)
-                } else {
-                    init_type
-                };
+                let widened =
+                    self.widen_mutable_binding_observation(var_decl.initializer, init_type);
                 // Route null/undefined widening through the flow observation boundary.
                 return flow_boundary::widen_null_undefined_to_any(
                     self.ctx.types,

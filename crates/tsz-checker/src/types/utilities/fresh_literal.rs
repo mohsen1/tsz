@@ -46,11 +46,42 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         init_type: TypeId,
     ) -> TypeId {
-        if self.is_fresh_literal_expression(expr_idx) {
+        if self.is_fresh_widening_source(expr_idx, init_type) {
             self.widen_initializer_type_for_mutable_binding(init_type)
         } else {
             init_type
         }
+    }
+
+    /// Freshness of an initializer/contribution expression, with the
+    /// enum-member-access arm enabled only when the observed type is
+    /// enum-member shaped.
+    ///
+    /// The enum arm resolves symbols (a scope-chain walk), so it must not run
+    /// for ordinary property reads like `let x = obj.prop`; the cheap type
+    /// gate keeps the non-enum common case on the zero-cost AST fall-through.
+    pub(crate) fn is_fresh_widening_source(&self, expr_idx: NodeIndex, init_type: TypeId) -> bool {
+        self.is_fresh_literal_expression_inner(
+            expr_idx,
+            0,
+            self.is_enum_member_like_type(init_type),
+        )
+    }
+
+    /// Cheap shape test with the same detection breadth as
+    /// [`Self::enum_member_parent_instance_type`]: a def-backed
+    /// `Enum(member_def, _)` or a symbol-backed identity carrying the
+    /// `ENUM_MEMBER` flag (the shape some resolution orders observe before the
+    /// member's def-backed type is interned). Tag reads and map lookups only —
+    /// no symbol scope walk, no type computation.
+    fn is_enum_member_like_type(&self, type_id: TypeId) -> bool {
+        if self.is_enum_member_type_for_widening(type_id) {
+            return true;
+        }
+        self.ctx
+            .resolve_type_to_symbol_id(type_id)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ENUM_MEMBER))
     }
 
     /// The parent enum's instance type for an enum-*member* type, or `None`
@@ -157,10 +188,19 @@ impl<'a> CheckerState<'a> {
     /// let n = c;              // c's type is non-fresh → n: E.A (not widened)
     /// ```
     pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
-        self.is_fresh_literal_expression_inner(idx, 0)
+        self.is_fresh_literal_expression_inner(idx, 0, false)
     }
 
-    fn is_fresh_literal_expression_inner(&self, idx: NodeIndex, depth: u8) -> bool {
+    /// `enum_member_arm` enables the enum-member-access case; callers turn it
+    /// on only when the observed type is enum-member shaped (see
+    /// [`Self::is_fresh_widening_source`]), keeping symbol resolution off the
+    /// common property-read path.
+    fn is_fresh_literal_expression_inner(
+        &self,
+        idx: NodeIndex,
+        depth: u8,
+        enum_member_arm: bool,
+    ) -> bool {
         if depth > MAX_FRESH_LITERAL_DEPTH {
             return false;
         }
@@ -187,7 +227,11 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.ctx.arena.get_parenthesized(node)
         {
-            return self.is_fresh_literal_expression_inner(paren.expression, depth + 1);
+            return self.is_fresh_literal_expression_inner(
+                paren.expression,
+                depth + 1,
+                enum_member_arm,
+            );
         }
 
         // Prefix unary (+/-) on numeric/bigint literals are fresh
@@ -196,7 +240,11 @@ impl<'a> CheckerState<'a> {
         {
             let op = prefix.operator;
             if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
-                return self.is_fresh_literal_expression_inner(prefix.operand, depth + 1);
+                return self.is_fresh_literal_expression_inner(
+                    prefix.operand,
+                    depth + 1,
+                    enum_member_arm,
+                );
             }
         }
 
@@ -206,8 +254,15 @@ impl<'a> CheckerState<'a> {
         if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
             && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
         {
-            return self.is_fresh_literal_expression_inner(cond.when_true, depth + 1)
-                || self.is_fresh_literal_expression_inner(cond.when_false, depth + 1);
+            return self.is_fresh_literal_expression_inner(
+                cond.when_true,
+                depth + 1,
+                enum_member_arm,
+            ) || self.is_fresh_literal_expression_inner(
+                cond.when_false,
+                depth + 1,
+                enum_member_arm,
+            );
         }
 
         // Object and array literals need widening (property types get widened)
@@ -227,8 +282,9 @@ impl<'a> CheckerState<'a> {
         // a primitive literal token mints a fresh primitive literal. Property
         // reads whose base is not the enum object (`o.p` where `p: E.A`)
         // resolve to `None` here and stay non-fresh.
-        if (kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        if enum_member_arm
+            && (kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
             && self.enum_member_access_symbol(idx, depth).is_some()
         {
             return true;
@@ -248,7 +304,11 @@ impl<'a> CheckerState<'a> {
             && var_decl.type_annotation.is_none()
             && var_decl.initializer.is_some()
         {
-            return self.is_fresh_literal_expression_inner(var_decl.initializer, depth + 1);
+            return self.is_fresh_literal_expression_inner(
+                var_decl.initializer,
+                depth + 1,
+                enum_member_arm,
+            );
         }
 
         // Everything else (identifiers, call expressions, binary expressions, etc.)

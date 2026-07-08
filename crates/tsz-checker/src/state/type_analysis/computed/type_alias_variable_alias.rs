@@ -678,12 +678,10 @@ impl<'a> CheckerState<'a> {
                         if !self.is_const_variable_declaration(resolved_value_decl)
                             && !self.is_const_assertion_initializer(var_decl.initializer)
                         {
-                            let widened_type =
-                                if self.is_fresh_literal_expression(var_decl.initializer) {
-                                    self.widen_initializer_type_for_mutable_binding(inferred_type)
-                                } else {
-                                    inferred_type
-                                };
+                            let widened_type = self.widen_mutable_binding_observation(
+                                var_decl.initializer,
+                                inferred_type,
+                            );
                             // Route null/undefined widening through the flow observation boundary.
                             let final_type = flow_boundary::widen_null_undefined_to_any(
                                 self.ctx.types,

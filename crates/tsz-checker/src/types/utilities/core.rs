@@ -520,13 +520,10 @@ impl<'a> CheckerState<'a> {
     /// error messages where tsc preserves literal types but widens enum members.
     pub(crate) fn widen_enum_member_type(&mut self, type_id: TypeId) -> TypeId {
         // An enum member widens to the parent enum's instance type (`E`),
-        // never the enum's static object shape (`typeof E`).
-        if let Some(parent_type) = self.enum_member_parent_instance_type(type_id) {
-            return parent_type;
-        }
-
-        // Do NOT widen literal types - return as-is
-        type_id
+        // never the enum's static object shape (`typeof E`). Literal types
+        // are NOT widened — non-enum input passes through unchanged.
+        self.enum_member_parent_instance_type(type_id)
+            .unwrap_or(type_id)
     }
 
     /// Check if a type is an enum member type (not the parent enum type).
