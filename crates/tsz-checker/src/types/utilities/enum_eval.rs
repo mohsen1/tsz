@@ -752,7 +752,15 @@ impl<'a> CheckerState<'a> {
         let mut saw_enum_decl = false;
 
         for &decl_idx in &enum_symbol.declarations {
-            let enum_decl = self.ctx.arena.get_enum_at(decl_idx)?;
+            // A namespace-merged enum symbol (`enum E {..}` + `namespace E
+            // {..}`) carries the namespace declaration in the same list; only
+            // enum declarations contribute members. Bailing (`?`) here would
+            // drop the whole const-value map for merged enums, silently
+            // disabling every declared-value fact (cross-enum member-set
+            // assignability, literal domain checks) for them.
+            let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx) else {
+                continue;
+            };
             saw_enum_decl = true;
             let mut auto_value = Some(0.0);
 

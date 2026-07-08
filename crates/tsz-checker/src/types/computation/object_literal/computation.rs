@@ -1939,7 +1939,17 @@ impl<'a> CheckerState<'a> {
             // Other element types (e.g., unknown AST node kinds) are silently skipped
         }
 
-        let drop_spread_index_signatures = !explicit_property_names.is_empty() || spread_count != 1;
+        // tsc keeps the (value-unioned) index signatures for a literal made
+        // ONLY of plain spreads — `{ ...indexed1, ...indexed2 }[k]` reads
+        // `number | boolean` — and drops them when any explicit member is
+        // present (`{ ...indexed1, b: 11 }[101]` is TS7053, rendered without
+        // the indexer) or when a UNION spread combines with another spread
+        // (the distributed per-branch object types carry no spread indexes; a
+        // single union spread keeps per-branch indexes). Verified against tsc on
+        // conformance/types/spread/objectSpreadIndexSignature.ts and the
+        // union_spread_index_bucket_tests fixtures.
+        let drop_spread_index_signatures =
+            !explicit_property_names.is_empty() || (spread_count != 1 && has_union_spread);
         let (string_index_param_name, number_index_param_name) = merge_spread_index_signatures(
             drop_spread_index_signatures,
             &mut string_index_types,

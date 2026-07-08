@@ -476,8 +476,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         Some(false)
                     }
                     _ => {
-                        // Different parents (or one/both are types, not members)
-                        // Nominal mismatch: EnumA.X is not assignable to EnumB
+                        // Two full enum TYPES compare structurally by member
+                        // set (tsc's isEnumTypeRelatedTo: every source member
+                        // must match a target member by name and value) — fall
+                        // through to the structural member-union comparison.
+                        // A namespace-merged enum keeps its nominal
+                        // `Enum(DefId)` wrapper, so def inequality here does
+                        // not imply non-assignability (enumAssignmentCompat3:
+                        // `First.E` <-> `Merged2.E` are mutually assignable).
+                        if self.subtype.resolver.is_enum_type(source, self.interner)
+                            && self.subtype.resolver.is_enum_type(target, self.interner)
+                        {
+                            return None;
+                        }
+                        // Member-level mismatch stays nominal:
+                        // EnumA.X is not assignable to EnumB.
                         Some(false)
                     }
                 }
