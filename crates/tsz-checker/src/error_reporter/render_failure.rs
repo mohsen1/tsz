@@ -70,6 +70,17 @@ impl<'a> CheckerState<'a> {
         if generalized == source {
             return source;
         }
+        // tsc preserves a literal / literal-union source verbatim against a
+        // `never` target: the exhaustiveness and narrowed-to-`never` surface
+        // reports the residual literal union (`Type '"d" | "c"' is not
+        // assignable to type 'never'`), not its widened base (`string`). `never`
+        // is not singleton-capable, so the general gate below would otherwise
+        // widen it. This is the one non-singleton-capable target where tsc keeps
+        // the literal source, so it is handled explicitly rather than through
+        // `relation_target_could_hold_singleton`.
+        if target == TypeId::NEVER {
+            return source;
+        }
         if crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
             self.ctx.types,
             &self.ctx,
