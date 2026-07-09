@@ -38,11 +38,12 @@ fn compile_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     diagnostic_code_messages(checker.ctx.diagnostics)
 }
 
-/// Infer-result conditional used as type argument with self-referential constraint
-/// should emit TS2344. This is the core pattern from
+/// Infer-result conditional used as type argument with a self-referential
+/// constraint: tsc emits NO TS2344 here — the deferred `GetProps<C>` conditional
+/// satisfies the `Shared<...>` constraint. Simplified from
 /// `circularlyConstrainedMappedTypeContainingConditionalNoInfiniteInstantiationDepth.ts`.
 #[test]
-fn test_infer_conditional_with_self_referential_constraint_emits_ts2344() {
+fn test_infer_conditional_with_self_referential_constraint_is_clean() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
 interface Array<T> {}
@@ -75,14 +76,10 @@ type Result<TInjectedProps> =
         .filter(|(code, _)| *code == 2344)
         .collect();
     assert!(
-        !ts2344_errors.is_empty(),
-        "Expected TS2344 for GetProps<C> not satisfying Shared constraint, got: {diagnostics:?}"
-    );
-    assert!(
-        ts2344_errors
-            .iter()
-            .any(|(_, msg)| msg.contains("GetProps")),
-        "Expected TS2344 message to mention 'GetProps', got: {ts2344_errors:?}"
+        ts2344_errors.is_empty(),
+        "tsc emits no TS2344 for this simplified self-referential-constraint infer \
+         pattern (the deferred infer-result conditional GetProps<C> satisfies the \
+         Shared<...> constraint), got: {ts2344_errors:?}"
     );
 }
 

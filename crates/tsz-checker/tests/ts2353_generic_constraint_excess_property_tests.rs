@@ -138,10 +138,10 @@ function strict<T extends { kind: string }>(obj: T): T {
 const s = strict({ value: 42 });
 "#;
     let ds = diags(source);
-    let ts2345: Vec<_> = ds.iter().filter(|d| d.0 == 2345).collect();
+    let ts2353: Vec<_> = ds.iter().filter(|d| d.0 == 2353).collect();
     assert!(
-        !ts2345.is_empty(),
-        "Expected TS2345 for argument missing required constraint property, got: {ds:?}",
+        !ts2353.is_empty(),
+        "Expected TS2353 for excess property not in the generic constraint, got: {ds:?}",
     );
 }
 

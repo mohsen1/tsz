@@ -165,7 +165,9 @@ declare const key: keyof {foo(): void};
 spyObj[key].and.returnValue(1);
 "#;
 
-    let diags = tsz_checker::test_utils::check_multi_file_with_global_index(
+    let lib_files = tsz_checker::test_utils::load_lib_files(&["es5.d.ts"]);
+    assert!(!lib_files.is_empty(), "es5.d.ts lib file not loaded");
+    let diags = tsz_checker::test_utils::check_multi_file_with_libs_stamped(
         &[
             (
                 "remote.ts",
@@ -182,6 +184,7 @@ export type OtherKey = "remote";
             strict_null_checks: true,
             ..CheckerOptions::default()
         },
+        &lib_files,
     );
     assert!(
         has_code(&diags, 2339),

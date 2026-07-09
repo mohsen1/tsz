@@ -4,10 +4,8 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
 use tsz_solver::{CallSignature, ParamInfo, PropertyInfo, TupleElement, TypeId};
 
-use super::{
-    assignability::{RelationFlags, RelationOutcome},
-    relation_policy,
-};
+use super::assignability::RelationFlags;
+use super::{assignability::RelationOutcome, relation_policy};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, PropertyAccessResult, TypeResolver, TypeSubstitution,

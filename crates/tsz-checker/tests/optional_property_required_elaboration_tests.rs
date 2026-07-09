@@ -9,11 +9,24 @@
 //! and mapped (`Partial<T>`, `{ [K in keyof T]?: T[K] }`) sources alike, and
 //! both the variable-initializer (TS2322) and call-argument (TS2345) paths.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::check_source;
 use tsz_common::diagnostics::Diagnostic;
 
 fn diagnostics(source: &str) -> Vec<Diagnostic> {
-    check_source_diagnostics(source)
+    // TS2327 ("Property 'x' is optional ... but required ...") is only tsc's
+    // elaboration under `exactOptionalPropertyTypes`; without it an optional
+    // source property contributes `T | undefined` and tsc reports the plain
+    // type-incompatibility chain instead. These cases test the TS2327 line, so
+    // they run with the flag on (verified against tsc 5.8/6.0).
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
+    )
 }
 
 /// True when some top-level diagnostic with `code` carries an elaboration line

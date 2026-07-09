@@ -1109,32 +1109,20 @@ impl<'a> CheckerState<'a> {
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
         let source_has_string_index = [source, source_evaluated].iter().any(|t| {
-            crate::query_boundaries::index_signature::has_index_signature(
-                self.ctx.types,
-                *t,
-                crate::query_boundaries::index_signature::IndexKind::String,
-            )
+            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
+                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::String)
         });
         let target_has_string_index = [target, target_evaluated].iter().any(|t| {
-            crate::query_boundaries::index_signature::has_index_signature(
-                self.ctx.types,
-                *t,
-                crate::query_boundaries::index_signature::IndexKind::String,
-            )
+            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
+                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::String)
         });
         let source_has_number_index = [source, source_evaluated].iter().any(|t| {
-            crate::query_boundaries::index_signature::has_index_signature(
-                self.ctx.types,
-                *t,
-                crate::query_boundaries::index_signature::IndexKind::Number,
-            )
+            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
+                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::Number)
         });
         let target_has_number_index = [target, target_evaluated].iter().any(|t| {
-            crate::query_boundaries::index_signature::has_index_signature(
-                self.ctx.types,
-                *t,
-                crate::query_boundaries::index_signature::IndexKind::Number,
-            )
+            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
+                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::Number)
         });
         // For number index signatures, only suppress when the missing properties are
         // NOT explicitly declared on the target (they came from index value type expansion).

@@ -435,7 +435,13 @@ impl<'a> CheckerState<'a> {
                 }
                 None
             });
-            if let Some((_parameter_idx, type_annotation)) = parameter_declaration
+            // Only preserve raw annotation text when the annotation names an
+            // actual type parameter (e.g. `T`). A type-alias annotation such as
+            // `type N = number` resolves to a concrete type, so tsc renders the
+            // resolved type (`number`), not the alias name — keying on the
+            // declared type being type-parameter-like keeps this structural.
+            if crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, declared)
+                && let Some((_parameter_idx, type_annotation)) = parameter_declaration
                 && let Some(annotation_node) = self.ctx.arena.get(type_annotation)
                 && let Some(type_name) = self
                     .ctx
