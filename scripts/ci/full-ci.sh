@@ -3,7 +3,6 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
-source scripts/lib/sh-portability.sh
 source scripts/ci/suite-metadata.sh
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
@@ -450,17 +449,6 @@ run_lint() {
   fi
 }
 
-nextest_allow_no_tests() {
-  set +e
-  cargo nextest run --profile ci "$@"
-  local rc="$?"
-  set -e
-  if [[ "$rc" -eq 0 || "$rc" -eq 4 ]]; then
-    return 0
-  fi
-  return "$rc"
-}
-
 _UNIT_TEST_PACKAGES=(
   tsz-common
   tsz-scanner
@@ -509,38 +497,27 @@ unit_test_packages() {
   done
 }
 
-unit_archive_package_args() {
-  local package
-  for package in "${_UNIT_TEST_PACKAGES[@]}"; do
-    if [[ "$package" == "tsz-checker" ]]; then
-      continue
-    fi
-    printf -- '-p\n%s\n' "$package"
-  done
-}
-
-# Adjudicate collected junit reports against the known-failures baseline
-# (#15646). Green means "no unit failures outside scripts/ci/known-failures.txt"
-# — a delta gate, not a masked rc. An empty report dir is only legal when the
-# nextest passes selected no tests at all (narrowed package override).
-run_known_failures_gate() {
+# Run unit-nextest.sh passes into a junit dir, then adjudicate the collected
+# reports against the known-failures baseline (#15646). Green means "no unit
+# failures outside scripts/ci/known-failures.txt" — a delta gate, not a masked
+# rc. The runner exits nonzero only for infrastructure failures (build error,
+# missing junit; it reports them itself), which fail the lane outright and
+# never reach the gate. --allow-no-reports lets a narrowed package override
+# that selects zero tests pass; the checker owns that verdict.
+run_delta_gated_unit_suite() {
   local junit_dir="$1"
-  local reports
-  reports=$(find "$junit_dir" -name '*.xml' 2>/dev/null | wc -l)
-  if (( reports == 0 )); then
-    echo "info: no junit reports in $junit_dir (no tests in selection); skipping known-failures gate"
-    return 0
-  fi
-  node scripts/ci/known-failures-check.mjs --junit-dir "$junit_dir"
+  shift
+  rm -rf "$junit_dir"
+  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" "$@" || return "$?"
+  node scripts/ci/known-failures-check.mjs --junit-dir "$junit_dir" --allow-no-reports
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites (signoff profile + known-failures gate)"
-  local packages rc=0
+  local packages
   # unit_test_packages validates _TSZ_CI_UNIT_PACKAGES_OVERRIDE; propagate its
   # config-error rc instead of masking it in the $() assignment below.
   packages="$(unit_test_packages)" || return "$?"
-  packages="$(printf '%s' "$packages" | tr '\n' ' ')"
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
@@ -549,31 +526,14 @@ run_unit_tests() {
     echo "info: skipping checker integration tests in unit job"
     skip_flag=(--skip-checker-integration)
   fi
-  local junit_dir="$LOG_DIR/unit-junit"
-  rm -rf "$junit_dir"
-  # Every pass runs with fail-fast disabled and writes its own junit report;
-  # test failures do NOT stop the run (rc-aggregation is logged per pass).
-  # A nonzero rc here is an infrastructure failure (build error, missing
-  # junit) and fails the job outright — it must never reach the delta gate.
-  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" \
-    --packages "$packages" ${skip_flag[@]+"${skip_flag[@]}"} || rc="$?"
-  if (( rc != 0 )); then
-    echo "error: unit nextest passes failed with an infrastructure error (rc=$rc)" >&2
-    return "$rc"
-  fi
-  run_known_failures_gate "$junit_dir"
+  run_delta_gated_unit_suite "$LOG_DIR/unit-junit" \
+    --packages "$packages" ${skip_flag[@]+"${skip_flag[@]}"}
 }
 
 run_checker_integration_tests() {
   ci_section "Checker integration nextest suites (signoff profile + known-failures gate)"
-  local junit_dir="$LOG_DIR/checker-integration-junit" rc=0
-  rm -rf "$junit_dir"
-  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" --packages tsz-checker || rc="$?"
-  if (( rc != 0 )); then
-    echo "error: checker integration nextest passes failed with an infrastructure error (rc=$rc)" >&2
-    return "$rc"
-  fi
-  run_known_failures_gate "$junit_dir"
+  run_delta_gated_unit_suite "$LOG_DIR/checker-integration-junit" \
+    --packages tsz-checker
 }
 
 build_unit_test_archive() {

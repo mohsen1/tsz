@@ -1,18 +1,22 @@
 """Tests for check-known-failures-growth.py (#15646).
 
-The baseline may only shrink in normal PRs. Growth is allowed exactly twice:
-bootstrap (base unreconciled) and an explicit TSZ_KNOWN_FAILURES_ALLOW_GROWTH=1
-re-reconcile. The reconciled marker must never be dropped, and the file must
-stay canonical (unique, sorted, `binary-id::test-name`).
+The baseline may only shrink in normal PRs. Growth is authorized in-artifact:
+the bootstrap reconcile (base unreconciled) or a reconcile-generation bump on
+the marker line in the same diff. The generation can never go backwards
+(dropping the marker included), and the file must stay canonical (unique,
+sorted, `binary-id::test-name`).
 """
 
 import importlib.util
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
 
-SCRIPT = pathlib.Path(__file__).resolve().parent / "check-known-failures-growth.py"
+HERE = pathlib.Path(__file__).resolve().parent
+SCRIPT = HERE / "check-known-failures-growth.py"
+CHECK_MJS = HERE / "known-failures-check.mjs"
 
 spec = importlib.util.spec_from_file_location("check_known_failures_growth", SCRIPT)
 guard = importlib.util.module_from_spec(spec)
@@ -22,7 +26,34 @@ MARKER = guard.RECONCILED_MARKER
 
 UNRECONCILED = "# header\n# more header\n"
 RECONCILED_EMPTY = f"# header\n{MARKER}\n"
-RECONCILED_TWO = f"# header\n{MARKER}\ntsz-a::t::alpha\ntsz-b::t::beta\n"
+RECONCILED_TWO = f"# header\n{MARKER} r1\ntsz-a::t::alpha\ntsz-b::t::beta\n"
+
+
+class MjsDriftPinTests(unittest.TestCase):
+    """The marker/format is written by known-failures-check.mjs and judged by
+    the python guard; pin the two implementations together."""
+
+    def test_marker_constant_matches_the_mjs(self):
+        mjs = CHECK_MJS.read_text(encoding="utf-8")
+        match = re.search(r'const RECONCILED_MARKER = "([^"]+)";', mjs)
+        self.assertIsNotNone(match, "RECONCILED_MARKER not found in known-failures-check.mjs")
+        self.assertEqual(match.group(1), MARKER)
+
+    def test_mjs_rendered_baseline_satisfies_guard_integrity_and_generation(self):
+        rendered = subprocess.check_output(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                "import { renderBaseline } from "
+                f"'file://{CHECK_MJS}';"
+                "process.stdout.write(renderBaseline(['tsz-b::t::y', 'tsz-a::t::x'],"
+                " { generation: 3 }));",
+            ],
+            text=True,
+        )
+        self.assertEqual(guard.check_integrity(rendered), [])
+        self.assertEqual(guard.baseline_generation(rendered), 3)
 
 
 class ParseAndIntegrityTests(unittest.TestCase):
@@ -30,9 +61,11 @@ class ParseAndIntegrityTests(unittest.TestCase):
         text = "# c\n\n tsz-a::t::x \n# d\ntsz-b::t::y\n"
         self.assertEqual(guard.parse_entries(text), ["tsz-a::t::x", "tsz-b::t::y"])
 
-    def test_reconciled_marker_detection(self):
-        self.assertFalse(guard.is_reconciled(UNRECONCILED))
-        self.assertTrue(guard.is_reconciled(RECONCILED_EMPTY))
+    def test_generation_parsing(self):
+        self.assertEqual(guard.baseline_generation(UNRECONCILED), 0)
+        # legacy bare marker reads as generation 1
+        self.assertEqual(guard.baseline_generation(RECONCILED_EMPTY), 1)
+        self.assertEqual(guard.baseline_generation(f"{MARKER} r7\n"), 7)
 
     def test_integrity_clean_file(self):
         self.assertEqual(guard.check_integrity(RECONCILED_TWO), [])
@@ -52,41 +85,50 @@ class ParseAndIntegrityTests(unittest.TestCase):
 
 class GrowthDecisionTests(unittest.TestCase):
     def test_shrink_is_always_allowed(self):
-        head = f"# h\n{MARKER}\ntsz-a::t::alpha\n"
-        problems, added, removed = guard.check_growth(RECONCILED_TWO, head, False)
+        head = f"# h\n{MARKER} r1\ntsz-a::t::alpha\n"
+        problems, _, added, removed = guard.check_growth(RECONCILED_TWO, head)
         self.assertEqual(problems, [])
         self.assertEqual(added, [])
         self.assertEqual(removed, ["tsz-b::t::beta"])
 
-    def test_growth_over_reconciled_base_is_rejected(self):
+    def test_growth_without_generation_bump_is_rejected(self):
         head = RECONCILED_TWO + "tsz-c::t::gamma\n"
-        problems, added, _ = guard.check_growth(RECONCILED_TWO, head, False)
+        problems, _, added, _ = guard.check_growth(RECONCILED_TWO, head)
         self.assertEqual(added, ["tsz-c::t::gamma"])
-        self.assertTrue(any("may only shrink" in p for p in problems))
+        self.assertTrue(any("without bumping" in p for p in problems))
 
     def test_bootstrap_growth_over_unreconciled_base_is_allowed(self):
-        problems, added, _ = guard.check_growth(UNRECONCILED, RECONCILED_TWO, False)
+        problems, notes, added, _ = guard.check_growth(UNRECONCILED, RECONCILED_TWO)
         self.assertEqual(problems, [])
         self.assertEqual(len(added), 2)
+        self.assertTrue(any("bootstrap" in n.lower() for n in notes))
 
-    def test_env_escape_allows_deliberate_re_reconcile(self):
-        head = RECONCILED_TWO + "tsz-c::t::gamma\n"
-        problems, _, _ = guard.check_growth(RECONCILED_TWO, head, True)
+    def test_generation_bump_authorizes_growth(self):
+        head = RECONCILED_TWO.replace(f"{MARKER} r1", f"{MARKER} r2") + "tsz-c::t::gamma\n"
+        problems, notes, _, _ = guard.check_growth(RECONCILED_TWO, head)
         self.assertEqual(problems, [])
+        self.assertTrue(any("generation bumped" in n for n in notes))
 
-    def test_dropping_the_marker_is_rejected_even_on_shrink(self):
+    def test_generation_can_never_go_backwards(self):
+        # dropping the marker entirely is the degenerate case (r1 -> r0)
         head = "# h\ntsz-a::t::alpha\n"
-        problems, _, _ = guard.check_growth(RECONCILED_TWO, head, False)
-        self.assertTrue(any("marker was removed" in p for p in problems))
+        problems, _, _, _ = guard.check_growth(RECONCILED_TWO, head)
+        self.assertTrue(any("went backwards" in p for p in problems))
+        # an explicit lower generation is equally rejected, even on shrink
+        base_r3 = RECONCILED_TWO.replace(f"{MARKER} r1", f"{MARKER} r3")
+        head_r2 = f"# h\n{MARKER} r2\ntsz-a::t::alpha\n"
+        problems, _, _, _ = guard.check_growth(base_r3, head_r2)
+        self.assertTrue(any("went backwards" in p for p in problems))
 
     def test_unreconciled_to_unreconciled_edit_is_allowed(self):
-        # Pre-bootstrap header edits must not require the escape.
-        problems, _, _ = guard.check_growth(UNRECONCILED, UNRECONCILED + "# note\n", False)
+        # Pre-bootstrap header edits must not require anything special.
+        problems, _, _, _ = guard.check_growth(UNRECONCILED, UNRECONCILED + "# note\n")
         self.assertEqual(problems, [])
 
 
 class EndToEndGitTests(unittest.TestCase):
-    """Drive the CLI against a real (temp) git history."""
+    """Drive the CLI against a real (temp) git history. The head baseline is
+    the working-tree file; the base comes from a committed ref."""
 
     def _run_git(self, cwd, *args):
         subprocess.run(
@@ -104,23 +146,18 @@ class EndToEndGitTests(unittest.TestCase):
             },
         )
 
-    def _guard(self, cwd, *args, env_extra=None):
-        env = {
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": cwd,
-        }
-        if env_extra:
-            env.update(env_extra)
+    def _guard(self, cwd, *args):
         return subprocess.run(
             ["python3", str(SCRIPT), *args],
             cwd=cwd,
             capture_output=True,
             text=True,
-            env=env,
+            env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": cwd},
         )
 
-    def _repo_with(self, base_text, head_text):
+    def _repo_with(self, base_text, worktree_text):
         tmp = tempfile.mkdtemp(prefix="kf-growth-")
+        self.addCleanup(__import__("shutil").rmtree, tmp, True)
         path = pathlib.Path(tmp) / "scripts" / "ci"
         path.mkdir(parents=True)
         baseline = path / "known-failures.txt"
@@ -129,21 +166,19 @@ class EndToEndGitTests(unittest.TestCase):
         self._run_git(tmp, "add", "-A")
         self._run_git(tmp, "commit", "-q", "-m", "base")
         self._run_git(tmp, "branch", "base-marker")
-        baseline.write_text(head_text, encoding="utf-8")
-        self._run_git(tmp, "add", "-A")
-        self._run_git(tmp, "commit", "-q", "-m", "head")
+        baseline.write_text(worktree_text, encoding="utf-8")
         return tmp
 
-    def test_cli_rejects_growth_and_env_escape_lifts_it(self):
-        repo = self._repo_with(RECONCILED_TWO, RECONCILED_TWO + "tsz-c::t::gamma\n")
+    def test_cli_rejects_growth_and_generation_bump_lifts_it(self):
+        grown = RECONCILED_TWO + "tsz-c::t::gamma\n"
+        repo = self._repo_with(RECONCILED_TWO, grown)
         blocked = self._guard(repo, "--base-ref", "base-marker")
         self.assertEqual(blocked.returncode, 1, blocked.stdout + blocked.stderr)
-        allowed = self._guard(
-            repo,
-            "--base-ref",
-            "base-marker",
-            env_extra={guard.ALLOW_GROWTH_ENV: "1"},
+        bumped = grown.replace(f"{MARKER} r1", f"{MARKER} r2")
+        pathlib.Path(repo, "scripts", "ci", "known-failures.txt").write_text(
+            bumped, encoding="utf-8"
         )
+        allowed = self._guard(repo, "--base-ref", "base-marker")
         self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
 
     def test_cli_allows_bootstrap_reconcile(self):
@@ -151,7 +186,7 @@ class EndToEndGitTests(unittest.TestCase):
         result = self._guard(repo, "--base-ref", "base-marker")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_cli_integrity_only_flags_unsorted_head(self):
+    def test_cli_integrity_only_flags_unsorted_worktree(self):
         unsorted_head = f"{MARKER}\ntsz-b::t::y\ntsz-a::t::x\n"
         repo = self._repo_with(UNRECONCILED, unsorted_head)
         result = self._guard(repo, "--integrity-only")

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   parseJunitFailures,
   parseBaseline,
+  baselineGeneration,
   baselineIsReconciled,
   evaluate,
   renderBaseline,
@@ -181,6 +182,21 @@ check("committed bootstrap render is unreconciled -> advisory (does not block)",
   const body = renderBaseline([], { reconciled: false });
   assert.equal(parseBaseline(body).size, 0);
   assert.ok(!baselineIsReconciled(body), "bootstrap baseline must be unreconciled");
+});
+
+check("reconcile generation: 0 unreconciled, bare marker reads as r1, rN parses", () => {
+  assert.equal(baselineGeneration("# header only\n"), 0);
+  // legacy bare marker (pre-generation baselines) still reads as reconciled
+  assert.equal(baselineGeneration("# h\n# baseline-status: reconciled\n"), 1);
+  assert.equal(baselineGeneration("# h\n# baseline-status: reconciled r4\n"), 4);
+  assert.ok(baselineIsReconciled("# baseline-status: reconciled r4\n"));
+});
+
+check("renderBaseline stamps the requested generation and round-trips", () => {
+  const body = renderBaseline(["tsz-a::t::x"], { generation: 2 });
+  assert.equal(baselineGeneration(body), 2);
+  // default generation is r1 (first reconcile)
+  assert.equal(baselineGeneration(renderBaseline([])), 1);
 });
 
 console.log(`\nAll ${passed} known-failures-check tests passed.`);

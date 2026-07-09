@@ -117,9 +117,11 @@ METADATA_JSON="$(cargo metadata --no-deps --format-version 1)"
 CARGO_TARGET_DIRECTORY="$(printf '%s' "$METADATA_JSON" | jq -r '.target_directory')"
 
 # The signoff junit report location. nextest resolves the configured junit
-# path relative to its per-profile store directory; the store dir default is
-# workspace-root `target/nextest`, but keep the cargo target dir as a fallback
-# candidate so a nextest that roots the store there still gets collected.
+# path relative to its per-profile store directory. Observed with nextest
+# 0.9.137 in this repo: the store roots at workspace-root `target/nextest`
+# even though the cargo target dir is `.target` — so the workspace-root
+# candidate is the live one; the cargo-target-dir variant stays as a fallback
+# for nextest versions that root the store under the target directory.
 JUNIT_CANDIDATES=(
   "$ROOT_DIR/target/nextest/signoff/junit.xml"
   "$CARGO_TARGET_DIRECTORY/nextest/signoff/junit.xml"
@@ -217,8 +219,22 @@ if (( checker_selected )) && [[ "$SKIP_CHECKER_INTEGRATION" == "0" ]]; then
   # (see header). Enumerate the declared [[test]] targets and run them in
   # bounded batches instead, so no cargo invocation builds the lib-test or
   # links an unbounded target set.
+  #
+  # Each checker test binary statically links the checker+solver stack and
+  # measures ~78 MB even at ci-unit (debug=false): all 787 targets together
+  # would need ~61 GB, which no hosted runner (or dev laptop partition) can
+  # keep resident. After a batch's junit is collected its binaries are never
+  # needed again, so prune them before the next batch — peak disk stays at
+  # libs + one batch (~3 GB) instead of growing monotonically to ENOSPC
+  # partway through the run.
   batch_names=()
   batch_index=0
+  prune_batch_artifacts() {
+    local test_name=""
+    for test_name in "${batch_names[@]}"; do
+      rm -f "$CARGO_TARGET_DIRECTORY/ci-unit/deps/$test_name"-*
+    done
+  }
   run_checker_batch() {
     local batch_args=()
     local test_name=""
@@ -230,6 +246,7 @@ if (( checker_selected )) && [[ "$SKIP_CHECKER_INTEGRATION" == "0" ]]; then
     run_pass "$(printf 'checker-%02d' "$batch_index")" \
       ${COMMON_FLAGS[@]+"${COMMON_FLAGS[@]}"} \
       -p tsz-checker "${batch_args[@]}"
+    prune_batch_artifacts
   }
   test_name=""
   while IFS= read -r test_name; do

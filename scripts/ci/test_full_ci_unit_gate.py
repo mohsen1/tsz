@@ -8,14 +8,13 @@ scripts/ci/known-failures-check.mjs. These tests extract the wiring functions
 verbatim from full-ci.sh, stub the runner and `node`, and assert:
 
 * an infrastructure failure fails the job and never reaches the gate;
-* the gate's verdict is the job's verdict when tests ran;
-* a run that selected no tests skips the gate instead of failing on a missing
-  junit;
+* the gate's verdict is the job's verdict when the runner completes;
+* the gate is always invoked with --allow-no-reports (the checker owns the
+  zero-tests-selected verdict);
 * narrow-override validation errors propagate;
-* the checker-integration suite shares the same wiring.
+* the checker-integration suite shares the same wiring by construction.
 """
 
-import os
 import pathlib
 import subprocess
 import tempfile
@@ -51,8 +50,8 @@ class UnitGateWiringTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         script = FULL_CI.read_text(encoding="utf-8")
-        cls.gate_fn = cls._function_body(
-            script, "run_known_failures_gate", "\nrun_unit_tests() {"
+        cls.suite_fn = cls._function_body(
+            script, "run_delta_gated_unit_suite", "\nrun_unit_tests() {"
         )
         cls.unit_fn = cls._function_body(
             script, "run_unit_tests", "\nrun_checker_integration_tests() {"
@@ -98,7 +97,7 @@ class UnitGateWiringTests(unittest.TestCase):
               printf '%s\\n' tsz-core tsz-checker
             }}
             node() {{ printf '%s\\n' "$*" >> {node_log}; return {node_rc}; }}
-            {self.gate_fn}
+            {self.suite_fn}
             {self.unit_fn}
             {self.checker_fn}
             set +e
@@ -124,7 +123,8 @@ class UnitGateWiringTests(unittest.TestCase):
     def test_green_run_gates_and_passes(self):
         rc, calls, node_calls, _ = self._run()
         self.assertEqual(rc, 0)
-        self.assertIn("--packages tsz-core tsz-checker", calls)
+        # newline-separated package list arrives as one --packages argument
+        self.assertIn("--packages tsz-core\ntsz-checker", calls)
         self.assertIn("known-failures-check.mjs --junit-dir", node_calls)
 
     def test_gate_verdict_is_the_job_verdict(self):
@@ -133,16 +133,16 @@ class UnitGateWiringTests(unittest.TestCase):
         self.assertIn("known-failures-check.mjs", node_calls)
 
     def test_infrastructure_failure_never_reaches_the_gate(self):
-        rc, _, node_calls, out = self._run(runner_rc=101)
+        rc, _, node_calls, _ = self._run(runner_rc=101)
         self.assertEqual(rc, 101)
         self.assertEqual(node_calls, "")
-        self.assertIn("infrastructure error", out)
 
-    def test_no_tests_selected_skips_the_gate(self):
-        rc, _, node_calls, out = self._run(junit_count=0)
+    def test_gate_owns_the_no_reports_verdict(self):
+        # Zero junit reports (narrowed override selected no tests): the gate
+        # still runs, with --allow-no-reports making the empty dir legal.
+        rc, _, node_calls, _ = self._run(junit_count=0)
         self.assertEqual(rc, 0)
-        self.assertEqual(node_calls, "")
-        self.assertIn("skipping known-failures gate", out)
+        self.assertIn("--allow-no-reports", node_calls)
 
     def test_bad_package_override_propagates(self):
         rc, calls, node_calls, _ = self._run(packages_rc=2)

@@ -5,44 +5,49 @@ Green unit CI means "no unit failures outside the baseline", so the baseline
 itself must only move in reviewed, intentional ways:
 
 * SHRINK (removing entries) is always allowed — a fixed test drops out.
-* GROWTH (adding entries) is rejected, with two explicit escapes:
-  - bootstrap: the base file is not yet reconciled (no
-    ``# baseline-status: reconciled`` marker), so the first reconcile's
-    additions are the point of the change;
-  - ``TSZ_KNOWN_FAILURES_ALLOW_GROWTH=1`` in the environment — a deliberate
-    re-reconcile. CI does not set it, so growth can only land through a
-    reviewed change that sets it (or a maintainer running the reconcile
-    locally and saying so in the PR).
-* Un-reconciling (the base had the marker, the head does not) is rejected —
-  dropping the marker would silently flip known-failures-check.mjs back to
-  advisory mode and disarm the gate.
+* GROWTH (adding entries) is rejected unless the same diff bumps the
+  reconcile generation carried by the marker line
+  (``# baseline-status: reconciled r<N>``; the bare marker reads as r1).
+  ``known-failures-check.mjs --update --bump-generation`` writes the bump, so
+  a deliberate re-reconcile authorizes its own additions inside the reviewed
+  artifact — no out-of-band env vars or workflow edits. The bootstrap
+  reconcile (base file unreconciled, generation 0) is growth by definition
+  and is allowed.
+* Lowering the generation — including dropping the marker, which would
+  silently flip known-failures-check.mjs back to advisory mode — is rejected.
 * Integrity: entries must be unique, sorted, and shaped like
   ``binary-id::test-name`` so diffs stay reviewable and the checker's set
   semantics hold.
 
+The head baseline is read from the working tree (what CI checked out / what
+the developer is about to commit); the base comes from ``git show``.
+
 Usage:
-    # Growth + integrity (default): additions rejected, removals allowed.
+    # Growth + integrity (default): compare the working tree to origin/main.
     python3 scripts/ci/check-known-failures-growth.py --base-ref origin/main
 
-    # Fetch origin/main first (shallow CI checkouts), fall back to a warning
-    # when the remote is unreachable (sandboxed/offline runs).
+    # Shallow CI checkouts: resolve the base, fetching it only if absent, and
+    # fall back to a warning when the remote is unreachable (offline runs).
     python3 scripts/ci/check-known-failures-growth.py \
         --fetch-base --allow-unavailable-base
 
-    # Integrity only: validate HEAD's baseline hygiene without a base ref.
+    # Integrity only: validate the working-tree baseline without a base ref.
     python3 scripts/ci/check-known-failures-growth.py --integrity-only
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import re
 import subprocess
 import sys
 
 BASELINE_PATH = "scripts/ci/known-failures.txt"
+# Must stay in lockstep with RECONCILED_MARKER / RECONCILED_MARKER_RE in
+# scripts/ci/known-failures-check.mjs (pinned by a drift test in
+# test_check_known_failures_growth.py).
 RECONCILED_MARKER = "# baseline-status: reconciled"
-ALLOW_GROWTH_ENV = "TSZ_KNOWN_FAILURES_ALLOW_GROWTH"
+RECONCILED_MARKER_RE = re.compile(r"^# baseline-status: reconciled(?: r(\d+))?$")
 
 
 def parse_entries(text: str) -> list[str]:
@@ -56,8 +61,13 @@ def parse_entries(text: str) -> list[str]:
     return entries
 
 
-def is_reconciled(text: str) -> bool:
-    return any(line.strip() == RECONCILED_MARKER for line in text.splitlines())
+def baseline_generation(text: str) -> int:
+    """Reconcile generation: 0 unreconciled, 1 bare marker, N for ``rN``."""
+    for raw in text.splitlines():
+        match = RECONCILED_MARKER_RE.match(raw.strip())
+        if match:
+            return int(match.group(1)) if match.group(1) else 1
+    return 0
 
 
 def check_integrity(text: str) -> list[str]:
@@ -80,29 +90,41 @@ def check_integrity(text: str) -> list[str]:
     return problems
 
 
-def check_growth(
-    base_text: str, head_text: str, allow_growth: bool
-) -> tuple[list[str], list[str], list[str]]:
-    """Return (problems, added, removed) for a base -> head baseline move."""
+def check_growth(base_text: str, head_text: str) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Return (problems, notes, added, removed) for a base -> head move."""
     base_entries = set(parse_entries(base_text))
     head_entries = set(parse_entries(head_text))
     added = sorted(head_entries - base_entries)
     removed = sorted(base_entries - head_entries)
+    base_gen = baseline_generation(base_text)
+    head_gen = baseline_generation(head_text)
     problems = []
-    if is_reconciled(base_text) and not is_reconciled(head_text):
+    notes = []
+    if head_gen < base_gen:
         problems.append(
-            "the reconciled marker was removed; that would flip "
-            "known-failures-check.mjs back to advisory mode. Keep the marker "
-            "(shrink by deleting entries, not the marker)."
+            f"the reconcile generation went backwards (r{base_gen} -> r{head_gen}"
+            f"{' — marker removed' if head_gen == 0 else ''}); that would flip "
+            "known-failures-check.mjs toward advisory mode. Keep the marker and "
+            "its generation (shrink by deleting entries, not the marker)."
         )
-    if added and is_reconciled(base_text) and not allow_growth:
-        problems.append(
-            f"{len(added)} entr{'y was' if len(added) == 1 else 'ies were'} "
-            "added to the baseline. The baseline may only shrink in normal "
-            "PRs: fix the regression instead. A deliberate re-reconcile must "
-            f"run with {ALLOW_GROWTH_ENV}=1 and say so in the PR body."
-        )
-    return problems, added, removed
+    if added:
+        if base_gen == 0:
+            notes.append("bootstrap reconcile (base baseline was unreconciled): growth allowed.")
+        elif head_gen > base_gen:
+            notes.append(
+                f"reconcile generation bumped r{base_gen} -> r{head_gen}: growth allowed "
+                "(deliberate re-reconcile)."
+            )
+        else:
+            problems.append(
+                f"{len(added)} entr{'y was' if len(added) == 1 else 'ies were'} "
+                "added to the baseline without bumping the reconcile generation. "
+                "The baseline may only shrink in normal PRs: fix the regression "
+                "instead. A deliberate re-reconcile regenerates the file with "
+                "`node scripts/ci/known-failures-check.mjs --update "
+                "--bump-generation` and says so in the PR body."
+            )
+    return problems, notes, added, removed
 
 
 def _read_ref_text(ref: str, path: str) -> str | None:
@@ -116,23 +138,29 @@ def _read_ref_text(ref: str, path: str) -> str | None:
         return None
 
 
+def _ref_exists(ref: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", f"{ref}^{{commit}}"],
+            capture_output=True,
+        ).returncode
+        == 0
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Guard the known-failures baseline: additions need an explicit, "
-            "reviewed escape; removals are always allowed; the reconciled "
-            "marker must never be dropped; the file must stay canonical."
+            "Guard the known-failures baseline: additions require a reconcile-"
+            "generation bump in the same diff, removals are always allowed, "
+            "the generation can never go backwards, and the file must stay "
+            "canonical (no duplicate / unsorted / malformed entries)."
         )
     )
     parser.add_argument(
         "--base-ref",
         default="origin/main",
         help="Base git ref to compare against (default: origin/main).",
-    )
-    parser.add_argument(
-        "--head-ref",
-        default="HEAD",
-        help="Head git ref to inspect (default: HEAD).",
     )
     parser.add_argument(
         "--path",
@@ -142,14 +170,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--integrity-only",
         action="store_true",
-        help="Only validate baseline hygiene at --head-ref; skip the base comparison.",
+        help="Only validate working-tree baseline hygiene; skip the base comparison.",
     )
     parser.add_argument(
         "--fetch-base",
         action="store_true",
         help=(
-            "Run `git fetch --no-tags --depth=1 origin main` first and compare "
-            "against FETCH_HEAD (for shallow CI checkouts)."
+            "When --base-ref does not resolve locally (shallow CI checkouts), "
+            "run `git fetch --no-tags --depth=1 origin main` and compare "
+            "against FETCH_HEAD."
         ),
     )
     parser.add_argument(
@@ -162,12 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    head_text = _read_ref_text(args.head_ref, args.path)
-    if head_text is None:
-        print(
-            f"error: could not read {args.path} from {args.head_ref!r}",
-            file=sys.stderr,
-        )
+    try:
+        with open(args.path, encoding="utf-8") as handle:
+            head_text = handle.read()
+    except OSError as err:
+        print(f"error: could not read {args.path}: {err}", file=sys.stderr)
         return 1
 
     integrity_problems = check_integrity(head_text)
@@ -180,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if integrity_problems else 0
 
     base_ref = args.base_ref
-    if args.fetch_base:
+    if args.fetch_base and not _ref_exists(base_ref):
         fetch = subprocess.run(
             ["git", "fetch", "--no-tags", "--depth=1", "origin", "main"],
             capture_output=True,
@@ -206,12 +234,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {msg}", file=sys.stderr)
         return 1
 
-    allow_growth = os.environ.get(ALLOW_GROWTH_ENV, "") == "1"
-    growth_problems, added, removed = check_growth(base_text, head_text, allow_growth)
+    growth_problems, notes, added, removed = check_growth(base_text, head_text)
 
     print(
-        f"known-failures baseline: {len(parse_entries(base_text))} entr(ies) at "
-        f"{base_ref!r}, {len(parse_entries(head_text))} at {args.head_ref!r}."
+        f"known-failures baseline: {len(parse_entries(base_text))} entr(ies) "
+        f"(r{baseline_generation(base_text)}) at {base_ref!r}, "
+        f"{len(parse_entries(head_text))} (r{baseline_generation(head_text)}) "
+        "in the working tree."
     )
     if removed:
         print(f"Removed entries ({len(removed)}) — shrink ratchet:")
@@ -221,10 +250,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Added entries ({len(added)}):")
         for entry in added:
             print(f"  + {entry}")
-        if not is_reconciled(base_text):
-            print("Bootstrap reconcile (base baseline was unreconciled): growth allowed.")
-        elif allow_growth:
-            print(f"{ALLOW_GROWTH_ENV}=1 set: growth allowed (deliberate re-reconcile).")
+    for note in notes:
+        print(note)
     for problem in growth_problems:
         print(f"::error::known-failures baseline: {problem}")
 
