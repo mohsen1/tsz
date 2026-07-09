@@ -1299,6 +1299,9 @@ mod namespace_property_mismatch_boundary_arch_tests;
 #[path = "tests/narrowed_union_source_display_tests.rs"]
 mod narrowed_union_source_display_tests;
 #[cfg(test)]
+#[path = "tests/narrowing_union_source_display_tests.rs"]
+mod narrowing_union_source_display_tests;
+#[cfg(test)]
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[cfg(test)]
