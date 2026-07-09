@@ -699,6 +699,20 @@ impl<'a> CheckerState<'a> {
         request: &NameResolutionRequest<'_>,
         failure: &ResolutionFailure,
     ) {
+        // Every arm below anchors its diagnostic at `request.idx` through the
+        // span-gated emitters (`error_at_node` and friends), which silently
+        // drop the diagnostic when the node is not addressable in this
+        // checker's arena. That happens when demand-driven lowering resolves
+        // names inside declarations from another arena (e.g. lib interface
+        // bodies materialized on behalf of user code): the failure produces
+        // an error type, but the diagnostic belongs to the owning file's own
+        // check. Bail out before building messages or running the
+        // full-symbol-universe spelling-suggestion scan for a diagnostic that
+        // is structurally guaranteed to be dropped at emission.
+        if self.get_node_span(request.idx).is_none() {
+            return;
+        }
+
         // Suppress TS2304/TS2552 entirely for identifiers inside enum computed
         // property names. tsc only emits TS1164 for these and doesn't resolve
         // the expressions.

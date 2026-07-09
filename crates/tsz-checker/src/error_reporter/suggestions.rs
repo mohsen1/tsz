@@ -46,6 +46,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // A discarded-diagnostics context never surfaces the diagnostic this
+        // suggestion would decorate; skip the property-universe scan.
+        if self.ctx.diagnostics_discarded {
+            return None;
+        }
+
         let evaluated_type = self.evaluate_type_for_assignability(type_id);
         let property_names = self.collect_accessible_type_property_names(type_id, evaluated_type);
         if property_names.is_empty() {
