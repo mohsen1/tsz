@@ -132,8 +132,14 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
+      # Only the daily scheduled run publishes: it always runs the full suite
+      # (empty filter), so it can never overwrite the site with a partial set.
+      # Manual dispatches — including filtered ones for spot-checking specific
+      # rows — never auto-publish; to publish a chosen run, dispatch
+      # bench-republish.yml with its run id. (A filtered dispatch previously
+      # replaced the full dataset with just its handful of rows.)
       - name: Trigger website redeploy
-        if: ${{ (inputs.redeploy_site || github.event_name == 'schedule') && steps.readiness.outputs.ready == 'true' }}
+        if: ${{ github.event_name == 'schedule' && steps.readiness.outputs.ready == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
