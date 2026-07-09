@@ -7,7 +7,7 @@ use tsz_checker::context::{CheckerOptions, LibContext as CheckerLibContext, Scri
 use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{load_compiled_lib_files, load_lib_files};
 use tsz_parser::parser::{NodeIndex, ParserState};
-use tsz_solver::construction::{TypeDatabase, TypeInterner};
+use tsz_solver::construction::{TypeBuiltinAccess, TypeInterner};
 
 fn parse_test_source(source: &str) -> (ParserState, NodeIndex) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -112,7 +112,7 @@ fn prime_array_display_props(lib_files: Vec<Arc<LibFile>>) -> Vec<String> {
     checker.prime_boxed_types();
 
     let array_base =
-        TypeDatabase::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
+        TypeBuiltinAccess::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
     checker
         .ctx
         .types
@@ -166,7 +166,7 @@ fn declaration_array_display_summary_merges_to_locale_string_overloads() {
     checker.prime_boxed_types();
 
     let array_base =
-        TypeDatabase::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
+        TypeBuiltinAccess::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
     let display_props = checker
         .ctx
         .types
@@ -253,7 +253,7 @@ fn declaration_array_display_summary_snapshots_well_known_symbol_names() {
     checker.prime_boxed_types();
 
     let array_base =
-        TypeDatabase::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
+        TypeBuiltinAccess::get_array_base_type(checker.ctx.types).expect("expected Array<T> base");
     let prop_names: Vec<_> = checker
         .ctx
         .types

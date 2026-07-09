@@ -309,7 +309,7 @@ const MIGRATED_OUT_OF_COMMON_12916: &[&str] = &[
     "function_signature_has_typeof",
 ];
 
-/// FunctionShape instantiation, parameter-list transformation, and
+/// `FunctionShape` instantiation, parameter-list transformation, and
 /// redeclaration-widening helpers migrated to `generic_instantiation`,
 /// `signature_building`, and `widening` by the #15643 arch-health paydown
 /// (parent #8225).
