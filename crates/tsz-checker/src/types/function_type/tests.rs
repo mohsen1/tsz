@@ -197,8 +197,12 @@ fn resolved_conditional_target_still_reduces_to_branch() {
     );
 }
 
-/// Minimal Promise definition so async tests can resolve Promise<T>.
-const PROMISE_DEF: &str = "interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }";
+/// Minimal Promise definitions so async tests can resolve promise-like values
+/// without loading the default libraries.
+const PROMISE_DEF: &str = r#"
+interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }
+interface PromiseLike<T> { then<U>(cb: (val: T) => U): PromiseLike<U>; }
+"#;
 
 fn async_diagnostics(body: &str) -> Vec<u32> {
     diagnostics_for_source(&format!("{PROMISE_DEF}\n{body}"))
@@ -297,6 +301,90 @@ fn async_inferred_return_union_with_promise() {
     assert!(
         !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "async returning Promise in union context should not double-wrap: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_recursively_awaits_nested_promise() {
+    let diags = async_diagnostics(
+        "declare function load<Payload>(): Promise<Promise<Payload>>;
+         const cb: () => Promise<boolean> = async () => load<boolean>();",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "nested Promise layers should flatten before the inferred return is wrapped: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_awaits_promiselike_with_renamed_binder() {
+    let diags = async_diagnostics(
+        "declare function load<Item>(): PromiseLike<Item>;
+         const cb: () => Promise<number> = async () => load<number>();",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "PromiseLike payloads should use the same awaited return path across binder names: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_distributes_awaited_union() {
+    let diags = async_diagnostics(
+        "declare const pick: boolean;
+         declare function load<Value>(): PromiseLike<Value>;
+         const cb: () => Promise<number> = async () => pick ? 1 : load<number>();",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "mixed value/PromiseLike unions should be awaited member-wise before wrapping: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_awaits_alias_wrapped_promiselike() {
+    let diags = async_diagnostics(
+        "type Later<Payload> = PromiseLike<Payload>;
+         declare function load<Result>(): Later<Result>;
+         const cb: () => Promise<string> = async () => load<string>();",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "alias-wrapped PromiseLike values should resolve through the awaited query: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_preserves_non_thenable_generic_application() {
+    let diags = async_diagnostics(
+        "interface Box<Payload> { value: Payload; }
+         declare function make<Item>(): Box<Item>;
+         const cb: () => Promise<Box<string>> = async () => make<string>();",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "non-thenable generic applications should be wrapped without structural evaluation: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_keeps_bare_constrained_parameter() {
+    let diags = async_diagnostics(
+        "const keep = async <P extends PromiseLike<number>>(value: P) => value;
+         const check: <Q extends PromiseLike<number>>(value: Q) => Promise<Q> = keep;",
+    );
+    assert!(
+        !diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "a bare constrained parameter should stay Promise<P>, not unwrap its constraint: {diags:?}"
+    );
+}
+
+#[test]
+fn async_inferred_return_still_reports_incompatible_payload() {
+    let diags = async_diagnostics("const cb: () => Promise<string> = async () => 42;");
+    assert!(
+        diags.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "canonical Promise wrapping must not suppress a genuine payload mismatch: {diags:?}"
     );
 }
 

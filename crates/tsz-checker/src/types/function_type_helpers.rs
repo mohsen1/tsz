@@ -1034,26 +1034,21 @@ impl<'a> CheckerState<'a> {
         Some(widened)
     }
 
-    fn wrap_unannotated_async_return_type(&mut self, mut return_type: TypeId) -> TypeId {
-        let had_promise_wrapper = if let Some(inner) = self.unwrap_promise_type(return_type) {
-            return_type = inner;
-            true
-        } else {
-            false
-        };
-        if !had_promise_wrapper
-            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, return_type)
+    fn wrap_unannotated_async_return_type(&mut self, return_type: TypeId) -> TypeId {
+        let mut awaited_type = self.compute_awaited_type(return_type, 0);
+        let had_awaitable_layer = awaited_type != return_type;
+        if !had_awaitable_layer
+            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, awaited_type)
         {
-            return_type = self.widen_literal_type(return_type);
+            awaited_type = self.widen_literal_type(awaited_type);
         }
-        let promise_base = self
-            .ctx
-            .lib_promise_type_ref()
-            .unwrap_or(TypeId::PROMISE_BASE);
+        if let Some(promise_type) = self.get_promise_type(awaited_type) {
+            return promise_type;
+        }
         return_type_construction::function_return_application(
             self.ctx.types,
-            promise_base,
-            vec![return_type],
+            TypeId::PROMISE_BASE,
+            vec![awaited_type],
         )
     }
 
