@@ -187,12 +187,12 @@ EventListener("ready");
 
 #[test]
 fn test_ts2304_emitted_for_undefined_name() {
-    let diagnostics = check_without_lib(r#"const x = undefinedName;"#);
+    let diagnostics = check_without_lib(r#"const x = zqxwyvNoSuchName;"#);
 
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         !ts2304_errors.is_empty(),
-        "Expected TS2304 error for undefinedName, got: {diagnostics:?}"
+        "Expected TS2304 error for zqxwyvNoSuchName, got: {diagnostics:?}"
     );
 }
 
