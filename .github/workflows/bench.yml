@@ -18,6 +18,12 @@ on:
         required: false
         default: true
         type: boolean
+  schedule:
+    # Daily full benchmark run that publishes fresh rows to the website. Set
+    # to 03:00 UTC so results land ahead of the 06:00 gh-pages deploy and stay
+    # clear of readme-benchmark-refresh (07:00) and daily-release (09:00). The
+    # `bench-<ref>` concurrency group keeps this to one run at a time.
+    - cron: "0 3 * * *"
 
 concurrency:
   group: bench-${{ github.ref }}
@@ -39,7 +45,7 @@ jobs:
   bench:
     name: GitHub Actions benchmark
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.full_suite && 360 || 120 }}
+    timeout-minutes: ${{ (inputs.full_suite || github.event_name == 'schedule') && 360 || 120 }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -72,7 +78,7 @@ jobs:
         shell: bash
         env:
           BENCH_FILTER: ${{ inputs.filter }}
-          FULL_SUITE: ${{ inputs.full_suite }}
+          FULL_SUITE: ${{ inputs.full_suite || github.event_name == 'schedule' }}
         run: |
           set -euo pipefail
           mkdir -p bench-out
@@ -127,7 +133,7 @@ jobs:
           compression-level: 1
 
       - name: Trigger website redeploy
-        if: inputs.redeploy_site && steps.readiness.outputs.ready == 'true'
+        if: ${{ (inputs.redeploy_site || github.event_name == 'schedule') && steps.readiness.outputs.ready == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
