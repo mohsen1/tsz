@@ -8,6 +8,20 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::operations::property::PropertyAccessResult;
 
+/// Classification of a type node as a generic indexed-access chain rooted at a
+/// concrete tuple (`Table[D1]`, `AddDigitTable[Carry][T]`, …).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GenericTupleChainVerdict {
+    /// A tuple-rooted chain whose every index stays in the element-index domain;
+    /// carries the chain's element-value union.
+    Value(TypeId),
+    /// A tuple-rooted chain with an index outside the element-index domain, so
+    /// the chain stays deferred and exposes no key space.
+    Escapes,
+    /// Not a tuple-rooted chain; this analysis has no opinion.
+    NotTupleRooted,
+}
+
 /// Check if a property with the given name is private or protected on the given type.
 /// Delegates to the solver's type query via `query_boundaries`.
 pub(super) fn has_nonpublic_property(
@@ -1151,21 +1165,53 @@ impl<'a> CheckerState<'a> {
     /// Returns `None` when `node_idx` is not such a chain. Bounded by chain depth
     /// and tuple length; no unbounded instantiation.
     fn generic_tuple_chain_value_type(&mut self, node_idx: NodeIndex) -> Option<TypeId> {
-        let node = self.ctx.arena.get(node_idx)?;
-        let indexed = self.ctx.arena.get_indexed_access_type(node)?;
+        match self.generic_tuple_chain_verdict(node_idx) {
+            GenericTupleChainVerdict::Value(value) => Some(value),
+            GenericTupleChainVerdict::Escapes | GenericTupleChainVerdict::NotTupleRooted => None,
+        }
+    }
+
+    /// Classify `node_idx` as a generic indexed-access chain rooted at a concrete
+    /// tuple, distinguishing "not such a chain" from "such a chain whose index
+    /// escapes the tuple's element-index domain". Only the latter licenses a
+    /// `TS2536` at the enclosing access: `tsc` leaves `Table[D1]` deferred when
+    /// `D1 extends 0 | 1 | 2` over a 2-tuple, so the chain has no known key space
+    /// and `Table[D1][0]` errors — even though evaluating the inner access here
+    /// yields a clean element union that would accept `0`.
+    ///
+    /// Bounded by chain depth and tuple length; no unbounded instantiation.
+    fn generic_tuple_chain_verdict(&mut self, node_idx: NodeIndex) -> GenericTupleChainVerdict {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return GenericTupleChainVerdict::NotTupleRooted;
+        };
+        let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
+            return GenericTupleChainVerdict::NotTupleRooted;
+        };
         let inner_node_idx = indexed.object_type;
         let index_node_idx = indexed.index_type;
 
         // Resolve the base value union: either a concrete tuple directly, or a
         // nested generic chain that itself bottoms out at a concrete tuple.
-        let base_value = if let Some(parent) = self.generic_tuple_chain_value_type(inner_node_idx) {
-            parent
-        } else {
-            let resolved = self.get_type_from_type_node(inner_node_idx);
-            let resolved = self.evaluate_type_with_env(resolved);
-            (resolved != TypeId::ERROR && self.tuple_fixed_length(resolved).is_some())
-                .then_some(resolved)?
+        let base_value = match self.generic_tuple_chain_verdict(inner_node_idx) {
+            GenericTupleChainVerdict::Value(parent) => parent,
+            GenericTupleChainVerdict::Escapes => return GenericTupleChainVerdict::Escapes,
+            GenericTupleChainVerdict::NotTupleRooted => {
+                let resolved = self.get_type_from_type_node(inner_node_idx);
+                let resolved = self.evaluate_type_with_env(resolved);
+                if resolved == TypeId::ERROR || self.tuple_fixed_length(resolved).is_none() {
+                    return GenericTupleChainVerdict::NotTupleRooted;
+                }
+                resolved
+            }
         };
+
+        // This level indexes `base_value`, so it is a tuple-element index only when
+        // `base_value` is itself tuple-like. A parent chain whose element union is,
+        // say, an object (`typeof x[0]` over `[{ tags: [...] }]`) makes the next key
+        // an ordinary property lookup, which this analysis has no opinion about.
+        if self.tuple_fixed_length(base_value).is_none() {
+            return GenericTupleChainVerdict::NotTupleRooted;
+        }
 
         // The index at this level must stay within the tuple element-index domain.
         let mut index_constraint = crate::query_boundaries::common::type_parameter_constraint(
@@ -1185,7 +1231,7 @@ impl<'a> CheckerState<'a> {
             index_constraint.unwrap_or_else(|| self.get_type_from_type_node(index_node_idx));
         let index_for_check = self.evaluate_type_with_env(index_for_check);
         if !self.index_within_tuple_element_domain(index_for_check, base_value) {
-            return None;
+            return GenericTupleChainVerdict::Escapes;
         }
 
         // The resolved value is the tuple's element-value union (`base[number]`).
@@ -1196,26 +1242,45 @@ impl<'a> CheckerState<'a> {
         );
         let element_union = self.evaluate_type_with_env(element_union);
         if matches!(element_union, TypeId::ERROR | TypeId::UNDEFINED) {
-            return None;
+            // The element union is unusable, so this analysis has nothing to say;
+            // leave the decision to the general recovery paths.
+            return GenericTupleChainVerdict::NotTupleRooted;
         }
-        Some(element_union)
+        GenericTupleChainVerdict::Value(element_union)
     }
 
-    /// Whether `Chain[J]` is a valid indexed access where `Chain` is a generic
-    /// indexed-access chain rooted at a concrete tuple base (e.g.
-    /// `Table[D1][0]`, `AddDigitTable[Carry][T][U]`). The chain's apparent value
-    /// type is the element-value union of the tuple; the outer index `J` must lie
-    /// in `keyof` of that union. Returns `false` (keeping any genuine `TS2536`)
-    /// when the chain is not tuple-rooted or `J` is out of the value key-space.
-    pub(super) fn generic_tuple_chain_index_access_allows_index(
+    /// Whether `Chain[J]` is a genuine `TS2536` that the general key-space
+    /// recovery would miss, because `Chain` is a tuple-rooted generic
+    /// indexed-access chain that `tsc` keeps deferred. Either an intermediate
+    /// index escapes the tuple element-index domain, or `J` lies outside the
+    /// chain's element-value key space. Returns `false` when `Chain` is not such
+    /// a chain, leaving the existing recovery paths in charge.
+    pub(super) fn generic_tuple_chain_index_access_rejects(
         &mut self,
         object_type_node_idx: NodeIndex,
         outer_index_node_idx: NodeIndex,
         outer_index_type: TypeId,
     ) -> bool {
-        let Some(value_union) = self.generic_tuple_chain_value_type(object_type_node_idx) else {
-            return false;
-        };
+        match self.generic_tuple_chain_verdict(object_type_node_idx) {
+            GenericTupleChainVerdict::NotTupleRooted => false,
+            GenericTupleChainVerdict::Escapes => true,
+            GenericTupleChainVerdict::Value(value_union) => !self
+                .outer_index_within_chain_value_key_space(
+                    value_union,
+                    object_type_node_idx,
+                    outer_index_node_idx,
+                    outer_index_type,
+                ),
+        }
+    }
+
+    fn outer_index_within_chain_value_key_space(
+        &mut self,
+        value_union: TypeId,
+        object_type_node_idx: NodeIndex,
+        outer_index_node_idx: NodeIndex,
+        outer_index_type: TypeId,
+    ) -> bool {
         let value_keyof = self.indexed_access_keyof_with_env(value_union);
 
         let mut outer_index_constraint = crate::query_boundaries::common::type_parameter_constraint(
@@ -1237,6 +1302,29 @@ impl<'a> CheckerState<'a> {
         let outer_for_check = self.evaluate_type_with_env(outer_for_check);
         self.indexed_access_key_space_relation_outcome(outer_for_check, value_keyof)
             .related
+    }
+
+    /// Whether `Chain[J]` is a valid indexed access where `Chain` is a generic
+    /// indexed-access chain rooted at a concrete tuple base (e.g.
+    /// `Table[D1][0]`, `AddDigitTable[Carry][T][U]`). The chain's apparent value
+    /// type is the element-value union of the tuple; the outer index `J` must lie
+    /// in `keyof` of that union. Returns `false` (keeping any genuine `TS2536`)
+    /// when the chain is not tuple-rooted or `J` is out of the value key-space.
+    pub(super) fn generic_tuple_chain_index_access_allows_index(
+        &mut self,
+        object_type_node_idx: NodeIndex,
+        outer_index_node_idx: NodeIndex,
+        outer_index_type: TypeId,
+    ) -> bool {
+        let Some(value_union) = self.generic_tuple_chain_value_type(object_type_node_idx) else {
+            return false;
+        };
+        self.outer_index_within_chain_value_key_space(
+            value_union,
+            object_type_node_idx,
+            outer_index_node_idx,
+            outer_index_type,
+        )
     }
 
     fn array_like_kind_has_length(
@@ -1373,13 +1461,26 @@ impl<'a> CheckerState<'a> {
         self.get_numeric_index_from_string(&property_name)
     }
 
+    /// Whether a canonical numeric string-literal key (`'0'`, `'1'`, …) indexes
+    /// `object_type`.
+    ///
+    /// `tsc` resolves a string-literal index against the *declared* keys, never
+    /// through a numeric index signature: `[1, 2]['0']` resolves, while
+    /// `[1, 2]['5']`, `string[]['0']`, and `[1, 2, ...number[]]['5']` are all
+    /// `TS2536`. Only a tuple's fixed positions are declared keys, so a rest
+    /// element never widens the domain and a plain array has no such keys at all.
     pub(super) fn canonical_numeric_string_literal_valid_for_object(
-        &self,
+        &mut self,
         index_type: TypeId,
         object_type: TypeId,
     ) -> bool {
-        self.string_literal_numeric_index(index_type)
-            .is_some_and(|_| self.is_element_indexable(object_type, false, true))
+        let Some(index) = self.string_literal_numeric_index(index_type) else {
+            return false;
+        };
+        let Some((len, _has_rest)) = self.tuple_fixed_length(object_type) else {
+            return false;
+        };
+        index < len
     }
 
     pub(super) fn union_index_members_valid_for_object(

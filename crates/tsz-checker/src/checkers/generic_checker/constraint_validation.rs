@@ -93,7 +93,9 @@ impl CheckerState<'_> {
                     // Defer to the assignability relation so `unknown` satisfies any
                     // such top-type constraint, matching tsc (xstate `NonReducibleUnknown`).
                     if !matches!(reduced_constraint, TypeId::ANY | TypeId::UNKNOWN)
-                        && !self.is_assignable_to(TypeId::UNKNOWN, reduced_constraint)
+                        && !self
+                            .unknown_type_arg_top_constraint_relation_outcome(reduced_constraint)
+                            .related
                     {
                         let constraint_str =
                             self.format_type_diagnostic_constraint(reduced_constraint);

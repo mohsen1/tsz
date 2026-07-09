@@ -859,6 +859,31 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A generic indexed-access chain rooted at a concrete tuple stays deferred
+        // in `tsc`: `Table[D1]` with `D1 extends 0 | 1 | 2` has no known element at
+        // index `2`, so `Table[D1][0]` is a genuine TS2536. By this point the inner
+        // access has already been evaluated to a clean element-value union whose
+        // key space accepts `0`, so this verdict must be taken before `keyof_object`
+        // is consulted below.
+        if self.generic_tuple_chain_index_access_rejects(
+            data.object_type,
+            data.index_type,
+            index_type,
+        ) {
+            let obj_type_str = self.format_ts2536_object_type(data.object_type, object_type);
+            let index_type_str = self.format_type(index_type);
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                error_anchor,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
+            return;
+        }
+
         let index_type_for_check = self.evaluate_type_with_env(index_type);
         if let Some(prop_atom) =
             crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)

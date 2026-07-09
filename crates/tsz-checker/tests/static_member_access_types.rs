@@ -257,7 +257,7 @@ const staticZ = StaticC.z;
 }
 
 #[test]
-fn object_entries_computed_object_literal_keeps_string_any_shape() {
+fn object_entries_computed_object_literal_keeps_string_unknown_shape() {
     let source = r#"
 type ArrayLike<T> = {
     length: number;
@@ -313,10 +313,14 @@ class Test {
         checker.get_type_of_node(first_call_with_property_name(&parser, "entries"));
     let object_literal_type = checker.get_type_of_node(first_object_literal(&parser));
 
+    // `tsc` selects the *generic* first overload for an `any` argument (`any`
+    // matches `{ [s: string]: T }`, inferring `T = unknown`) rather than falling
+    // back to the `entries(o: {})` signature, so the element type is `unknown`.
+    // The `{}` overload is only reached for a bare `object`.
     assert_eq!(
         checker.format_type(entries_call_type),
-        "[string, any][]",
-        "expected Object.entries call to preserve the currently selected overload result"
+        "[string, unknown][]",
+        "expected Object.entries(any) to select the generic overload with T = unknown"
     );
 
     assert_eq!(
@@ -326,12 +330,12 @@ class Test {
     );
     assert_eq!(
         checker.format_type(value_type),
-        "any",
-        "expected Object.entries value binding to infer any from the selected overload"
+        "unknown",
+        "expected Object.entries value binding to infer unknown from the selected overload"
     );
     assert_eq!(
         checker.format_type(object_literal_type),
-        "{ [x: string]: any; }",
+        "{ [x: string]: unknown; }",
         "expected computed object literal to keep a string index signature"
     );
 }

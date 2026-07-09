@@ -50,7 +50,10 @@ fn diagnostics_boundary_reexports_routed_display_helpers() {
         "is_union_type",
         "widen_type",
         "IndexKind",
-        "IndexSignatureResolver",
+        // The resolver itself stays owned by `query_boundaries::index_signature`
+        // (see `index_signature_boundary_scans`); `diagnostics` routes the fact,
+        // not the resolver, so display call sites never construct one.
+        "has_index_signature",
     ] {
         assert!(
             diagnostics.contains(helper),

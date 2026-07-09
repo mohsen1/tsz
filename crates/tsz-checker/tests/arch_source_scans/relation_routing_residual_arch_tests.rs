@@ -139,13 +139,14 @@ fn relation_outcome_with_env_fast_path_uses_named_diagnostic_guard() {
 
 #[test]
 fn type_parameter_constraint_elaboration_uses_named_outcome_helper() {
-    let source = read_checker_source("error_reporter/assignability.rs");
-    let body = function_body_between(
-        &source,
-        "fn unrelated_type_parameter_target_related_info(",
-        "fn type_or_evaluated_has_display_properties(",
+    // `unrelated_type_parameter_target_related_info` owns this file outright, so
+    // the whole source is the function body under scan.
+    let source = read_checker_source("error_reporter/assignability_type_parameter_target.rs");
+    assert!(
+        source.contains("fn unrelated_type_parameter_target_related_info("),
+        "the type-parameter-target elaboration must live in its own module"
     );
-    let compact: String = body.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let compact: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
         compact
