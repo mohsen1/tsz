@@ -19,7 +19,7 @@
 //! - Mapped/conditional body generics still expand args (regression guard)
 //! - Incorrect types still emit TS2322 (false-negative guard)
 
-use crate::test_utils::has_diagnostic_code;
+use crate::test_utils::{check_source_with_libs, has_diagnostic_code, load_default_lib_files};
 use tsz_common::options::checker::CheckerOptions;
 
 fn diags_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -28,7 +28,14 @@ fn diags_strict(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
         strict_null_checks: true,
         ..CheckerOptions::default()
     };
-    crate::test_utils::check_source(source, "test.ts", opts)
+    // These fixtures use `Map<...>` type-argument defaults, so the standard
+    // lib must be loaded. Filter TS2318 missing-default-lib noise so the
+    // assertions see only the semantic diagnostics.
+    let lib_files = load_default_lib_files();
+    check_source_with_libs(source, "test.ts", opts, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

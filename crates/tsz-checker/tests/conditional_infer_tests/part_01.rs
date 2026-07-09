@@ -25,6 +25,7 @@ const value: Depth2 = "terminal";
 #[test]
 fn test_utility_types_function_keys_generic_pick_has_no_false_diagnostics() {
     let source = r#"
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
 type NonUndefined<A> = A extends undefined ? never : A;
 type FunctionKeys<T extends object> = {
   [K in keyof T]-?: NonUndefined<T[K]> extends (...args: any[]) => unknown ? K : never;

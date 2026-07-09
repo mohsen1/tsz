@@ -229,11 +229,11 @@ flat2([1, ['a']]);
             .iter()
             .filter(|diag| {
                 diag.message_text.as_str()
-                    == "Type 'number' is not assignable to type 'string | (string | string[])[]'."
+                    == "Type 'number' is not assignable to type 'string | RecArray<string>'."
             })
             .count(),
         1,
-        "Expected exactly one nested string[] TS2322, got: {diagnostics:?}"
+        "Expected exactly one recursive-alias TS2322, got: {diagnostics:?}"
     );
 
     let mut seen = HashSet::new();

@@ -1018,7 +1018,7 @@ layerEffect(
   })
 );
 "#;
-    let diags = relevant_diagnostics(source);
+    let diags = relevant_default_lib_diagnostics(source);
     assert!(
         lacks_diagnostic_code(&diags, 2345),
         "Expected no stale TS2345 for class-tag contextual generator callback. Diagnostics: {diags:#?}"
@@ -1087,7 +1087,7 @@ layerEffect(
   }),
 );
 "#;
-    let diags = relevant_diagnostics(source);
+    let diags = relevant_default_lib_diagnostics(source);
     assert!(
         lacks_diagnostic_code(&diags, 2345),
         "Expected return-context retry to discard stale TS2345 for the generator callback. Diagnostics: {diags:#?}"

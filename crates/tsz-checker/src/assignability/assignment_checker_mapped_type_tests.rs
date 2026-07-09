@@ -1,5 +1,30 @@
 use super::strict_diagnostics_for;
 
+/// Strict diagnostics with the standard lib loaded, for fixtures that
+/// reference lib globals (`Symbol`, `PropertyKey`, ...). Mirrors the strict
+/// option triple of [`strict_diagnostics_for`] but wires in the default lib
+/// set and filters TS2318 missing-default-lib noise.
+fn strict_lib_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{check_source_with_libs, load_default_lib_files};
+
+    let lib_files = load_default_lib_files();
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            strict_function_types: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    )
+    .into_iter()
+    .filter(|diagnostic| diagnostic.code != 2318)
+    .collect()
+}
+
 #[test]
 fn key_remapped_mapped_types_preserve_optional_declared_property_types() {
     let diagnostics = strict_diagnostics_for(
@@ -46,7 +71,7 @@ type cases = [
 
 #[test]
 fn tuple_to_object_preserves_unique_symbol_keys_from_tuple_index_access() {
-    let diagnostics = strict_diagnostics_for(
+    let diagnostics = strict_lib_diagnostics_for(
         r#"
 type Same<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends

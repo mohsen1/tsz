@@ -12,11 +12,17 @@
 //! `Type 'Promise<TResult2>' is not assignable to type 'T'`
 //! (kysely.ts 707/717/751/776, tracker #10663).
 
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_source_with_libs, load_default_lib_files};
 
 fn diagnostic_summaries(source: &str) -> Vec<String> {
-    check_source_diagnostics(source)
+    // These fixtures reference `Promise`/`PromiseLike`, so the check must run
+    // with the standard lib loaded. Filter TS2318 missing-default-lib noise so
+    // the assertions see only the semantic diagnostics.
+    let lib_files = load_default_lib_files();
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &lib_files)
         .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
         .map(|diagnostic| format!("TS{}: {}", diagnostic.code, diagnostic.message_text))
         .collect()
 }

@@ -172,8 +172,9 @@ type Bad = StrOnly[symbol];
 "#,
     );
     assert!(
-        str_only.contains(&2536),
-        "string-only signature indexed by symbol must emit TS2536: {str_only:?}"
+        str_only.contains(&2538),
+        "string-only signature indexed by symbol must emit TS2538 \
+         (Type 'symbol' cannot be used as an index type): {str_only:?}"
     );
 
     let num_only = codes(
@@ -183,8 +184,9 @@ type Bad = NumOnly[symbol];
 "#,
     );
     assert!(
-        num_only.contains(&2536),
-        "number-only signature indexed by symbol must emit TS2536: {num_only:?}"
+        num_only.contains(&2538),
+        "number-only signature indexed by symbol must emit TS2538 \
+         (Type 'symbol' cannot be used as an index type): {num_only:?}"
     );
 }
 

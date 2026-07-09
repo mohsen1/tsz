@@ -11,7 +11,7 @@ declare function choose<T>(options: T[], fallback: NI<T>): T;
 choose(["foo", "bar"], "baz");
 choose([1, 2], 3);
 "#;
-    let diags = relevant_diagnostics(source);
+    let diags = relevant_default_lib_diagnostics(source);
     assert!(
         diags.is_empty(),
         "NoInfer via type alias still widens array-inferred T to primitive. Diagnostics: {diags:#?}"
