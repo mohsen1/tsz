@@ -1770,6 +1770,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 }
 
+/// How one instantiation step that left the same alias still to be expanded
+/// should be bounded — see `classify_same_alias_expansion`.
+///
+/// `def_depth` (`MAX_DEF_DEPTH`, escalated through
+/// `REAL_INSTANTIATION_BAILOUT_THRESHOLD`) is the tsz analogue of tsc's
+/// `instantiationDepth`: divergent self-recursive aliases must reach it (or an
+/// equivalent depth verdict) so the checker can surface `TS2589`, while
+/// convergent ones terminate on their own. A silent iteration bail from the
+/// meta-rereduce identity guard at depth 5 would return the deferred
+/// application with no limit verdict the checker maps to `TS2589` — losing
+/// parity for shapes like
+/// `type Foo<T extends "true", B> = { "true": Foo<T, Foo<T, B>> }[T]`, where
+/// the growth hides behind an object property feeding an index access rather
+/// than sitting in direct tail position.
+enum SameAliasExpansion {
+    /// Direct tail-position growth or a non-conditional self-recursive
+    /// wrapper: skip the identity guard and let `def_depth` own the bound.
+    DefDepthOwned,
+    /// A fully concrete conditional-bodied self-recursive alias at the
+    /// identity ceiling: non-convergent growth whose conditional re-entry
+    /// would otherwise terminate silently — report the depth verdict now.
+    // Designed verdict not yet wired: `classify_same_alias_expansion` does not
+    // return this yet; the `resolve_application` match already handles the arm.
+    #[allow(dead_code)]
+    DivergentConditional,
+    /// Convergent or still-generic: keep the meta-rereduce identity wrapper.
+    None,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1867,30 +1896,4 @@ mod tests {
             1
         );
     }
-}
-
-/// How one instantiation step that left the same alias still to be expanded
-/// should be bounded — see `classify_same_alias_expansion`.
-///
-/// `def_depth` (`MAX_DEF_DEPTH`, escalated through
-/// `REAL_INSTANTIATION_BAILOUT_THRESHOLD`) is the tsz analogue of tsc's
-/// `instantiationDepth`: divergent self-recursive aliases must reach it (or an
-/// equivalent depth verdict) so the checker can surface `TS2589`, while
-/// convergent ones terminate on their own. A silent iteration bail from the
-/// meta-rereduce identity guard at depth 5 would return the deferred
-/// application with no limit verdict the checker maps to `TS2589` — losing
-/// parity for shapes like
-/// `type Foo<T extends "true", B> = { "true": Foo<T, Foo<T, B>> }[T]`, where
-/// the growth hides behind an object property feeding an index access rather
-/// than sitting in direct tail position.
-enum SameAliasExpansion {
-    /// Direct tail-position growth or a non-conditional self-recursive
-    /// wrapper: skip the identity guard and let `def_depth` own the bound.
-    DefDepthOwned,
-    /// A fully concrete conditional-bodied self-recursive alias at the
-    /// identity ceiling: non-convergent growth whose conditional re-entry
-    /// would otherwise terminate silently — report the depth verdict now.
-    DivergentConditional,
-    /// Convergent or still-generic: keep the meta-rereduce identity wrapper.
-    None,
 }

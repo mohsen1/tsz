@@ -426,11 +426,8 @@ impl<'a> CheckerState<'a> {
 
     /// Widen a literal type to its primitive type.
     ///
-    /// This function converts literal types to their corresponding primitive types,
-    /// which is used for type widening in various contexts:
-    /// - Variable declarations without type annotations
-    /// - Property assignments
-    /// - Return type inference
+    /// Converts literal types to their primitive types for widening (unannotated
+    /// declarations, property assignments, return-type inference).
     ///
     /// ## Examples:
     /// ```typescript

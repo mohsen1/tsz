@@ -967,18 +967,12 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Returns `true` when `flow_id`'s antecedent chain (including itself)
-    /// contains a `SWITCH_CLAUSE` flow node.
-    ///
-    /// Used by the `check_flow` worklist to skip flow-cache reads/writes for
-    /// `unknown`-typed references whose chain passes through switch clauses.
-    /// Memoized in the per-`check_flow` [`ChainReachabilityMemo`] scratch so
-    /// the worklist no longer allocates a fresh `VecDeque` + `FxHashSet` per
-    /// iteration (#13083). The verdict is a pure property of the flow graph,
-    /// which is immutable for the duration of one `check_flow` traversal, so
-    /// memoized answers stay valid for the scratch lifetime. The previous
-    /// one-shot BFS gave up after 32 nodes and reported `false`; the memoized
-    /// form is exact, so very deep switch chains now conservatively skip the
-    /// flow cache (recompute) instead of consulting it.
+    /// contains a `SWITCH_CLAUSE` flow node. Used by the `check_flow` worklist
+    /// to skip flow-cache reads/writes for `unknown`-typed references whose
+    /// chain passes through switch clauses. Memoized in the per-`check_flow`
+    /// [`ChainReachabilityMemo`] scratch (#13083); the verdict is a pure
+    /// property of the immutable flow graph, so memoized answers stay valid —
+    /// exact, unlike the old 32-node BFS, so deep chains skip (recompute) it.
     fn flow_chain_contains_switch_clause_with_memo(
         &self,
         flow_id: FlowNodeId,

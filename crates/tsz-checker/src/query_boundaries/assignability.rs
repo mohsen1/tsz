@@ -1165,12 +1165,10 @@ pub(crate) struct RelationOutcome {
 
 /// Execute a `RelationRequest` through the canonical boundary.
 ///
-/// This is the single authoritative entry point for relation queries that
-/// need structured failure information. It:
-///
-/// 1. Runs the assignability check via the solver.
-/// 2. When not related, collects a structured failure reason.
-/// 3. Detects weak-union violations.
+/// This is the single authoritative entry point for relation queries that need
+/// structured failure information: it runs the solver assignability check,
+/// collects a structured failure reason when not related, and detects
+/// weak-union violations.
 ///
 /// The boundary translates request policy into solver flags and the
 /// property-classification work the diagnostic layer can consume. Existing
@@ -1179,11 +1177,9 @@ pub(crate) struct RelationOutcome {
 /// is part of the relation outcome.
 ///
 /// `precomputed` replays a prior reason-collecting solver pass over the same
-/// memo key (issue #13243): when present, the solver is not re-run and the
-/// outcome is rebuilt from the captured analysis through the identical
-/// post-processing. The second return value is the raw solver analysis of a
-/// freshly executed non-decision-only pass, for the caller to memoize; it is
-/// `None` on the decision-only path and on memo replays.
+/// memo key (issue #13243): the solver is not re-run; the outcome is rebuilt
+/// from the captured analysis. The second return value is the fresh solver
+/// analysis to memoize — `None` on the decision-only path and on memo replays.
 /// The checker-environment slice of a relation execution: everything the
 /// boundary needs besides the request itself. Mirrors
 /// `AssignabilityQueryInputs` for the request-driven `execute_relation` path.

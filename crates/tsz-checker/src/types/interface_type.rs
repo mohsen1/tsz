@@ -211,10 +211,8 @@ impl<'a> CheckerState<'a> {
 
     /// Get the type of an interface declaration.
     ///
-    /// This function builds the interface type by:
-    /// 1. Collecting all interface members (call signatures, construct signatures, properties, index signatures)
-    /// 2. Processing heritage clauses (extends)
-    /// 3. Merging base interface types
+    /// This function collects the interface members (call/construct signatures,
+    /// properties, index signatures), processes `extends` heritage, and merges bases.
     ///
     /// # Arguments
     /// * `idx` - The `NodeIndex` of the interface declaration
