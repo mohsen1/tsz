@@ -20,7 +20,8 @@
 //! checking the expanded type text in cases where the alias is transparent (e.g.,
 //! `Identity<T>`) or via the TS2327 elaboration path.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::{check_source, check_source_diagnostics};
 
 // =============================================================================
 // Excess-property path — identity homomorphic (`T[K]` template)
@@ -118,13 +119,23 @@ fn identity_mapped_optional_ts2327_source_type_shows_question_mark() {
     // When the source of a TS2322 is an identity-mapped type with an optional property,
     // the TS2327 elaboration says "Property 'x' is optional in type '...' but required
     // in type '...'". The source type string should show `x?:`.
-    let diags = check_source_diagnostics(
+    //
+    // The TS2327 "is optional ... but required" elaboration is only tsc's output
+    // under `exactOptionalPropertyTypes`; without it the optional source property
+    // contributes `T | undefined` and tsc reports the plain type-incompatibility
+    // chain instead. (Verified against tsc 6.0.)
+    let diags = check_source(
         r#"
 type Identity<T> = { [K in keyof T]: T[K] };
 declare let a: Identity<{ x?: number }>;
 declare let b: { x: number };
 b = a;
 "#,
+        "test.ts",
+        CheckerOptions {
+            exact_optional_property_types: true,
+            ..CheckerOptions::default()
+        },
     );
     // At minimum: a TS2322 must exist with a TS2327 elaboration.
     let has_ts2327 = diags.iter().any(|d| {

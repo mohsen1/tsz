@@ -46,7 +46,7 @@ const bad: number = result;
 "#,
     );
 
-    assert_ts2322_mentions(&diagnostics, "\"hello\"", "number");
+    assert_ts2322_mentions(&diagnostics, "string", "number");
 }
 
 #[test]

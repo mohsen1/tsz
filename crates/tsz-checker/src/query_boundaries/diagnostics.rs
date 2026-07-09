@@ -32,6 +32,10 @@ pub(crate) use super::common::{
     is_conditional_type, is_generic_application, is_literal_type, is_mapped_type,
     is_type_parameter, is_type_parameter_like, is_type_query_type, is_union_type, widen_type,
 };
+// Index-signature shape types routed off the `index_signature` boundary so
+// `error_reporter/` missing-property presentation depends on `diagnostics`
+// exclusively for its display-shape reads (issue #12947).
+pub(crate) use tsz_solver::objects::index_signatures::{IndexKind, IndexSignatureResolver};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
 /// Resolve the binder symbol backing an object type, for diagnostic
