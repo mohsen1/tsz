@@ -54,7 +54,7 @@ const ti: TemplateIndex = { "data-id": "ok", "other": "no" };
         "Expected exactly one TS2353 for the non-matching key, got: {ts2353:?}",
     );
     assert!(
-        ts2353[0].1.contains("'other'"),
+        ts2353[0].1.contains("\"other\""),
         "Expected TS2353 to mention 'other', got: {}",
         ts2353[0].1
     );

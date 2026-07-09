@@ -679,19 +679,6 @@ pub(crate) fn enum_def_id(
     tsz_solver::type_queries::get_enum_def_id(db, type_id)
 }
 
-/// Get the def id behind an enum-member reference in either of its two
-/// representations: the evaluated `Enum` member data, or the still-deferred
-/// `Lazy(DefId)` semantic ref a type-position `E.X` annotation stabilizes to.
-/// Callers must still verify the def is an enum member (parent-edge or
-/// `ENUM_MEMBER` symbol flags) — a plain alias/interface ref also matches the
-/// lazy arm.
-pub(crate) fn enum_or_lazy_def_id(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_solver::def::DefId> {
-    enum_def_id(db, type_id).or_else(|| lazy_def_id(db, type_id))
-}
-
 /// Check whether a mapped type has a `readonly` modifier applied.
 pub(crate) fn is_mapped_type_with_readonly_modifier(
     db: &dyn TypeDatabase,
