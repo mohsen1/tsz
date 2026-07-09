@@ -460,6 +460,97 @@ fn load_cross_file_jsx_lib_files() -> Vec<Arc<LibFile>> {
     load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
+fn load_es2015_dom_lib_files() -> Vec<Arc<LibFile>> {
+    // `load_compiled_lib_files` parses only the named files; it does not follow
+    // `/// <reference lib>` directives. Spell out the transitive
+    // `lib.es6.d.ts` closure used by the React 16 fixtures that target ES2015.
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.decorators.d.ts",
+        "lib.decorators.legacy.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2018.asynciterable.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+        "lib.webworker.importscripts.d.ts",
+        "lib.scripthost.d.ts",
+    ])
+}
+
+fn stamped_cross_file_jsx_diagnostics_with_es2015_dom(
+    lib_source: &str,
+    main_source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut lib_files = load_es2015_dom_lib_files();
+    let actual_lib_file_count = lib_files.len();
+    lib_files.push(Arc::new(LibFile::from_source(
+        "react.d.ts".to_string(),
+        lib_source.to_string(),
+    )));
+
+    let mut parser = ParserState::new("file.tsx".to_string(), main_source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.set_file_idx(0);
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "file.tsx".to_string(),
+        options,
+    );
+    checker
+        .ctx
+        .set_all_arenas(Arc::new(vec![Arc::clone(&arena)]));
+    checker
+        .ctx
+        .set_all_binders(Arc::new(vec![Arc::clone(&binder)]));
+    checker.ctx.set_current_file_idx(0);
+    checker.ctx.set_lib_contexts(
+        lib_files
+            .iter()
+            .map(|lib| tsz_checker::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect(),
+    );
+    checker.ctx.set_actual_lib_file_count(actual_lib_file_count);
+
+    let mut symbol_file_index = rustc_hash::FxHashMap::default();
+    for symbol in binder.symbols.iter() {
+        if symbol.decl_file_idx != u32::MAX {
+            symbol_file_index.entry(symbol.id).or_insert(0);
+        }
+    }
+    checker
+        .ctx
+        .set_global_symbol_file_index(Arc::new(symbol_file_index));
+
+    checker.prime_module_augmentation_bodies();
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text.clone()))
+        .collect()
+}
+
 #[path = "jsx_component_attribute_tests/part_00.rs"]
 mod part_00;
 #[path = "jsx_component_attribute_tests/part_01.rs"]

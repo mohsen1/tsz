@@ -628,11 +628,12 @@ fn jsx_complex_signature_react16_fixture_accepts_optional_value_attr() {
 
     let renamed = source.replace("WrappedProps", "W");
     for (label, source) in [("original", source.as_str()), ("renamed", renamed.as_str())] {
-        let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(
+        let diags = stamped_cross_file_jsx_diagnostics_with_es2015_dom(
             &react_types,
             source,
             CheckerOptions {
                 jsx_mode: JsxMode::React,
+                target: tsz_common::common::ScriptTarget::ES2015,
                 strict: true,
                 strict_null_checks: true,
                 no_implicit_any: true,
@@ -643,7 +644,6 @@ fn jsx_complex_signature_react16_fixture_accepts_optional_value_attr() {
                 always_strict: true,
                 ..CheckerOptions::default()
             },
-            true,
         );
 
         assert!(
