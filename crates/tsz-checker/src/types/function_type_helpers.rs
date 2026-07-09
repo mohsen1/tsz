@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
             TypeId::NEVER
         } else {
             let types: Vec<TypeId> = contributions.iter().map(|c| c.type_id).collect();
-            self.ctx.types.factory().union(types)
+            crate::query_boundaries::function_returns::function_return_union(self.ctx.types, types)
         };
         (contributions, inferred)
     }

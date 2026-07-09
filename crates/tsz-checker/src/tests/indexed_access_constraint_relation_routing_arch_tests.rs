@@ -129,14 +129,19 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         .find("\n    fn keyof_candidate_target_is_array_like")
         .expect("find end of indexed-access key-space helper block");
     let helpers = &source[helper_start..helper_start + helper_end];
+    let tuple_chain_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/types/type_checking/indexed_access/generic_tuple_chain.rs");
+    let tuple_chain =
+        fs::read_to_string(&tuple_chain_path).expect("read tuple-chain indexed-access helpers");
+    let guarded_helpers = format!("{helpers}\n{tuple_chain}");
     let compact_helpers: String = helpers.chars().filter(|ch| !ch.is_whitespace()).collect();
 
     assert!(
-        !helpers.contains("diagnostic_relation_boolean_guard"),
+        !guarded_helpers.contains("diagnostic_relation_boolean_guard"),
         "indexed-access type-checking key-space helpers must use relation outcomes"
     );
     assert_eq!(
-        helpers
+        guarded_helpers
             .matches("indexed_access_key_space_relation_outcome(")
             .count(),
         13,
@@ -191,7 +196,7 @@ fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
         "deferred constraint-chain target checks should route through RelationOutcome"
     );
     assert!(
-        !helpers.contains("assign_relation_outcome("),
+        !guarded_helpers.contains("assign_relation_outcome("),
         "indexed-access key-space helper probes should use named RelationRequests"
     );
 }

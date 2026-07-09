@@ -1,4 +1,5 @@
 use super::*;
+use crate::query_boundaries::diagnostics::IndexKind;
 
 impl<'a> CheckerState<'a> {
     // Extracted from `render_failure.rs` to keep assignability rendering under the file-size cap.
@@ -1108,22 +1109,21 @@ impl<'a> CheckerState<'a> {
         // Check both original and evaluated types (needed for generic class instances)
         let source_evaluated = self.evaluate_type_with_env(source);
         let target_evaluated = self.evaluate_type_with_env(target);
-        let source_has_string_index = [source, source_evaluated].iter().any(|t| {
-            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
-                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::String)
-        });
-        let target_has_string_index = [target, target_evaluated].iter().any(|t| {
-            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
-                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::String)
-        });
-        let source_has_number_index = [source, source_evaluated].iter().any(|t| {
-            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
-                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::Number)
-        });
-        let target_has_number_index = [target, target_evaluated].iter().any(|t| {
-            crate::query_boundaries::diagnostics::IndexSignatureResolver::new(self.ctx.types)
-                .has_index_signature(*t, crate::query_boundaries::diagnostics::IndexKind::Number)
-        });
+        let has_index = |type_id: TypeId, kind: IndexKind| {
+            crate::query_boundaries::diagnostics::has_index_signature(self.ctx.types, type_id, kind)
+        };
+        let source_has_string_index = [source, source_evaluated]
+            .iter()
+            .any(|t| has_index(*t, IndexKind::String));
+        let target_has_string_index = [target, target_evaluated]
+            .iter()
+            .any(|t| has_index(*t, IndexKind::String));
+        let source_has_number_index = [source, source_evaluated]
+            .iter()
+            .any(|t| has_index(*t, IndexKind::Number));
+        let target_has_number_index = [target, target_evaluated]
+            .iter()
+            .any(|t| has_index(*t, IndexKind::Number));
         // For number index signatures, only suppress when the missing properties are
         // NOT explicitly declared on the target (they came from index value type expansion).
         // We detect this by checking if none of the missing property names match a real

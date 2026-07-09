@@ -683,6 +683,18 @@ impl<'a> CheckerState<'a> {
         self.no_weak_relation_outcome(source, target)
     }
 
+    /// Probe whether an `unknown` type argument satisfies a reduced type-parameter
+    /// constraint, i.e. whether the constraint is a top type. `unknown` relates to
+    /// the canonical `any`/`unknown` and to structural spellings of them such as
+    /// `{} | null | undefined` (TypeScript's `NonReducibleUnknown`).
+    /// Decision-only: the caller reads just `outcome.related`.
+    pub(crate) fn unknown_type_arg_top_constraint_relation_outcome(
+        &mut self,
+        constraint: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        self.diagnostic_relation_outcome(TypeId::UNKNOWN, constraint)
+    }
+
     /// Execute a diagnostic-bearing mapped-key constraint relation for raw
     /// checker types, preserving the canonical mapped-key request shape.
     /// Decision-only: every caller reads only `outcome.related`, so the
