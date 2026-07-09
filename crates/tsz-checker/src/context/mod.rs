@@ -1176,16 +1176,19 @@ pub struct CheckerContext<'a> {
     pub diagnostics: Vec<Diagnostic>,
     /// Whether this context's `diagnostics` are never surfaced to the user.
     ///
-    /// Set for transient cross-arena delegation child checkers (the parent
-    /// consumes only the delegated symbol's type and drops the child's
-    /// diagnostics at teardown) and inherited by their descendants via
-    /// [`Self::with_parent_cache`]. When set, the expensive diagnostic
-    /// *presentation* work — solver failure-reason elaboration
-    /// (`explain_failure`), diagnostic type formatting, and related-info
-    /// chains — is skipped; diagnostics are still recorded with the correct
-    /// code and span so child-internal counting/dedup predicates keep
-    /// working. This flag must never change which checks run or what types
-    /// are computed.
+    /// Set by [`Self::with_parent_cache`] for every transient cross-arena
+    /// delegation child checker (the parent consumes only the delegated
+    /// symbol's type and drops the child's diagnostics at teardown — no
+    /// construction site merges them back), and by the driver's skipLibCheck
+    /// declaration-preparation pass, which likewise drops its checker
+    /// diagnostics. When set, the expensive diagnostic *presentation* work —
+    /// solver failure-reason elaboration (`explain_failure`), diagnostic type
+    /// formatting, related-info chains, and spelling-suggestion candidate
+    /// scans — is skipped; diagnostics routed through
+    /// [`Self::error`](crate::context::CheckerContext) are still recorded
+    /// with the correct code and span so context-internal counting/dedup
+    /// predicates keep working. This flag must never change which checks run
+    /// or what types are computed.
     pub diagnostics_discarded: bool,
     pub(crate) diagnostic_indices: DiagnosticIndices,
     /// Call-expression nodes that resolved to TS2769 during the current

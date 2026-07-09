@@ -882,10 +882,13 @@ impl<'a> CheckerContext<'a> {
         ctx.definition_store = Arc::clone(&parent.definition_store);
         ctx.share_owner_symbol_type_results = parent.share_owner_symbol_type_results;
 
-        // A child of a discarded-diagnostics checker is itself discarded: the
-        // whole delegation subtree's diagnostics are dropped at teardown, so
-        // none of its descendants should pay for diagnostic presentation.
-        ctx.diagnostics_discarded = parent.diagnostics_discarded;
+        // Every `with_parent_cache` child is a transient delegation checker:
+        // the parent consumes only the delegated symbol's type, and no
+        // construction site merges the child's diagnostics back — they are
+        // dropped at teardown. Mark the whole delegation subtree discarded so
+        // none of it pays for diagnostic presentation work (failure
+        // elaboration, type display, spelling-suggestion candidate scans).
+        ctx.diagnostics_discarded = true;
 
         ctx
     }
