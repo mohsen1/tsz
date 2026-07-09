@@ -502,9 +502,7 @@ unit_test_packages() {
 # failures (build error, missing junit — reported by the runner itself), and
 # otherwise the known-failures delta gate's verdict is the job's verdict
 # (#15646): green means "no unit failures outside
-# scripts/ci/known-failures.txt", not a masked rc. --allow-no-reports lets a
-# narrowed package override that selects zero tests pass; the checker owns
-# that verdict.
+# scripts/ci/known-failures.txt", not a masked rc.
 
 run_unit_tests() {
   ci_section "Workspace nextest suites (signoff profile + known-failures gate)"
@@ -512,23 +510,26 @@ run_unit_tests() {
   # unit_test_packages validates _TSZ_CI_UNIT_PACKAGES_OVERRIDE; propagate its
   # config-error rc instead of masking it in the $() assignment below.
   packages="$(unit_test_packages)" || return "$?"
+  local extra_flags=()
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
+    # Only a narrowed selection may legitimately produce zero junit reports
+    # (every pass rc=4). The full lane always has tests, so an empty report
+    # dir there is an infrastructure failure the gate must reject.
+    extra_flags+=(--allow-no-reports)
   fi
-  local skip_flag=()
   if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
     echo "info: skipping checker integration tests in unit job"
-    skip_flag=(--skip-checker-integration)
+    extra_flags+=(--skip-checker-integration)
   fi
   scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/unit-junit" \
-    --gate --allow-no-reports \
-    --packages "$packages" ${skip_flag[@]+"${skip_flag[@]}"}
+    --gate --packages "$packages" ${extra_flags[@]+"${extra_flags[@]}"}
 }
 
 run_checker_integration_tests() {
   ci_section "Checker integration nextest suites (signoff profile + known-failures gate)"
   scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/checker-integration-junit" \
-    --gate --allow-no-reports --packages tsz-checker
+    --gate --packages tsz-checker
 }
 
 build_unit_test_archive() {

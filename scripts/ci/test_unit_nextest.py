@@ -187,6 +187,15 @@ class UnitNextestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(len(self.deps()), 5)
 
+    def test_keep_batch_artifacts_env_knob(self):
+        # signoff.sh's command line is fixed; the env knob is how a machine
+        # with disk headroom opts into incremental relink reuse there.
+        result = self.run_script(
+            "--packages", "tsz-checker", extra_env={"TSZ_KEEP_BATCH_ARTIFACTS": "1"}
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(self.deps()), 5)
+
     def test_gate_runs_known_failures_check_and_propagates_verdict(self):
         ok = self.run_script("--packages", "tsz-core tsz-checker", "--gate")
         self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)

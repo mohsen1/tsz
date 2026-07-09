@@ -186,11 +186,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Base git ref to compare against (default: origin/main).",
     )
     parser.add_argument(
-        "--path",
-        default=BASELINE_PATH,
-        help=f"Path to the baseline file (default: {BASELINE_PATH}).",
-    )
-    parser.add_argument(
         "--integrity-only",
         action="store_true",
         help="Only validate working-tree baseline hygiene; skip the base comparison.",
@@ -215,10 +210,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        with open(args.path, encoding="utf-8") as handle:
+        with open(BASELINE_PATH, encoding="utf-8") as handle:
             head_text = handle.read()
     except OSError as err:
-        print(f"error: could not read {args.path}: {err}", file=sys.stderr)
+        print(f"error: could not read {BASELINE_PATH}: {err}", file=sys.stderr)
         return 1
 
     integrity_problems = check_integrity(head_text)
@@ -253,10 +248,10 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
 
-    base_text = _read_ref_text(base_ref, args.path)
+    base_text = _read_ref_text(base_ref, BASELINE_PATH)
     if base_text is None:
         msg = (
-            f"could not read {args.path} from {base_ref!r}; "
+            f"could not read {BASELINE_PATH} from {base_ref!r}; "
             "known-failures growth check skipped."
         )
         if args.allow_unavailable_base:

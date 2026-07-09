@@ -20,7 +20,7 @@ retries = 0
 test-threads = "num-cpus"
 
 [[profile.default.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.default.overrides]]
@@ -93,19 +93,15 @@ slow-timeout = { period = "90s", terminate-after = 2 }
 # from local runs. Hosted runners additionally cap test threads via
 # UNIT_NEXTEST_TEST_THREADS / CHECKER_NEXTEST_TEST_THREADS (full-ci.sh);
 # memory-heavy checker tests can be SIGKILLed at num-cpus there.
+# The base values below deliberately PIN the unit-lane policy even where
+# they currently equal [profile.default]: retuning the local dev profile must
+# not silently retune the CI gate.
 [profile.signoff]
 slow-timeout = { period = "30s", terminate-after = 2 }
 leak-timeout = "3s"
 fail-fast = false
 test-threads = "num-cpus"
 status-level = "fail"
-
-# Carried over from the precommit override (90s there; 120s subsumes it).
-# This is the one heavy test absent from the `[[profile.default.overrides]]`
-# lists, which cover the rest.
-[[profile.signoff.overrides]]
-filter = 'test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
-slow-timeout = { period = "120s", terminate-after = 2 }
 
 # See the `[profile.default.junit]` note: `path` resolves relative to the
 # per-profile store dir, so this lands at `target/nextest/signoff/junit.xml`

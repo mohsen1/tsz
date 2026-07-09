@@ -226,7 +226,9 @@ function resolveJunitPaths(args) {
     }
     for (const name of xml) paths.push(path.join(dir, name));
   }
-  if (paths.length === 0 && args.junitDirs.length > 0 && args.allowNoReports) {
+  // Reachable only with --allow-no-reports: without it, an empty/unreadable
+  // --junit-dir already returned an error above.
+  if (paths.length === 0 && args.junitDirs.length > 0) {
     return { paths: [], noReports: true };
   }
   if (paths.length === 0) paths.push(DEFAULT_JUNIT);

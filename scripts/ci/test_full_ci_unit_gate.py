@@ -102,9 +102,19 @@ class UnitGateWiringTests(unittest.TestCase):
     def test_unit_lane_invokes_the_gated_runner(self):
         rc, calls, _ = self._run()
         self.assertEqual(rc, 0)
-        self.assertIn("--gate --allow-no-reports", calls)
+        self.assertIn("--gate", calls)
         # newline-separated package list arrives as one --packages argument
         self.assertIn("--packages tsz-core\ntsz-checker", calls)
+        # the full lane always has tests, so zero junit reports must stay an
+        # infrastructure failure — no blanket --allow-no-reports
+        self.assertNotIn("--allow-no-reports", calls)
+
+    def test_narrowed_override_allows_a_no_tests_run(self):
+        rc, calls, _ = self._run(
+            env_line="export _TSZ_CI_UNIT_PACKAGES_OVERRIDE='tsz-core'"
+        )
+        self.assertEqual(rc, 0)
+        self.assertIn("--allow-no-reports", calls)
 
     def test_runner_verdict_is_the_job_verdict(self):
         # rc=1 is the gate's new-failure verdict; rc=101 an infra failure —
@@ -129,7 +139,8 @@ class UnitGateWiringTests(unittest.TestCase):
     def test_checker_integration_suite_shares_the_wiring(self):
         rc, calls, _ = self._run(entry="run_checker_integration_tests")
         self.assertEqual(rc, 0)
-        self.assertIn("--gate --allow-no-reports --packages tsz-checker", calls)
+        self.assertIn("--gate --packages tsz-checker", calls)
+        self.assertNotIn("--allow-no-reports", calls)
 
     def test_checker_integration_runner_rc_propagates(self):
         rc, _, _ = self._run(entry="run_checker_integration_tests", runner_rc=7)

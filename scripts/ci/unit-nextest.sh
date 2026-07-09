@@ -61,6 +61,8 @@
 #                                  cap this; memory-heavy checker tests can
 #                                  be SIGKILLed at num-cpus there)
 #   TSZ_CI_CHECKER_TEST_BATCH_SIZE default checker batch size (40)
+#   TSZ_KEEP_BATCH_ARTIFACTS=1     same as --keep-batch-artifacts (for flows
+#                                  with fixed command lines, e.g. signoff.sh)
 
 set -Eeuo pipefail
 
@@ -68,7 +70,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 usage() {
-  sed -n '2,66p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Print the header comment block (everything up to the first blank line).
+  sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 JUNIT_DIR=""
@@ -77,7 +80,7 @@ WORKSPACE_MINUS_CHECKER=0
 SKIP_CHECKER_INTEGRATION=0
 GATE=0
 ALLOW_NO_REPORTS=0
-KEEP_BATCH_ARTIFACTS=0
+KEEP_BATCH_ARTIFACTS="${TSZ_KEEP_BATCH_ARTIFACTS:-0}"
 CHECKER_BATCH_SIZE="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
 
 while [[ "$#" -gt 0 ]]; do
