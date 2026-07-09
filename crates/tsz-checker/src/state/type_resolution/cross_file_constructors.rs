@@ -47,8 +47,6 @@ impl<'a> CheckerState<'a> {
             self,
             CheckerCreationReason::DelegateCrossArenaOther,
         ));
-        // Transient delegation child: diagnostics are discarded at teardown.
-        checker.ctx.diagnostics_discarded = true;
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         self.ctx.copy_symbol_file_targets_to_attributed(

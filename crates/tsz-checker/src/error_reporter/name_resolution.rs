@@ -1162,6 +1162,14 @@ impl<'a> CheckerState<'a> {
     /// the previous eager `collect_spelling_suggestions`, so cap behavior and
     /// the resulting diagnostics are unchanged.
     pub(crate) fn suggestion_scan_eligible(&self, name: &str, idx: NodeIndex) -> bool {
+        // A failure site whose diagnostic can never be emitted from this
+        // checker (node not addressable in the current arena) must skip both
+        // the scan and the cap-counter charge: tsc's `suggestionCount` only
+        // ever advances for failures it reports, and it never reports these.
+        if !self.can_emit_diagnostic_at(idx) {
+            return false;
+        }
+
         // Keep TS2304 for accessibility modifier keywords recovered as identifiers.
         // tsc does not emit TS2552 suggestions (e.g. "private" -> "print") in these cases.
         let is_accessibility_modifier_name = matches!(name, "public" | "private" | "protected");
@@ -1229,6 +1237,13 @@ impl<'a> CheckerState<'a> {
     /// (it does not re-apply the suppression predicates or touch the cap
     /// counter), and only when a diagnostic is actually being emitted.
     pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
+        // Bail before the meaning-detection parent walk: a discarded context
+        // returns no candidates regardless of meaning (the same gate inside
+        // `scan_similar_identifiers_for_meaning` covers direct callers).
+        if self.ctx.diagnostics_discarded {
+            return Vec::new();
+        }
+
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
@@ -1286,12 +1301,14 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         meaning: u32,
     ) -> Vec<String> {
-        // Name-resolution failures inside built-in libs are often encountered by
-        // transient cross-arena child checkers whose diagnostics are discarded;
-        // their spelling suggestions are pure presentation work. Keep the scan
-        // for retained diagnostics, because `tsc` can still surface observable
-        // lib diagnostics such as the Temporal/Intl TS2552 baseline.
-        if self.ctx.diagnostics_discarded && self.node_is_in_builtin_lib_file(idx) {
+        // A discarded-diagnostics context (transient cross-arena child
+        // checkers, the driver's skipLibCheck declaration-preparation pass)
+        // never surfaces any diagnostic, so the full-symbol-universe
+        // Levenshtein scan below is pure presentation work for it — skip it
+        // for every node. Retained-diagnostics contexts always scan, because
+        // `tsc` can still surface observable lib diagnostics such as the
+        // Temporal/Intl TS2552 baseline.
+        if self.ctx.diagnostics_discarded {
             return Vec::new();
         }
         // Memoize per (reference site, meaning): the same unresolved reference is

@@ -273,27 +273,26 @@ fn run_check_on_existing_checker<'a>(
     if skip_lib_check && is_declaration_file(&file.file_name) {
         let check_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
         tsz::checker::reset_stack_overflow_flag();
+        // This pass exists only to populate shared caches (lib symbol types,
+        // heritage, cross-file state); every checker diagnostic it produces
+        // is dropped before returning. Declare the discard up front so the
+        // checker skips diagnostic presentation work entirely — failure
+        // elaboration, type display, and spelling-suggestion candidate scans
+        // — instead of formatting diagnostics that are thrown away below.
+        // The flag is cleared again for session-reuse callers that check a
+        // user file on this same `CheckerState` next (`reset_for_next_file`
+        // does not touch it); top-level per-file checkers always arrive here
+        // with the flag off.
+        checker.ctx.diagnostics_discarded = true;
         checker.check_source_file(file.source_file);
+        checker.ctx.diagnostics_discarded = false;
         tsz_common::perf_counters::record_interner_working_set_for_file();
-        let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-        let effective_options = ResolvedCompilerOptions {
-            check_js,
-            explicit_check_js_false,
-            ..ResolvedCompilerOptions::default()
-        };
-        post_process_checker_diagnostics(
-            &mut checker_diagnostics,
-            file,
-            &effective_options,
-            program_has_real_syntax_errors,
-            program_has_unsupported_js_root,
-            program_context.has_deprecation_diagnostics,
-        );
+        checker.ctx.diagnostics.clear();
         if let Some(start) = check_start {
             tsz_common::perf_counters::record_slow_check_file_timing(
                 &file.file_name,
                 start.elapsed().as_nanos() as u64,
-                checker_diagnostics.len() as u64,
+                0,
             );
         }
         return file_diagnostics;

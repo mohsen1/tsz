@@ -699,6 +699,18 @@ impl<'a> CheckerState<'a> {
         request: &NameResolutionRequest<'_>,
         failure: &ResolutionFailure,
     ) {
+        // Every arm below anchors its diagnostic at `request.idx` through the
+        // span-gated emitters, so an unaddressable node (demand-driven
+        // lowering of another arena's declarations — e.g. lib interface
+        // bodies materialized on behalf of user code) is structurally
+        // guaranteed to be dropped at emission. Bail out before building
+        // messages or running the full-symbol-universe spelling-suggestion
+        // scan for it; the failure still produces an error type, and the
+        // diagnostic belongs to the owning file's own check.
+        if !self.can_emit_diagnostic_at(request.idx) {
+            return;
+        }
+
         // Suppress TS2304/TS2552 entirely for identifiers inside enum computed
         // property names. tsc only emits TS1164 for these and doesn't resolve
         // the expressions.

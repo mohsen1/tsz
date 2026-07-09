@@ -511,6 +511,9 @@ mod stability_validation_tests;
 #[path = "../tests/string_literal_arithmetic_tests.rs"]
 mod string_literal_arithmetic_tests;
 #[cfg(test)]
+#[path = "tests/suggestion_scan_discarded_tests.rs"]
+mod suggestion_scan_discarded_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_resolver_stability_tests.rs"]
 mod symbol_resolver_stability_tests;
 #[cfg(test)]
