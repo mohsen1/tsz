@@ -1,5 +1,4 @@
-use rustc_hash::FxHashSet;
-use tsz_solver::TypeId;
+use super::*;
 
 pub(super) struct MemberTraversalState<'a> {
     visited: &'a mut FxHashSet<TypeId>,

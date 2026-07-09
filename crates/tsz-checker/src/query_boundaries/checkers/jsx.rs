@@ -407,7 +407,11 @@ pub(crate) fn instantiate_function_shape_preserving_unresolved_params(
             full_substitution.insert(type_param.name, preserved_type_param);
         }
     }
-    crate::query_boundaries::common::instantiate_function_shape(db, func, &full_substitution)
+    crate::query_boundaries::generic_instantiation::instantiate_function_shape(
+        db,
+        func,
+        &full_substitution,
+    )
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

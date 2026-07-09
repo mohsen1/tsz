@@ -608,10 +608,11 @@ impl<'a> CheckerState<'a> {
                     if remaining.len() == 1 && remaining[0].rest {
                         remaining[0].type_id
                     } else {
-                        self.ctx
-                            .types
-                            .factory()
-                            .tuple(common::params_to_tuple_elements(remaining))
+                        self.ctx.types.factory().tuple(
+                            crate::query_boundaries::signature_building::params_to_tuple_elements(
+                                remaining,
+                            ),
+                        )
                     }
                 } else {
                     let Some(target_param) = target_fn.params.get(target_index) else {

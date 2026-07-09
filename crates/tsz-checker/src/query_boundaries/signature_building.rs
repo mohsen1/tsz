@@ -9,8 +9,8 @@ use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use tsz_common::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
-    CallSignature, ParamInfo, TypeId, TypeParamInfo, TypeParamOrigin, TypePredicate,
-    TypePredicateTarget,
+    CallSignature, CallableShape, ParamInfo, TupleElement, TypeId, TypeParamInfo, TypeParamOrigin,
+    TypePredicate, TypePredicateTarget,
 };
 
 pub(crate) const fn type_param_info(
@@ -186,4 +186,65 @@ fn instantiate_predicate(
             predicate.parameter_index,
         )
     })
+}
+
+// ── Parameter-list transformation helpers ──
+
+/// Replace parameter types at the given positions with a replacement type.
+///
+/// Used to sanitize binding-pattern parameters during generic inference:
+/// destructured parameters contribute no inference candidates, so their
+/// types are replaced with `unknown` to avoid polluting the constraint.
+pub(crate) fn sanitize_params_at_positions(
+    params: &[ParamInfo],
+    positions: &[usize],
+    replacement: TypeId,
+) -> Vec<ParamInfo> {
+    let mut result = params.to_vec();
+    for &index in positions {
+        if let Some(param) = result.get_mut(index) {
+            param.type_id = replacement;
+        }
+    }
+    result
+}
+
+/// Convert a slice of function parameters to tuple elements.
+///
+/// Each parameter's `type_id`, `optional`, `rest`, and `name` fields are
+/// transferred directly.  Used when synthesizing a tuple type that mirrors
+/// a parameter list (e.g. collecting remaining params for a rest argument).
+pub(crate) fn params_to_tuple_elements(params: &[ParamInfo]) -> Vec<TupleElement> {
+    params
+        .iter()
+        .map(|param| TupleElement {
+            type_id: param.type_id,
+            optional: param.optional,
+            rest: param.rest,
+            name: param.name,
+        })
+        .collect()
+}
+
+/// Sanitize binding-pattern parameters in a callable shape.
+///
+/// Like [`sanitize_params_at_positions`] but operates on a [`CallableShape`]:
+/// each call signature's parameters at the given positions are replaced with
+/// `replacement`.  Returns a new `CallableShape` ready for interning.
+pub(crate) fn sanitize_callable_shape_binding_pattern_params(
+    shape: &CallableShape,
+    positions: &[usize],
+    replacement: TypeId,
+) -> CallableShape {
+    let mut sanitized = shape.clone();
+    sanitized.call_signatures = sanitized
+        .call_signatures
+        .iter()
+        .map(|sig| {
+            let mut new_sig = sig.clone();
+            new_sig.params = sanitize_params_at_positions(&sig.params, positions, replacement);
+            new_sig
+        })
+        .collect();
+    sanitized
 }

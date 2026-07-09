@@ -371,12 +371,66 @@ pub trait TypePruneUnionCache {
     fn set_prune_union_members_memo(&self, _type_id: TypeId, _result: TypeId) {}
 }
 
+/// Registered lib.d.ts builtin type access (`Array<T>`, `ReadonlyArray<T>`,
+/// boxed primitive interfaces).
+///
+/// Split out of [`TypeDatabase`] (#8205) so solver paths that only need the
+/// builtin registry can take this narrow capability, and the broad storage
+/// trait stays under its method-count ratchet. Defaults return "not
+/// registered"; the interner and query cache override with live lookups.
+pub trait TypeBuiltinAccess {
+    /// Get the canonical `Array<T>` base type registered from lib.d.ts.
+    ///
+    /// This is used by solver-only paths that need array member metadata
+    /// (for example mapped-type display ordering) even when no richer
+    /// `TypeResolver` is available.
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the registered `Array<T>` base type parameters.
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        &[]
+    }
+
+    /// Get the `Array<T>` base type used for display-order-sensitive queries.
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the `ReadonlyArray<T>` base type registered from lib.d.ts.
+    ///
+    /// Used by property access to resolve only non-mutating members when the
+    /// receiver is `readonly T[]` or a readonly tuple.
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        None
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic kind.
+    ///
+    /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
+    /// from lib.d.ts. This bypasses `TypeResolver` (which may fail due to `RefCell` borrow
+    /// conflicts) by reading directly from the interner's `DashMap`.
+    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
+        None
+    }
+
+    /// Check if a `DefId` corresponds to a boxed type of the given kind.
+    ///
+    /// For example, checking if a `DefId` represents the `Function` interface.
+    /// This bypasses `TypeResolver` by reading directly from the interner's storage.
+    fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
+        false
+    }
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
 pub trait TypeDatabase:
-    TypePredicateCache
+    TypeBuiltinAccess
+    + TypePredicateCache
     + TypeTupleLimitSignal
     + TypeDisplayProvenance
     + TypeCompilerOptions
@@ -541,50 +595,6 @@ pub trait TypeDatabase:
     /// void, never, and tuples composed entirely of identity-comparable types.
     /// Results are cached for O(1) lookup after first computation.
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool;
-
-    /// Get the canonical `Array<T>` base type registered from lib.d.ts.
-    ///
-    /// This is used by solver-only paths that need array member metadata
-    /// (for example mapped-type display ordering) even when no richer
-    /// `TypeResolver` is available.
-    fn get_array_base_type(&self) -> Option<TypeId> {
-        None
-    }
-
-    /// Get the registered `Array<T>` base type parameters.
-    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        &[]
-    }
-
-    /// Get the `Array<T>` base type used for display-order-sensitive queries.
-    fn get_array_display_base_type(&self) -> Option<TypeId> {
-        None
-    }
-
-    /// Get the `ReadonlyArray<T>` base type registered from lib.d.ts.
-    ///
-    /// Used by property access to resolve only non-mutating members when the
-    /// receiver is `readonly T[]` or a readonly tuple.
-    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
-        None
-    }
-
-    /// Get the boxed interface type for a primitive intrinsic kind.
-    ///
-    /// For example, `IntrinsicKind::Function` returns the `TypeId` of the `Function` interface
-    /// from lib.d.ts. This bypasses `TypeResolver` (which may fail due to `RefCell` borrow
-    /// conflicts) by reading directly from the interner's `DashMap`.
-    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
-        None
-    }
-
-    /// Check if a `DefId` corresponds to a boxed type of the given kind.
-    ///
-    /// For example, checking if a `DefId` represents the `Function` interface.
-    /// This bypasses `TypeResolver` by reading directly from the interner's storage.
-    fn is_boxed_def_id(&self, _def_id: DefId, _kind: IntrinsicKind) -> bool {
-        false
-    }
 
     /// Check if a `DefId` corresponds to the `ThisType` marker interface.
     fn is_this_type_marker_def_id(&self, _def_id: DefId) -> bool {
@@ -904,6 +914,32 @@ impl TypePruneUnionCache for TypeInterner {
     }
 }
 
+impl TypeBuiltinAccess for TypeInterner {
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        Self::get_array_base_type(self)
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        Self::get_array_base_type_params(self)
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        Self::get_array_display_base_type(self)
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        TypeInterner::get_readonly_array_base_type(self)
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        Self::get_boxed_type(self, kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        Self::is_boxed_def_id(self, def_id, kind)
+    }
+}
+
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
         Self::intern(self, key)
@@ -1198,30 +1234,6 @@ impl TypeDatabase for TypeInterner {
 
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
         Self::is_identity_comparable_type(self, type_id)
-    }
-
-    fn get_array_base_type(&self) -> Option<TypeId> {
-        Self::get_array_base_type(self)
-    }
-
-    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        Self::get_array_base_type_params(self)
-    }
-
-    fn get_array_display_base_type(&self) -> Option<TypeId> {
-        Self::get_array_display_base_type(self)
-    }
-
-    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
-        TypeInterner::get_readonly_array_base_type(self)
-    }
-
-    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
-        Self::get_boxed_type(self, kind)
-    }
-
-    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
-        Self::is_boxed_def_id(self, def_id, kind)
     }
 
     fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {

@@ -1,7 +1,7 @@
 use tsz_solver::computation as c;
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeId,
-    TypePredicate, operations::widening,
+    operations::widening,
 };
 
 pub(crate) use tsz_solver::computation::CompatChecker;
@@ -415,71 +415,6 @@ pub(crate) fn collect_enum_def_ids(
     tsz_solver::visitor::collect_enum_def_ids(db, type_id)
 }
 
-// ── Redeclaration widening helpers ──
-
-/// Widen a literal return type in a function-shaped type for TS2403 comparison.
-///
-/// For `Function` types (e.g., `(s: string) => 3`), widens the return type
-/// from a literal to its base (e.g., `3` → `number`). Returns the original
-/// type unchanged if it is not a `Function` or no widening is needed.
-///
-/// This is a thin boundary wrapper that keeps direct `type_queries` and
-/// `widen_literal_type` calls out of checker modules.
-pub(crate) fn widen_function_literal_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) else {
-        return type_id;
-    };
-    let widened_return = widening::widen_literal_type(db, shape.return_type);
-    if widened_return != shape.return_type {
-        tsz_solver::type_queries::replace_function_return_type(db, type_id, widened_return)
-    } else {
-        type_id
-    }
-}
-
-/// Widen literal return types in callable call-signatures for TS2403 comparison.
-///
-/// For `Callable` types (e.g., `{ (s: string): 3 }`), widens each call
-/// signature's return type from a literal to its base (e.g., `3` → `number`).
-/// Returns the original type unchanged if it is not a `Callable` or no
-/// widening is needed.
-///
-/// This is a thin boundary wrapper that encapsulates solver `TypeData::Callable`
-/// inspection so checker modules never touch `.lookup()` or `TypeData` directly.
-pub(crate) fn widen_callable_literal_return_types(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> TypeId {
-    let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) else {
-        return type_id;
-    };
-
-    let mut any_changed = false;
-    let new_call_sigs: Vec<_> = callable
-        .call_signatures
-        .iter()
-        .map(|sig| {
-            let widened = widening::widen_literal_type(db, sig.return_type);
-            if widened != sig.return_type {
-                any_changed = true;
-                let mut new_sig = sig.clone();
-                new_sig.return_type = widened;
-                new_sig
-            } else {
-                sig.clone()
-            }
-        })
-        .collect();
-
-    if any_changed {
-        let mut new_shape = (*callable).clone();
-        new_shape.call_signatures = new_call_sigs;
-        db.callable(new_shape)
-    } else {
-        type_id
-    }
-}
-
 // ── Type construction wrappers ──
 
 /// Create `type_id | undefined`. Used for optional chain call results.
@@ -780,133 +715,6 @@ pub(crate) fn collect_all_types(
     type_id: TypeId,
 ) -> rustc_hash::FxHashSet<TypeId> {
     tsz_solver::visitor::collect_all_types(db, type_id)
-}
-
-// ── FunctionShape transformation helpers ──
-
-/// Apply a `TypeSubstitution` to every type component in a `FunctionShape`.
-///
-/// Replaces type parameter references in parameter types, return type, this-type,
-/// and type predicate type. Clears `type_params` since they are now resolved.
-pub(crate) fn instantiate_function_shape(
-    db: &dyn QueryDatabase,
-    func: &FunctionShape,
-    substitution: &TypeSubstitution,
-) -> FunctionShape {
-    let instantiate = |type_id| {
-        c::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
-    };
-    FunctionShape {
-        params: func
-            .params
-            .iter()
-            .map(|param| ParamInfo {
-                name: param.name,
-                type_id: instantiate(param.type_id),
-                optional: param.optional,
-                rest: param.rest,
-            })
-            .collect(),
-        return_type: instantiate(func.return_type),
-        this_type: func.this_type.map(instantiate),
-        type_params: vec![],
-        type_predicate: func.type_predicate.as_ref().map(|predicate| TypePredicate {
-            asserts: predicate.asserts,
-            target: predicate.target,
-            type_id: predicate.type_id.map(instantiate),
-            parameter_index: predicate.parameter_index,
-        }),
-        is_constructor: func.is_constructor,
-        is_method: func.is_method,
-    }
-}
-
-/// Instantiate a generic function shape by substituting type parameters with
-/// their defaults or constraints. Used for return-context matching where we
-/// need a concrete shape but have no argument-driven substitution.
-///
-/// Returns the shape unchanged if it has no type parameters or no
-/// defaults/constraints to apply.
-pub(crate) fn instantiate_shape_to_defaults(
-    db: &dyn QueryDatabase,
-    func: &FunctionShape,
-) -> FunctionShape {
-    if func.type_params.is_empty() {
-        return func.clone();
-    }
-
-    let mut substitution = TypeSubstitution::new();
-    for tp in &func.type_params {
-        let Some(replacement) = tp.default.or(tp.constraint) else {
-            continue;
-        };
-        substitution.insert(tp.name, replacement);
-    }
-
-    if substitution.is_empty() {
-        return func.clone();
-    }
-
-    instantiate_function_shape(db, func, &substitution)
-}
-
-/// Replace parameter types at the given positions with a replacement type.
-///
-/// Used to sanitize binding-pattern parameters during generic inference:
-/// destructured parameters contribute no inference candidates, so their
-/// types are replaced with `unknown` to avoid polluting the constraint.
-pub(crate) fn sanitize_params_at_positions(
-    params: &[ParamInfo],
-    positions: &[usize],
-    replacement: TypeId,
-) -> Vec<ParamInfo> {
-    let mut result = params.to_vec();
-    for &index in positions {
-        if let Some(param) = result.get_mut(index) {
-            param.type_id = replacement;
-        }
-    }
-    result
-}
-
-/// Convert a slice of function parameters to tuple elements.
-///
-/// Each parameter's `type_id`, `optional`, `rest`, and `name` fields are
-/// transferred directly.  Used when synthesizing a tuple type that mirrors
-/// a parameter list (e.g. collecting remaining params for a rest argument).
-pub(crate) fn params_to_tuple_elements(params: &[ParamInfo]) -> Vec<TupleElement> {
-    params
-        .iter()
-        .map(|param| TupleElement {
-            type_id: param.type_id,
-            optional: param.optional,
-            rest: param.rest,
-            name: param.name,
-        })
-        .collect()
-}
-
-/// Sanitize binding-pattern parameters in a callable shape.
-///
-/// Like [`sanitize_params_at_positions`] but operates on a [`CallableShape`]:
-/// each call signature's parameters at the given positions are replaced with
-/// `replacement`.  Returns a new `CallableShape` ready for interning.
-pub(crate) fn sanitize_callable_shape_binding_pattern_params(
-    shape: &CallableShape,
-    positions: &[usize],
-    replacement: TypeId,
-) -> CallableShape {
-    let mut sanitized = shape.clone();
-    sanitized.call_signatures = sanitized
-        .call_signatures
-        .iter()
-        .map(|sig| {
-            let mut new_sig = sig.clone();
-            new_sig.params = sanitize_params_at_positions(&sig.params, positions, replacement);
-            new_sig
-        })
-        .collect();
-    sanitized
 }
 
 // ── Data-layer query wrappers ──

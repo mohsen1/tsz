@@ -589,14 +589,18 @@ impl<'a> CheckerState<'a> {
     /// Our checker may preserve the literal return type, so we widen it here
     /// before the identity comparison to avoid false TS2403 positives.
     fn widen_function_return_type_for_redeclaration(&self, type_id: TypeId) -> TypeId {
-        use crate::query_boundaries::common;
-
         // For Function types: widen the return type directly via boundary helper.
-        let type_id = common::widen_function_literal_return_type(self.ctx.types, type_id);
+        let type_id = crate::query_boundaries::widening::widen_function_literal_return_type(
+            self.ctx.types,
+            type_id,
+        );
 
         // For Callable types (e.g., `{ (s: string): number }`): widen each
         // call signature's return type via boundary helper.
-        common::widen_callable_literal_return_types(self.ctx.types, type_id)
+        crate::query_boundaries::widening::widen_callable_literal_return_types(
+            self.ctx.types,
+            type_id,
+        )
     }
 
     /// Get the `this` type for the enclosing class, computing it on demand if needed.

@@ -87,11 +87,13 @@ fn sanitize_function_shape_binding_pattern_params(
     shape: &tsz_solver::FunctionShape,
     binding_pattern_param_positions: &[usize],
 ) -> tsz_solver::FunctionShape {
-    shape.with_replaced_params(common::sanitize_params_at_positions(
-        &shape.params,
-        binding_pattern_param_positions,
-        TypeId::UNKNOWN,
-    ))
+    shape.with_replaced_params(
+        crate::query_boundaries::signature_building::sanitize_params_at_positions(
+            &shape.params,
+            binding_pattern_param_positions,
+            TypeId::UNKNOWN,
+        ),
+    )
 }
 
 pub(crate) fn should_preserve_contextual_application_shape(
@@ -106,14 +108,18 @@ fn instantiate_function_shape_with_substitution(
     func: &tsz_solver::FunctionShape,
     substitution: &crate::query_boundaries::common::TypeSubstitution,
 ) -> tsz_solver::FunctionShape {
-    common::instantiate_function_shape(types, func, substitution)
+    crate::query_boundaries::generic_instantiation::instantiate_function_shape(
+        types,
+        func,
+        substitution,
+    )
 }
 
 fn instantiate_contextual_target_shape_for_return_context(
     types: &dyn QueryDatabase,
     func: &tsz_solver::FunctionShape,
 ) -> tsz_solver::FunctionShape {
-    common::instantiate_shape_to_defaults(types, func)
+    crate::query_boundaries::generic_instantiation::instantiate_shape_to_defaults(types, func)
 }
 
 impl<'a> CheckerState<'a> {
@@ -1080,7 +1086,7 @@ impl<'a> CheckerState<'a> {
             );
             signature_construction::function_type_from_shape(self.ctx.types, sanitized)
         } else if let Some(shape) = common::callable_shape_for_type(self.ctx.types, arg_type) {
-            let sanitized = common::sanitize_callable_shape_binding_pattern_params(
+            let sanitized = crate::query_boundaries::signature_building::sanitize_callable_shape_binding_pattern_params(
                 &shape,
                 &binding_pattern_param_positions,
                 TypeId::UNKNOWN,
