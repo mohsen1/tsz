@@ -250,6 +250,19 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        // A def in a declaration (`.d.ts`) file is ambient regardless of the
+        // `declare` keyword: react.d.ts's namespace-nested component interfaces
+        // (`Component`, `StatelessComponent`, `ComponentClass`) carry
+        // `is_declare = false`, so the guard above lets them through. But a
+        // declaration-file def does not suffer the per-file binder-id collision
+        // (#14344) this def-store route works around — the symbol route resolves
+        // it correctly — and instantiating it here mis-relates those library
+        // component types (a false `TS2322` on `tsxUnionTypeComponent1` and
+        // `reactReadonlyHOCAssignabilityReal`). Keep declaration-file bases on
+        // the symbol path.
+        if file_id.is_some_and(|file_id| self.file_idx_is_declaration_file(file_id)) {
+            return None;
+        }
         let ApplicationBaseBody {
             body_type,
             type_params,
@@ -263,6 +276,18 @@ impl<'a> CheckerState<'a> {
             args,
             application,
         ))
+    }
+
+    /// Whether the source file at `file_idx` is a TypeScript declaration file.
+    /// Reads the parser's structural `is_declaration_file` flag on the source
+    /// file (file kind), not a path/name string — a declaration-file def is
+    /// ambient regardless of the `declare` keyword.
+    fn file_idx_is_declaration_file(&self, file_idx: u32) -> bool {
+        self.ctx
+            .get_arena_for_file(file_idx)
+            .source_files
+            .first()
+            .is_some_and(|source_file| source_file.is_declaration_file)
     }
 
     /// Instantiate a generic interface/class body with its type parameters bound
