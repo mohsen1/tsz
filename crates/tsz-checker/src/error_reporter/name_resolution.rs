@@ -1237,6 +1237,13 @@ impl<'a> CheckerState<'a> {
     /// (it does not re-apply the suppression predicates or touch the cap
     /// counter), and only when a diagnostic is actually being emitted.
     pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
+        // Bail before the meaning-detection parent walk: a discarded context
+        // returns no candidates regardless of meaning (the same gate inside
+        // `scan_similar_identifiers_for_meaning` covers direct callers).
+        if self.ctx.diagnostics_discarded {
+            return Vec::new();
+        }
+
         // Determine spelling suggestion meaning based on context.
         // In type positions (type annotations, implements clauses, type references),
         // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
