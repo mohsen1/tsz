@@ -85,41 +85,15 @@ pub(crate) const fn static_late_bound_index_signature(
 }
 
 pub(crate) struct MergedClassInstanceInterfaceSurface {
-    result_is_callable: bool,
-    call_signatures: Vec<CallSignature>,
-    construct_signatures: Vec<CallSignature>,
-    properties: Vec<PropertyInfo>,
-    string_index: Option<IndexSignature>,
-    number_index: Option<IndexSignature>,
-    symbol_index: Option<IndexSignature>,
-    symbol: Option<SymbolId>,
-    plain_object_without_indexes: bool,
-}
-
-impl MergedClassInstanceInterfaceSurface {
-    pub(crate) const fn new(
-        result_is_callable: bool,
-        call_signatures: Vec<CallSignature>,
-        construct_signatures: Vec<CallSignature>,
-        properties: Vec<PropertyInfo>,
-        string_index: Option<IndexSignature>,
-        number_index: Option<IndexSignature>,
-        symbol_index: Option<IndexSignature>,
-        symbol: Option<SymbolId>,
-        plain_object_without_indexes: bool,
-    ) -> Self {
-        Self {
-            result_is_callable,
-            call_signatures,
-            construct_signatures,
-            properties,
-            string_index,
-            number_index,
-            symbol_index,
-            symbol,
-            plain_object_without_indexes,
-        }
-    }
+    pub(crate) result_is_callable: bool,
+    pub(crate) call_signatures: Vec<CallSignature>,
+    pub(crate) construct_signatures: Vec<CallSignature>,
+    pub(crate) properties: Vec<PropertyInfo>,
+    pub(crate) string_index: Option<IndexSignature>,
+    pub(crate) number_index: Option<IndexSignature>,
+    pub(crate) symbol_index: Option<IndexSignature>,
+    pub(crate) symbol: Option<SymbolId>,
+    pub(crate) plain_object_without_indexes: bool,
 }
 
 pub(crate) fn merged_class_instance_interface_type(

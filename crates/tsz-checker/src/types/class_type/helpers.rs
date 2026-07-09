@@ -369,20 +369,20 @@ impl<'a> CheckerState<'a> {
 
         class_type::merged_class_instance_interface_type(
             self.ctx.types,
-            class_type::MergedClassInstanceInterfaceSurface::new(
+            class_type::MergedClassInstanceInterfaceSurface {
                 result_is_callable,
                 call_signatures,
                 construct_signatures,
-                properties.into_values().collect(),
+                properties: properties.into_values().collect(),
                 string_index,
                 number_index,
                 symbol_index,
                 symbol,
-                is_plain_object_type(self.ctx.types, instance_type)
+                plain_object_without_indexes: is_plain_object_type(self.ctx.types, instance_type)
                     && string_index.is_none()
                     && number_index.is_none()
                     && symbol_index.is_none(),
-            ),
+            },
         )
     }
 

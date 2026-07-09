@@ -250,7 +250,7 @@ const mixed: { a: 6 | string } = five;
 }
 
 /// Enum members generalize to their parent enum in the positional-chain leaf
-/// (tsc `getBaseTypeOfLiteralType` EnumLike branch).
+/// (tsc `getBaseTypeOfLiteralType` `EnumLike` branch).
 #[test]
 fn enum_member_tuple_chain_leaf_widens_to_parent_enum() {
     let source = r#"
