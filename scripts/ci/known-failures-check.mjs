@@ -212,9 +212,7 @@ function parseArgs(argv) {
 // can legitimately select zero tests, and this checker owns that verdict).
 function resolveJunitPaths(args) {
   const paths = [...args.junits];
-  let sawDirFlag = false;
   for (const dir of args.junitDirs) {
-    sawDirFlag = true;
     let entries;
     try {
       entries = fs.readdirSync(dir);
@@ -228,7 +226,7 @@ function resolveJunitPaths(args) {
     }
     for (const name of xml) paths.push(path.join(dir, name));
   }
-  if (paths.length === 0 && sawDirFlag && args.allowNoReports) {
+  if (paths.length === 0 && args.junitDirs.length > 0 && args.allowNoReports) {
     return { paths: [], noReports: true };
   }
   if (paths.length === 0) paths.push(DEFAULT_JUNIT);

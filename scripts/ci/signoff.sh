@@ -90,17 +90,18 @@ else
   commands+=("cargo fmt --all --check")
   # Run the delta-verified unit suite (#15646): every nextest pass runs with
   # fail-fast disabled (signoff profile) and records a junit report, then
-  # known-failures-check.mjs distinguishes a NEW regression from the committed
-  # known-failures baseline (#15399). unit-nextest.sh exits nonzero only for
-  # infrastructure failures (build errors, missing junit) — test failures land
-  # in the reports and the baseline check is the real gate. This is the SAME
-  # suite the unit CI job runs, so the shared baseline means one thing in both
-  # places. Note the tsz-checker lib-test target (its in-crate unit tests) is
-  # outside this suite: compiling it exceeds a 32 GiB machine (see
-  # [profile.ci-unit] in Cargo.toml). node-less machines can fall back to
-  # `--profile precommit` via SIGNOFF_COMMANDS_FILE (script header).
-  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- scripts/ci/unit-nextest.sh --junit-dir .ci-logs/signoff-unit-junit --workspace-minus-checker")
-  commands+=("node scripts/ci/known-failures-check.mjs --junit-dir .ci-logs/signoff-unit-junit")
+  # --gate has known-failures-check.mjs distinguish a NEW regression from the
+  # committed known-failures baseline (#15399); a nonzero rc before the gate
+  # is an infrastructure failure (build error, missing junit). Signoff runs a
+  # SUPERSET of the unit CI job's package set (--workspace-minus-checker adds
+  # tsz-cli, tsz-lowering, ... on top of CI's core list); the shared baseline
+  # is reconciled from this superset and the gate tolerates subsets, so green
+  # means "no NEW failures in what ran" in both places. The tsz-checker
+  # lib-test target (its in-crate unit tests) is outside both suites:
+  # compiling it exceeds a 32 GiB machine (see [profile.ci-unit] in
+  # Cargo.toml). node-less machines can fall back to `--profile precommit`
+  # via SIGNOFF_COMMANDS_FILE (script header).
+  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- scripts/ci/unit-nextest.sh --junit-dir .ci-logs/signoff-unit-junit --workspace-minus-checker --gate")
 fi
 
 announce "$green" "Attempting to sign off on ${sha} as ${user}."

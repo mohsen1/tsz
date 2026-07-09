@@ -74,6 +74,14 @@ def check_integrity(text: str) -> list[str]:
     """Hygiene problems in a baseline text (empty list when clean)."""
     entries = parse_entries(text)
     problems = []
+    # A marker-like line the generation parser does not understand must be a
+    # hard error, not generation 0: reading a mangled/future marker as
+    # "unreconciled" would misclassify the next growth as a bootstrap
+    # reconcile and wave it through.
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("# baseline-status:") and not RECONCILED_MARKER_RE.match(line):
+            problems.append(f"unparseable baseline-status marker: {line}")
     seen = set()
     for entry in entries:
         if entry in seen:
@@ -90,8 +98,14 @@ def check_integrity(text: str) -> list[str]:
     return problems
 
 
-def check_growth(base_text: str, head_text: str) -> tuple[list[str], list[str], list[str], list[str]]:
-    """Return (problems, notes, added, removed) for a base -> head move."""
+def check_growth(base_text: str, head_text: str) -> dict:
+    """Adjudicate a base -> head baseline move.
+
+    Returns a dict with `problems`/`notes` (lists of strings), the
+    `added`/`removed` entry lists, and the already-computed
+    `base_count`/`head_count`/`base_gen`/`head_gen` so callers can report
+    without re-parsing.
+    """
     base_entries = set(parse_entries(base_text))
     head_entries = set(parse_entries(head_text))
     added = sorted(head_entries - base_entries)
@@ -124,7 +138,16 @@ def check_growth(base_text: str, head_text: str) -> tuple[list[str], list[str], 
                 "`node scripts/ci/known-failures-check.mjs --update "
                 "--bump-generation` and says so in the PR body."
             )
-    return problems, notes, added, removed
+    return {
+        "problems": problems,
+        "notes": notes,
+        "added": added,
+        "removed": removed,
+        "base_count": len(base_entries),
+        "head_count": len(head_entries),
+        "base_gen": base_gen,
+        "head_gen": head_gen,
+    }
 
 
 def _read_ref_text(ref: str, path: str) -> str | None:
@@ -209,8 +232,16 @@ def main(argv: list[str] | None = None) -> int:
 
     base_ref = args.base_ref
     if args.fetch_base and not _ref_exists(base_ref):
+        # Derive the fetch source from --base-ref ("origin/main" -> remote
+        # origin, ref main; a bare ref fetches from origin). blob:none keeps
+        # the shallow fetch to commits+trees; the later `git show` lazily
+        # fetches just the one baseline blob.
+        if "/" in args.base_ref:
+            remote, _, ref = args.base_ref.partition("/")
+        else:
+            remote, ref = "origin", args.base_ref
         fetch = subprocess.run(
-            ["git", "fetch", "--no-tags", "--depth=1", "origin", "main"],
+            ["git", "fetch", "--no-tags", "--depth=1", "--filter=blob:none", remote, ref],
             capture_output=True,
             text=True,
         )
@@ -218,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
             base_ref = "FETCH_HEAD"
         else:
             print(
-                f"warning: could not fetch origin main: {fetch.stderr.strip()}",
+                f"warning: could not fetch {remote} {ref}: {fetch.stderr.strip()}",
                 file=sys.stderr,
             )
 
@@ -234,28 +265,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {msg}", file=sys.stderr)
         return 1
 
-    growth_problems, notes, added, removed = check_growth(base_text, head_text)
+    growth = check_growth(base_text, head_text)
 
     print(
-        f"known-failures baseline: {len(parse_entries(base_text))} entr(ies) "
-        f"(r{baseline_generation(base_text)}) at {base_ref!r}, "
-        f"{len(parse_entries(head_text))} (r{baseline_generation(head_text)}) "
-        "in the working tree."
+        f"known-failures baseline: {growth['base_count']} entr(ies) "
+        f"(r{growth['base_gen']}) at {base_ref!r}, "
+        f"{growth['head_count']} (r{growth['head_gen']}) in the working tree."
     )
-    if removed:
-        print(f"Removed entries ({len(removed)}) — shrink ratchet:")
-        for entry in removed:
+    if growth["removed"]:
+        print(f"Removed entries ({len(growth['removed'])}) — shrink ratchet:")
+        for entry in growth["removed"]:
             print(f"  - {entry}")
-    if added:
-        print(f"Added entries ({len(added)}):")
-        for entry in added:
+    if growth["added"]:
+        print(f"Added entries ({len(growth['added'])}):")
+        for entry in growth["added"]:
             print(f"  + {entry}")
-    for note in notes:
+    for note in growth["notes"]:
         print(note)
-    for problem in growth_problems:
+    for problem in growth["problems"]:
         print(f"::error::known-failures baseline: {problem}")
 
-    if growth_problems or integrity_problems:
+    if growth["problems"] or integrity_problems:
         return 1
     print("known-failures growth gate passed.")
     return 0

@@ -55,6 +55,11 @@ export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
 # Cap nextest test-thread parallelism for memory-heavy unit lib-tests on
 # GitHub-hosted runners. Default to 2; override with TSZ_CI_UNIT_TEST_THREADS.
 export UNIT_NEXTEST_TEST_THREADS="${TSZ_CI_UNIT_TEST_THREADS:-2}"
+# Same cap for the checker integration batches (unit-nextest.sh): several are
+# memory-heavy enough that running at num-cpus can SIGKILL otherwise-passing
+# tests on hosted runners (this was `test-threads = 4` in the retired
+# `[profile.ci]` nextest profile). Local runs leave it unset -> num-cpus.
+export CHECKER_NEXTEST_TEST_THREADS="${TSZ_CI_CHECKER_TEST_THREADS:-4}"
 echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
 
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
@@ -393,7 +398,6 @@ run_lint() {
   node scripts/ci/test-check-main-red.mjs || return $?
   node scripts/ci/test-sentinel-issues.mjs || return $?
   node scripts/ci/test-gh.mjs || return $?
-  node scripts/ci/test-known-failures-check.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
@@ -410,14 +414,10 @@ run_lint() {
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
-  python3 scripts/ci/test_check_known_failures_growth.py || return $?
-  python3 scripts/ci/test_unit_nextest.py || return $?
-  python3 scripts/ci/test_full_ci_unit_gate.py || return $?
-  # Known-failures baseline contract (#15646): additions need an explicit,
-  # reviewed escape; removals are the shrink ratchet. Shallow CI checkouts
-  # fetch the base ref; offline/sandboxed runs warn and skip the comparison.
-  python3 scripts/ci/check-known-failures-growth.py \
-    --fetch-base --allow-unavailable-base || return $?
+  # Known-failures baseline contract + gate-wiring tests (#15646). The
+  # command list lives in one script shared with the ci.yml cheap-guards
+  # step so the two tiers cannot drift.
+  scripts/ci/check-unit-gate-contracts.sh || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
@@ -497,20 +497,14 @@ unit_test_packages() {
   done
 }
 
-# Run unit-nextest.sh passes into a junit dir, then adjudicate the collected
-# reports against the known-failures baseline (#15646). Green means "no unit
-# failures outside scripts/ci/known-failures.txt" — a delta gate, not a masked
-# rc. The runner exits nonzero only for infrastructure failures (build error,
-# missing junit; it reports them itself), which fail the lane outright and
-# never reach the gate. --allow-no-reports lets a narrowed package override
-# that selects zero tests pass; the checker owns that verdict.
-run_delta_gated_unit_suite() {
-  local junit_dir="$1"
-  shift
-  rm -rf "$junit_dir"
-  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" "$@" || return "$?"
-  node scripts/ci/known-failures-check.mjs --junit-dir "$junit_dir" --allow-no-reports
-}
+# Both unit lanes run scripts/ci/unit-nextest.sh with --gate: the runner
+# collects one junit per nextest pass, exits nonzero for infrastructure
+# failures (build error, missing junit — reported by the runner itself), and
+# otherwise the known-failures delta gate's verdict is the job's verdict
+# (#15646): green means "no unit failures outside
+# scripts/ci/known-failures.txt", not a masked rc. --allow-no-reports lets a
+# narrowed package override that selects zero tests pass; the checker owns
+# that verdict.
 
 run_unit_tests() {
   ci_section "Workspace nextest suites (signoff profile + known-failures gate)"
@@ -526,14 +520,15 @@ run_unit_tests() {
     echo "info: skipping checker integration tests in unit job"
     skip_flag=(--skip-checker-integration)
   fi
-  run_delta_gated_unit_suite "$LOG_DIR/unit-junit" \
+  scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/unit-junit" \
+    --gate --allow-no-reports \
     --packages "$packages" ${skip_flag[@]+"${skip_flag[@]}"}
 }
 
 run_checker_integration_tests() {
   ci_section "Checker integration nextest suites (signoff profile + known-failures gate)"
-  run_delta_gated_unit_suite "$LOG_DIR/checker-integration-junit" \
-    --packages tsz-checker
+  scripts/ci/unit-nextest.sh --junit-dir "$LOG_DIR/checker-integration-junit" \
+    --gate --allow-no-reports --packages tsz-checker
 }
 
 build_unit_test_archive() {

@@ -10,6 +10,7 @@ sorted, `binary-id::test-name`).
 import importlib.util
 import pathlib
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -82,48 +83,57 @@ class ParseAndIntegrityTests(unittest.TestCase):
         text = f"{MARKER}\nnot-a-nextest-id\n"
         self.assertTrue(any("malformed" in p for p in guard.check_integrity(text)))
 
+    def test_integrity_flags_unparseable_marker_instead_of_reading_gen_zero(self):
+        # A mangled/future marker must hard-error: silently parsing it as
+        # generation 0 would make the next growth look like a bootstrap
+        # reconcile and wave it through.
+        text = "# baseline-status: reconciled rTWO\ntsz-a::t::x\n"
+        self.assertTrue(any("unparseable" in p for p in guard.check_integrity(text)))
+        self.assertEqual(guard.baseline_generation(text), 0)
+
 
 class GrowthDecisionTests(unittest.TestCase):
     def test_shrink_is_always_allowed(self):
         head = f"# h\n{MARKER} r1\ntsz-a::t::alpha\n"
-        problems, _, added, removed = guard.check_growth(RECONCILED_TWO, head)
-        self.assertEqual(problems, [])
-        self.assertEqual(added, [])
-        self.assertEqual(removed, ["tsz-b::t::beta"])
+        growth = guard.check_growth(RECONCILED_TWO, head)
+        self.assertEqual(growth["problems"], [])
+        self.assertEqual(growth["added"], [])
+        self.assertEqual(growth["removed"], ["tsz-b::t::beta"])
+        self.assertEqual((growth["base_count"], growth["head_count"]), (2, 1))
 
     def test_growth_without_generation_bump_is_rejected(self):
         head = RECONCILED_TWO + "tsz-c::t::gamma\n"
-        problems, _, added, _ = guard.check_growth(RECONCILED_TWO, head)
-        self.assertEqual(added, ["tsz-c::t::gamma"])
-        self.assertTrue(any("without bumping" in p for p in problems))
+        growth = guard.check_growth(RECONCILED_TWO, head)
+        self.assertEqual(growth["added"], ["tsz-c::t::gamma"])
+        self.assertTrue(any("without bumping" in p for p in growth["problems"]))
 
     def test_bootstrap_growth_over_unreconciled_base_is_allowed(self):
-        problems, notes, added, _ = guard.check_growth(UNRECONCILED, RECONCILED_TWO)
-        self.assertEqual(problems, [])
-        self.assertEqual(len(added), 2)
-        self.assertTrue(any("bootstrap" in n.lower() for n in notes))
+        growth = guard.check_growth(UNRECONCILED, RECONCILED_TWO)
+        self.assertEqual(growth["problems"], [])
+        self.assertEqual(len(growth["added"]), 2)
+        self.assertTrue(any("bootstrap" in n.lower() for n in growth["notes"]))
 
     def test_generation_bump_authorizes_growth(self):
         head = RECONCILED_TWO.replace(f"{MARKER} r1", f"{MARKER} r2") + "tsz-c::t::gamma\n"
-        problems, notes, _, _ = guard.check_growth(RECONCILED_TWO, head)
-        self.assertEqual(problems, [])
-        self.assertTrue(any("generation bumped" in n for n in notes))
+        growth = guard.check_growth(RECONCILED_TWO, head)
+        self.assertEqual(growth["problems"], [])
+        self.assertTrue(any("generation bumped" in n for n in growth["notes"]))
 
     def test_generation_can_never_go_backwards(self):
         # dropping the marker entirely is the degenerate case (r1 -> r0)
         head = "# h\ntsz-a::t::alpha\n"
-        problems, _, _, _ = guard.check_growth(RECONCILED_TWO, head)
-        self.assertTrue(any("went backwards" in p for p in problems))
+        growth = guard.check_growth(RECONCILED_TWO, head)
+        self.assertTrue(any("went backwards" in p for p in growth["problems"]))
         # an explicit lower generation is equally rejected, even on shrink
         base_r3 = RECONCILED_TWO.replace(f"{MARKER} r1", f"{MARKER} r3")
         head_r2 = f"# h\n{MARKER} r2\ntsz-a::t::alpha\n"
-        problems, _, _, _ = guard.check_growth(base_r3, head_r2)
-        self.assertTrue(any("went backwards" in p for p in problems))
+        growth = guard.check_growth(base_r3, head_r2)
+        self.assertTrue(any("went backwards" in p for p in growth["problems"]))
 
     def test_unreconciled_to_unreconciled_edit_is_allowed(self):
         # Pre-bootstrap header edits must not require anything special.
-        problems, _, _, _ = guard.check_growth(UNRECONCILED, UNRECONCILED + "# note\n")
-        self.assertEqual(problems, [])
+        growth = guard.check_growth(UNRECONCILED, UNRECONCILED + "# note\n")
+        self.assertEqual(growth["problems"], [])
 
 
 class EndToEndGitTests(unittest.TestCase):
@@ -157,7 +167,7 @@ class EndToEndGitTests(unittest.TestCase):
 
     def _repo_with(self, base_text, worktree_text):
         tmp = tempfile.mkdtemp(prefix="kf-growth-")
-        self.addCleanup(__import__("shutil").rmtree, tmp, True)
+        self.addCleanup(shutil.rmtree, tmp, True)
         path = pathlib.Path(tmp) / "scripts" / "ci"
         path.mkdir(parents=True)
         baseline = path / "known-failures.txt"

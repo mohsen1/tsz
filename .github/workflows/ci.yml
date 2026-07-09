@@ -35,15 +35,9 @@ jobs:
           python3 scripts/lib/test_check_sh_portability.py
       # Known-failures baseline contract (#15646): the unit job's green means
       # "no NEW unit failures", so the baseline may only move in reviewed ways
-      # and the gate wiring itself is contract-tested here (cheap, <5s).
+      # and the gate wiring itself is contract-tested here (cheap, <15s).
       - name: Known-failures baseline gate and unit-lane contract tests
-        run: |
-          python3 scripts/ci/check-known-failures-growth.py \
-            --fetch-base --allow-unavailable-base
-          python3 scripts/ci/test_check_known_failures_growth.py
-          python3 scripts/ci/test_unit_nextest.py
-          python3 scripts/ci/test_full_ci_unit_gate.py
-          node scripts/ci/test-known-failures-check.mjs
+        run: scripts/ci/check-unit-gate-contracts.sh
       - name: Run cargo clippy
         run: |
           scripts/safe-run.sh --limit 88% -- \
