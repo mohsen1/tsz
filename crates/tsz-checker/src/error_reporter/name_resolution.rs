@@ -1162,13 +1162,11 @@ impl<'a> CheckerState<'a> {
     /// the previous eager `collect_spelling_suggestions`, so cap behavior and
     /// the resulting diagnostics are unchanged.
     pub(crate) fn suggestion_scan_eligible(&self, name: &str, idx: NodeIndex) -> bool {
-        // A failure site that is not addressable in this checker's arena
-        // (demand-driven lowering of another arena's declarations, or a
-        // missing node) can never emit a diagnostic here — every emitter is
-        // span-gated on `idx`. Skip both the scan and the cap-counter charge:
-        // tsc's `suggestionCount` only ever advances for failures it reports,
-        // and it never reports these.
-        if self.get_node_span(idx).is_none() {
+        // A failure site whose diagnostic can never be emitted from this
+        // checker (node not addressable in the current arena) must skip both
+        // the scan and the cap-counter charge: tsc's `suggestionCount` only
+        // ever advances for failures it reports, and it never reports these.
+        if !self.can_emit_diagnostic_at(idx) {
             return false;
         }
 

@@ -279,19 +279,22 @@ fn run_check_on_existing_checker<'a>(
         // checker skips diagnostic presentation work entirely — failure
         // elaboration, type display, and spelling-suggestion candidate scans
         // — instead of formatting diagnostics that are thrown away below.
-        // The flag is restored for session-reuse callers that check a user
-        // file on this same `CheckerState` next.
-        let diagnostics_previously_discarded = checker.ctx.diagnostics_discarded;
+        // The flag is cleared again for session-reuse callers that check a
+        // user file on this same `CheckerState` next (`reset_for_next_file`
+        // does not touch it); top-level per-file checkers always arrive here
+        // with the flag off.
         checker.ctx.diagnostics_discarded = true;
         checker.check_source_file(file.source_file);
-        checker.ctx.diagnostics_discarded = diagnostics_previously_discarded;
+        checker.ctx.diagnostics_discarded = false;
         tsz_common::perf_counters::record_interner_working_set_for_file();
-        let discarded_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
+        checker.ctx.diagnostics.clear();
         if let Some(start) = check_start {
+            // Diagnostic count 0: nothing from this pass is surfaced, and the
+            // buffer only ever held the discard-mode subset anyway.
             tsz_common::perf_counters::record_slow_check_file_timing(
                 &file.file_name,
                 start.elapsed().as_nanos() as u64,
-                discarded_diagnostics.len() as u64,
+                0,
             );
         }
         return file_diagnostics;

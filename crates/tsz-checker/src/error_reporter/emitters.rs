@@ -9,6 +9,21 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
+    /// Whether a diagnostic anchored at `idx` can be emitted from this
+    /// checker.
+    ///
+    /// Every node-anchored emitter below (`error_at_node` and friends) is
+    /// span-gated: it silently drops the diagnostic when `idx` is not
+    /// addressable in the current arena — the case for nodes from another
+    /// arena reached through demand-driven lowering, whose diagnostics
+    /// belong to the owning file's own check. Pre-flight gates that want to
+    /// skip diagnostic-presentation work (message building, spelling
+    /// suggestion scans) for such nodes must use this predicate so they
+    /// cannot drift from the emitters' actual drop rule.
+    pub(crate) fn can_emit_diagnostic_at(&self, idx: NodeIndex) -> bool {
+        self.get_node_span(idx).is_some()
+    }
+
     /// Report an error at a specific node.
     ///
     /// The span is normalized via `normalized_anchor_span` so that, for

@@ -700,16 +700,14 @@ impl<'a> CheckerState<'a> {
         failure: &ResolutionFailure,
     ) {
         // Every arm below anchors its diagnostic at `request.idx` through the
-        // span-gated emitters (`error_at_node` and friends), which silently
-        // drop the diagnostic when the node is not addressable in this
-        // checker's arena. That happens when demand-driven lowering resolves
-        // names inside declarations from another arena (e.g. lib interface
-        // bodies materialized on behalf of user code): the failure produces
-        // an error type, but the diagnostic belongs to the owning file's own
-        // check. Bail out before building messages or running the
-        // full-symbol-universe spelling-suggestion scan for a diagnostic that
-        // is structurally guaranteed to be dropped at emission.
-        if self.get_node_span(request.idx).is_none() {
+        // span-gated emitters, so an unaddressable node (demand-driven
+        // lowering of another arena's declarations — e.g. lib interface
+        // bodies materialized on behalf of user code) is structurally
+        // guaranteed to be dropped at emission. Bail out before building
+        // messages or running the full-symbol-universe spelling-suggestion
+        // scan for it; the failure still produces an error type, and the
+        // diagnostic belongs to the owning file's own check.
+        if !self.can_emit_diagnostic_at(request.idx) {
             return;
         }
 
