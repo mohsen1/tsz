@@ -144,3 +144,69 @@ declare function Btn(props: DirectProps): JSX.Element;
         "direct callable prop should not emit TS2322, got: {diags:?}"
     );
 }
+
+#[test]
+fn jsx_contextual_retry_preserves_nested_callback_diagnostics() {
+    let source = format!(
+        r#"
+{JSX_PREAMBLE}
+interface Click {{ x: number; }}
+interface ButtonProps {{
+    onClick?: (event: Click) => void;
+}}
+declare function Button(props: ButtonProps): JSX.Element;
+declare const consumeAny: any;
+declare function consumeTyped(callback: (value: string) => void): void;
+
+<Button onClick={{({{ x: outerX }}) => {{
+    consumeAny((nested) => nested);
+    consumeAny(({{ destructured }}) => destructured);
+    consumeAny((...rest) => rest);
+    consumeTyped((typed) => typed.length);
+    void outerX;
+}}}} />;
+<Button onClick={{function (renamedOuter) {{
+    consumeAny((renamedNested) => renamedNested);
+    void renamedOuter.x;
+}}}} />;
+"#
+    );
+    let diags = jsx_diagnostics(&source);
+    let implicit_any_messages: Vec<_> = diags
+        .iter()
+        .filter(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE)
+        .map(|(_, message)| message.as_str())
+        .collect();
+
+    assert_eq!(
+        implicit_any_messages.len(),
+        2,
+        "only the two nested callbacks should emit TS7006, got: {diags:?}"
+    );
+    assert!(
+        implicit_any_messages
+            .iter()
+            .any(|message| message.contains("'nested'")),
+        "the nested arrow parameter should emit TS7006, got: {diags:?}"
+    );
+    assert!(
+        implicit_any_messages
+            .iter()
+            .any(|message| message.contains("'renamedNested'")),
+        "the nested function-expression parameter should emit TS7006, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::BINDING_ELEMENT_IMPLICITLY_HAS_AN_TYPE
+                && message.contains("'destructured'")
+        }),
+        "the nested destructured binding should emit TS7031, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE
+                && message.contains("'rest'")
+        }),
+        "the nested rest parameter should emit TS7019, got: {diags:?}"
+    );
+}

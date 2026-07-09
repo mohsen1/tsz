@@ -841,15 +841,23 @@ impl<'a> CheckerState<'a> {
                         self.evaluate_application_type(expected_context_type);
                     let expected_context_type = self.evaluate_type_with_env(expected_context_type);
                     // Pre-extract before &mut self calls to release the arena borrow.
-                    let value_node_fn_span = self
+                    let value_fn_spans = self
                         .ctx
                         .arena
                         .get(value_node_idx)
                         .filter(|n| n.is_function_expression_or_arrow())
-                        .map(|n| (n.pos, n.end));
+                        .map(|node| {
+                            let header_end = self
+                                .ctx
+                                .arena
+                                .get_function(node)
+                                .and_then(|function| self.ctx.arena.get(function.body))
+                                .map_or(node.end, |body| body.pos);
+                            (node.pos, header_end, node.end)
+                        });
 
-                    let mut function_param_diagnostic_span = None;
-                    let contextual_expected_type = if let Some(fn_span) = value_node_fn_span {
+                    let mut diagnostic_spans = None;
+                    let contextual_expected_type = if let Some(fn_spans) = value_fn_spans {
                         // Determine whether contextual typing applies to this arrow function.
                         // For union props (e.g. `(e: MouseEvent) => void | undefined`),
                         // extract callable members first — the raw union fails
@@ -904,15 +912,15 @@ impl<'a> CheckerState<'a> {
                             .implicit_any_checked_closures
                             .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
-                        function_param_diagnostic_span = Some(fn_span);
+                        diagnostic_spans = Some(fn_spans);
                         refined
                     } else {
                         expected_context_type
                     };
                     // Set contextual type to preserve narrow literal types.
-                    let is_function_attr = function_param_diagnostic_span.is_some();
-                    let spec_snap = function_param_diagnostic_span
-                        .map(|_| DiagnosticSpeculationSnapshot::new(&self.ctx));
+                    let is_function_attr = diagnostic_spans.is_some();
+                    let spec_snap =
+                        diagnostic_spans.map(|_| DiagnosticSpeculationSnapshot::new(&self.ctx));
                     let actual_type = self.compute_type_of_node_with_request(
                         value_node_idx,
                         &opts
@@ -921,10 +929,21 @@ impl<'a> CheckerState<'a> {
                             .normal_origin()
                             .contextual(contextual_expected_type),
                     );
-                    if let (Some((start, end)), Some(snap)) =
-                        (function_param_diagnostic_span, spec_snap)
+                    if let (Some((start, header_end, function_end)), Some(snap)) =
+                        (diagnostic_spans, spec_snap)
                     {
+                        // Implicit-any diagnostics are transient only for the outer
+                        // function header. Nested callbacks in its body are independent
+                        // and must survive. TS2322 keeps the full-function boundary so
+                        // the later assignability check can re-anchor a contextual return
+                        // mismatch at the JSX attribute name.
                         snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
+                            let end =
+                                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                                    function_end
+                                } else {
+                                    header_end
+                                };
                             !(matches!(
                                 diag.code,
                                 7006 | 7019
