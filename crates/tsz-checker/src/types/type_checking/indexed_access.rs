@@ -8,6 +8,7 @@ use tsz_solver::TypeId;
 mod concrete_index_error;
 mod deferred_conditional_index;
 mod error_contagion;
+mod generic_tuple_chain;
 mod indexed_access_helpers;
 mod infer_node_walk;
 mod mapped_key_check;
