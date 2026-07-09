@@ -17,10 +17,10 @@
 //! covered by `tests/lib_type_spelling_suggestions_tests.rs`.
 
 use crate::context::CheckerOptions;
+use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
-use tsz_solver::TypeInterner;
 
 /// Run `f` against a checked source file, with `diagnostics_discarded` set
 /// before the check when requested. `f` receives the checker and the
