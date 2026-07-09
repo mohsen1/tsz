@@ -1184,10 +1184,12 @@ pub struct CheckerContext<'a> {
     /// diagnostics. When set, the expensive diagnostic *presentation* work —
     /// solver failure-reason elaboration (`explain_failure`), diagnostic type
     /// formatting, related-info chains, and spelling-suggestion candidate
-    /// scans — is skipped; diagnostics routed through `CheckerContext::error`
-    /// are still recorded with the correct code and span so context-internal
-    /// counting/dedup predicates keep working. This flag must never change
-    /// which checks run or what types are computed.
+    /// scans — is skipped. Diagnostics routed through
+    /// `CheckerContext::error` are still recorded with the correct code and
+    /// span, so counting/dedup predicates over that family keep working;
+    /// diagnostics routed through `CheckerContext::push_diagnostic` are
+    /// dropped wholesale (before the dedup-key insert). This flag must never
+    /// change which checks run or what types are computed.
     pub diagnostics_discarded: bool,
     pub(crate) diagnostic_indices: DiagnosticIndices,
     /// Call-expression nodes that resolved to TS2769 during the current
