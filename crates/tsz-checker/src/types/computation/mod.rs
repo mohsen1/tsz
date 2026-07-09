@@ -54,6 +54,7 @@ pub(crate) mod generic_new_inference;
 pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod identifier_flow;
+pub(crate) mod interface_member_type;
 pub(crate) mod large_tuple;
 mod nullish_coalescing;
 pub(crate) mod object_literal;

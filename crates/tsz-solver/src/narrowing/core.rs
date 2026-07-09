@@ -383,7 +383,7 @@ impl<'a> NarrowingContext<'a> {
                     } else {
                         self.db.mapped(crate::types::MappedType {
                             constraint: resolved_constraint,
-                            ..(*mapped).clone()
+                            ..*mapped
                         })
                     };
                     let evaluated = self.db.evaluate_type(eval_input);
@@ -517,35 +517,6 @@ impl<'a> NarrowingContext<'a> {
                     if evaluated != type_id {
                         type_id = evaluated;
                         continue;
-                    }
-                    break;
-                }
-
-                // 10. Mapped types — evaluate after generic instantiation so
-                // homomorphic mapped types over unions can distribute before
-                // property-presence narrowing filters members.
-                Some(TypeData::Mapped(mapped_id)) => {
-                    // The constraint may hold unresolved `Lazy` refs
-                    // (`keyof (Left | Right)`), which the resolver-less
-                    // evaluator would leave deferred; resolve it first so the
-                    // key set is concrete.
-                    let mapped = self.db.mapped_type(mapped_id);
-                    let resolved_constraint = self.resolve_type(mapped.constraint);
-                    let eval_input = if resolved_constraint == mapped.constraint {
-                        type_id
-                    } else {
-                        self.db.mapped(crate::types::MappedType {
-                            constraint: resolved_constraint,
-                            ..(*mapped).clone()
-                        })
-                    };
-                    let evaluated = self.db.evaluate_type(eval_input);
-                    if evaluated != type_id && evaluated != eval_input {
-                        type_id = evaluated;
-                        continue;
-                    }
-                    if evaluated != type_id {
-                        type_id = evaluated;
                     }
                     break;
                 }
