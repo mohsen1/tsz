@@ -547,20 +547,26 @@ run_unit_tests() {
     fi
   done
 
+  # Suites run under `timed`'s `set +e`, so a failing nextest does not abort.
+  # Aggregate every batch's exit code and surface a nonzero result if ANY
+  # batch failed — otherwise only the last batch's status reaches the job and
+  # earlier failures are silently swallowed (a green job over red tests).
+  local overall_rc=0
   if (( ${#general_pkg_args[@]} > 0 )); then
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
       --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
-      "${general_pkg_args[@]}"
+      "${general_pkg_args[@]}" || overall_rc=$?
   fi
 
   if (( checker_selected )); then
     if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
       echo "info: skipping checker integration tests in unit job"
-      return 0
+      return "$overall_rc"
     fi
-    run_checker_integration_tests
+    run_checker_integration_tests || overall_rc=$?
   fi
+  return "$overall_rc"
 }
 
 run_checker_integration_tests() {
@@ -578,6 +584,9 @@ run_checker_integration_tests() {
       echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
       return 2
     fi
+    # Aggregate rc across batches: a failing batch must fail the whole run,
+    # not be masked by a later passing batch (batches run under `set +e`).
+    local overall_rc=0
     checker_batch_names=()
     while IFS= read -r test_name; do
       checker_batch_names+=("$test_name")
@@ -589,7 +598,7 @@ run_checker_integration_tests() {
         echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
         cargo nextest run --profile ci --cargo-profile ci-unit \
           --build-jobs "$CARGO_BUILD_JOBS" \
-          -p tsz-checker "${checker_batch_args[@]}"
+          -p tsz-checker "${checker_batch_args[@]}" || overall_rc=$?
         checker_batch_names=()
       fi
     done < <(checker_integration_test_names)
@@ -602,8 +611,9 @@ run_checker_integration_tests() {
       echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
       cargo nextest run --profile ci --cargo-profile ci-unit \
         --build-jobs "$CARGO_BUILD_JOBS" \
-        -p tsz-checker "${checker_batch_args[@]}"
+        -p tsz-checker "${checker_batch_args[@]}" || overall_rc=$?
     fi
+    return "$overall_rc"
 }
 
 build_unit_test_archive() {
