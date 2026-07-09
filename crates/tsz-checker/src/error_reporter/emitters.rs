@@ -12,8 +12,8 @@ impl<'a> CheckerState<'a> {
     /// Whether a diagnostic anchored at `idx` can be emitted from this
     /// checker.
     ///
-    /// Every node-anchored emitter below (`error_at_node` and friends) is
-    /// span-gated: it silently drops the diagnostic when `idx` is not
+    /// The node-anchored emitters below (`error_at_node` and friends) are
+    /// span-gated: they silently drop the diagnostic when `idx` is not
     /// addressable in the current arena — the case for nodes from another
     /// arena reached through demand-driven lowering, whose diagnostics
     /// belong to the owning file's own check. Pre-flight gates that want to

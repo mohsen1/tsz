@@ -52,7 +52,7 @@ fn run_tsz(files: &[(&str, &str)], skip_lib_check: bool) -> String {
     std::fs::write(
         dir.path().join("tsconfig.json"),
         format!(
-            r#"{{ "compilerOptions": {{ "noEmit": true, "strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "skipLibCheck": {skip_lib_check} }} }}"#
+            r#"{{ "compilerOptions": {{ "noEmit": true, "strict": true, "target": "esnext", "module": "esnext", "lib": ["esnext"], "moduleResolution": "bundler", "skipLibCheck": {skip_lib_check} }} }}"#
         ),
     )
     .expect("write tsconfig.json");

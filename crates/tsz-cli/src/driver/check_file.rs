@@ -289,8 +289,6 @@ fn run_check_on_existing_checker<'a>(
         tsz_common::perf_counters::record_interner_working_set_for_file();
         checker.ctx.diagnostics.clear();
         if let Some(start) = check_start {
-            // Diagnostic count 0: nothing from this pass is surfaced, and the
-            // buffer only ever held the discard-mode subset anyway.
             tsz_common::perf_counters::record_slow_check_file_timing(
                 &file.file_name,
                 start.elapsed().as_nanos() as u64,
