@@ -4,9 +4,10 @@
 //! types.  The solver tracks a distinct write type per property.  These tests
 //! verify:
 //!
-//! 1. **Variance** — write-position assignments into a split-accessor type are
-//!    checked against the *setter* parameter type (contravariant), not the
-//!    getter return type.
+//! 1. **Writes** — assigning through a split-accessor property is checked
+//!    against the setter parameter type, while normal structural compatibility
+//!    compares the readable getter type and does not reject differing setter
+//!    widths.
 //! 2. **Display** — nested property-mismatch diagnostics report the actual
 //!    mismatched property type, not the outer expression's type.
 //! 3. **Readonly** — getter-only type-literal/interface properties are readonly.
@@ -114,18 +115,24 @@ obj.y = true;
     );
 }
 
-/// Assigning a type-literal with a mismatched setter parameter to a target
-/// that requires a wider setter should fail (contravariant write position).
+/// In normal TypeScript compatibility mode, differing setter widths do not
+/// affect structural assignment when the readable getter types agree. This is
+/// symmetric: both the wider and narrower setter shapes remain compatible.
 #[test]
-fn type_literal_split_accessor_narrower_setter_rejected() {
-    assert_has_2322(
+fn type_literal_split_accessor_setter_width_does_not_affect_assignability() {
+    let codes = check_source_codes(
         "
 type Wide  = { get z(): string; set z(v: string | number) };
 type Narrow = { get z(): string; set z(v: string) };
 declare let wide: Wide;
 declare let narrow: Narrow;
 wide = narrow;
+narrow = wide;
 ",
+    );
+    assert!(
+        codes.is_empty(),
+        "matching getter types should be compatible in both directions, got: {codes:?}"
     );
 }
 
