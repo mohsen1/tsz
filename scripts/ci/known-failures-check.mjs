@@ -27,8 +27,16 @@
 // and compare the reported failures to scripts/ci/known-failures.txt by hand, or
 // pin a nextest `default-filter` that excludes the known set.
 //
+// The unit CI lane runs several nextest passes (a general workspace pass plus
+// batched checker integration targets, #15646), each writing junit to a
+// distinct path. `--junit` may be repeated and `--junit-dir` reads every
+// `*.xml` in a directory; the run under adjudication is the UNION of all
+// provided reports. Every provided report must be readable and non-empty —
+// a pass that died before recording tests must fail the gate, not shrink it.
+//
 // Usage:
-//   node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]
+//   node scripts/ci/known-failures-check.mjs [--junit <path>]... [--junit-dir <dir>] \
+//     [--baseline <path>] [--update]
 //
 // Exit codes:
 //   0 - no new failures (or advisory bootstrap / shrink-only)
@@ -115,6 +123,20 @@ export function baselineIsReconciled(text) {
   return text.split(/\r?\n/).some((line) => line.trim() === RECONCILED_MARKER);
 }
 
+// Union several parsed junit results ({all, failing} pairs) into one run.
+// The unit lane produces one junit per nextest pass (#15646); the run under
+// adjudication is their union. A test can only appear in multiple reports if
+// two passes ran it; a failure in any pass keeps it failing.
+export function unionRuns(runs) {
+  const all = new Set();
+  const failing = new Set();
+  for (const run of runs) {
+    for (const id of run.all) all.add(id);
+    for (const id of run.failing) failing.add(id);
+  }
+  return { all, failing };
+}
+
 // Diff a junit result against the baseline set.
 //   newFailures - failing tests absent from the baseline (regressions -> block)
 //   nowPassing  - baselined tests that ran and did not fail (shrink candidates)
@@ -136,10 +158,11 @@ export function renderBaseline(ids, { reconciled = true } = {}) {
 }
 
 function parseArgs(argv) {
-  const out = { junit: DEFAULT_JUNIT, baseline: DEFAULT_BASELINE, update: false };
+  const out = { junits: [], junitDirs: [], baseline: DEFAULT_BASELINE, update: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--junit") out.junit = argv[++i];
+    if (a === "--junit") out.junits.push(argv[++i]);
+    else if (a === "--junit-dir") out.junitDirs.push(argv[++i]);
     else if (a === "--baseline") out.baseline = argv[++i];
     else if (a === "--update") out.update = true;
     else if (a === "--help" || a === "-h") out.help = true;
@@ -151,11 +174,33 @@ function parseArgs(argv) {
   return out;
 }
 
+// Expand --junit/--junit-dir into the concrete report list. With neither flag,
+// fall back to the single default path (the local signoff flow before #15646).
+function resolveJunitPaths(args) {
+  const paths = [...args.junits];
+  for (const dir of args.junitDirs) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir);
+    } catch (err) {
+      return { error: `cannot read junit dir ${dir}: ${err.message}` };
+    }
+    const xml = entries.filter((name) => name.endsWith(".xml")).sort();
+    if (xml.length === 0) {
+      return { error: `junit dir ${dir} contains no *.xml reports` };
+    }
+    for (const name of xml) paths.push(path.join(dir, name));
+  }
+  if (paths.length === 0) paths.push(DEFAULT_JUNIT);
+  return { paths };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     process.stdout.write(
-      "usage: node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]\n",
+      "usage: node scripts/ci/known-failures-check.mjs [--junit <path>]... " +
+        "[--junit-dir <dir>] [--baseline <path>] [--update]\n",
     );
     process.exit(0);
   }
@@ -164,30 +209,42 @@ function main() {
     process.exit(2);
   }
 
-  let junitXml;
-  try {
-    junitXml = fs.readFileSync(args.junit, "utf8");
-  } catch (err) {
-    process.stderr.write(
-      `known-failures-check: cannot read junit ${args.junit}: ${err.message}\n` +
-        `Run the suite first: cargo nextest run --profile signoff --workspace || true\n`,
-    );
+  const resolved = resolveJunitPaths(args);
+  if (resolved.error) {
+    process.stderr.write(`known-failures-check: ${resolved.error}\n`);
     process.exit(2);
   }
-  const junit = parseJunitFailures(junitXml);
 
-  // A junit with zero testcases means the run produced no results (build failed,
-  // or the runner was killed before any test recorded). Treat it as an infra
-  // error rather than "nothing failed" so a truncated run can neither pass the
-  // gate nor be written as an empty baseline. (Partial runs that record most but
-  // not all tests are not caught here; the slice-2 full CI tier owns that.)
-  if (junit.all.size === 0) {
-    process.stderr.write(
-      `known-failures-check: junit ${args.junit} recorded no testcases; ` +
-        `treating as a failed/incomplete run.\n`,
-    );
-    process.exit(2);
+  const runs = [];
+  for (const junitPath of resolved.paths) {
+    let junitXml;
+    try {
+      junitXml = fs.readFileSync(junitPath, "utf8");
+    } catch (err) {
+      process.stderr.write(
+        `known-failures-check: cannot read junit ${junitPath}: ${err.message}\n` +
+          `Run the suite first: cargo nextest run --profile signoff --workspace || true\n`,
+      );
+      process.exit(2);
+    }
+    const run = parseJunitFailures(junitXml);
+
+    // A junit with zero testcases means the pass produced no results (build
+    // failed, or the runner was killed before any test recorded). Treat it as
+    // an infra error rather than "nothing failed" so a truncated pass can
+    // neither pass the gate nor be written as an empty baseline. (Partial runs
+    // that record most but not all tests are not caught here; the slice-2 full
+    // CI tier owns that.)
+    if (run.all.size === 0) {
+      process.stderr.write(
+        `known-failures-check: junit ${junitPath} recorded no testcases; ` +
+          `treating as a failed/incomplete run.\n`,
+      );
+      process.exit(2);
+    }
+    runs.push(run);
   }
+  const junit = unionRuns(runs);
 
   if (args.update) {
     fs.mkdirSync(path.dirname(args.baseline), { recursive: true });
@@ -226,8 +283,8 @@ function main() {
 
   const { newFailures, nowPassing } = evaluate(baseline, junit);
   process.stdout.write(
-    `known-failures-check: ${junit.all.size} test(s) ran, ${junit.failing.size} failing, ` +
-      `baseline has ${baseline.size} known failure(s).\n`,
+    `known-failures-check: ${junit.all.size} test(s) ran across ${runs.length} report(s), ` +
+      `${junit.failing.size} failing, baseline has ${baseline.size} known failure(s).\n`,
   );
   for (const id of nowPassing) {
     process.stdout.write(`  shrink: ${id} is baselined but now passes -> drop it with --update.\n`);

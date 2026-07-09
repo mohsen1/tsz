@@ -7,6 +7,7 @@ import {
   baselineIsReconciled,
   evaluate,
   renderBaseline,
+  unionRuns,
 } from "./known-failures-check.mjs";
 
 let passed = 0;
@@ -126,6 +127,39 @@ check("a baselined test absent from this run is neither new nor shrink (never bl
   const { newFailures, nowPassing } = evaluate(baseline, parseJunitFailures(JUNIT));
   assert.equal(newFailures.length, 0);
   assert.equal(nowPassing.length, 0);
+});
+
+check("unionRuns merges per-pass reports into one adjudicated run (#15646)", () => {
+  // The unit lane records one junit per nextest pass; the gate judges their
+  // union. A test failing in ANY pass stays failing, and passes contribute
+  // disjoint test populations.
+  const passA = parseJunitFailures(
+    `<testcase name="a_ok" classname="tsz-core::x"/>` +
+      `<testcase name="a_bad" classname="tsz-core::x"><failure/></testcase>`,
+  );
+  const passB = parseJunitFailures(
+    `<testcase name="b_ok" classname="tsz-checker::y"/>`,
+  );
+  const merged = unionRuns([passA, passB]);
+  assert.deepEqual([...merged.all].sort(), [
+    "tsz-checker::y::b_ok",
+    "tsz-core::x::a_ok",
+    "tsz-core::x::a_bad",
+  ].sort());
+  assert.deepEqual([...merged.failing], ["tsz-core::x::a_bad"]);
+  // union with an empty list is empty (callers guard the no-reports case)
+  assert.equal(unionRuns([]).all.size, 0);
+});
+
+check("a test failing in one pass and passing in another stays failing", () => {
+  // Overlapping populations can only happen when two passes ran the same
+  // test (e.g. a retry pass); the conservative reading is "it failed".
+  const failed = parseJunitFailures(
+    `<testcase name="flaky" classname="tsz-core::x"><failure/></testcase>`,
+  );
+  const passed = parseJunitFailures(`<testcase name="flaky" classname="tsz-core::x"/>`);
+  assert.deepEqual([...unionRuns([failed, passed]).failing], ["tsz-core::x::flaky"]);
+  assert.deepEqual([...unionRuns([passed, failed]).failing], ["tsz-core::x::flaky"]);
 });
 
 check("renderBaseline round-trips through parseBaseline and is sorted + deduped", () => {

@@ -88,16 +88,19 @@ if [[ -n "${SIGNOFF_COMMANDS_FILE:-}" ]]; then
   done < "$SIGNOFF_COMMANDS_FILE"
 else
   commands+=("cargo fmt --all --check")
-  # Run the whole suite with fail-fast disabled (signoff profile) so a full
-  # failure inventory is produced, then let known-failures-check.mjs distinguish
-  # a NEW regression from the committed known-failures baseline (#15399). The
-  # nextest step is allowed to exit nonzero (known failures are expected); the
-  # baseline check is the real gate. A build failure produces no junit, which
-  # the checker reports as a hard error (exit 2). node-less machines can fall
-  # back to `--profile precommit` via SIGNOFF_COMMANDS_FILE (script header).
-  commands+=("rm -f target/nextest/signoff/junit.xml")
-  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- cargo nextest run --profile signoff --cargo-profile ci-unit --workspace || true")
-  commands+=("node scripts/ci/known-failures-check.mjs --junit target/nextest/signoff/junit.xml")
+  # Run the delta-verified unit suite (#15646): every nextest pass runs with
+  # fail-fast disabled (signoff profile) and records a junit report, then
+  # known-failures-check.mjs distinguishes a NEW regression from the committed
+  # known-failures baseline (#15399). unit-nextest.sh exits nonzero only for
+  # infrastructure failures (build errors, missing junit) — test failures land
+  # in the reports and the baseline check is the real gate. This is the SAME
+  # suite the unit CI job runs, so the shared baseline means one thing in both
+  # places. Note the tsz-checker lib-test target (its in-crate unit tests) is
+  # outside this suite: compiling it exceeds a 32 GiB machine (see
+  # [profile.ci-unit] in Cargo.toml). node-less machines can fall back to
+  # `--profile precommit` via SIGNOFF_COMMANDS_FILE (script header).
+  commands+=("scripts/test/nextest-guard.sh -- scripts/safe-run.sh -- scripts/ci/unit-nextest.sh --junit-dir .ci-logs/signoff-unit-junit --workspace-minus-checker")
+  commands+=("node scripts/ci/known-failures-check.mjs --junit-dir .ci-logs/signoff-unit-junit")
 fi
 
 announce "$green" "Attempting to sign off on ${sha} as ${user}."

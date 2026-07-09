@@ -411,6 +411,14 @@ run_lint() {
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
+  python3 scripts/ci/test_check_known_failures_growth.py || return $?
+  python3 scripts/ci/test_unit_nextest.py || return $?
+  python3 scripts/ci/test_full_ci_unit_gate.py || return $?
+  # Known-failures baseline contract (#15646): additions need an explicit,
+  # reviewed escape; removals are the shrink ratchet. Shallow CI checkouts
+  # fetch the base ref; offline/sandboxed runs warn and skip the comparison.
+  python3 scripts/ci/check-known-failures-growth.py \
+    --fetch-base --allow-unavailable-base || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
@@ -466,10 +474,10 @@ _UNIT_TEST_PACKAGES=(
 )
 
 # The `tsz-checker` lib-test target can exceed hosted runner memory even with
-# one Cargo job and serialized codegen. Keep checker
-# integration tests in the unit job by enumerating declared `[[test]]` targets
-# and avoiding the monolithic `rustc --test crates/tsz-checker/src/lib.rs`
-# artifact.
+# one Cargo job and serialized codegen. scripts/ci/unit-nextest.sh keeps
+# checker integration tests in the unit job by enumerating declared `[[test]]`
+# targets in bounded batches and never building the monolithic
+# `rustc --test crates/tsz-checker/src/lib.rs` artifact.
 
 # Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
 #
@@ -511,99 +519,61 @@ unit_archive_package_args() {
   done
 }
 
-checker_integration_test_args() {
-  local test_name
-  while IFS= read -r test_name; do
-    printf -- '--test\n%s\n' "$test_name"
-  done < <(checker_integration_test_names)
-}
-
-checker_integration_test_names() {
-  cargo metadata --no-deps --format-version 1 \
-    | jq -r '.packages[]
-        | select(.name == "tsz-checker")
-        | .targets[]
-        | select(.kind[]? == "test")
-        | .name' \
-    | sort
+# Adjudicate collected junit reports against the known-failures baseline
+# (#15646). Green means "no unit failures outside scripts/ci/known-failures.txt"
+# — a delta gate, not a masked rc. An empty report dir is only legal when the
+# nextest passes selected no tests at all (narrowed package override).
+run_known_failures_gate() {
+  local junit_dir="$1"
+  local reports
+  reports=$(find "$junit_dir" -name '*.xml' 2>/dev/null | wc -l)
+  if (( reports == 0 )); then
+    echo "info: no junit reports in $junit_dir (no tests in selection); skipping known-failures gate"
+    return 0
+  fi
+  node scripts/ci/known-failures-check.mjs --junit-dir "$junit_dir"
 }
 
 run_unit_tests() {
-  ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args
-  # Bash 3.2 (macOS system `/bin/bash`) has no `mapfile`; use the portable shim.
-  portable_read_lines package_names < <(unit_test_packages)
+  ci_section "Workspace nextest suites (signoff profile + known-failures gate)"
+  local packages rc=0
+  # unit_test_packages validates _TSZ_CI_UNIT_PACKAGES_OVERRIDE; propagate its
+  # config-error rc instead of masking it in the $() assignment below.
+  packages="$(unit_test_packages)" || return "$?"
+  packages="$(printf '%s' "$packages" | tr '\n' ' ')"
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
-
-  checker_selected=0
-  general_pkg_args=()
-  for package in "${package_names[@]}"; do
-    if [[ "$package" == "tsz-checker" ]]; then
-      checker_selected=1
-    else
-      general_pkg_args+=(-p "$package")
-    fi
-  done
-
-  if (( ${#general_pkg_args[@]} > 0 )); then
-    cargo nextest run --profile ci --cargo-profile ci-unit \
-      --build-jobs "$CARGO_BUILD_JOBS" \
-      --test-threads "$UNIT_NEXTEST_TEST_THREADS" \
-      "${general_pkg_args[@]}"
+  local skip_flag=()
+  if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
+    echo "info: skipping checker integration tests in unit job"
+    skip_flag=(--skip-checker-integration)
   fi
-
-  if (( checker_selected )); then
-    if [[ "${TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION:-0}" == "1" ]]; then
-      echo "info: skipping checker integration tests in unit job"
-      return 0
-    fi
-    run_checker_integration_tests
+  local junit_dir="$LOG_DIR/unit-junit"
+  rm -rf "$junit_dir"
+  # Every pass runs with fail-fast disabled and writes its own junit report;
+  # test failures do NOT stop the run (rc-aggregation is logged per pass).
+  # A nonzero rc here is an infrastructure failure (build error, missing
+  # junit) and fails the job outright — it must never reach the delta gate.
+  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" \
+    --packages "$packages" ${skip_flag[@]+"${skip_flag[@]}"} || rc="$?"
+  if (( rc != 0 )); then
+    echo "error: unit nextest passes failed with an infrastructure error (rc=$rc)" >&2
+    return "$rc"
   fi
+  run_known_failures_gate "$junit_dir"
 }
 
 run_checker_integration_tests() {
-  ci_section "Checker integration nextest suites"
-  local checker_batch_size checker_batch_names checker_batch_args
-  # The checker lib-test binary is larger than the 32 GiB CI runners can link
-  # reliably. Keep checker integration tests in unit CI while avoiding that
-  # monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-  #
-  # Cargo also struggles when one command asks it to link every checker
-  # integration target. Batch the declared targets so each `cargo test
-  # --no-run` phase has a bounded link set while preserving the same coverage.
-    checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
-    if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
-      echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
-      return 2
-    fi
-    checker_batch_names=()
-    while IFS= read -r test_name; do
-      checker_batch_names+=("$test_name")
-      if (( ${#checker_batch_names[@]} >= checker_batch_size )); then
-        checker_batch_args=()
-        for test_name in "${checker_batch_names[@]}"; do
-          checker_batch_args+=(--test "$test_name")
-        done
-        echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
-        cargo nextest run --profile ci --cargo-profile ci-unit \
-          --build-jobs "$CARGO_BUILD_JOBS" \
-          -p tsz-checker "${checker_batch_args[@]}"
-        checker_batch_names=()
-      fi
-    done < <(checker_integration_test_names)
-
-    if (( ${#checker_batch_names[@]} > 0 )); then
-      checker_batch_args=()
-      for test_name in "${checker_batch_names[@]}"; do
-        checker_batch_args+=(--test "$test_name")
-      done
-      echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
-      cargo nextest run --profile ci --cargo-profile ci-unit \
-        --build-jobs "$CARGO_BUILD_JOBS" \
-        -p tsz-checker "${checker_batch_args[@]}"
-    fi
+  ci_section "Checker integration nextest suites (signoff profile + known-failures gate)"
+  local junit_dir="$LOG_DIR/checker-integration-junit" rc=0
+  rm -rf "$junit_dir"
+  scripts/ci/unit-nextest.sh --junit-dir "$junit_dir" --packages tsz-checker || rc="$?"
+  if (( rc != 0 )); then
+    echo "error: checker integration nextest passes failed with an infrastructure error (rc=$rc)" >&2
+    return "$rc"
+  fi
+  run_known_failures_gate "$junit_dir"
 }
 
 build_unit_test_archive() {
