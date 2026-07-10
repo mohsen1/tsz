@@ -8,7 +8,9 @@
 //! for entity names, TS2531/TS2532/TS2533 otherwise) in addition to the
 //! TS2721/TS2722/TS2723 that call resolution reports. Optional-chain calls
 //! take the chain arm of the quick path, which never re-checks the callee, so
-//! they only get the invoke-family diagnostic.
+//! they never get the companion (a direct `?.()` also suppresses the
+//! invoke-family diagnostic upstream; only inherited-chain forms like
+//! `a?.b.c()` reach this guard with one already emitted).
 
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};

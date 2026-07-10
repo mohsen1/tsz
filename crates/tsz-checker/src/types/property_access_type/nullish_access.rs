@@ -276,8 +276,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Mirror the naming arms of tsc's
-    /// `reportObjectPossiblyNullOrUndefinedError`: entity-name expressions
-    /// shorter than 100 characters report `'{0}' is possibly ...`
+    /// `reportObjectPossiblyNullOrUndefinedError`: nameable expressions
+    /// (entity names, plus the `this` receiver fallback) shorter than 100
+    /// UTF-16 units report `'{0}' is possibly ...`
     /// (TS18047/TS18048/TS18049); other expressions report the anonymous
     /// `Object is possibly ...` forms (TS2531/TS2532/TS2533).
     pub(crate) fn report_named_possibly_nullish_expression(

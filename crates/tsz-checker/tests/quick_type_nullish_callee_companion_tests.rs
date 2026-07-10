@@ -40,6 +40,15 @@ fn assert_invoke_only(source: &str, context: &str) {
     );
 }
 
+/// Assert neither the invoke-family TS2722 nor the TS18048 companion fired.
+fn assert_neither_fires(source: &str, context: &str) {
+    let codes = check_source_strict_codes(source);
+    assert!(
+        !codes.contains(&2722) && !codes.contains(&18048),
+        "{context}: expected neither TS2722 nor TS18048; got: {codes:?}"
+    );
+}
+
 // =========================================================================
 // Companion fires: variable declarations
 // =========================================================================
@@ -409,21 +418,17 @@ fn enum_member_initializer_reports_invoke_only() {
 
 #[test]
 fn optional_call_chain_reports_nothing() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nconst r = o.f?.();\n");
-    assert!(
-        !codes.contains(&2722) && !codes.contains(&18048),
-        "`?.()` guards the callee; got: {codes:?}"
+    assert_neither_fires(
+        "declare const o: { f?: () => number };\nconst r = o.f?.();\n",
+        "`?.()` guards the callee",
     );
 }
 
 #[test]
 fn non_null_asserted_callee_reports_nothing() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nconst r = o.f!();\n");
-    assert!(
-        !codes.contains(&2722) && !codes.contains(&18048),
-        "`!` removes the nullish callee slice; got: {codes:?}"
+    assert_neither_fires(
+        "declare const o: { f?: () => number };\nconst r = o.f!();\n",
+        "`!` removes the nullish callee slice",
     );
 }
 
@@ -433,25 +438,20 @@ fn non_null_asserted_callee_reports_nothing() {
 
 #[test]
 fn required_member_call_reports_nothing() {
-    let codes =
-        check_source_strict_codes("declare const o: { f: () => number };\nconst r = o.f();\n");
-    assert!(
-        !codes.contains(&2722) && !codes.contains(&18048),
-        "required members must not gain optionality; got: {codes:?}"
+    assert_neither_fires(
+        "declare const o: { f: () => number };\nconst r = o.f();\n",
+        "required members must not gain optionality",
     );
 }
 
 #[test]
 fn identity_key_remap_keeps_required_member_required() {
-    let codes = check_source_strict_codes(
+    assert_neither_fires(
         "type Model = { save: () => number };\n\
          type Same<T> = { [P in keyof T as P]: T[P] };\n\
          declare const store: Same<Model>;\n\
          const value = store.save();\n",
-    );
-    assert!(
-        !codes.contains(&2722) && !codes.contains(&18048),
-        "remapped required members must not gain optionality; got: {codes:?}"
+        "remapped required members must not gain optionality",
     );
 }
 
