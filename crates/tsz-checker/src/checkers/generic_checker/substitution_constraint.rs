@@ -7,6 +7,7 @@
 //! `isTypeAssignableTo(typeArgument, constraint)`: the substitution relates
 //! through its intersection `base & constraint`.
 
+use crate::query_boundaries::checkers::generic::is_substitution_type;
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -68,12 +69,7 @@ impl CheckerState<'_> {
         type_arg_subst: &TypeSubstitution,
         arg_idx: Option<NodeIndex>,
     ) -> bool {
-        if tsz_solver::type_queries::substitution_components(
-            self.ctx.types.as_type_database(),
-            type_arg,
-        )
-        .is_none()
-        {
+        if !is_substitution_type(self.ctx.types.as_type_database(), type_arg) {
             return false;
         }
 

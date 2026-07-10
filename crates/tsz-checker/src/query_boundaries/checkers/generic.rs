@@ -20,6 +20,11 @@ pub(crate) fn is_bare_named_type_parameter(db: &dyn TypeDatabase, type_id: TypeI
     tsz_solver::type_queries::is_bare_named_type_parameter(db, type_id)
 }
 
+/// Whether `type_id` is a solver substitution type.
+pub(crate) fn is_substitution_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::substitution_components(db, type_id).is_some()
+}
+
 pub(crate) fn named_type_param_info(
     db: &dyn TypeDatabase,
     type_id: TypeId,

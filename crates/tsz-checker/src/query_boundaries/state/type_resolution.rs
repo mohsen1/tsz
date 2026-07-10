@@ -52,6 +52,26 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
 }
 
+pub(crate) fn substitution_base_or_self(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::substitution_base_or_self(db, type_id)
+}
+
+pub(crate) fn contains_conditional_through_aliases(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    resolve_lazy: &mut dyn FnMut(tsz_solver::def::DefId) -> Option<TypeId>,
+) -> bool {
+    tsz_solver::type_queries::contains_conditional_through_aliases(db, type_id, resolve_lazy)
+}
+
+pub(crate) fn object_property_names_cover(
+    db: &dyn TypeDatabase,
+    superset: TypeId,
+    subset: TypeId,
+) -> bool {
+    tsz_solver::type_queries::object_property_names_cover(db, superset, subset)
+}
+
 pub(crate) fn is_union_or_intersection(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_union_type(db, type_id)
         || tsz_solver::type_queries::is_intersection_type(db, type_id)

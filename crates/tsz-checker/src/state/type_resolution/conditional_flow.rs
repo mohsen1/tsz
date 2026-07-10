@@ -7,6 +7,7 @@
 //! well-formed against dependent constraints.
 
 use crate::query_boundaries::common::{self as query_common, TypeSubstitution};
+use crate::query_boundaries::state::type_resolution as type_resolution_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -53,7 +54,7 @@ impl CheckerState<'_> {
         // Entries are `(type-param name, type-param id, accumulated extends)`.
         let mut naked: Vec<(tsz_common::interner::Atom, TypeId, TypeId)> = Vec::new();
 
-        let arg_actual = tsz_solver::type_queries::substitution_base_or_self(
+        let arg_actual = type_resolution_query::substitution_base_or_self(
             self.ctx.types.as_type_database(),
             type_arg,
         );
@@ -93,7 +94,7 @@ impl CheckerState<'_> {
                     // is the conditional's check operand (compared by actual type
                     // variable so a substitution on either side still matches).
                     let check_t = self.get_type_from_type_node(cond.check_type);
-                    let check_actual = tsz_solver::type_queries::substitution_base_or_self(
+                    let check_actual = type_resolution_query::substitution_base_or_self(
                         self.ctx.types.as_type_database(),
                         check_t,
                     );
