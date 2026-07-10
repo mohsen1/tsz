@@ -551,14 +551,10 @@ function UnwrappedLink2<T extends ElementType = ElementType>(
 
 #[test]
 fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts2322() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
-    ) else {
-        return;
-    };
+    );
 
     let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
     assert!(
@@ -576,14 +572,10 @@ fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts2322() {
 
 #[test]
 fn test_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
-    ) else {
-        return;
-    };
+    );
 
     let diags = cross_file_jsx_diagnostics_with_mode(&react_types, &source, JsxMode::Preserve);
     assert!(
@@ -616,14 +608,10 @@ function wrap<T extends string>(props: {{ value?: T }}) {{
 
 #[test]
 fn jsx_complex_signature_react16_fixture_accepts_optional_value_attr() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(mut source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx",
-    ) else {
-        return;
-    };
+    );
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let renamed = source.replace("WrappedProps", "W");
@@ -655,9 +643,7 @@ fn jsx_complex_signature_react16_fixture_accepts_optional_value_attr() {
 
 #[test]
 fn jsx_excess_props_and_assignability_react16_generic_spread_reports_ts2322() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import * as React from 'react';
 
@@ -939,14 +925,10 @@ render;
 
 #[test]
 fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(mut source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx",
-    ) else {
-        return;
-    };
+    );
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
@@ -982,14 +964,9 @@ fn test_jsx_excess_props_and_assignability_react16_fixture_matches_tsc() {
 
 #[test]
 fn test_jsx_intrinsic_union_react16_fixture_accepts_shared_attributes() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(mut source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx")
-    else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let mut source =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/jsxIntrinsicUnions.tsx");
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
     source.push_str("\ndeclare namespace JSX { interface IntrinsicAttributes { key?: any } }\n");
 
@@ -1017,14 +994,10 @@ fn test_jsx_intrinsic_union_react16_fixture_accepts_shared_attributes() {
 
 #[test]
 fn jsx_import_side_effects_non_extant_no_false_intrinsic_missing_props() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(mut source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxImportForSideEffectsNonExtantNoError.tsx",
-    ) else {
-        return;
-    };
+    );
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
@@ -1044,14 +1017,10 @@ fn jsx_import_side_effects_non_extant_no_false_intrinsic_missing_props() {
 
 #[test]
 fn jsx_jsxs_nested_self_closing_child_no_false_intrinsic_missing_props() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(mut source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/conformance/jsx/jsxs/jsxJsxsCjsTransformNestedSelfClosingChild.tsx",
-    ) else {
-        return;
-    };
+    );
     source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
@@ -1071,14 +1040,9 @@ fn jsx_jsxs_nested_self_closing_child_no_false_intrinsic_missing_props() {
 
 #[test]
 fn jsx_function_component_union_alias_keeps_missing_required_props() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react.d.ts") else {
-        return;
-    };
-    let Some(mut source) =
-        load_typescript_fixture("TypeScript/tests/cases/conformance/jsx/tsxUnionElementType6.tsx")
-    else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react.d.ts");
+    let mut source =
+        load_typescript_fixture("TypeScript/tests/cases/conformance/jsx/tsxUnionElementType6.tsx");
     source = source.replace("/// <reference path=\"/.lib/react.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
@@ -1286,14 +1250,10 @@ const myHoc = <CompProps extends any>(
 
 #[test]
 fn test_jsx_fragment_factory_no_unused_locals_react16_fixture_checks_nested_callback_body() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(source) = load_typescript_fixture(
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxFragmentFactoryNoUnusedLocals.tsx",
-    ) else {
-        return;
-    };
+    );
     let source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
 
     let diags = cross_file_jsx_diagnostics_with_options_and_default_libs(

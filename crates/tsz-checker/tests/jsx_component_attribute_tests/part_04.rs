@@ -61,9 +61,7 @@ declare namespace JSX {
 fn jsx_react_type_union_no_ts2786_with_actual_react16() {
     // Rule: when a JSX component type is `React.ReactType` from the actual react16.d.ts,
     // no TS2786 should be emitted.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return; // Skip when TypeScript submodule is not available
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 function App(props: { component: React.ReactType }) {
@@ -82,9 +80,7 @@ function App(props: { component: React.ReactType }) {
 fn jsx_component_type_union_no_ts2786_with_actual_react16() {
     // Rule: when a JSX component type is `ComponentType<P1> | ComponentType<P2>` from react16.d.ts,
     // no TS2786 should be emitted.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return; // Skip when TypeScript submodule is not available
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 function render2() {
@@ -269,9 +265,7 @@ const _ = <Comp />;
 #[test]
 fn jsx_react_type_union_no_ts2786_with_actual_react16_top_level() {
     // Same as jsx_react_type_union_no_ts2786_with_actual_react16 but top-level declaration.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 declare const Comp: React.ReactType;
@@ -287,9 +281,7 @@ const _ = <Comp />;
 #[test]
 fn jsx_react_type_union_no_ts2786_with_actual_react16_in_function() {
     // Same as top-level but inside function body without function params.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 function App() {
@@ -307,9 +299,7 @@ function App() {
 #[test]
 fn jsx_react_type_union_no_ts2786_with_actual_react16_top_level_const() {
     // Top-level (non-ambient) const with explicit ReactType annotation.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 const Comp: React.ReactType = "div" as any;
@@ -325,9 +315,7 @@ const _ = <Comp />;
 #[test]
 fn jsx_react_type_union_no_ts2786_with_actual_react16_in_function_assign() {
     // Function body but assigns JSX element instead of returning.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 function App(): void {
@@ -345,9 +333,7 @@ function App(): void {
 #[test]
 fn jsx_react_type_union_no_ts2786_with_actual_react16_explicit_return_type() {
     // Function body with explicit return type annotation to test if inferred return type causes issue.
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from "react";
 function App(): React.ReactElement<any> | null {

@@ -1,10 +1,8 @@
 #[test]
 fn compile_allow_import_clauses_to_merge_with_types_fixture_has_no_default_export_conflict() {
-    let Some(source) = load_typescript_fixture(
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/allowImportClausesToMergeWithTypes.ts",
-    ) else {
-        return;
-    };
+    );
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1746,4 +1744,3 @@ fn compile_respects_no_emit_on_error() {
     assert!(!result.diagnostics.is_empty());
     assert!(!base.join("dist/src/index.js").is_file());
 }
-

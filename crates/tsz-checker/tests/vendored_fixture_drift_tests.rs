@@ -1,14 +1,11 @@
 //! Drift guards for `vendor/TypeScript/` and the version-controlled compiled
 //! lib copies under `crates/tsz-website/src/lib`.
 //!
-//! Issue #15685: tests that read fixtures or compiled `lib.*.d.ts` files from
-//! environment-provisioned locations (the `TypeScript/` checkout, various
-//! `node_modules` installs) behaved differently per machine — fixture-gated
-//! tests silently skipped where the checkout was absent, and lib-loading
-//! tests checked whatever lib version happened to be installed. The fix pins
-//! both to version-controlled copies; these guards keep those copies
-//! byte-identical to the TypeScript ref recorded in
-//! `scripts/ci/typescript-submodule-ref`.
+//! Tests resolve fixtures and compiled libs from version-controlled copies
+//! so results do not depend on environment provisioning (issue #15685 — see
+//! `tsz_checker::test_utils::load_typescript_fixture` for the full
+//! rationale). These guards keep those copies byte-identical to the
+//! TypeScript ref recorded in `scripts/ci/typescript-submodule-ref`.
 //!
 //! The byte-equality guards run wherever a `TypeScript/` checkout at the
 //! pinned ref is present — always true in the `unit` CI job, which restores
@@ -103,20 +100,31 @@ fn files_under(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// Files whose vendored/synced copy differs from (or is missing in) the
-/// pinned checkout, rendered as `relative-path (reason)` lines.
-fn drifted(pairs: &[(PathBuf, PathBuf, PathBuf)]) -> Vec<String> {
-    pairs
+/// Assert every `(relative-path, our-copy, pinned-checkout-copy)` pair is
+/// present and byte-identical, listing each drifted file with its reason.
+fn assert_no_drift(pairs: &[(PathBuf, PathBuf, PathBuf)], what: &str) {
+    assert!(!pairs.is_empty(), "no {what} files found to compare");
+
+    let drift: Vec<String> = pairs
         .iter()
         .filter_map(|(rel, ours, theirs)| {
             if !theirs.exists() {
                 return Some(format!("{} (absent in pinned checkout)", rel.display()));
             }
-            let ours_bytes = fs::read(ours).ok()?;
-            let theirs_bytes = fs::read(theirs).ok()?;
+            let ours_bytes =
+                fs::read(ours).unwrap_or_else(|e| panic!("read {}: {e}", ours.display()));
+            let theirs_bytes =
+                fs::read(theirs).unwrap_or_else(|e| panic!("read {}: {e}", theirs.display()));
             (ours_bytes != theirs_bytes).then(|| format!("{} (content differs)", rel.display()))
         })
-        .collect()
+        .collect();
+
+    assert!(
+        drift.is_empty(),
+        "{what} drifted from the pinned checkout; re-copy the listed files per \
+         vendor/TypeScript/README.md:\n{}",
+        drift.join("\n")
+    );
 }
 
 /// `vendor/TypeScript/tests/**` must be byte-identical to the pinned
@@ -139,18 +147,7 @@ fn vendored_fixtures_match_pinned_typescript_checkout() {
             )
         })
         .collect();
-    assert!(
-        !pairs.is_empty(),
-        "vendor/TypeScript/tests should contain the vendored fixtures"
-    );
-
-    let drift = drifted(&pairs);
-    assert!(
-        drift.is_empty(),
-        "vendor/TypeScript drifted from the pinned checkout; re-copy per \
-         vendor/TypeScript/README.md:\n{}",
-        drift.join("\n")
-    );
+    assert_no_drift(&pairs, "vendor/TypeScript/tests");
 }
 
 /// Compiled lib files under `crates/tsz-website/src/lib` are the primary
@@ -180,19 +177,7 @@ fn website_compiled_libs_match_pinned_typescript_checkout() {
         })
         .filter(|(_, _, theirs)| theirs.exists())
         .collect();
-    assert!(
-        !pairs.is_empty(),
-        "expected shared lib.*.d.ts files between crates/tsz-website/src/lib \
-         and the pinned checkout's lib/"
-    );
-
-    let drift = drifted(&pairs);
-    assert!(
-        drift.is_empty(),
-        "crates/tsz-website/src/lib drifted from the pinned checkout's lib/; \
-         re-copy the listed files from TypeScript/lib:\n{}",
-        drift.join("\n")
-    );
+    assert_no_drift(&pairs, "crates/tsz-website/src/lib");
 }
 
 /// Every `TypeScript/...` fixture path a test passes to

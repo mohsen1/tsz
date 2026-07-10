@@ -92,14 +92,8 @@ function wrap<P>(App: React.ComponentClass<P> | React.StatelessComponent<P>): vo
 
 #[test]
 fn react_hoc_spreadprops_react16_fixture_has_no_ts2322() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx")
-    else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let source = load_typescript_fixture("TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx");
     let source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
     let libs = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
     let diags = tsz_checker::test_utils::check_multi_file_with_libs(

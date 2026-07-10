@@ -921,11 +921,12 @@ pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
 ///
 /// The version-controlled copy under `crates/tsz-website/src/lib` comes
 /// first: it exists in every checkout and is kept byte-identical to the
-/// pinned TypeScript ref (`scripts/ci/typescript-submodule-ref`) by the
-/// drift guard in `vendored_fixture_drift_tests.rs`, so test results do
-/// not depend on which environment-provisioned copies happen to exist
-/// (issue #15685). The `TypeScript/` checkout and the `node_modules`
-/// installs remain fallbacks for names the in-repo copy lacks.
+/// pinned TypeScript ref by the drift guard in
+/// `vendored_fixture_drift_tests.rs`, so test results do not depend on
+/// which environment-provisioned copies happen to exist (see
+/// [`load_typescript_fixture`] for the issue #15685 rationale). The
+/// `TypeScript/` checkout and the `node_modules` installs remain
+/// fallbacks for names the in-repo copy lacks.
 ///
 /// Includes paths relative to the worktree's `CARGO_MANIFEST_DIR` AND a
 /// walk-up fallback to the primary checkout. `npm install` only
@@ -1017,21 +1018,27 @@ pub fn load_compiled_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
 /// (issue #15685: fixture-gated tests that silently skipped made *which*
 /// test fails environment-dependent).
 ///
-/// Returns `None` when the fixture exists in no probed location; callers
-/// that require the fixture should `expect` it rather than skip.
-pub fn load_typescript_fixture(rel_path: &str) -> Option<String> {
+/// Panics when the fixture exists in no probed location: fixtures are
+/// version-controlled under `vendor/`, so absence means the vendored mirror
+/// is broken (or the path was never vendored) — a silent skip here is how
+/// which-test-fails became environment-dependent in the first place.
+pub fn load_typescript_fixture(rel_path: &str) -> String {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // The vendored mirror is version-controlled, so it exists at the
+    // workspace root in every checkout (including worktrees); only the real
+    // checkout needs the one-level-up fallback for worktree layouts.
     let candidates = [
         manifest_dir.join("../../vendor").join(rel_path),
         manifest_dir.join("../../").join(rel_path),
-        manifest_dir.join("../../../vendor").join(rel_path),
         manifest_dir.join("../../../").join(rel_path),
     ];
 
     candidates
         .into_iter()
-        .find(|candidate| candidate.exists())
-        .and_then(|candidate| std::fs::read_to_string(candidate).ok())
+        .find_map(|candidate| std::fs::read_to_string(candidate).ok())
+        .unwrap_or_else(|| {
+            panic!("fixture {rel_path} not found; vendor it per vendor/TypeScript/README.md")
+        })
 }
 
 /// Parse, bind, and type-check `source` with the given `lib_files` wired
