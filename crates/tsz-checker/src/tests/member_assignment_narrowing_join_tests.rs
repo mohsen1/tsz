@@ -11,8 +11,9 @@
 //! guard's narrowing is preserved. Owner layer: checker flow narrowing
 //! (`flow/control_flow/core/flow_traversal.rs`).
 //!
-//! Negatives: a *direct* reassignment of `m` itself (`m = undefined`,
-//! `m = maybe`) is a real definition and still un-narrows `m`.
+//! A direct reassignment follows the right-hand side's current flow type. It
+//! un-narrows `m` only when that type still includes `undefined`; an annotated
+//! local initialized from the narrowed `m` remains flow-narrowed to `M`.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_with_options, diagnostic_count};
@@ -114,11 +115,23 @@ fn direct_reassign_undefined_after_join_keeps_ts18048() {
 
 #[test]
 fn direct_reassign_maybe_after_join_keeps_ts18048() {
-    let diags = check("if (m) { if (cond) {} let maybe: M | undefined = m; m = maybe; m.id; }");
+    let diags = check(
+        "if (m) { if (cond) {} let maybe: M | undefined = cond ? m : undefined; m = maybe; m.id; }",
+    );
     assert_eq!(
         diagnostic_count(&diags, 18048),
         1,
-        "reassigning m to a possibly-undefined value after the guard must still report TS18048: {diags:?}"
+        "reassigning m from a flow type that includes undefined must still report TS18048: {diags:?}"
+    );
+}
+
+#[test]
+fn direct_reassign_flow_narrowed_alias_after_join_stays_clean() {
+    let diags = check("if (m) { if (cond) {} let maybe: M | undefined = m; m = maybe; m.id; }");
+    assert_eq!(
+        diagnostic_count(&diags, 18048),
+        0,
+        "an annotated alias initialized from narrowed m has current flow type M: {diags:?}"
     );
 }
 
