@@ -154,19 +154,8 @@ pub fn is_synthetic_private_brand_name(name: &str) -> bool {
 /// - "`NaN`", "Infinity", "-Infinity"
 /// - Numeric strings that round-trip correctly through JavaScript's number-to-string conversion
 pub fn is_numeric_literal_name(name: &str) -> bool {
-    if name == "NaN" || name == "Infinity" || name == "-Infinity" {
-        return true;
-    }
-
-    let value: f64 = match name.parse() {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    if !value.is_finite() {
-        return false;
-    }
-
-    js_number_to_string(value) == name
+    matches!(name, "NaN" | "Infinity" | "-Infinity")
+        || tsz_common::numeric::round_trip_js_number(name).is_some()
 }
 
 /// Canonicalizes a numeric property name to its JavaScript canonical form.

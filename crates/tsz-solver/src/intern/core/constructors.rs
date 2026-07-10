@@ -49,13 +49,7 @@ impl TypeInterner {
     /// bit pattern collapses to the canonical NaN. `OrderedFloat` compares by
     /// raw bits, so both must be normalized before interning.
     pub fn literal_number(&self, value: f64) -> TypeId {
-        let value = if value == 0.0 {
-            0.0
-        } else if value.is_nan() {
-            f64::NAN
-        } else {
-            value
-        };
+        let value = OrderedFloat::same_value_zero_canonical(value);
         self.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(value))))
     }
 

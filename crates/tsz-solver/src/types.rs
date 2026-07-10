@@ -691,14 +691,22 @@ impl LiteralValue {
 pub struct OrderedFloat(pub f64);
 
 impl OrderedFloat {
-    fn same_value_zero_bits(self) -> u64 {
-        if self.0 == 0.0 {
-            0.0f64.to_bits()
-        } else if self.0.is_nan() {
-            f64::NAN.to_bits()
+    /// The `SameValueZero` representative of a value: `-0` folds into `+0`
+    /// and every NaN bit pattern collapses to the canonical NaN. Single owner
+    /// of the keying rule, shared by `Eq`/`Hash` and `literal_number`'s
+    /// stored-representative normalization.
+    pub(crate) fn same_value_zero_canonical(value: f64) -> f64 {
+        if value == 0.0 {
+            0.0
+        } else if value.is_nan() {
+            f64::NAN
         } else {
-            self.0.to_bits()
+            value
         }
+    }
+
+    fn same_value_zero_bits(self) -> u64 {
+        Self::same_value_zero_canonical(self.0).to_bits()
     }
 }
 

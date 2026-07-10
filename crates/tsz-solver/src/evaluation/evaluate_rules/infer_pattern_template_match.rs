@@ -71,11 +71,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        let literal = self.interner().literal_number(value);
         // tsc's isValidNumberString(s, roundTripOnly=true): the capture keeps
         // its literal type only when JS Number::toString reproduces the text.
-        let round_trips = tsz_common::numeric::round_trip_js_number(captured).is_some();
-        Some(if round_trips { literal } else { TypeId::NUMBER })
+        if tsz_common::numeric::js_number_to_string(value) == captured {
+            Some(self.interner().literal_number(value))
+        } else {
+            Some(TypeId::NUMBER)
+        }
     }
 
     fn parse_template_bigint_capture(&self, captured: &str) -> Option<TypeId> {

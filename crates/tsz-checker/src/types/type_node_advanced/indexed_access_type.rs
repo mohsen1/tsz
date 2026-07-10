@@ -473,8 +473,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// single literal regardless of where the indexed access appears
     /// syntactically. Keys come from the literal *types* so numeric indices
     /// use the canonical JS property name (`O[1e21]` looks up `"1e+21"`, not
-    /// the raw source text); the AST fallback only covers indices whose type
-    /// did not resolve to a literal.
+    /// the raw source text); enum-literal and unique-symbol indices resolve
+    /// to their internal key spellings the same way. The AST fallback only
+    /// covers indices whose type did not resolve to a literal.
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
         use crate::query_boundaries::common::union_members;
         use crate::query_boundaries::type_computation::access::literal_property_name;

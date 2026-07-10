@@ -69,6 +69,23 @@ pub fn round_trip_js_number(text: &str) -> Option<f64> {
     (value.is_finite() && js_number_to_string(value) == text).then_some(value)
 }
 
+/// tsc's `isValidBigIntString(text, roundTripOnly = true)`: an optional sign
+/// followed by decimal digits whose canonical bigint text reproduces the
+/// input — no leading zeros and no negative zero.
+///
+/// Returns the `(negative, digits)` split so callers can intern the literal
+/// without re-splitting.
+pub fn round_trip_js_bigint(text: &str) -> Option<(bool, &str)> {
+    let (negative, digits) = text
+        .strip_prefix('-')
+        .map_or((false, text), |rest| (true, rest));
+    (!digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && (digits == "0" || !digits.starts_with('0'))
+        && !(negative && digits == "0"))
+        .then_some((negative, digits))
+}
+
 /// Parse a numeric literal text representation into a f64 value.
 /// Supports standard floating point literals as well as 0x, 0b, and 0o prefixes.
 /// Also handles numeric separators (`_`).
@@ -77,14 +94,20 @@ pub fn parse_numeric_literal_value(text: &str) -> Option<f64> {
         return None;
     }
 
-    if text.len() > 2 {
-        let prefix = &text[0..2];
-        if prefix.eq_ignore_ascii_case("0x") {
-            return parse_radix_digits_as_f64(&text[2..], 16);
-        } else if prefix.eq_ignore_ascii_case("0b") {
-            return parse_radix_digits_as_f64(&text[2..], 2);
-        } else if prefix.eq_ignore_ascii_case("0o") {
-            return parse_radix_digits_as_f64(&text[2..], 8);
+    // Byte-wise prefix check: indexing `text[0..2]` would panic on multi-byte
+    // UTF-8 input (property names are arbitrary text), and a radix prefix is
+    // ASCII by construction.
+    if let [b'0', radix_marker, ..] = text.as_bytes() {
+        let radix = match radix_marker {
+            b'x' | b'X' => Some(16),
+            b'b' | b'B' => Some(2),
+            b'o' | b'O' => Some(8),
+            _ => None,
+        };
+        if let Some(radix) = radix
+            && text.len() > 2
+        {
+            return parse_radix_digits_as_f64(&text[2..], radix);
         }
     }
 
@@ -342,5 +365,25 @@ mod tests {
         assert_eq!(round_trip_js_number("0x2A"), None);
         assert_eq!(round_trip_js_number("Infinity"), None);
         assert_eq!(round_trip_js_number(""), None);
+    }
+
+    #[test]
+    fn parse_numeric_literal_value_multibyte_utf8_is_safe() {
+        // Property names are arbitrary text; a multi-byte first character
+        // must not panic the byte-indexed radix-prefix check.
+        assert_eq!(parse_numeric_literal_value("日本語"), None);
+        assert_eq!(parse_numeric_literal_value("0あ"), None);
+        assert_eq!(round_trip_js_number("日本語"), None);
+    }
+
+    #[test]
+    fn round_trip_js_bigint_gate() {
+        assert_eq!(round_trip_js_bigint("42"), Some((false, "42")));
+        assert_eq!(round_trip_js_bigint("-42"), Some((true, "42")));
+        assert_eq!(round_trip_js_bigint("0"), Some((false, "0")));
+        assert_eq!(round_trip_js_bigint("042"), None);
+        assert_eq!(round_trip_js_bigint("-0"), None);
+        assert_eq!(round_trip_js_bigint("4.2"), None);
+        assert_eq!(round_trip_js_bigint(""), None);
     }
 }
