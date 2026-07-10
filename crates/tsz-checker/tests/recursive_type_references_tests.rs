@@ -305,8 +305,18 @@ let s: string = 1;
         .collect();
     assert_eq!(
         number_to_string.len(),
-        1,
-        "Expected unrelated TS2322 messages to survive recursive rewrite filtering: {diagnostics:?}"
+        2,
+        "Expected both unrelated TS2322 messages to survive recursive rewrite filtering: {diagnostics:?}"
+    );
+
+    let spans: HashSet<_> = number_to_string
+        .iter()
+        .map(|diag| (diag.start, diag.length))
+        .collect();
+    assert_eq!(
+        spans,
+        HashSet::from([(382, 1), (418, 1)]),
+        "Expected the matching TS2322 messages at the flat1 call and unrelated assignment: {diagnostics:?}"
     );
 }
 
