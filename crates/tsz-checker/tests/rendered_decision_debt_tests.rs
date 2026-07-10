@@ -334,16 +334,16 @@ fn ts2820_target_display_uses_structural_surface_predicates() {
 fn index_access_type_parameter_ts2719_uses_declared_param_names() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/error_reporter/render_failure.rs"
+        "/src/error_reporter/render_failure_index_access.rs"
     ))
-    .expect("render failure source should be readable");
+    .expect("index-access render source should be readable");
     let start = source
         .find("fn render_index_access_type_parameter_mismatch")
         .expect("indexed-access parameter mismatch renderer should exist");
     let body = &source[start..];
     let end = body
-        .find("\n    /// Render the TS2322 + TS2517")
-        .expect("indexed-access parameter mismatch renderer should end before TS2517 renderer");
+        .find("\n    }\n}")
+        .expect("indexed-access parameter mismatch renderer should end before the impl closes");
     let helper_body = &body[..end];
 
     assert!(
