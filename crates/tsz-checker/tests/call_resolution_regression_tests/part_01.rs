@@ -728,23 +728,50 @@ declare const inputB: { readonly length: number; readonly [n: number]: B };
 const r: string[] = i.call(inputB, (x) => x.b);
 const r2: number[] = i.call(inputB, (x) => x.b);
 "#;
-    let codes = get_codes(source);
+    let diagnostics = get_diagnostics(source);
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "the outer assignment mismatch must be the only diagnostic: {diagnostics:#?}"
+    );
+    assert_eq!(diagnostics[0].0, 2322, "diagnostics: {diagnostics:#?}");
     assert!(
-        codes.contains(&2322),
-        "expected TS2322 for `string[]` not assignable to `number[]`; got: {:?}",
-        get_diagnostics(source)
+        diagnostics[0].1.contains("string[]") && diagnostics[0].1.contains("number[]"),
+        "TS2322 must preserve the inferred callback result: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn pinned_callback_property_projections_outrank_outer_return_context() {
+    let source = r#"
+interface Projector {
+    project<Input, Output>(value: Input, select: (record: Input) => Output): Output[];
+}
+interface Row { meta: { label: string }; }
+declare const projector: Projector;
+declare const row: Row;
+
+const nestedWrong: number[] = projector.project(row, value => value.meta.label);
+const bracketWrong: number[] = projector.project(row, item => item["meta"].label);
+const blockWrong: number[] = projector.project(row, record => { return record.meta.label; });
+const compatible: string[] = projector.project(row, value => value.meta.label);
+const inferred = projector.project(row, value => value.meta.label);
+const inferredCheck: string[] = inferred;
+
+declare function invoke<Result>(producer: () => Result): Result;
+const freshLiteral: 0 | 1 | 2 = invoke(() => 1);
+"#;
+    let diagnostics = get_diagnostics(source);
+    assert_eq!(
+        diagnostics.len(),
+        3,
+        "only the three number[] assignments should fail: {diagnostics:#?}"
     );
     assert!(
-        !codes.contains(&2769),
-        "must not emit TS2769 — the overload resolves; the only error is the \
-         outer-contextual return-type mismatch (TS2322); got: {:?}",
-        get_diagnostics(source)
-    );
-    assert!(
-        !codes.contains(&2339),
-        "must not emit TS2339 — `x` must be inferred as `B` (not unresolved \
-         type parameter) when the callback body is checked; got: {:?}",
-        get_diagnostics(source)
+        diagnostics.iter().all(|(code, message)| *code == 2322
+            && message.contains("string[]")
+            && message.contains("number[]")),
+        "each projection must retain its bottom-up string result: {diagnostics:#?}"
     );
 }
 

@@ -4,15 +4,16 @@ use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{FunctionShape, TypeId};
 
 impl CheckerState<'_> {
     /// Detects the `#14792` shape: a generic call whose return type mentions a
     /// type parameter `U` — either bare (`(...): U`) or under a covariant wrapper
     /// (`(...): U[]`) — where a context-sensitive callback argument (whose
-    /// declared signature mentions `U` in its return position) returns an object
-    /// literal built ENTIRELY from the callback's own parameters that are already
-    /// pinned by a concrete (non context-sensitive) sibling argument.
+    /// declared signature mentions `U` in its return position) returns a value
+    /// derived entirely from callback parameters that are already pinned by a
+    /// concrete (non context-sensitive) sibling argument.
     ///
     /// In that shape the callback's return value is fully determined by the
     /// pinned inputs, so the outer contextual type cannot refine it; `tsc`'s
@@ -26,7 +27,7 @@ impl CheckerState<'_> {
     /// fresh leaf the contextual type could refine (a free literal such as
     /// `() => 1` or `(v) => [1, 2]`) are excluded, because there the contextual
     /// return legitimately seeds inference and must not be dropped.
-    pub(super) fn callback_object_return_pinned_by_concrete_arg(
+    pub(super) fn callback_return_pinned_by_concrete_arg(
         &mut self,
         shape: &FunctionShape,
         args: &[NodeIndex],
@@ -77,17 +78,18 @@ impl CheckerState<'_> {
             {
                 continue;
             }
-            if self.callback_object_return_built_from_pinned_params(arg_idx, param_type, &pinned) {
+            if self.callback_return_built_from_pinned_params(arg_idx, param_type, &pinned) {
                 return true;
             }
         }
         false
     }
 
-    /// Returns true when the callback at `arg_idx` is an inferred-return concise
-    /// arrow whose body is an object literal whose every property value is one
-    /// of the callback's own parameters bound to a type that is fully `pinned`.
-    fn callback_object_return_built_from_pinned_params(
+    /// Returns true when the callback at `arg_idx` has an inferred return whose
+    /// complete value is structurally derived from callback parameters bound to
+    /// fully `pinned` types. Supported returns are property projections rooted
+    /// in those parameters and object literals whose values are such projections.
+    fn callback_return_built_from_pinned_params(
         &mut self,
         arg_idx: NodeIndex,
         param_type: TypeId,
@@ -117,8 +119,9 @@ impl CheckerState<'_> {
                 func.body,
             )
         };
-        // Inferred-return concise arrows only: an explicit return annotation
-        // pins `U` independently, and block bodies are outside this narrow shape.
+        // Inferred-return arrows only: an explicit return annotation pins `U`
+        // independently. Block bodies are accepted only by the single-return
+        // extractor below.
         if has_return_annotation || !is_arrow {
             return false;
         }
@@ -146,48 +149,104 @@ impl CheckerState<'_> {
             return false;
         }
 
-        // The concise-body return must be an object literal whose every property
-        // value is one of those pinned callback parameters; no fresh leaf the
-        // contextual type could refine.
+        let Some(return_expression) = self.single_callback_return_expression(body) else {
+            return false;
+        };
+        self.return_expression_is_pinned_projection(return_expression, &pinned_param_names)
+    }
+
+    /// Extract a concise-body expression or the expression from a block that
+    /// consists of exactly one return statement.
+    fn single_callback_return_expression(&self, body: NodeIndex) -> Option<NodeIndex> {
         let body = self.ctx.arena.skip_parenthesized(body);
-        let element_indices: Vec<NodeIndex> = {
-            let Some(body_node) = self.ctx.arena.get(body) else {
+        let body_node = self.ctx.arena.get(body)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return Some(body);
+        }
+        let block = self.ctx.arena.get_block(body_node)?;
+        let [statement] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+        let statement_node = self.ctx.arena.get(*statement)?;
+        if statement_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+            return None;
+        }
+        let return_statement = self.ctx.arena.get_return_statement(statement_node)?;
+        return_statement
+            .expression
+            .is_some()
+            .then_some(return_statement.expression)
+    }
+
+    /// A pinned projection contains no fresh expression that outer contextual
+    /// typing could refine. It is either a pinned parameter, a property chain
+    /// rooted in one, or a non-empty object literal composed only of such values.
+    fn return_expression_is_pinned_projection(
+        &self,
+        expression: NodeIndex,
+        pinned_param_names: &FxHashSet<String>,
+    ) -> bool {
+        let expression = self.ctx.arena.skip_parenthesized(expression);
+        let Some(node) = self.ctx.arena.get(expression) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| pinned_param_names.contains(&ident.escaped_text));
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let Some(access) = self.ctx.arena.get_access_expr(node) else {
                 return false;
             };
-            if body_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                && !self.element_access_key_is_fixed_literal(access.name_or_argument)
+            {
                 return false;
             }
-            let Some(obj) = self.ctx.arena.get_literal_expr(body_node) else {
-                return false;
-            };
-            obj.elements.nodes.clone()
-        };
-        if element_indices.is_empty() {
+            return self
+                .return_expression_is_pinned_projection(access.expression, pinned_param_names);
+        }
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return false;
         }
-        element_indices.iter().all(|&el_idx| {
-            let Some(el) = self.ctx.arena.get(el_idx) else {
-                return false;
-            };
-            let value_idx = if el.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                self.ctx
-                    .arena
-                    .get_property_assignment(el)
-                    .map(|p| p.initializer)
-            } else if el.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
-                self.ctx.arena.get_shorthand_property(el).map(|p| p.name)
-            } else {
-                None
-            };
-            let Some(value_idx) = value_idx else {
-                return false;
-            };
-            let value_idx = self.ctx.arena.skip_parenthesized(value_idx);
-            self.ctx
-                .arena
-                .get(value_idx)
-                .and_then(|n| self.ctx.arena.get_identifier(n))
-                .is_some_and(|ident| pinned_param_names.contains(&ident.escaped_text))
+        let Some(object) = self.ctx.arena.get_literal_expr(node) else {
+            return false;
+        };
+        !object.elements.nodes.is_empty()
+            && object.elements.nodes.iter().all(|&element_idx| {
+                let Some(element) = self.ctx.arena.get(element_idx) else {
+                    return false;
+                };
+                let value = if element.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    self.ctx
+                        .arena
+                        .get_property_assignment(element)
+                        .map(|property| property.initializer)
+                } else if element.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    self.ctx
+                        .arena
+                        .get_shorthand_property(element)
+                        .map(|property| property.name)
+                } else {
+                    None
+                };
+                value.is_some_and(|value| {
+                    self.return_expression_is_pinned_projection(value, pinned_param_names)
+                })
+            })
+    }
+
+    fn element_access_key_is_fixed_literal(&self, key: NodeIndex) -> bool {
+        let key = self.ctx.arena.skip_parenthesized(key);
+        self.ctx.arena.get(key).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NumericLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
         })
     }
 

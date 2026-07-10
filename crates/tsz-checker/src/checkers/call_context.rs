@@ -575,13 +575,13 @@ impl<'a> CheckerState<'a> {
             found
         };
 
-        // A callback whose object-literal return is built entirely from
-        // concrete-pinned parameters has a fully-determined return the outer
-        // contextual type cannot refine (#14792 — see the helper's doc comment).
+        // A callback whose return is derived entirely from concrete-pinned
+        // parameters has a fully-determined return the outer contextual type
+        // cannot refine (#14792 — see the helper's doc comment).
         // This holds whether the call returns the bare parameter `U` or a
         // covariant wrapper of it (`U[]`, …), so it takes precedence over the
         // wrapped-parameter specialization path below.
-        if self.callback_object_return_pinned_by_concrete_arg(shape, args, &return_type_params) {
+        if self.callback_return_pinned_by_concrete_arg(shape, args, &return_type_params) {
             return true;
         }
 
