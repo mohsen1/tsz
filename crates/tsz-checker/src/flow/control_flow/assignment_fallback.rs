@@ -8,7 +8,7 @@ use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
     PropertyAccessResult, TypeSubstitution, call_signatures_for_type,
     construct_signatures_for_type, contains_free_type_parameters, flow_call_signature,
-    flow_property, function_return_type, get_application_info, instantiate_type,
+    flow_property, function_return_type, get_application_info, get_lazy_def_id, instantiate_type,
     is_promise_like_type, literal_value, optional_flow_property, union_members_for_type,
     unwrap_promise_type_argument, widen_literal_to_primitive,
 };
@@ -738,7 +738,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// flow narrowing (`narrow_assignment`, truthiness filtering) cannot reduce a
     /// union against it; callers must recover a concrete declared type instead.
     fn is_unresolved_lazy_type(&self, ty: TypeId) -> bool {
-        tsz_solver::type_queries::get_lazy_def_id(self.interner.as_type_database(), ty).is_some()
+        get_lazy_def_id(self.interner.as_type_database(), ty).is_some()
     }
 
     /// Resolve a declaration's declared type from its syntactic type annotation.

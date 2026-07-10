@@ -7,6 +7,7 @@
 //! guard predicates (published-body member coverage, program-file heritage
 //! provenance) and the import-alias `DefId` forwarding registration.
 
+use crate::query_boundaries::state::type_resolution as type_resolution_query;
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -127,7 +128,7 @@ impl<'a> CheckerState<'a> {
             let db = self.ctx.types.as_type_database();
             let def_store = &self.ctx.definition_store;
             let mut resolve_lazy = |d: tsz_solver::DefId| def_store.get_body(d);
-            tsz_solver::type_queries::contains_conditional_through_aliases(
+            type_resolution_query::contains_conditional_through_aliases(
                 db,
                 published,
                 &mut resolve_lazy,
@@ -175,7 +176,7 @@ impl<'a> CheckerState<'a> {
         published: TypeId,
         local: TypeId,
     ) -> bool {
-        tsz_solver::type_queries::object_property_names_cover(
+        type_resolution_query::object_property_names_cover(
             self.ctx.types.as_type_database(),
             published,
             local,

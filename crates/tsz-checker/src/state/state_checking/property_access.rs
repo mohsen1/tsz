@@ -1458,21 +1458,21 @@ type Plain = { mon: number; tue: number };
 
         let schedule = resolve(&mut checker, "Schedule");
         assert!(
-            tsz_solver::type_queries::is_mapped_type(db, schedule),
+            crate::query_boundaries::state::checking::is_mapped_type(db, schedule),
             "concrete enum-key mapped alias must stay a Mapped type, got {}",
             checker.format_type(schedule),
         );
 
         let schedule_alias = resolve(&mut checker, "ScheduleAlias");
         assert!(
-            tsz_solver::type_queries::is_mapped_type(db, schedule_alias),
+            crate::query_boundaries::state::checking::is_mapped_type(db, schedule_alias),
             "wrapper alias of a concrete mapped type must preserve Mapped identity, got {}",
             checker.format_type(schedule_alias),
         );
 
         let plain = resolve(&mut checker, "Plain");
         assert!(
-            !tsz_solver::type_queries::is_mapped_type(db, plain),
+            !crate::query_boundaries::state::checking::is_mapped_type(db, plain),
             "plain object alias must not be a Mapped type (negative control), got {}",
             checker.format_type(plain),
         );
