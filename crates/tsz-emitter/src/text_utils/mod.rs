@@ -8,9 +8,10 @@
 ///
 /// Delegates to the cross-crate `js_number_to_string` owner shared with the
 /// solver and checker, so emit and semantic decisions can never disagree on a
-/// number's JS text (`-0` → `"0"`, scientific notation exactly at magnitudes
-/// >= 1e21 or < 1e-6 — the previous local copy switched a digit early, at 21
-/// integer digits, mis-formatting values in `[1e20, 1e21)`).
+/// number's JS text: `-0` → `"0"`, and scientific notation exactly at
+/// magnitudes at or above 1e21 or below 1e-6 (the previous local copy
+/// switched a digit early, at 21 integer digits, mis-formatting values in
+/// `[1e20, 1e21)`).
 pub(crate) fn format_js_number(value: f64) -> String {
     tsz_common::numeric::js_number_to_string(value).into_owned()
 }
