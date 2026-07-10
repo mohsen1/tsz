@@ -56,9 +56,9 @@ fn call_parameter_array_display_normalization_is_not_gated_by_rendered_text() {
 fn mapped_target_type_parameter_containment_is_structural() {
     let source = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/src/assignability/assignability_diagnostics/argument_reports.rs"
+        "/src/assignability/assignability_diagnostics/generic_argument_suppression.rs"
     ))
-    .expect("assignability diagnostics source should be readable");
+    .expect("generic argument suppression source should be readable");
 
     let start = source
         .find("pub(crate) fn should_suppress_self_referential_mapped_constraint_arg_mismatch")
@@ -78,8 +78,11 @@ fn mapped_target_type_parameter_containment_is_structural() {
         "mapped target type-parameter containment must not string-match user-chosen parameter names"
     );
     assert!(
-        helper_body.contains("contains_type_parameter_named("),
-        "mapped target type-parameter containment should route through the structural query boundary"
+        helper_body
+            .matches("contains_type_parameter_named(")
+            .count()
+            >= 2,
+        "both mapped constraints and their target occurrences should route through the structural query boundary"
     );
 }
 
