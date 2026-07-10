@@ -128,23 +128,14 @@ impl<'a> CheckerState<'a> {
             .borrow()
             .get(&cache_key(resolved_base, prop_atom), resolver_generation);
         if let Some(Some(entry)) = cached_property_type {
-            let mut result_type = self.refine_expando_property_read_type(
+            let result_type = self.refine_expando_property_read_type(
                 idx,
                 expression,
                 property_name,
                 entry.type_id,
             );
-            let marker_only = if base_nullish.is_some() {
-                let marker_only = self.record_optional_chain_marker(idx, result_type);
-                result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                    self.ctx.types,
-                    result_type,
-                );
-                marker_only
-            } else {
-                self.set_optional_chain_marker_only(idx, false);
-                false
-            };
+            let (result_type, marker_only) =
+                self.union_optional_chain_undefined(idx, result_type, base_nullish.is_some());
             if skip_result_flow_for_result {
                 self.ctx
                     .flow_shared
@@ -154,10 +145,10 @@ impl<'a> CheckerState<'a> {
                     .insert(
                         (object_type, prop_atom),
                         resolver_generation,
-                        crate::query_boundaries::common::CachedChainType {
-                            type_id: result_type,
-                            undefined_is_marker_only: marker_only,
-                        },
+                        crate::query_boundaries::common::CachedChainType::new(
+                            result_type,
+                            marker_only,
+                        ),
                     );
             }
             return Some(self.finalize_property_access_result(
@@ -229,22 +220,11 @@ impl<'a> CheckerState<'a> {
                             from_index_signature,
                         )),
                     );
-                let mut result_type = effective_write_result(refined_type_id, write_type);
-                let marker_only = if base_nullish.is_some() {
-                    let marker_only = self.record_optional_chain_marker(idx, result_type);
-                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                        self.ctx.types,
-                        result_type,
-                    );
-                    marker_only
-                } else {
-                    self.set_optional_chain_marker_only(idx, false);
-                    false
-                };
-                let cached_chain = crate::query_boundaries::common::CachedChainType {
-                    type_id: result_type,
-                    undefined_is_marker_only: marker_only,
-                };
+                let result_type = effective_write_result(refined_type_id, write_type);
+                let (result_type, marker_only) =
+                    self.union_optional_chain_undefined(idx, result_type, base_nullish.is_some());
+                let cached_chain =
+                    crate::query_boundaries::common::CachedChainType::new(result_type, marker_only);
                 if skip_result_flow_for_result {
                     self.ctx
                         .flow_shared
@@ -279,16 +259,11 @@ impl<'a> CheckerState<'a> {
                         resolver_generation,
                         property_type.map(CachedPropertyType::explicit),
                     );
-                let mut result_type = property_type.unwrap_or(TypeId::ERROR);
-                if base_nullish.is_some() {
-                    self.record_optional_chain_marker(idx, result_type);
-                    result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                        self.ctx.types,
-                        result_type,
-                    );
-                } else {
-                    self.set_optional_chain_marker_only(idx, false);
-                }
+                let (result_type, _) = self.union_optional_chain_undefined(
+                    idx,
+                    property_type.unwrap_or(TypeId::ERROR),
+                    base_nullish.is_some(),
+                );
                 Some(self.finalize_property_access_result(
                     idx,
                     result_type,

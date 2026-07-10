@@ -54,8 +54,6 @@ impl<'a> CheckerState<'a> {
         } = site;
         use crate::query_boundaries::common::PropertyAccessResult;
 
-        let factory = self.ctx.types.factory();
-
         if receiver_has_daa_error {
             return self.finalize_property_access_result(
                 idx,
@@ -98,11 +96,10 @@ impl<'a> CheckerState<'a> {
                 self.error_property_not_exist_at(property_name, TypeId::NEVER, name_or_argument);
             }
             let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-            // The `| undefined` below is the chain short-circuit marker; track
-            // whether the member itself already carried `undefined` so chain
-            // continuations can strip only the marker.
-            self.record_optional_chain_marker(idx, base_type);
-            return factory.union2(base_type, TypeId::UNDEFINED);
+            // The added `| undefined` is the chain short-circuit marker; the
+            // helper tracks whether the member itself already carried
+            // `undefined` so chain continuations can strip only the marker.
+            return self.union_optional_chain_undefined(idx, base_type, true).0;
         }
 
         if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {

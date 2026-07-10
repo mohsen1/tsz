@@ -26,6 +26,16 @@ pub struct CachedChainType {
     pub undefined_is_marker_only: bool,
 }
 
+impl CachedChainType {
+    #[must_use]
+    pub const fn new(type_id: TypeId, undefined_is_marker_only: bool) -> Self {
+        Self {
+            type_id,
+            undefined_is_marker_only,
+        }
+    }
+}
+
 /// Cache key for a successful identifier-rooted optional property chain.
 ///
 /// The root is semantic (`TypeId`), while the path uses interned property

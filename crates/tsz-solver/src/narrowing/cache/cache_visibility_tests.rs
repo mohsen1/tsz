@@ -48,18 +48,12 @@ fn narrowing_cache_statistics_report_entries_and_size() {
     cache.optional_chain_cache.borrow_mut().insert(
         (TypeId::STRING, prop),
         7,
-        CachedChainType {
-            type_id: TypeId::BOOLEAN,
-            undefined_is_marker_only: false,
-        },
+        CachedChainType::new(TypeId::BOOLEAN, false),
     );
     cache.optional_property_chain_cache.borrow_mut().insert(
         chain_key,
         7,
-        CachedChainType {
-            type_id: TypeId::BOOLEAN,
-            undefined_is_marker_only: false,
-        },
+        CachedChainType::new(TypeId::BOOLEAN, false),
     );
     cache
         .contextual_resolve_cache
@@ -127,18 +121,12 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
         cache.optional_chain_cache.borrow_mut().insert(
             property_key,
             generation,
-            CachedChainType {
-                type_id: TypeId::BOOLEAN,
-                undefined_is_marker_only: false,
-            },
+            CachedChainType::new(TypeId::BOOLEAN, false),
         );
         cache.optional_property_chain_cache.borrow_mut().insert(
             chain_key.clone(),
             generation,
-            CachedChainType {
-                type_id: TypeId::NUMBER,
-                undefined_is_marker_only: false,
-            },
+            CachedChainType::new(TypeId::NUMBER, false),
         );
         cache.narrow_type_cache.borrow_mut().insert(
             request_key.clone(),
@@ -209,10 +197,7 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
     );
     assert_eq!(
         cache.optional_chain_cache.borrow().get(&property_key, 7),
-        Some(CachedChainType {
-            type_id: TypeId::BOOLEAN,
-            undefined_is_marker_only: false,
-        })
+        Some(CachedChainType::new(TypeId::BOOLEAN, false))
     );
     assert_eq!(
         cache
@@ -226,10 +211,7 @@ fn generation_stamped_narrowing_caches_bound_retained_generations() {
             .optional_property_chain_cache
             .borrow()
             .get(&chain_key, 7),
-        Some(CachedChainType {
-            type_id: TypeId::NUMBER,
-            undefined_is_marker_only: false,
-        })
+        Some(CachedChainType::new(TypeId::NUMBER, false))
     );
     assert_eq!(cache.narrow_type_cache.borrow().get(&request_key, 1), None);
     assert_eq!(
@@ -254,26 +236,17 @@ fn optional_chain_caches_serve_only_matching_resolver_generation() {
     cache.optional_chain_cache.borrow_mut().insert(
         property_key,
         3,
-        CachedChainType {
-            type_id: TypeId::BOOLEAN,
-            undefined_is_marker_only: false,
-        },
+        CachedChainType::new(TypeId::BOOLEAN, false),
     );
     cache.optional_property_chain_cache.borrow_mut().insert(
         chain_key.clone(),
         3,
-        CachedChainType {
-            type_id: TypeId::NUMBER,
-            undefined_is_marker_only: false,
-        },
+        CachedChainType::new(TypeId::NUMBER, false),
     );
 
     assert_eq!(
         cache.optional_chain_cache.borrow().get(&property_key, 3),
-        Some(CachedChainType {
-            type_id: TypeId::BOOLEAN,
-            undefined_is_marker_only: false,
-        })
+        Some(CachedChainType::new(TypeId::BOOLEAN, false))
     );
     assert_eq!(
         cache.optional_chain_cache.borrow().get(&property_key, 4),
@@ -284,10 +257,7 @@ fn optional_chain_caches_serve_only_matching_resolver_generation() {
             .optional_property_chain_cache
             .borrow()
             .get(&chain_key, 3),
-        Some(CachedChainType {
-            type_id: TypeId::NUMBER,
-            undefined_is_marker_only: false,
-        })
+        Some(CachedChainType::new(TypeId::NUMBER, false))
     );
     assert_eq!(
         cache

@@ -1837,34 +1837,25 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(cause) = nullish_cause {
-            if access.question_dot_token {
-                // The `| undefined` below is the chain short-circuit marker;
-                // track whether the element type itself already carried
-                // `undefined` so chain continuations can strip only the marker.
-                self.record_optional_chain_marker(idx, result_type);
-                result_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(result_type, TypeId::UNDEFINED);
-            } else if !report_no_index {
-                self.report_possibly_nullish_object(access.expression, cause);
-            }
-        } else if access.question_dot_token {
-            // No short-circuit possible: any `undefined` in the result is
-            // inherent. Clear a stale marker bit from a prior recomputation.
-            self.set_optional_chain_marker_only(idx, false);
+        if access.question_dot_token {
+            // The added `| undefined` is the chain short-circuit marker; the
+            // helper tracks whether the element type itself already carried
+            // `undefined` so chain continuations can strip only the marker.
+            result_type = self
+                .union_optional_chain_undefined(idx, result_type, nullish_cause.is_some())
+                .0;
+        } else if let Some(cause) = nullish_cause
+            && !report_no_index
+        {
+            self.report_possibly_nullish_object(access.expression, cause);
         }
 
         // The chain can short-circuit at the `?.`; add back the `| undefined`
         // that was stripped when resolving the element access.
         if is_chain_continuation {
-            self.record_optional_chain_marker(idx, result_type);
-            result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                self.ctx.types,
-                result_type,
-            );
+            result_type = self
+                .union_optional_chain_undefined(idx, result_type, true)
+                .0;
         }
 
         let result_type = if skip_flow_narrowing {

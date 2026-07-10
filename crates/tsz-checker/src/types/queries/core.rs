@@ -1410,12 +1410,38 @@ impl<'a> CheckerState<'a> {
 
     /// Set or clear the marker-only bit for an optional-chain node. Producers
     /// call this on every recomputation so speculative or stale entries
-    /// self-correct.
+    /// self-correct. The emptiness fast-path keeps clears free for programs
+    /// without optional chains.
     pub(crate) fn set_optional_chain_marker_only(&mut self, idx: NodeIndex, marker_only: bool) {
         if marker_only {
             self.ctx.optional_chain_marker_only_nodes.insert(idx.0);
-        } else {
+        } else if !self.ctx.optional_chain_marker_only_nodes.is_empty() {
             self.ctx.optional_chain_marker_only_nodes.remove(&idx.0);
+        }
+    }
+
+    /// Union the chain short-circuit `undefined` into an optional-chain result
+    /// and record the marker bit for `idx`; clears the bit when the chain
+    /// cannot short-circuit. Returns the result type and whether its
+    /// `undefined` is marker-only.
+    pub(crate) fn union_optional_chain_undefined(
+        &mut self,
+        idx: NodeIndex,
+        type_id: TypeId,
+        chain_can_short_circuit: bool,
+    ) -> (TypeId, bool) {
+        if chain_can_short_circuit {
+            let marker_only = self.record_optional_chain_marker(idx, type_id);
+            (
+                crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                    self.ctx.types,
+                    type_id,
+                ),
+                marker_only,
+            )
+        } else {
+            self.set_optional_chain_marker_only(idx, false);
+            (type_id, false)
         }
     }
 
@@ -1430,7 +1456,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> TypeId {
         if self.ctx.optional_chain_marker_only_nodes.contains(&expr.0) {
-            tsz_solver::narrowing::remove_undefined(self.ctx.types.as_type_database(), type_id)
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id)
         } else {
             type_id
         }
