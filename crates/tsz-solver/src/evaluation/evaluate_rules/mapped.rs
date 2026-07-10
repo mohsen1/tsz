@@ -1280,7 +1280,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Returns true when the mapped type must stay deferred because its constraint
-    /// is `keyof T` (or `keyof Partial<T>`) where T is still a type parameter.
+    /// is `keyof T` (or `keyof Partial<T>`) where T is still a type parameter, or
+    /// `keyof (T & X)` / `keyof (T | X)` where a composite member is one — the
+    /// key set then includes `keyof T`, which has no concrete expansion.
     ///
     /// Intersection constraints like `keyof T & keyof C` are intentionally excluded:
     /// those defer later at the "could not extract concrete keys" fallback, which
@@ -1290,27 +1292,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.constraint_has_keyof_type_param(mapped.constraint)
     }
 
-    /// Returns true when `constraint` is `keyof T` (or `keyof Partial<T>`) where T
-    /// is a type parameter or infer type.
+    /// Returns true when `constraint` is `keyof S` where `S` is (or contains,
+    /// for a union/intersection operand) a free type parameter or infer type.
     ///
-    /// Does not recurse through intersections — `keyof T & string` must not defer
-    /// early so that `try_distribute_mapped_over_union_source` still runs correctly.
+    /// Does not recurse through intersections at the *constraint* level —
+    /// `keyof T & string` must not defer early so that
+    /// `try_distribute_mapped_over_union_source` still runs correctly.
     fn constraint_has_keyof_type_param(&self, constraint: TypeId) -> bool {
         let Some(TypeData::KeyOf(source)) = self.interner().lookup(constraint) else {
             return false;
         };
-        match self.interner().lookup(source) {
-            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
-            Some(TypeData::Substitution { base_type, .. }) => matches!(
-                self.interner().lookup(base_type),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-            ),
-            Some(TypeData::Mapped(inner_mapped_id)) => {
-                let inner_mapped = self.interner().get_mapped(inner_mapped_id);
-                self.constraint_has_keyof_type_param(inner_mapped.constraint)
-            }
-            _ => false,
-        }
+        crate::type_queries::mapped::keyof_operand_is_generic(self.interner(), source)
     }
 
     /// Try to evaluate a mapped type over a type parameter as an array/tuple.
