@@ -251,13 +251,11 @@ impl TypeInterner {
                 })
             }
             Some(TypeData::Literal(literal)) => {
-                let literal_text = match literal {
+                let literal_text: std::borrow::Cow<'_, str> = match literal {
                     LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
-                        self.resolve_atom(atom)
+                        self.resolve_atom(atom).into()
                     }
-                    LiteralValue::Number(num) => {
-                        crate::utils::js_number_to_string(num.0).into_owned()
-                    }
+                    LiteralValue::Number(num) => crate::utils::js_number_to_string(num.0),
                     LiteralValue::Boolean(value) => {
                         if value {
                             "true".into()
@@ -267,7 +265,7 @@ impl TypeInterner {
                     }
                 };
                 remaining
-                    .strip_prefix(literal_text.as_str())
+                    .strip_prefix(literal_text.as_ref())
                     .is_some_and(|remaining| {
                         self.match_template_literal_shallow(remaining, spans, span_idx + 1)
                     })

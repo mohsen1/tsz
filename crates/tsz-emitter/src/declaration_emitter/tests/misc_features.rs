@@ -33,40 +33,6 @@ fn test_normalize_numeric_literal_large_integer() {
     );
 }
 
-// =============================================================================
-// 15. Format JS Number
-// =============================================================================
-
-#[test]
-fn test_format_js_number_infinity() {
-    assert_eq!(
-        DeclarationEmitter::format_js_number(f64::INFINITY),
-        "Infinity"
-    );
-    assert_eq!(
-        DeclarationEmitter::format_js_number(f64::NEG_INFINITY),
-        "-Infinity"
-    );
-}
-
-#[test]
-fn test_format_js_number_nan() {
-    assert_eq!(DeclarationEmitter::format_js_number(f64::NAN), "NaN");
-}
-
-#[test]
-fn test_format_js_number_integers() {
-    assert_eq!(DeclarationEmitter::format_js_number(0.0), "0");
-    assert_eq!(DeclarationEmitter::format_js_number(42.0), "42");
-    assert_eq!(DeclarationEmitter::format_js_number(-1.0), "-1");
-}
-
-#[test]
-fn test_format_js_number_floats() {
-    assert_eq!(DeclarationEmitter::format_js_number(3.15), "3.15");
-    assert_eq!(DeclarationEmitter::format_js_number(0.5), "0.5");
-}
-
 #[test]
 fn test_large_separated_numeric_literal_declaration_emit() {
     let output = emit_dts(

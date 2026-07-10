@@ -681,13 +681,30 @@ impl LiteralValue {
     }
 }
 
-/// Wrapper for f64 that implements Eq and Hash for use in `TypeData`
+/// Wrapper for f64 that implements Eq and Hash for use in `TypeData`.
+///
+/// Identity is `SameValueZero`, matching how tsc keys number literal types
+/// (a JS `Map`): `-0` and `+0` are one value and every NaN bit pattern is one
+/// value. `literal_number` also normalizes the stored representative, but the
+/// `Eq`/`Hash` impls make the collapse unbypassable for direct constructions.
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedFloat(pub f64);
 
+impl OrderedFloat {
+    fn same_value_zero_bits(self) -> u64 {
+        if self.0 == 0.0 {
+            0.0f64.to_bits()
+        } else if self.0.is_nan() {
+            f64::NAN.to_bits()
+        } else {
+            self.0.to_bits()
+        }
+    }
+}
+
 impl PartialEq for OrderedFloat {
     fn eq(&self, other: &Self) -> bool {
-        self.0.to_bits() == other.0.to_bits()
+        self.same_value_zero_bits() == other.same_value_zero_bits()
     }
 }
 
@@ -695,7 +712,7 @@ impl Eq for OrderedFloat {}
 
 impl std::hash::Hash for OrderedFloat {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.0.to_bits().hash(state);
+        self.same_value_zero_bits().hash(state);
     }
 }
 

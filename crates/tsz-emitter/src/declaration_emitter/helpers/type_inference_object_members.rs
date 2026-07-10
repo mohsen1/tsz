@@ -347,7 +347,7 @@ impl<'a> DeclarationEmitter<'a> {
             tsz_solver::types::LiteralValue::String(atom) => {
                 Self::format_property_name_literal_text(&interner.resolve_atom(*atom))
             }
-            tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
+            tsz_solver::types::LiteralValue::Number(n) => crate::text_utils::format_js_number(n.0),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
             tsz_solver::types::LiteralValue::BigInt(atom) => {
                 format!("{}n", interner.resolve_atom(*atom))

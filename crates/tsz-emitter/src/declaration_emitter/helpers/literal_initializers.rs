@@ -598,15 +598,11 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::ImportKeyword as u16)
     }
 
-    pub(crate) fn format_js_number(n: f64) -> String {
-        crate::text_utils::format_js_number(n)
-    }
-
     /// Normalize a numeric literal string through f64, matching tsc's JS round-trip behavior.
     /// E.g., `123456789123456789123456789123456789123456789123456789` -> `1.2345678912345678e+53`
     pub(crate) fn normalize_numeric_literal(text: &str) -> String {
         if let Ok(val) = text.parse::<f64>() {
-            let normalized = Self::format_js_number(val);
+            let normalized = crate::text_utils::format_js_number(val);
             if normalized != text {
                 return normalized;
             }
@@ -617,7 +613,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn declaration_numeric_literal_text(text: &str, value: Option<f64>) -> String {
         if text.contains('_') {
             if let Some(value) = value {
-                Self::format_js_number(value)
+                crate::text_utils::format_js_number(value)
             } else {
                 text.replace('_', "")
             }
@@ -635,7 +631,7 @@ impl<'a> DeclarationEmitter<'a> {
             || text.chars().filter(|c| c.is_ascii_digit()).count() >= 21
         {
             if let Some(value) = value {
-                Self::format_js_number(value)
+                crate::text_utils::format_js_number(value)
             } else {
                 let digits = lower
                     .strip_prefix("0x")

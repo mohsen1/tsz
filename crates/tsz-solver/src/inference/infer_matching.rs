@@ -1801,33 +1801,41 @@ impl<'a> InferenceContext<'a> {
         infer_var: InferenceVar,
         captured: &str,
     ) -> TypeId {
-        let string_capture = self.interner.literal_string(captured);
         let Some(constraint) = self.get_declared_constraint(infer_var) else {
-            return string_capture;
+            return self.interner.literal_string(captured);
         };
 
-        let members: Vec<TypeId> =
-            crate::type_queries::get_union_members(self.interner, constraint)
-                .map(|members| members.to_vec())
-                .unwrap_or_else(|| vec![constraint]);
+        let union_list = crate::type_queries::get_union_members(self.interner, constraint);
+        let members: &[TypeId] = union_list
+            .as_deref()
+            .unwrap_or(std::slice::from_ref(&constraint));
 
-        // `isValidNumberString(captured, roundTripOnly = true)`.
-        let round_trip_number = captured
-            .parse::<f64>()
-            .ok()
-            .filter(|v| v.is_finite() && crate::utils::js_number_to_string(*v) == captured);
-        // `isValidBigIntString(captured, roundTripOnly = true)`: an optional
-        // sign followed by digits whose canonical form reproduces the text.
-        let round_trip_bigint: Option<(bool, &str)> = {
+        // tsc skips the whole coercion when the constraint contains `string`
+        // (`allTypeFlags & TypeFlags.String` in `inferToTemplateLiteralType`).
+        if members.contains(&TypeId::STRING) {
+            return self.interner.literal_string(captured);
+        }
+
+        // Round-trip gates, computed at most once and only when a matching
+        // constituent kind is present.
+        //
+        // `round_trip_number`: `isValidNumberString(captured, roundTripOnly)`.
+        // `round_trip_bigint`: `isValidBigIntString(captured, roundTripOnly)`
+        // — an optional sign followed by digits with no leading zeros and no
+        // negative zero, so the canonical bigint text reproduces the capture.
+        let mut round_trip_number: Option<Option<f64>> = None;
+        let mut number_gate = |captured: &str| {
+            *round_trip_number
+                .get_or_insert_with(|| tsz_common::numeric::round_trip_js_number(captured))
+        };
+        let round_trip_bigint = || -> Option<(bool, &str)> {
             let (negative, digits) = captured
                 .strip_prefix('-')
                 .map_or((false, captured), |rest| (true, rest));
-            let canonical = digits.trim_start_matches('0');
-            let canonical = if canonical.is_empty() { "0" } else { canonical };
             (!digits.is_empty()
                 && digits.bytes().all(|b| b.is_ascii_digit())
-                && canonical == digits
-                && !(negative && canonical == "0"))
+                && (digits == "0" || !digits.starts_with('0'))
+                && !(negative && digits == "0"))
                 .then_some((negative, digits))
         };
 
@@ -1836,75 +1844,58 @@ impl<'a> InferenceContext<'a> {
         // constituents (and unresolved Lazy constraints) fall through to the
         // string capture, as does a text that matches no constituent.
         let mut best: Option<(u8, TypeId)> = None;
-        let consider = |rank: u8, result: TypeId, best: &mut Option<(u8, TypeId)>| {
-            if best.is_none_or(|(existing, _)| rank < existing) {
-                *best = Some((rank, result));
-            }
-        };
-        for &member in &members {
-            match member {
-                TypeId::STRING => consider(0, string_capture, &mut best),
+        for &member in members {
+            let candidate: Option<(u8, TypeId)> = match member {
                 TypeId::NUMBER => {
-                    if let Some(value) = round_trip_number {
-                        consider(2, self.interner.literal_number(value), &mut best);
-                    }
+                    number_gate(captured).map(|value| (1, self.interner.literal_number(value)))
                 }
-                TypeId::BIGINT => {
-                    if let Some((negative, digits)) = round_trip_bigint {
-                        let literal = self.interner.literal_bigint_with_sign(negative, digits);
-                        consider(4, literal, &mut best);
-                    }
-                }
-                TypeId::BOOLEAN => {
-                    let result = match captured {
+                TypeId::BIGINT => round_trip_bigint().map(|(negative, digits)| {
+                    (3, self.interner.literal_bigint_with_sign(negative, digits))
+                }),
+                TypeId::BOOLEAN => Some((
+                    5,
+                    match captured {
                         "true" => TypeId::BOOLEAN_TRUE,
                         "false" => TypeId::BOOLEAN_FALSE,
                         _ => TypeId::BOOLEAN,
+                    },
+                )),
+                TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => {
+                    let name = if member == TypeId::BOOLEAN_TRUE {
+                        "true"
+                    } else {
+                        "false"
                     };
-                    consider(6, result, &mut best);
+                    (captured == name).then_some((6, member))
                 }
-                TypeId::BOOLEAN_TRUE => {
-                    if captured == "true" {
-                        consider(7, member, &mut best);
-                    }
-                }
-                TypeId::BOOLEAN_FALSE => {
-                    if captured == "false" {
-                        consider(7, member, &mut best);
-                    }
-                }
-                TypeId::UNDEFINED => {
-                    if captured == "undefined" {
-                        consider(8, member, &mut best);
-                    }
-                }
-                TypeId::NULL => {
-                    if captured == "null" {
-                        consider(9, member, &mut best);
-                    }
-                }
+                TypeId::UNDEFINED => (captured == "undefined").then_some((7, member)),
+                TypeId::NULL => (captured == "null").then_some((8, member)),
                 _ => match self.interner.lookup(member) {
                     Some(TypeData::Literal(LiteralValue::String(atom))) => {
-                        if self.interner.resolve_atom_ref(atom).as_ref() == captured {
-                            consider(1, member, &mut best);
-                        }
+                        (self.interner.resolve_atom_ref(atom).as_ref() == captured)
+                            .then_some((0, member))
                     }
                     Some(TypeData::Literal(LiteralValue::Number(n))) => {
-                        if round_trip_number == Some(n.0) {
-                            consider(3, member, &mut best);
-                        }
+                        (number_gate(captured) == Some(n.0)).then_some((2, member))
                     }
                     Some(TypeData::Literal(LiteralValue::BigInt(atom))) => {
-                        if self.interner.resolve_atom_ref(atom).as_ref() == captured {
-                            consider(5, member, &mut best);
-                        }
+                        (self.interner.resolve_atom_ref(atom).as_ref() == captured)
+                            .then_some((4, member))
                     }
-                    _ => {}
+                    _ => None,
                 },
+            };
+            if let Some((rank, result)) = candidate
+                && best.is_none_or(|(existing, _)| rank < existing)
+            {
+                best = Some((rank, result));
             }
         }
 
-        best.map_or(string_capture, |(_, result)| result)
+        match best {
+            Some((_, result)) => result,
+            None => self.interner.literal_string(captured),
+        }
     }
 
     /// Extract a string literal value from a `TypeId`.

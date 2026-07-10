@@ -56,6 +56,19 @@ pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
     Cow::Owned(value.to_string())
 }
 
+/// tsc's `isValidNumberString(text, roundTripOnly = true)`: parse `text` as a
+/// JS number and return the value only when [`js_number_to_string`]
+/// reproduces the text exactly.
+///
+/// This is the gate template-literal `infer` captures and inference-capture
+/// coercions use to decide whether a captured segment keeps a numeric literal
+/// type: `"42"` round-trips (→ `42`), while `"042"`, `"1.0"`, `"-0"`,
+/// `"0x2A"`, and `"Infinity"` do not.
+pub fn round_trip_js_number(text: &str) -> Option<f64> {
+    let value = parse_numeric_literal_value(text)?;
+    (value.is_finite() && js_number_to_string(value) == text).then_some(value)
+}
+
 /// Parse a numeric literal text representation into a f64 value.
 /// Supports standard floating point literals as well as 0x, 0b, and 0o prefixes.
 /// Also handles numeric separators (`_`).
@@ -284,5 +297,50 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0x1p2"), None);
         assert_eq!(parse_numeric_literal_value("abc"), None);
         assert_eq!(parse_numeric_literal_value("1__2"), Some(12.0));
+    }
+
+    #[test]
+    fn js_number_to_string_specials() {
+        assert_eq!(js_number_to_string(f64::NAN), "NaN");
+        assert_eq!(js_number_to_string(f64::INFINITY), "Infinity");
+        assert_eq!(js_number_to_string(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(js_number_to_string(0.0), "0");
+        assert_eq!(js_number_to_string(-0.0), "0");
+    }
+
+    #[test]
+    fn js_number_to_string_fixed_point_range() {
+        assert_eq!(js_number_to_string(42.0), "42");
+        assert_eq!(js_number_to_string(-1.0), "-1");
+        assert_eq!(js_number_to_string(3.15), "3.15");
+        assert_eq!(js_number_to_string(-0.5), "-0.5");
+        assert_eq!(js_number_to_string(1e-6), "0.000001");
+        // 21-digit integers below 1e21 stay fixed-point, as in JS.
+        assert_eq!(js_number_to_string(1e20), "100000000000000000000");
+        assert_eq!(js_number_to_string(9.99e20), "999000000000000000000");
+    }
+
+    #[test]
+    fn js_number_to_string_scientific_range() {
+        assert_eq!(js_number_to_string(1e21), "1e+21");
+        assert_eq!(js_number_to_string(-1e21), "-1e+21");
+        assert_eq!(js_number_to_string(1e-7), "1e-7");
+        assert_eq!(
+            js_number_to_string(1.2345678912345678e53),
+            "1.2345678912345678e+53"
+        );
+    }
+
+    #[test]
+    fn round_trip_js_number_gate() {
+        assert_eq!(round_trip_js_number("42"), Some(42.0));
+        assert_eq!(round_trip_js_number("-1"), Some(-1.0));
+        assert_eq!(round_trip_js_number("1e+21"), Some(1e21));
+        assert_eq!(round_trip_js_number("042"), None);
+        assert_eq!(round_trip_js_number("1.0"), None);
+        assert_eq!(round_trip_js_number("-0"), None);
+        assert_eq!(round_trip_js_number("0x2A"), None);
+        assert_eq!(round_trip_js_number("Infinity"), None);
+        assert_eq!(round_trip_js_number(""), None);
     }
 }

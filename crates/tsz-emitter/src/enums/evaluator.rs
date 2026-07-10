@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+use crate::text_utils::format_js_number;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -765,10 +766,6 @@ fn global_numeric_constant(name: &str) -> Option<EnumValue> {
         "Infinity" => Some(EnumValue::Float(f64::INFINITY)),
         _ => None,
     }
-}
-
-fn format_js_number(value: f64) -> String {
-    crate::text_utils::format_js_number(value)
 }
 
 #[cfg(test)]

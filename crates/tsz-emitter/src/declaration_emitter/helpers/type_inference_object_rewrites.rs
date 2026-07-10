@@ -629,7 +629,7 @@ impl<'a> DeclarationEmitter<'a> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
             let value = self.arena.get_literal(expr_node)?.value?;
-            return Some(Self::format_js_number(value));
+            return Some(crate::text_utils::format_js_number(value));
         }
         if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
             let binary = self.arena.get_binary_expr(expr_node)?;
@@ -638,7 +638,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let left = self.constant_computed_key_number_value(binary.left)?;
             let right = self.constant_computed_key_number_value(binary.right)?;
-            return Some(Self::format_js_number(left + right));
+            return Some(crate::text_utils::format_js_number(left + right));
         }
         None
     }

@@ -593,7 +593,7 @@ impl<'a> CheckerState<'a> {
             && !prefer_write_method
             && self.is_object_literal_backed_element_access_receiver(expr_idx)
         {
-            let prop_name = tsz_solver::utils::js_number_to_string(num).into_owned();
+            let prop_name = tsz_solver::utils::js_number_to_string(num);
             let object_str = self
                 .object_literal_initializer_display_type_for_receiver(expr_idx)
                 .map(|init_type| {

@@ -194,8 +194,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                         LiteralValue::Number(num) => {
-                            let num_str = crate::utils::js_number_to_string(num.0).into_owned();
-                            if let Some(remaining) = remaining.strip_prefix(&num_str) {
+                            let num_str = crate::utils::js_number_to_string(num.0);
+                            if let Some(remaining) = remaining.strip_prefix(num_str.as_ref()) {
                                 self.match_template_literal_recursive(
                                     remaining,
                                     spans,
@@ -468,8 +468,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                     }
                     LiteralValue::Number(num) => {
-                        let num_str = crate::utils::js_number_to_string(num.0).into_owned();
-                        if remaining.starts_with(&num_str) {
+                        let num_str = crate::utils::js_number_to_string(num.0);
+                        if remaining.starts_with(num_str.as_ref()) {
                             self.match_template_literal_recursive(
                                 &remaining[num_str.len()..],
                                 spans,
