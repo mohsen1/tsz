@@ -1,7 +1,7 @@
 //! Canonical key for the `type_resolution_visiting` cycle guard.
 
+use crate::query_boundaries::common::TypeDatabase;
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
 use tsz_solver::def::{DefId, DefinitionStore};
 
 use crate::query_boundaries::state::type_environment as query;

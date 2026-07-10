@@ -1,5 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_solver::{DefId, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::def::DefId;
 
 use super::{AssignabilityEvalStamp, CheckerContext, EnvEvalCacheEntry};
 
@@ -388,14 +389,11 @@ impl<'a> CheckerContext<'a> {
     /// interned type structure, so the reachable lazy-`DefId` set is cached per
     /// `type_id` and reused across the many hot callers that re-query the same
     /// (lib-heavy) types. Returns an `Rc` slice for cheap clone-on-hit.
-    pub(crate) fn collect_lazy_def_ids_cached(
-        &self,
-        type_id: TypeId,
-    ) -> std::rc::Rc<[tsz_solver::DefId]> {
+    pub(crate) fn collect_lazy_def_ids_cached(&self, type_id: TypeId) -> std::rc::Rc<[DefId]> {
         if let Some(cached) = self.lazy_def_ids_cache.borrow().get(&type_id) {
             return std::rc::Rc::clone(cached);
         }
-        let collected: std::rc::Rc<[tsz_solver::DefId]> =
+        let collected: std::rc::Rc<[DefId]> =
             crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id).into();
         self.lazy_def_ids_cache
             .borrow_mut()
@@ -427,7 +425,7 @@ impl<'a> CheckerContext<'a> {
         collected
     }
 
-    fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
+    fn type_mentions_def(&self, type_id: TypeId, def_id: DefId) -> bool {
         self.collect_lazy_def_ids_cached(type_id).contains(&def_id)
     }
 
@@ -610,7 +608,7 @@ impl<'a> CheckerContext<'a> {
         removed + normalization_removed
     }
 
-    pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
+    pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: DefId) {
         self.env_eval_cache.borrow_mut().invalidate_for_def(def_id);
         self.flow_shared
             .narrowing_cache
