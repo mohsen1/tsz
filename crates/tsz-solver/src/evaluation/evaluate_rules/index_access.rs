@@ -691,6 +691,30 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         self.evaluator.bind_member_this(result, self.object_type)
     }
 
+    /// True when a per-member indexed access came back as the member's own
+    /// deferred `member[K]` because the member is a semantic reference
+    /// (`Lazy`/`Application`/`TypeQuery`) the active resolver could not expand —
+    /// the cross-file registration window, or the instantiation-time
+    /// `NoopResolver` eager-evaluation pass.
+    ///
+    /// Intersection distribution must not keep such a member-wise deferral:
+    /// `(A & B)["a"]` skips constituents lacking the key, while the standalone
+    /// member access `B["a"]` later resolves to `undefined` on its own and
+    /// poisons the intersection to `never` (false TS2322, #15676). The caller
+    /// defers the WHOLE access instead so a resolver-backed pass redoes the
+    /// intersection-aware lookup.
+    ///
+    /// A member that partially resolves to a *different* unresolved ref
+    /// (`obj != member`) is not fingerprinted here; that pass already tripped
+    /// `mark_unresolved_def_seen`, so the recompute-via-taint backstop owns it.
+    fn member_access_stuck_on_unresolved_ref(&self, member: TypeId, result: TypeId) -> bool {
+        matches!(
+            self.evaluator.interner().lookup(member),
+            Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::TypeQuery(_))
+        ) && crate::index_access_parts(self.evaluator.interner(), result)
+            .is_some_and(|(obj, idx)| obj == member && idx == self.index_type)
+    }
+
     /// Merge an intersection receiver's full property set into one object and
     /// index that, so a property read observes every constituent at once. Used
     /// for both generic-index distribution fallback and `this`-typed concrete
@@ -981,6 +1005,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 if result == TypeId::ERROR {
                     return Some(TypeId::ERROR);
                 }
+                // Defer the WHOLE access rather than a member-wise `member[K]`
+                // piece; see `member_access_stuck_on_unresolved_ref`.
+                if self.member_access_stuck_on_unresolved_ref(member, result) {
+                    self.evaluator.mark_unresolved_def_seen();
+                    return None;
+                }
                 if result == TypeId::UNDEFINED {
                     // Check if the member is a type parameter without a meaningful constraint.
                     // If so, create a deferred IndexAccess to preserve the constraint.
@@ -1051,20 +1081,20 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
         // CRITICAL: Deferred IndexAccess types (from type parameters without constraints)
         // must be preserved even if the property access returns UNDEFINED. For example,
         // (S & State<T>)["a"] where S is unconstrained should produce S["a"] & (T | undefined),
-        // not just T | undefined. The deferred S["a"] provides a constraint that must be
-        // checked for correct assignability.
-        //
+        // not just T | undefined — otherwise T would incorrectly be assignable to the result.
         // Both concrete and deferred IndexAccess results are included in the intersection.
-        // Deferred types (e.g., S["a"] where S is an unconstrained type parameter) represent
-        // unknown constraints that must be preserved for correct assignability checking.
-        // For example, (S & State<T>)["a"] must produce S["a"] & (T | undefined), not
-        // just T | undefined — otherwise T would incorrectly be assignable to the result.
         let members = self.evaluator.interner().type_list(TypeListId(list_id));
         let mut results = Vec::new();
         for &member in members.iter() {
             let result = self.evaluator.recurse_index_access(member, self.index_type);
             if result == TypeId::ERROR {
                 return Some(TypeId::ERROR);
+            }
+            // Defer the WHOLE access rather than a member-wise `member[K]`
+            // piece; see `member_access_stuck_on_unresolved_ref`.
+            if self.member_access_stuck_on_unresolved_ref(member, result) {
+                self.evaluator.mark_unresolved_def_seen();
+                return None;
             }
             if result == TypeId::UNDEFINED {
                 // Check if the member is a type parameter without a meaningful constraint.

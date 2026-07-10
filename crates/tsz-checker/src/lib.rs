@@ -1275,6 +1275,9 @@ mod mapped_infer_with_substitution_tests;
 #[path = "tests/mapped_intersection_excess_property_tests.rs"]
 mod mapped_intersection_excess_property_tests;
 #[cfg(test)]
+#[path = "../tests/mapped_intersection_indexed_access_tests.rs"]
+mod mapped_intersection_indexed_access_tests;
+#[cfg(test)]
 #[path = "tests/mapped_optional_target_excess_property_tests.rs"]
 mod mapped_optional_target_excess_property_tests;
 #[cfg(test)]
