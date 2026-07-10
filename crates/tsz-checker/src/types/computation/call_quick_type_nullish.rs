@@ -24,13 +24,7 @@ impl CheckerState<'_> {
         callee_expr: NodeIndex,
         cause: TypeId,
     ) {
-        let call_is_chain = self
-            .ctx
-            .arena
-            .get(call_idx)
-            .is_some_and(tsz_parser::parser::node::Node::is_optional_chain)
-            || super::access::is_optional_chain(self.ctx.arena, callee_expr);
-        if call_is_chain {
+        if super::access::is_optional_chain(self.ctx.arena, call_idx) {
             return;
         }
         if !self.call_result_infers_declaration_type(call_idx) {
@@ -44,6 +38,14 @@ impl CheckerState<'_> {
     /// variable declaration, property declaration, or parameter without a
     /// type annotation, or the default of a binding element (which never
     /// carries its own annotation).
+    ///
+    /// tsc's gate also excludes `super(...)`, `import(...)`, `require(...)`,
+    /// and `Symbol()` calls and skips JSDoc type assertions. Those arms are
+    /// deliberately omitted: this predicate only runs after TS2721/TS2722/
+    /// TS2723 fired for the callee, and none of those callee forms can be
+    /// possibly-nullish (`super`/`import` are keywords, `require`/`Symbol`
+    /// resolve to non-nullish globals), while JSDoc assertions only occur in
+    /// JS files where `strictNullChecks` call diagnostics take other paths.
     fn call_result_infers_declaration_type(&self, call_idx: NodeIndex) -> bool {
         let arena = self.ctx.arena;
         let mut cur = call_idx;

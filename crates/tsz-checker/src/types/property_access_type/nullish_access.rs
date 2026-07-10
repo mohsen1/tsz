@@ -292,8 +292,10 @@ impl<'a> CheckerState<'a> {
                 .then(|| "this".to_string())
             })
             // tsc falls back to the anonymous `Object is possibly ...` form
-            // when the rendered entity name reaches 100 UTF-16 units.
-            .filter(|name| name.encode_utf16().count() < 100);
+            // when the rendered entity name reaches 100 UTF-16 units. A name
+            // never has more UTF-16 units than UTF-8 bytes, so short byte
+            // lengths skip the exact count.
+            .filter(|name| name.len() < 100 || name.encode_utf16().count() < 100);
 
         let (code, message): (u32, String) = if let Some(ref name) = name {
             if cause == TypeId::NULL {

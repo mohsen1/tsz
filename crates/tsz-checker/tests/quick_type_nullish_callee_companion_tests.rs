@@ -16,6 +16,30 @@
 
 use crate::test_utils::{check_source_strict_codes, check_source_strict_messages};
 
+/// Assert the declaration-inferred quick-type path fired: TS2722 plus the
+/// TS18048 companion.
+fn assert_companion_fires(source: &str, context: &str) {
+    let codes = check_source_strict_codes(source);
+    assert!(
+        codes.contains(&2722) && codes.contains(&18048),
+        "{context}: expected TS2722 + TS18048; got: {codes:?}"
+    );
+}
+
+/// Assert the call reported only the invoke-family TS2722 with no
+/// quick-type companion.
+fn assert_invoke_only(source: &str, context: &str) {
+    let codes = check_source_strict_codes(source);
+    assert!(
+        codes.contains(&2722),
+        "{context}: expected TS2722; got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&18048),
+        "{context}: unexpected TS18048 companion; got: {codes:?}"
+    );
+}
+
 // =========================================================================
 // Companion fires: variable declarations
 // =========================================================================
@@ -130,11 +154,9 @@ fn bare_identifier_callee_names_identifier_in_companion() {
 
 #[test]
 fn var_declaration_gets_companion() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nvar w = o.f();\n");
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "var declarations infer through the quick-type path; got: {codes:?}"
+    assert_companion_fires(
+        "declare const o: { f?: () => number };\nvar w = o.f();\n",
+        "var declarations infer through the quick-type path",
     );
 }
 
@@ -142,23 +164,17 @@ fn var_declaration_gets_companion() {
 fn overloaded_optional_callee_still_gets_companion() {
     // The callee re-check runs before signature counting, so overloads
     // (multiple non-generic signatures) still pair the diagnostics.
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const o: { f?: { (): number; (s: string): string } };\nconst r = o.f();\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "expected both TS2722 and TS18048 for overloaded callee; got: {codes:?}"
+        "overloaded callee",
     );
 }
 
 #[test]
 fn generic_optional_callee_still_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const o: { pick?: <T>(x?: T) => T };\nconst r = o.pick();\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "expected both TS2722 and TS18048 for generic callee; got: {codes:?}"
+        "generic callee",
     );
 }
 
@@ -168,67 +184,49 @@ fn generic_optional_callee_still_gets_companion() {
 
 #[test]
 fn class_property_initializer_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const src: { get?: () => number };\nclass Holder { slot = src.get(); }\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "property declarations infer through the quick-type path; got: {codes:?}"
+        "property declarations infer through the quick-type path",
     );
 }
 
 #[test]
 fn static_class_property_initializer_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const src: { get?: () => number };\nclass Holder { static slot = src.get(); }\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "static property declarations infer through the quick-type path; got: {codes:?}"
+        "static property declarations infer through the quick-type path",
     );
 }
 
 #[test]
 fn parameter_default_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const env: { port?: () => number };\nfunction serve(p = env.port()) {}\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "parameter defaults infer through the quick-type path; got: {codes:?}"
+        "parameter defaults infer through the quick-type path",
     );
 }
 
 #[test]
 fn binding_element_default_gets_companion_even_when_pattern_is_annotated() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const o: { f?: () => number };\nconst { n = o.f() }: { n?: number } = {};\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "binding-element defaults always take the quick-type path; got: {codes:?}"
+        "binding-element defaults always take the quick-type path",
     );
 }
 
 #[test]
 fn destructuring_from_call_initializer_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const o: { f?: () => { p: number } };\nconst { p } = o.f();\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "binding-pattern declarations infer through the quick-type path; got: {codes:?}"
+        "binding-pattern declarations infer through the quick-type path",
     );
 }
 
 #[test]
 fn for_loop_initializer_declaration_gets_companion() {
-    let codes = check_source_strict_codes(
+    assert_companion_fires(
         "declare const o: { g?: () => number };\nfor (const n = o.g(); ;) { break; }\n",
-    );
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "for-init declarations infer through the quick-type path; got: {codes:?}"
+        "for-init declarations infer through the quick-type path",
     );
 }
 
@@ -238,11 +236,9 @@ fn for_loop_initializer_declaration_gets_companion() {
 
 #[test]
 fn parenthesized_initializer_still_gets_companion() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nconst r = ((o.f()));\n");
-    assert!(
-        codes.contains(&2722) && codes.contains(&18048),
-        "parentheses are skipped by the quick-type path; got: {codes:?}"
+    assert_companion_fires(
+        "declare const o: { f?: () => number };\nconst r = ((o.f()));\n",
+        "parentheses are skipped by the quick-type path",
     );
 }
 
@@ -329,116 +325,81 @@ fn entity_name_of_99_utf16_units_keeps_named_variant() {
 
 #[test]
 fn bare_statement_call_reports_invoke_only() {
-    let codes = check_source_strict_codes("declare const o: { f?: () => void };\no.f();\n");
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048) && !codes.contains(&2532),
-        "statement calls do not take the quick-type path; got: {codes:?}"
+    assert_invoke_only(
+        "declare const o: { f?: () => void };\no.f();\n",
+        "statement calls do not take the quick-type path",
     );
 }
 
 #[test]
 fn annotated_variable_reports_invoke_only() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => void };\nconst r: void = o.f();\n");
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "annotated declarations do not take the quick-type path; got: {codes:?}"
+    assert_invoke_only(
+        "declare const o: { f?: () => void };\nconst r: void = o.f();\n",
+        "annotated declarations do not take the quick-type path",
     );
 }
 
 #[test]
 fn annotated_class_property_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\nclass H { p: number | undefined = o.f(); }\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "annotated properties do not take the quick-type path; got: {codes:?}"
+        "annotated properties do not take the quick-type path",
     );
 }
 
 #[test]
 fn annotated_parameter_default_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\nfunction u(p: number | undefined = o.f()) {}\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "annotated parameters do not take the quick-type path; got: {codes:?}"
+        "annotated parameters do not take the quick-type path",
     );
 }
 
 #[test]
 fn assignment_reports_invoke_only() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nlet t;\nt = o.f();\n");
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "assignments do not take the quick-type path; got: {codes:?}"
+    assert_invoke_only(
+        "declare const o: { f?: () => number };\nlet t;\nt = o.f();\n",
+        "assignments do not take the quick-type path",
     );
 }
 
 #[test]
 fn argument_position_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\ndeclare function sink(v: unknown): void;\nsink(o.f());\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "call arguments do not take the quick-type path; got: {codes:?}"
+        "call arguments do not take the quick-type path",
     );
 }
 
 #[test]
 fn return_position_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\nfunction relay() { return o.f(); }\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "return expressions do not take the quick-type path; got: {codes:?}"
+        "return expressions do not take the quick-type path",
     );
 }
 
 #[test]
 fn as_assertion_initializer_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\nconst r = o.f() as unknown;\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "assertion initializers short-circuit the quick-type path; got: {codes:?}"
+        "assertion initializers short-circuit the quick-type path",
     );
 }
 
 #[test]
 fn satisfies_initializer_reports_invoke_only() {
-    let codes = check_source_strict_codes(
+    assert_invoke_only(
         "declare const o: { f?: () => number };\nconst r = o.f() satisfies unknown;\n",
-    );
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "satisfies initializers do not take the quick-type path; got: {codes:?}"
+        "satisfies initializers do not take the quick-type path",
     );
 }
 
 #[test]
 fn enum_member_initializer_reports_invoke_only() {
-    let codes =
-        check_source_strict_codes("declare const o: { f?: () => number };\nenum E { A = o.f() }\n");
-    assert!(codes.contains(&2722), "expected TS2722; got: {codes:?}");
-    assert!(
-        !codes.contains(&18048),
-        "enum members are not variable-like declarations; got: {codes:?}"
+    assert_invoke_only(
+        "declare const o: { f?: () => number };\nenum E { A = o.f() }\n",
+        "enum members are not variable-like declarations",
     );
 }
 
