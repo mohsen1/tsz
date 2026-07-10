@@ -49,24 +49,38 @@ fn assert_neither_fires(source: &str, context: &str) {
     );
 }
 
+/// Assert the invoke-family diagnostic fired together with a companion of
+/// the given code and exact message.
+fn assert_invoke_and_companion_message(
+    source: &str,
+    invoke_code: u32,
+    companion_code: u32,
+    expected_msg: &str,
+) {
+    let messages = check_source_strict_messages(source);
+    assert!(
+        messages.iter().any(|(code, _)| *code == invoke_code),
+        "expected TS{invoke_code}; got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|(code, msg)| *code == companion_code && msg == expected_msg),
+        "expected TS{companion_code} companion {expected_msg:?}; got: {messages:?}"
+    );
+}
+
 // =========================================================================
 // Companion fires: variable declarations
 // =========================================================================
 
 #[test]
 fn const_from_optional_method_call_emits_invoke_and_companion() {
-    let messages = check_source_strict_messages(
+    assert_invoke_and_companion_message(
         "declare const obj: { run?: () => void };\nconst out = obj.run();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2722),
-        "expected TS2722; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 18048 && msg == "'obj.run' is possibly 'undefined'."),
-        "expected TS18048 companion naming the callee; got: {messages:?}"
+        2722,
+        18048,
+        "'obj.run' is possibly 'undefined'.",
     );
 }
 
@@ -75,76 +89,47 @@ fn issue_witness_key_remapped_homomorphic_mapped_type_getter() {
     // Direct witness from issue #15677: optional member produced by an
     // `as`-remapped homomorphic mapped type keeps its optionality, and the
     // declaration-inferred call reports both TS2722 and TS18048.
-    let messages = check_source_strict_messages(
+    assert_invoke_and_companion_message(
         "type Src = { a?: number; b: string };\n\
          type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };\n\
          declare const g: Getters<Src>;\n\
          const x = g.getA();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2722),
-        "expected TS2722; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 18048 && msg == "'g.getA' is possibly 'undefined'."),
-        "expected TS18048 companion; got: {messages:?}"
+        2722,
+        18048,
+        "'g.getA' is possibly 'undefined'.",
     );
 }
 
 #[test]
 fn identity_key_remap_without_intrinsic_keeps_optionality_pairing() {
-    let messages = check_source_strict_messages(
+    assert_invoke_and_companion_message(
         "type Model = { load?: () => number };\n\
          type Same<T> = { [P in keyof T as P]: T[P] };\n\
          declare const store: Same<Model>;\n\
          const value = store.load();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2722),
-        "expected TS2722; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 18048 && msg == "'store.load' is possibly 'undefined'."),
-        "expected TS18048 companion; got: {messages:?}"
+        2722,
+        18048,
+        "'store.load' is possibly 'undefined'.",
     );
 }
 
 #[test]
 fn null_callee_emits_ts2721_and_ts18047() {
-    let messages = check_source_strict_messages(
+    assert_invoke_and_companion_message(
         "declare const box: { open: (() => void) | null };\nconst r = box.open();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2721),
-        "expected TS2721; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 18047 && msg == "'box.open' is possibly 'null'."),
-        "expected TS18047 companion; got: {messages:?}"
+        2721,
+        18047,
+        "'box.open' is possibly 'null'.",
     );
 }
 
 #[test]
 fn null_or_undefined_callee_emits_ts2723_and_ts18049() {
-    let messages = check_source_strict_messages(
+    assert_invoke_and_companion_message(
         "declare const cfg: { init: (() => void) | null | undefined };\nconst r = cfg.init();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2723),
-        "expected TS2723; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 18049
-                && msg == "'cfg.init' is possibly 'null' or 'undefined'."),
-        "expected TS18049 companion; got: {messages:?}"
+        2723,
+        18049,
+        "'cfg.init' is possibly 'null' or 'undefined'.",
     );
 }
 
@@ -253,18 +238,12 @@ fn parenthesized_initializer_still_gets_companion() {
 
 #[test]
 fn parenthesized_callee_gets_object_variant_companion() {
-    let messages = check_source_strict_messages(
+    // Parenthesized callees are not entity names, so tsc reports TS2532.
+    assert_invoke_and_companion_message(
         "declare const o: { f?: () => number };\nconst r = (o.f)();\n",
-    );
-    assert!(
-        messages.iter().any(|(code, _)| *code == 2722),
-        "expected TS2722; got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|(code, msg)| *code == 2532 && msg == "Object is possibly 'undefined'."),
-        "parenthesized callees are not entity names, so tsc reports TS2532; got: {messages:?}"
+        2722,
+        2532,
+        "Object is possibly 'undefined'.",
     );
 }
 
