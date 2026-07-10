@@ -2,7 +2,10 @@
 //!
 //! Verifies that assigning to readonly properties emits TS2540.
 
-use tsz_checker::test_utils::{check_source_code_messages, check_source_codes};
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_source_code_messages, check_source_codes, check_source_with_libs, load_lib_files,
+};
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     check_source_codes(source).contains(&code)
@@ -629,17 +632,32 @@ declare const drn: DRN;
 
 #[test]
 fn test_deep_readonly_function_branch_all_levels_error() {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    assert!(!libs.is_empty(), "expected es5.d.ts to load");
+
     for (expr, label) in [
         ("drn.a = { b: { c: 1 } };", "level 1 (drn.a)"),
         ("drn.a.b = { c: 1 };", "level 2 (drn.a.b)"),
         ("drn.a.b.c = 5;", "level 3 (drn.a.b.c)"),
     ] {
         let source = format!("{DEEP_READONLY_PREAMBLE}\n{expr}");
+        let diagnostics =
+            check_source_with_libs(&source, "test.ts", CheckerOptions::default(), &libs);
         assert!(
-            has_error_with_code(&source, 2540),
-            "Should emit TS2540 at {label}"
+            diagnostics.iter().any(|diag| diag.code == 2540),
+            "Should emit TS2540 at {label}, got: {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn test_deep_readonly_function_branch_without_lib_does_not_synthesize_readonly_error() {
+    let source = format!("{DEEP_READONLY_PREAMBLE}\ndrn.a.b.c = 5;");
+    let codes = check_source_codes(&source);
+    assert!(
+        !codes.contains(&2540),
+        "an unresolved Function must not synthesize TS2540, got: {codes:?}"
+    );
 }
 
 #[test]
