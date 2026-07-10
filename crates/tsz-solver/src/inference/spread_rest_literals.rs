@@ -130,11 +130,11 @@ fn tuple_constraint_element_at(
         return Some(elems[index].type_id);
     }
     let suffix = &elems[rest_pos + 1..];
-    if !suffix.is_empty() && index + suffix.len() >= count {
+    // `index < count` always (the packed tuple has `count` elements), so this
+    // single guard also bounds `from_end` within the suffix.
+    if index + suffix.len() >= count {
         let from_end = count - index;
-        if from_end <= suffix.len() {
-            return Some(suffix[suffix.len() - from_end].type_id);
-        }
+        return Some(suffix[suffix.len() - from_end].type_id);
     }
     let rest_inner = elems[rest_pos].type_id;
     match db.lookup(rest_inner) {
