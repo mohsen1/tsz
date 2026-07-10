@@ -1,11 +1,11 @@
 use crate::query_boundaries::indexed_access_key_space as key_space_query;
+use crate::query_boundaries::property_access::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::operations::property::PropertyAccessResult;
 
 /// Check if a property with the given name is private or protected on the given type.
 /// Delegates to the solver's type query via `query_boundaries`.

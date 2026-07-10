@@ -2,9 +2,9 @@
 
 use crate::context::CheckerContext;
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
+use crate::query_boundaries::common::TypeEnvironment;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
-use tsz_solver::relations::subtype::TypeEnvironment;
 
 impl CheckerContext<'_> {
     /// Mirror a definition body into the flow-analyzer env (`type_environment`)

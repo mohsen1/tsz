@@ -7,11 +7,12 @@
 //! `IteratorConstructor` can inherit an abstract construct signature without
 //! polluting the global namespace with the helper class declaration.
 
+use crate::query_boundaries::signature_building::user_type_param_info;
 use crate::state::CheckerState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, CallableShape, TypeId, TypeParamInfo, TypeParamOrigin};
+use tsz_solver::{CallSignature, CallableShape, TypeId, TypeParamInfo};
 
 use super::lib_resolution::{
     keyword_name_to_type_id, keyword_syntax_to_type_id, resolve_scope_chain,
@@ -159,13 +160,12 @@ impl<'a> CheckerState<'a> {
                             .get_identifier_text(param.constraint)
                             .and_then(keyword_name_to_type_id)
                     });
-                Some(TypeParamInfo {
-                    name: name_atom,
+                Some(user_type_param_info(
+                    name_atom,
                     constraint,
                     default,
-                    is_const: arena.has_modifier(&param.modifiers, SyntaxKind::ConstKeyword),
-                    origin: TypeParamOrigin::User,
-                })
+                    arena.has_modifier(&param.modifiers, SyntaxKind::ConstKeyword),
+                ))
             })
             .collect()
     }

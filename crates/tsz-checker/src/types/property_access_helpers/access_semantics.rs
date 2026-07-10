@@ -4,6 +4,7 @@
 //! checks, and const expando key resolution.
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::common::TypeResolver;
 use crate::query_boundaries::property_access as property_access_query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -538,8 +539,6 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::definition_identity::lazy_def_id;
         use crate::query_boundaries::property_access::type_has_property;
         use crate::query_boundaries::type_checking_utilities::application_base;
-        use tsz_solver::relations::subtype::TypeResolver;
-
         if type_has_property(self.ctx.types, type_id, prop_atom) {
             return true;
         }
