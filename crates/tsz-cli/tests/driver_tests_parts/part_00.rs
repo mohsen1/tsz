@@ -640,21 +640,7 @@ fn load_real_default_lib_files(target: ScriptTarget) -> Vec<Arc<tsz_binder::lib_
     tsz::parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs")
 }
 
-fn load_typescript_fixture(rel_path: &str) -> Option<String> {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        manifest_dir.join("../../").join(rel_path),
-        manifest_dir.join("../../../").join(rel_path),
-    ];
-
-    for candidate in candidates {
-        if candidate.exists() {
-            return std::fs::read_to_string(candidate).ok();
-        }
-    }
-
-    None
-}
+use tsz_checker::test_utils::load_typescript_fixture;
 
 #[test]
 fn compile_document_create_element_overload_augmentation_no_false_ts2430() {

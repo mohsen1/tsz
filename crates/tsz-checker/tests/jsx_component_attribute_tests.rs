@@ -431,21 +431,7 @@ const _ok = <Comp />;
     jsx_codes(&source)
 }
 
-fn load_typescript_fixture(rel_path: &str) -> Option<String> {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        manifest_dir.join("../../").join(rel_path),
-        manifest_dir.join("../../../").join(rel_path),
-    ];
-
-    for candidate in candidates {
-        if candidate.exists() {
-            return std::fs::read_to_string(candidate).ok();
-        }
-    }
-
-    None
-}
+use tsz_checker::test_utils::load_typescript_fixture;
 
 /// Helper that wraps `jsx_diagnostics` but returns only unique error codes.
 fn jsx_codes(source: &str) -> Vec<u32> {

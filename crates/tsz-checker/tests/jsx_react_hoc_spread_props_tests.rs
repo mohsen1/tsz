@@ -35,18 +35,7 @@ fn has_code(diags: &[(u32, String)], code: u32) -> bool {
     diags.iter().any(|(diag_code, _)| *diag_code == code)
 }
 
-fn load_typescript_fixture(rel_path: &str) -> Option<String> {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        manifest_dir.join("../../").join(rel_path),
-        manifest_dir.join("../../../").join(rel_path),
-    ];
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.exists())
-        .and_then(|candidate| std::fs::read_to_string(candidate).ok())
-}
+use tsz_checker::test_utils::load_typescript_fixture;
 
 const REACT_PREAMBLE: &str = r#"
 declare namespace JSX {
