@@ -652,7 +652,12 @@ impl<'a> CheckerState<'a> {
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
         // Try solver-level iterator resolution first (handles Application types correctly)
-        if let Some(yield_type) = iterator_info_yield_type(self.ctx.types, type_id, false) {
+        // `ANY` is also the solver's unresolved-iterator sentinel. Let the
+        // environment-aware property chain distinguish that from an explicit
+        // `Generator<any>` yield, mirroring the async iterator path above.
+        if let Some(yield_type) = iterator_info_yield_type(self.ctx.types, type_id, false)
+            && yield_type != TypeId::ANY
+        {
             return yield_type;
         }
 
