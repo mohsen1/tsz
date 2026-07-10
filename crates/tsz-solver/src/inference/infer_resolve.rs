@@ -131,8 +131,13 @@ impl<'a> InferenceContext<'a> {
         &self,
         contra_candidates: &[crate::inference::infer::InferenceCandidate],
     ) -> TypeId {
+        // tsc clears both candidate lists when a better inference priority is
+        // encountered and then records only candidates at that priority. TSZ
+        // retains the full history, so apply the equivalent filter here before
+        // deduplication or combination.
+        let prioritized_candidates = self.filter_candidates_by_priority(contra_candidates);
         let mut contra_types: Vec<InferenceCandidate> = Vec::new();
-        for candidate in contra_candidates {
+        for candidate in &prioritized_candidates {
             if !contra_types
                 .iter()
                 .any(|existing| existing.type_id == candidate.type_id)
@@ -186,13 +191,30 @@ impl<'a> InferenceContext<'a> {
             return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
-        // Use intersection for all contra-candidate priorities. In tsc (strict mode),
-        // `getCommonSubtype` calls `getIntersectionType` when strictNullChecks is on,
-        // which is the default. The previous tournament path was a workaround for tsz
-        // not simplifying `string & number` to `never`, but the interner now correctly
-        // reduces disjoint primitive intersections to `never` via
-        // `intersection_has_disjoint_primitives`, so intersection is safe here.
-        self.interner.intersection(effective_types)
+        let best_priority = contra_types.first().map(|candidate| candidate.priority);
+        let priority_implies_combination = best_priority.is_some_and(|priority| {
+            matches!(
+                priority,
+                InferencePriority::ReturnType
+                    | InferencePriority::LowPriority
+                    | InferencePriority::MappedType
+                    | InferencePriority::LiteralKeyof
+            )
+        });
+        if priority_implies_combination {
+            return self.interner.intersection(effective_types);
+        }
+
+        // Mirror tsc's `getCommonSubtype`: walk candidates from left to right
+        // and replace the current winner only when the new candidate is its
+        // subtype. Unrelated candidates therefore keep the first inference.
+        let mut winner = effective_types[0];
+        for &candidate in &effective_types[1..] {
+            if self.is_subtype(candidate, winner) {
+                winner = candidate;
+            }
+        }
+        winner
     }
 
     // =========================================================================
