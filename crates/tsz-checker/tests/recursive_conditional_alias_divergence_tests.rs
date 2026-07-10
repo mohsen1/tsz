@@ -112,10 +112,10 @@ function f20<T, U extends T>(x: Unpack1<T>, y: Unpack2<T>) {
 }
 "#;
     let diags = check_source_diagnostics(source);
-    let codes = codes(&diags);
     assert!(
         diags.is_empty(),
-        "identical recursive conditional aliases must stay related. Codes: {codes:?}"
+        "identical recursive conditional aliases must stay related. Codes: {:?}",
+        codes(&diags)
     );
 }
 

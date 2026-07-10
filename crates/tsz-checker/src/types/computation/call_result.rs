@@ -1645,11 +1645,8 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
                 let actual_type_params = self.referenced_type_params(refined_actual);
-                let expected_type_params = self.referenced_type_params(refined_expected);
                 if !actual_type_params.is_empty()
-                    && actual_type_params
-                        .iter()
-                        .all(|ty| expected_type_params.contains(ty))
+                    && actual_type_params.is_subset(&self.referenced_type_params(refined_expected))
                 {
                     return true;
                 }
@@ -1711,14 +1708,12 @@ impl<'a> CheckerState<'a> {
             }
             // Generalization of the bare-parameter rule above: the in-flight
             // `infer` holes already returned early, so every type parameter
-            // reaching this point is a RIGID enclosing-scope parameter that
-            // no later inference pass will substitute. When
-            // both sides reference exactly the same non-empty parameter set,
-            // the solver's rejection was computed against those rigid
-            // parameters and is permanent (e.g. two structurally divergent
-            // recursive conditional aliases applied to the same parameter);
-            // deferring would silently drop a real TS2345, where tsc checks
-            // the instantiated signature directly and reports.
+            // reaching this point is a RIGID enclosing-scope parameter that no
+            // later inference pass will substitute — a rejection computed
+            // against the same parameter set on both sides is permanent (e.g.
+            // two structurally divergent recursive conditional aliases applied
+            // to the same parameter). Deferring would silently drop a real
+            // TS2345; tsc checks the instantiated signature and reports.
             let actual_type_params = self.referenced_type_params(actual);
             if !actual_type_params.is_empty()
                 && actual_type_params == self.referenced_type_params(expected)
