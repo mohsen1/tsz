@@ -1776,12 +1776,135 @@ impl<'a> InferenceContext<'a> {
         {
             // Convert captured strings to literal types and add as candidates
             for (infer_var, captured_string) in captures {
-                let literal_type = self.interner.literal_string(&captured_string);
+                let literal_type =
+                    self.coerce_captured_template_segment(infer_var, &captured_string);
                 self.add_candidate(infer_var, literal_type, priority);
             }
         }
 
         Ok(())
+    }
+
+    /// Coerce a captured template segment to the declared constraint of its
+    /// inference variable, mirroring tsc's `inferToTemplateLiteralType`.
+    ///
+    /// When a template capture flows into a type variable whose declared
+    /// constraint admits a non-string primitive, tsc infers the literal type
+    /// of the highest-priority constituent the text can inhabit: a `number`
+    /// constituent captures the numeric literal only when the text
+    /// round-trips through JS `Number::toString` (`isValidNumberString` with
+    /// `roundTripOnly`), `bigint` similarly, and `boolean`/`null`/`undefined`
+    /// match their exact intrinsic names. A `string` constituent (or no
+    /// usable constituent) keeps the plain string-literal capture.
+    fn coerce_captured_template_segment(
+        &mut self,
+        infer_var: InferenceVar,
+        captured: &str,
+    ) -> TypeId {
+        let string_capture = self.interner.literal_string(captured);
+        let Some(constraint) = self.get_declared_constraint(infer_var) else {
+            return string_capture;
+        };
+
+        let members: Vec<TypeId> =
+            crate::type_queries::get_union_members(self.interner, constraint)
+                .map(|members| members.to_vec())
+                .unwrap_or_else(|| vec![constraint]);
+
+        // `isValidNumberString(captured, roundTripOnly = true)`.
+        let round_trip_number = captured
+            .parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && crate::utils::js_number_to_string(*v) == captured);
+        // `isValidBigIntString(captured, roundTripOnly = true)`: an optional
+        // sign followed by digits whose canonical form reproduces the text.
+        let round_trip_bigint: Option<(bool, &str)> = {
+            let (negative, digits) = captured
+                .strip_prefix('-')
+                .map_or((false, captured), |rest| (true, rest));
+            let canonical = digits.trim_start_matches('0');
+            let canonical = if canonical.is_empty() { "0" } else { canonical };
+            (!digits.is_empty()
+                && digits.bytes().all(|b| b.is_ascii_digit())
+                && canonical == digits
+                && !(negative && canonical == "0"))
+                .then_some((negative, digits))
+        };
+
+        // tsc's reduceLeft chain expresses a fixed constituent priority;
+        // lower rank wins. TemplateLiteral / StringMapping / Enum
+        // constituents (and unresolved Lazy constraints) fall through to the
+        // string capture, as does a text that matches no constituent.
+        let mut best: Option<(u8, TypeId)> = None;
+        let mut consider = |rank: u8, result: TypeId, best: &mut Option<(u8, TypeId)>| {
+            if best.is_none_or(|(existing, _)| rank < existing) {
+                *best = Some((rank, result));
+            }
+        };
+        for &member in &members {
+            match member {
+                TypeId::STRING => consider(0, string_capture, &mut best),
+                TypeId::NUMBER => {
+                    if let Some(value) = round_trip_number {
+                        consider(2, self.interner.literal_number(value), &mut best);
+                    }
+                }
+                TypeId::BIGINT => {
+                    if let Some((negative, digits)) = round_trip_bigint {
+                        let literal = self.interner.literal_bigint_with_sign(negative, digits);
+                        consider(4, literal, &mut best);
+                    }
+                }
+                TypeId::BOOLEAN => {
+                    let result = match captured {
+                        "true" => TypeId::BOOLEAN_TRUE,
+                        "false" => TypeId::BOOLEAN_FALSE,
+                        _ => TypeId::BOOLEAN,
+                    };
+                    consider(6, result, &mut best);
+                }
+                TypeId::BOOLEAN_TRUE => {
+                    if captured == "true" {
+                        consider(7, member, &mut best);
+                    }
+                }
+                TypeId::BOOLEAN_FALSE => {
+                    if captured == "false" {
+                        consider(7, member, &mut best);
+                    }
+                }
+                TypeId::UNDEFINED => {
+                    if captured == "undefined" {
+                        consider(8, member, &mut best);
+                    }
+                }
+                TypeId::NULL => {
+                    if captured == "null" {
+                        consider(9, member, &mut best);
+                    }
+                }
+                _ => match self.interner.lookup(member) {
+                    Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                        if self.interner.resolve_atom_ref(atom).as_ref() == captured {
+                            consider(1, member, &mut best);
+                        }
+                    }
+                    Some(TypeData::Literal(LiteralValue::Number(n))) => {
+                        if round_trip_number == Some(n.0) {
+                            consider(3, member, &mut best);
+                        }
+                    }
+                    Some(TypeData::Literal(LiteralValue::BigInt(atom))) => {
+                        if self.interner.resolve_atom_ref(atom).as_ref() == captured {
+                            consider(5, member, &mut best);
+                        }
+                    }
+                    _ => {}
+                },
+            }
+        }
+
+        best.map_or(string_capture, |(_, result)| result)
     }
 
     /// Extract a string literal value from a `TypeId`.

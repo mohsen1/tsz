@@ -256,9 +256,7 @@ impl TypeInterner {
                         self.resolve_atom(atom)
                     }
                     LiteralValue::Number(num) => {
-                        crate::relations::subtype::rules::literals::format_number_for_template(
-                            num.0,
-                        )
+                        crate::utils::js_number_to_string(num.0).into_owned()
                     }
                     LiteralValue::Boolean(value) => {
                         if value {

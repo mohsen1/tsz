@@ -1457,9 +1457,7 @@ fn collect_exact_literal_property_keys_with_symbol_info_inner(
             Some(())
         }
         Some(TypeData::Literal(LiteralValue::Number(n))) => {
-            let atom = db.intern_string(
-                &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
-            );
+            let atom = db.intern_string(&crate::utils::js_number_to_string(n.0));
             keys.insert(ExactLiteralPropertyKey {
                 name: atom,
                 is_symbol_named: false,

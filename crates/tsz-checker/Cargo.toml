@@ -2447,3 +2447,7 @@ path = "tests/generic_mapped_intersection_deferral_tests.rs"
 [[test]]
 name = "spread_rest_literal_preservation_tests"
 path = "tests/spread_rest_literal_preservation_tests.rs"
+
+[[test]]
+name = "js_number_string_semantics_tests"
+path = "tests/js_number_string_semantics_tests.rs"

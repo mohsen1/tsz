@@ -1160,9 +1160,12 @@ impl<'a> CheckerState<'a> {
             && node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.ctx.arena.get_literal(node)
         {
-            let property_name = &lit.text;
+            // Canonicalize through JS Number::toString so source spellings
+            // like `1e21` look up the declared property name `"1e+21"`.
+            let property_name = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                .unwrap_or_else(|| lit.text.clone());
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self.resolve_property_access_with_env(resolved_type, property_name);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,

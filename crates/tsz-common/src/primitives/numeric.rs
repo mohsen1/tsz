@@ -1,4 +1,60 @@
-//! Utilities for parsing numeric literals.
+//! Utilities for parsing and stringifying numeric literals.
+
+use std::borrow::Cow;
+
+/// Converts a JavaScript number to its string representation, matching the
+/// ECMAScript `Number::toString(10)` abstract operation.
+///
+/// This is the single owner for JS number→string conversion. Every semantic
+/// or emit decision that turns a numeric value into JS text (template literal
+/// type evaluation, property-key canonicalization, indexed-access key
+/// derivation, `infer`-pattern round-trip checks, JS/DTS numeric emit) must
+/// route through it: raw Rust `Display` diverges from JS exactly where the
+/// spec switches notation (`1e21` → JS `"1e+21"` vs Rust
+/// `"1000000000000000000000"`, `1e-7` → JS `"1e-7"` vs Rust `"0.0000001"`,
+/// `-0` → JS `"0"` vs Rust `"-0"`).
+///
+/// Returns `Cow::Borrowed` for static special cases (`NaN`, `0`, infinities)
+/// and `Cow::Owned` for dynamically formatted numbers.
+pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
+    if value.is_nan() {
+        return Cow::Borrowed("NaN");
+    }
+    if value == 0.0 {
+        // Covers -0.0 as well: IEEE 754 comparison treats -0 == 0, and JS
+        // Number::toString(-0) is "0".
+        return Cow::Borrowed("0");
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            Cow::Borrowed("-Infinity")
+        } else {
+            Cow::Borrowed("Infinity")
+        };
+    }
+
+    // ECMAScript Number::toString uses scientific notation when the decimal
+    // exponent is >= 21 or <= -7, i.e. |value| >= 1e21 or |value| < 1e-6.
+    let abs = value.abs();
+    if !(1e-6..1e21).contains(&abs) {
+        let mut formatted = format!("{value:e}");
+        if let Some(split) = formatted.find('e') {
+            let (mantissa, exp) = formatted.split_at(split);
+            let exp_digits = exp.strip_prefix('e').unwrap_or("");
+            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
+                ('-', digits)
+            } else {
+                ('+', exp_digits)
+            };
+            let trimmed = digits.trim_start_matches('0');
+            let digits = if trimmed.is_empty() { "0" } else { trimmed };
+            formatted = format!("{mantissa}e{sign}{digits}");
+        }
+        return Cow::Owned(formatted);
+    }
+
+    Cow::Owned(value.to_string())
+}
 
 /// Parse a numeric literal text representation into a f64 value.
 /// Supports standard floating point literals as well as 0x, 0b, and 0o prefixes.

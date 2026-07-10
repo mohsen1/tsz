@@ -441,9 +441,9 @@ impl<'a> FlowAnalyzer<'a> {
             let key_type = self.fallback_expression_type_from_syntax(computed.expression)?;
             if let Some(literal) = literal_value(self.interner, key_type) {
                 return Some(match literal {
-                    tsz_solver::LiteralValue::Number(value) => {
-                        self.interner.intern_string(&value.0.to_string())
-                    }
+                    tsz_solver::LiteralValue::Number(value) => self
+                        .interner
+                        .intern_string(&tsz_solver::utils::js_number_to_string(value.0)),
                     tsz_solver::LiteralValue::Boolean(value) => self
                         .interner
                         .intern_string(if value { "true" } else { "false" }),

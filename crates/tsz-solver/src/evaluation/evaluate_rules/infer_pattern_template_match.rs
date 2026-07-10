@@ -72,10 +72,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let literal = self.interner().literal_number(value);
-        let round_trips = match value {
-            v if v.fract() == 0.0 && v.abs() < 1e15 => (v as i64).to_string() == captured,
-            v => format!("{v}") == captured,
-        };
+        // tsc's isValidNumberString(s, roundTripOnly=true): the capture keeps
+        // its literal type only when JS Number::toString reproduces the text.
+        let round_trips = crate::utils::js_number_to_string(value) == captured;
         Some(if round_trips { literal } else { TypeId::NUMBER })
     }
 

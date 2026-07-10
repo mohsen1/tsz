@@ -194,7 +194,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             }
                         }
                         LiteralValue::Number(num) => {
-                            let num_str = format_number_for_template(num.0);
+                            let num_str = crate::utils::js_number_to_string(num.0).into_owned();
                             if let Some(remaining) = remaining.strip_prefix(&num_str) {
                                 self.match_template_literal_recursive(
                                     remaining,
@@ -468,7 +468,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         }
                     }
                     LiteralValue::Number(num) => {
-                        let num_str = format_number_for_template(num.0);
+                        let num_str = crate::utils::js_number_to_string(num.0).into_owned();
                         if remaining.starts_with(&num_str) {
                             self.match_template_literal_recursive(
                                 &remaining[num_str.len()..],
@@ -1029,7 +1029,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
                 self.interner.resolve_atom(*atom)
             }
-            LiteralValue::Number(n) => format_number_for_template(n.0),
+            LiteralValue::Number(n) => crate::utils::js_number_to_string(n.0).into_owned(),
             LiteralValue::Boolean(b) => {
                 if *b {
                     "true".to_string()
@@ -1044,30 +1044,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // =============================================================================
 // Helper functions for template literal matching
 // =============================================================================
-
-/// Format a number for template literal string coercion.
-/// Follows JavaScript's number-to-string conversion rules.
-pub(crate) fn format_number_for_template(num: f64) -> String {
-    if num.is_nan() {
-        return "NaN".to_string();
-    }
-    if num.is_infinite() {
-        return if num.is_sign_positive() {
-            "Infinity".to_string()
-        } else {
-            "-Infinity".to_string()
-        };
-    }
-    // Use JavaScript-like formatting (no trailing .0 for integers)
-    if num.fract() == 0.0 && num.abs() < 1e15 {
-        format!("{num:.0}")
-    } else {
-        // Use default Rust formatting which is close enough for most cases
-        let s = format!("{num}");
-        // Remove unnecessary trailing zeros after decimal point
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
-    }
-}
 
 /// Find the length of a valid number at the start of a string.
 pub(crate) fn find_number_length(s: &str) -> usize {

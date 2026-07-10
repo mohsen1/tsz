@@ -69,9 +69,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 key_literal: type_id,
             }),
             TypeData::Literal(LiteralValue::Number(n)) => {
-                let name = self.interner().intern_string(
-                    &crate::relations::subtype::rules::literals::format_number_for_template(n.0),
-                );
+                let name = self
+                    .interner()
+                    .intern_string(&crate::utils::js_number_to_string(n.0));
                 Some(MappedKey {
                     name,
                     key_literal: type_id,
