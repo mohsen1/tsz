@@ -214,7 +214,17 @@
 # 6.0.3 cache. See #15631; the sibling yield*-delegation inference gap is
 # tracked in #15632.
 
-# PR #15375 run 28571773361 at b675fbc17d recovered the core PR CI aggregate
-# and found these exact current-main rows still failing. Keep them listed as
-# path-based runway so the aggregate rejects any new unlisted conformance drift.
-TypeScript/tests/cases/compiler/recursiveConditionalTypes.ts
+# recursiveConditionalTypes.ts: RESOLVED (last row of the PR #15375 batch; its
+# siblings were retired by #15462 and #15631). One missing TS2345 on
+# `f21(y, x)`: relating two structurally divergent recursive conditional
+# aliases (`Grow2<[], T>` vs `Grow1<[], T>`) diverged instead of failing.
+# Two-part fix: (1) `subtype_of_conditional_target` now treats a failed
+# true-branch relation as decisive instead of also descending into the
+# recursive false branch, so the relation bottoms out at the first element
+# mismatch like tsc rather than burning the depth budget (spurious TS2859 /
+# depth-exceeded assumed-related); (2) the generic-call contextual-mismatch
+# deferral no longer swallows a rejection whose actual and expected sides
+# reference exactly the same set of enclosing-scope type parameters — no
+# later inference re-instantiates such a call, so the rejection is permanent.
+# Covered by recursive_conditional_alias_divergence_tests and verified 1/1 by
+# the conformance runner against the pinned 6.0.3 cache. See #15665.

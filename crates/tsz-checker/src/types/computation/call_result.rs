@@ -1717,6 +1717,30 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
+            // Generalization of the bare-parameter rule: when both sides
+            // reference exactly the same non-empty set of type parameters (and
+            // carry no in-flight `infer` holes — those returned above), every
+            // future substitution applies to both sides identically, and the
+            // solver already rejected the relation against those same rigid
+            // enclosing-scope parameters. Nothing re-instantiates this call
+            // later, so the rejection is permanent — e.g. two structurally
+            // divergent recursive conditional aliases applied to the same
+            // parameter (`Grow2<[], T>` vs `Grow1<[], T>`). Deferring would
+            // silently drop a real TS2345; tsc checks the instantiated
+            // signature directly and reports.
+            let actual_type_params: rustc_hash::FxHashSet<_> =
+                common::collect_referenced_types(self.ctx.types, actual)
+                    .into_iter()
+                    .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                    .collect();
+            let expected_type_params: rustc_hash::FxHashSet<_> =
+                common::collect_referenced_types(self.ctx.types, expected)
+                    .into_iter()
+                    .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
+                    .collect();
+            if !actual_type_params.is_empty() && actual_type_params == expected_type_params {
+                return false;
+            }
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
