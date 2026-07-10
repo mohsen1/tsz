@@ -1803,6 +1803,91 @@ pipe(
 }
 
 #[test]
+fn contextual_parameter_self_referential_no_excess_constraint_renamed_binders() {
+    let source = r#"
+type StrictShape<Expected, Candidate> = Expected & {
+  readonly [Key in Exclude<keyof Candidate, keyof Expected>]: never;
+};
+
+interface Task<out Value> {
+  readonly TaskTypeId: {
+    readonly value: (_: never) => Value;
+  };
+}
+
+declare function flow<Input, Output>(input: Input, step: (input: Input) => Output): Output;
+
+interface Settings<Value> {
+  stop?: (_: Value) => boolean;
+}
+
+declare const cycle: {
+  <Candidate extends StrictShape<Settings<Value>, Candidate>, Value>(
+    settings: Candidate,
+  ): (task: Task<Value>) => Task<Value>;
+};
+
+flow(
+  {} as Task<boolean>,
+  cycle({
+    stop: (flag) => flag,
+  }),
+);
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "self-referential mapped substitution must not depend on binder or property names. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn contextual_parameter_self_referential_no_excess_constraint_rejects_extra_property() {
+    let source = r#"
+type NoExcessProperties<T, U> = T & {
+  readonly [K in Exclude<keyof U, keyof T>]: never;
+};
+
+interface Effect<out A> {
+  readonly EffectTypeId: {
+    readonly _A: (_: never) => A;
+  };
+}
+
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+
+interface RepeatOptions<A> {
+  until?: (_: A) => boolean;
+}
+
+declare const repeat: {
+  <O extends NoExcessProperties<RepeatOptions<A>, O>, A>(
+    options: O,
+  ): (self: Effect<A>) => Effect<A>;
+};
+
+const unexpectedValue: number = 1;
+
+pipe(
+  {} as Effect<boolean>,
+  repeat({
+    until: (x) => x,
+    extra: unexpectedValue,
+  }),
+);
+"#;
+    let diags = relevant_lib_diagnostics(source);
+    assert!(
+        has_diagnostic_message_containing(
+            &diags,
+            2322,
+            "Type 'number' is not assignable to type 'never'",
+        ),
+        "the structural substitution must retain the genuine excess-property error. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn conformance_probe_nested_generic_spread_inference() {
     let source = r#"
 declare function wrap<X>(x: X): { x: X };

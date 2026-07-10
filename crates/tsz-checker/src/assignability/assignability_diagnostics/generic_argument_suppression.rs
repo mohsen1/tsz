@@ -170,20 +170,18 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut substitution = TypeSubstitution::new();
-        let target_display = self.format_type_for_assignability_message(target);
         for referenced in common::collect_referenced_types(self.ctx.types, target) {
             let Some(info) = type_param_info(self.ctx.types, referenced) else {
                 continue;
             };
-            let name = self.ctx.types.resolve_atom_ref(info.name);
             let Some(constraint) = info.constraint else {
-                if target_display.contains(name.as_ref()) {
+                if common::contains_type_parameter_named(self.ctx.types, target, info.name) {
                     substitution.insert(info.name, source);
                 }
                 continue;
             };
             if common::contains_type_parameter_named(self.ctx.types, constraint, info.name)
-                || target_display.contains(name.as_ref())
+                || common::contains_type_parameter_named(self.ctx.types, target, info.name)
             {
                 substitution.insert(info.name, source);
             }
