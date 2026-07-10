@@ -986,7 +986,12 @@ impl CheckerState<'_> {
         });
         self.ctx.rebuild_emitted_diagnostics_from_current();
         for replacement in replacements {
-            self.ctx.push_diagnostic(replacement);
+            self.push_error_at(
+                replacement.start,
+                replacement.length,
+                replacement.message_text,
+                replacement.code,
+            );
         }
     }
 
