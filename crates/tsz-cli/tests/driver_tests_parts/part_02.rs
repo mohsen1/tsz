@@ -1441,14 +1441,10 @@ createInstance(MenuWorkbenchToolBar, {
 
 #[test]
 fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
-    let Some(mut source) = load_typescript_fixture(
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx",
-    ) else {
-        return;
-    };
-    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    );
+    let react16 = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1486,14 +1482,10 @@ fn compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006() {
 
 #[test]
 fn compile_contextually_typed_jsx_children2_include_project_has_no_ts2739() {
-    let Some(mut source) = load_typescript_fixture(
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/contextuallyTypedJsxChildren2.tsx",
-    ) else {
-        return;
-    };
-    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    );
+    let react16 = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1523,9 +1515,7 @@ fn compile_contextually_typed_jsx_children2_include_project_has_no_ts2739() {
     let ts2739: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| {
-            d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
-        })
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE)
         .collect();
 
     assert!(
@@ -1539,9 +1529,7 @@ fn compile_contextually_typed_jsx_children2_include_project_has_no_ts2739() {
 
 #[test]
 fn compile_react16_automatic_jsx_intrinsics_keep_children_and_img_src() {
-    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react16 = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1608,14 +1596,10 @@ export * as two from "./two.js";
 
 #[test]
 fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322() {
-    let Some(mut source) = load_typescript_fixture(
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/jsxCallElaborationCheckNoCrash1.tsx",
-    ) else {
-        return;
-    };
-    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    );
+    let react16 = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1656,14 +1640,10 @@ fn compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322()
 
 #[test]
 fn compile_related_index_react16_fixture_reports_only_distinct_key_ts2322() {
-    let Some(mut source) = load_typescript_fixture(
+    let mut source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts",
-    ) else {
-        return;
-    };
-    let Some(react16) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    );
+    let react16 = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1689,19 +1669,17 @@ fn compile_related_index_react16_fixture_reports_only_distinct_key_ts2322() {
         .collect();
 
     assert!(
-        ts2322_messages
-            .iter()
-            .any(|message| message
-                .contains("Type 'IntrinsicElements[T1]' is not assignable to type 'IntrinsicElements[T2]'.")),
+        ts2322_messages.iter().any(|message| message.contains(
+            "Type 'IntrinsicElements[T1]' is not assignable to type 'IntrinsicElements[T2]'."
+        )),
         "expected the distinct-key indexed-access TS2322; got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
         result.file_infos
     );
     assert!(
-        ts2322_messages
-            .iter()
-            .all(|message| !message.contains("Type '{}' is not assignable to type 'IntrinsicElements[T1]'.")),
+        ts2322_messages.iter().all(|message| !message
+            .contains("Type '{}' is not assignable to type 'IntrinsicElements[T1]'.")),
         "did not expect the false empty-object TS2322; got diagnostics: {:?}\nfiles_read: {:?}\nfile_infos: {:?}",
         result.diagnostics,
         result.files_read,
@@ -1711,11 +1689,9 @@ fn compile_related_index_react16_fixture_reports_only_distinct_key_ts2322() {
 
 #[test]
 fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_outer_ts2345() {
-    let Some(source) = load_typescript_fixture(
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall1.ts",
-    ) else {
-        return;
-    };
+    );
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1774,11 +1750,9 @@ fn compile_generic_call_at_yield_expression_in_generic_call_fixture_reports_oute
 
 #[test]
 fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts2345() {
-    let Some(source) = load_typescript_fixture(
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/genericCallAtYieldExpressionInGenericCall2.ts",
-    ) else {
-        return;
-    };
+    );
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1812,11 +1786,9 @@ fn compile_generic_call_at_yield_expression_in_generic_call2_fixture_has_no_ts23
 
 #[test]
 fn compile_return_type_inference_contextual_parameter_types_in_generator_fixture_has_no_errors() {
-    let Some(source) = load_typescript_fixture(
+    let source = load_typescript_fixture(
         "TypeScript/tests/cases/compiler/returnTypeInferenceContextualParameterTypesInGenerator1.ts",
-    ) else {
-        return;
-    };
+    );
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1843,11 +1815,8 @@ fn compile_return_type_inference_contextual_parameter_types_in_generator_fixture
 
 #[test]
 fn compile_excessive_stack_depth_flat_array_fixture_reports_normalized_jsx_key_target() {
-    let Some(source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/excessiveStackDepthFlatArray.ts")
-    else {
-        return;
-    };
+    let source =
+        load_typescript_fixture("TypeScript/tests/cases/compiler/excessiveStackDepthFlatArray.ts");
 
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

@@ -460,9 +460,7 @@ let err = <Comp><div /><div /></Comp>;
 
 #[test]
 fn jsx_react_class_tuple_children_prefer_declared_tuple_over_injected_react_node() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import React from 'react'
 
@@ -1226,10 +1224,8 @@ declare function dom(...args: any[]): any;
 
 #[test]
 fn jsx_member_component_missing_root_reports_at_member_tag_root() {
-    let react_global =
-        load_typescript_fixture("TypeScript/tests/lib/react18/global.d.ts").unwrap_or_default();
-    let react18 =
-        load_typescript_fixture("TypeScript/tests/lib/react18/react18.d.ts").unwrap_or_default();
+    let react_global = load_typescript_fixture("TypeScript/tests/lib/react18/global.d.ts");
+    let react18 = load_typescript_fixture("TypeScript/tests/lib/react18/react18.d.ts");
     let react_like_lib = format!("{react_global}\n{react18}");
     let source = r#"
 const test = () => "asd";
@@ -1517,9 +1513,7 @@ const l = <div<number>/>;
 
 #[test]
 fn test_jsx_intrinsic_type_arg_errors_skip_react_required_props_noise() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
     let source = r#"
 import * as React from "react";
 type Record<K extends keyof any, T> = { [P in K]: T };

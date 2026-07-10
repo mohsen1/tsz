@@ -35,18 +35,7 @@ fn has_code(diags: &[(u32, String)], code: u32) -> bool {
     diags.iter().any(|(diag_code, _)| *diag_code == code)
 }
 
-fn load_typescript_fixture(rel_path: &str) -> Option<String> {
-    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let candidates = [
-        manifest_dir.join("../../").join(rel_path),
-        manifest_dir.join("../../../").join(rel_path),
-    ];
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.exists())
-        .and_then(|candidate| std::fs::read_to_string(candidate).ok())
-}
+use tsz_checker::test_utils::load_typescript_fixture;
 
 const REACT_PREAMBLE: &str = r#"
 declare namespace JSX {
@@ -103,14 +92,8 @@ function wrap<P>(App: React.ComponentClass<P> | React.StatelessComponent<P>): vo
 
 #[test]
 fn react_hoc_spreadprops_react16_fixture_has_no_ts2322() {
-    let Some(react_types) = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts") else {
-        return;
-    };
-    let Some(source) =
-        load_typescript_fixture("TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx")
-    else {
-        return;
-    };
+    let react_types = load_typescript_fixture("TypeScript/tests/lib/react16.d.ts");
+    let source = load_typescript_fixture("TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx");
     let source = source.replace("/// <reference path=\"/.lib/react16.d.ts\" />", "");
     let libs = tsz_checker::test_utils::load_compiled_lib_files(&["lib.es5.d.ts"]);
     let diags = tsz_checker::test_utils::check_multi_file_with_libs(

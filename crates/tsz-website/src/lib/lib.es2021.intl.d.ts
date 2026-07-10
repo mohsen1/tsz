@@ -19,22 +19,12 @@ declare namespace Intl {
         fractionalSecond: any;
     }
 
-    type DateTimeFormatPartTypes = keyof DateTimeFormatPartTypesRegistry;
-
     interface DateTimeFormatOptions {
         formatMatcher?: "basic" | "best fit" | "best fit" | undefined;
         dateStyle?: "full" | "long" | "medium" | "short" | undefined;
         timeStyle?: "full" | "long" | "medium" | "short" | undefined;
         dayPeriod?: "narrow" | "short" | "long" | undefined;
         fractionalSecondDigits?: 1 | 2 | 3 | undefined;
-    }
-
-    // `DateTimeFormatPart` is declared in `lib.es2017.intl.d.ts`. Forward-declare
-    // it here so the embedded lib file is self-contained for tsz's per-file
-    // checker during benchmarks and zero-I/O startup.
-    interface DateTimeFormatPart {
-        type: DateTimeFormatPartTypes;
-        value: string;
     }
 
     interface DateTimeRangeFormatPart extends DateTimeFormatPart {

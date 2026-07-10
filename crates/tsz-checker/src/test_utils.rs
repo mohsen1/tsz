@@ -919,6 +919,15 @@ pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
 /// These point at directories where TypeScript's own compiled lib files
 /// (with the `lib.` prefix preserved, e.g. `lib.es5.d.ts`) live.
 ///
+/// The version-controlled copy under `crates/tsz-website/src/lib` comes
+/// first: it exists in every checkout and is kept byte-identical to the
+/// pinned TypeScript ref by the drift guard in
+/// `vendored_fixture_drift_tests.rs`, so test results do not depend on
+/// which environment-provisioned copies happen to exist (see
+/// [`load_typescript_fixture`] for the issue #15685 rationale). The
+/// `TypeScript/` checkout and the `node_modules` installs remain
+/// fallbacks for names the in-repo copy lacks.
+///
 /// Includes paths relative to the worktree's `CARGO_MANIFEST_DIR` AND a
 /// walk-up fallback to the primary checkout. `npm install` only
 /// populates `scripts/node_modules/` in the primary checkout; worktrees
@@ -928,8 +937,8 @@ pub fn load_default_lib_files() -> Vec<Arc<LibFile>> {
 fn compiled_lib_test_roots() -> Vec<PathBuf> {
     let m = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut roots = vec![
-        m.join("../../TypeScript/lib"),
         m.join("../tsz-website/src/lib"),
+        m.join("../../TypeScript/lib"),
         m.join("../../scripts/conformance/node_modules/typescript/lib"),
         m.join("../../scripts/emit/node_modules/typescript/lib"),
         m.join("../../scripts/node_modules/typescript/lib"),
@@ -994,6 +1003,42 @@ pub fn load_compiled_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
         }
     }
     out
+}
+
+/// Load a fixture file from the TypeScript source tree by its
+/// checkout-relative path, e.g. `"TypeScript/tests/lib/react16.d.ts"`.
+///
+/// Probes the version-controlled mirror under `vendor/TypeScript/` first,
+/// then the real `TypeScript/` checkout (both from the current workspace
+/// root and from one directory above, for worktree layouts). The vendored
+/// copies are byte-identical to the ref pinned in
+/// `scripts/ci/typescript-submodule-ref` — enforced by
+/// `vendored_fixture_drift_tests.rs` — so tests that consume these
+/// fixtures behave the same whether or not the checkout exists
+/// (issue #15685: fixture-gated tests that silently skipped made *which*
+/// test fails environment-dependent).
+///
+/// Panics when the fixture exists in no probed location: fixtures are
+/// version-controlled under `vendor/`, so absence means the vendored mirror
+/// is broken (or the path was never vendored) — a silent skip here is how
+/// which-test-fails became environment-dependent in the first place.
+pub fn load_typescript_fixture(rel_path: &str) -> String {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // The vendored mirror is version-controlled, so it exists at the
+    // workspace root in every checkout (including worktrees); only the real
+    // checkout needs the one-level-up fallback for worktree layouts.
+    let candidates = [
+        manifest_dir.join("../../vendor").join(rel_path),
+        manifest_dir.join("../../").join(rel_path),
+        manifest_dir.join("../../../").join(rel_path),
+    ];
+
+    candidates
+        .into_iter()
+        .find_map(|candidate| std::fs::read_to_string(candidate).ok())
+        .unwrap_or_else(|| {
+            panic!("fixture {rel_path} not found; vendor it per vendor/TypeScript/README.md")
+        })
 }
 
 /// Parse, bind, and type-check `source` with the given `lib_files` wired
