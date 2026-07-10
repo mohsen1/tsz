@@ -11,7 +11,8 @@
 //! per CLAUDE.md §25 — if a rename breaks the rule, the fix is hardcoded.
 
 use tsz_checker::test_utils::{
-    check_source_diagnostics, diagnostic_code_message_refs, has_any_diagnostic_code,
+    DiagnosticShape, assert_diagnostic_shapes_exactly, check_source_diagnostics,
+    diagnostic_code_message_refs, has_any_diagnostic_code,
 };
 
 const INFERENCE_FAILURE_CODES: &[u32] = &[
@@ -127,12 +128,13 @@ const v: number = build({
     );
 }
 
-/// Overload selection axis: thisless function expressions must let the
-/// generic call pick the matching overload (here, the 3-arg pipe form).
+/// Overload selection axis: the two-callback overload is selected, but there
+/// is no independent inference candidate for `A`, so it defaults to `unknown`.
+/// The exact diagnostic also proves that overload selection itself succeeds
+/// without TS2769.
 #[test]
 fn thisless_function_expression_selects_overload() {
-    assert_no_inference_failure(
-        r#"
+    let source = r#"
 declare function pipe<A, B>(f: (a: A) => B): (a: A) => B;
 declare function pipe<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
 const stages = pipe(
@@ -140,7 +142,31 @@ const stages = pipe(
   function (b) { return b.length; },
 );
 const out: number = stages(42);
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_diagnostic_shapes_exactly(
+        source,
+        &diagnostics,
+        &[DiagnosticShape::code(18046)
+            .at(5, 25)
+            .with_message_fragment("'a' is of type 'unknown'")],
+    );
+}
+
+/// A contextual result supplies the otherwise-missing candidate for `A` and
+/// keeps both thisless callback parameters fully inferred.
+#[test]
+fn thisless_function_expression_contextual_result_anchors_input_type() {
+    assert_no_inference_failure(
+        r#"
+declare function pipe<A, B>(f: (a: A) => B): (a: A) => B;
+declare function pipe<A, B, C>(f: (a: A) => B, g: (b: B) => C): (a: A) => C;
+const stages: (a: number) => number = pipe(
+  function (a) { return a.toFixed(); },
+  function (b) { return b.length; },
+);
+const out: number = stages(42);
 "#,
-        "overload selection with two thisless function expressions",
+        "contextual result anchors the two-callback thisless overload",
     );
 }
