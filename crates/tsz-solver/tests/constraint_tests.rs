@@ -987,26 +987,6 @@ fn test_constraint_empty_no_constraints() {
 }
 
 // =============================================================================
-// Contra-candidate Tests
-// =============================================================================
-
-#[test]
-fn test_contra_candidate_basic() {
-    let interner = TypeInterner::new();
-    let (mut ctx, var_t) = ctx_with_t_var(&interner);
-
-    // Add a contravariant candidate
-    ctx.add_contra_candidate(var_t, TypeId::STRING, InferencePriority::NakedTypeVariable);
-    ctx.add_contra_candidate(var_t, TypeId::NUMBER, InferencePriority::NakedTypeVariable);
-
-    // With only contra-candidates, resolution uses intersection
-    let result = ctx.resolve_with_constraints(var_t).unwrap();
-    // Contravariant candidates should produce an intersection
-    let expected = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected);
-}
-
-// =============================================================================
 // Constraint with Any/Unknown/Never
 // =============================================================================
 

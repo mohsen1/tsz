@@ -75,10 +75,69 @@ fn callback_parameter_function_candidates_fix_from_first_function() {
 declare function f<T>(a: (x: T) => void, b: (x: T) => void): T;
 
 const r = f((x: number) => {}, (x: string) => {});
+const numberResult: number = r;
 "#,
     );
 
+    assert_eq!(
+        messages.len(),
+        1,
+        "the rejected second callback should be the only diagnostic: {messages:#?}"
+    );
     assert_has_ts2345(&messages, "(x: number) => void");
+}
+
+#[test]
+fn callback_parameter_function_candidates_reverse_order_fix_from_first_function() {
+    let messages = strict_messages(
+        r#"
+declare function f<T>(a: (x: T) => void, b: (x: T) => void): T;
+
+const r = f((x: string) => {}, (x: number) => {});
+const stringResult: string = r;
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        1,
+        "reverse order should still report only the second callback: {messages:#?}"
+    );
+    assert_has_ts2345(&messages, "(x: string) => void");
+}
+
+#[test]
+fn aliased_callback_parameter_candidates_use_same_rule() {
+    let messages = strict_messages(
+        r#"
+type Sink<Input> = (value: Input) => void;
+declare function combine<Value>(first: Sink<Value>, second: Sink<Value>): Value;
+
+const r = combine((value: number) => {}, (value: string) => {});
+const numberResult: number = r;
+"#,
+    );
+
+    assert_eq!(
+        messages.len(),
+        1,
+        "the alias wrapper must not add diagnostics beyond the rejected callback: {messages:#?}"
+    );
+    assert_has_ts2345(&messages, "(value: number) => void");
+}
+
+#[test]
+fn related_callback_parameter_candidates_choose_literal_subtype_in_either_order() {
+    let messages = strict_messages(
+        r#"
+declare function f<T>(a: (x: T) => void, b: (x: T) => void): T;
+
+const first = f((x: number) => {}, (x: 1) => {});
+const second = f((x: 1) => {}, (x: number) => {});
+"#,
+    );
+
+    assert_no_ts2345(&messages);
 }
 
 #[test]

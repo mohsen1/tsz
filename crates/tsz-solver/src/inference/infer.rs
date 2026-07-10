@@ -91,7 +91,8 @@ pub(crate) struct InferenceInfo {
     pub(crate) candidates: Vec<InferenceCandidate>,
     /// Candidates from contravariant positions (e.g., function parameters).
     /// When only `contra_candidates` exist (no covariant candidates), the
-    /// resolution uses intersection instead of union, matching tsc behavior.
+    /// resolution uses common-subtype selection for ordinary priorities and
+    /// intersection for combination priorities, matching tsc behavior.
     pub(crate) contra_candidates: Vec<InferenceCandidate>,
     pub(crate) upper_bounds: Vec<TypeId>,
     pub(crate) resolved: Option<TypeId>,
@@ -1292,8 +1293,8 @@ impl<'a> InferenceContext<'a> {
     /// Add a contravariant inference candidate for a variable.
     /// Used when the type parameter appears in a contravariant position
     /// (e.g., function parameter types). When only `contra_candidates` exist
-    /// (no covariant candidates), resolution uses intersection instead of
-    /// union, matching tsc's `contraCandidates` behavior.
+    /// (no covariant candidates), resolution uses tsc's priority-sensitive
+    /// common-subtype or intersection behavior.
     pub fn add_contra_candidate(
         &mut self,
         var: InferenceVar,
