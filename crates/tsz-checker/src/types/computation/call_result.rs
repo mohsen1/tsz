@@ -935,6 +935,11 @@ impl<'a> CheckerState<'a> {
                     let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
                     if let Some(cause) = nullish_cause {
                         self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);
+                        self.report_nullish_callee_declaration_companion(
+                            call_idx,
+                            callee_expr,
+                            cause,
+                        );
                     } else if !self.is_in_decorator_expression(callee_expr) {
                         // Don't emit TS2349 for calls inside decorators - decorators
                         // are resolved at runtime and should not be checked for callability.
