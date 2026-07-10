@@ -1546,10 +1546,7 @@ impl<'a> DeclarationEmitter<'a> {
                     // Strip numeric separators (tsc strips them in .d.ts output)
                     if text.contains('_') {
                         if let Some(v) = lit.value {
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                return format!("{}", v as i64);
-                            }
-                            return v.to_string();
+                            return crate::text_utils::format_js_number(v);
                         }
                         return text.replace('_', "");
                     }

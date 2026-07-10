@@ -20,47 +20,11 @@ pub(crate) fn format_js_number(value: f64) -> String {
 mod tests {
     use super::*;
 
+    /// Behavior tests live beside the owner in `tsz_common::numeric`; this
+    /// smoke test only pins that the emitter delegate wires through.
     #[test]
-    fn infinity() {
-        assert_eq!(format_js_number(f64::INFINITY), "Infinity");
-        assert_eq!(format_js_number(f64::NEG_INFINITY), "-Infinity");
-    }
-
-    #[test]
-    fn nan() {
-        assert_eq!(format_js_number(f64::NAN), "NaN");
-    }
-
-    #[test]
-    fn integers() {
-        assert_eq!(format_js_number(0.0), "0");
-        assert_eq!(format_js_number(42.0), "42");
-        assert_eq!(format_js_number(-1.0), "-1");
-        assert_eq!(format_js_number(1_000_000.0), "1000000");
-    }
-
-    #[test]
-    fn floats() {
-        assert_eq!(format_js_number(3.15), "3.15");
-        assert_eq!(format_js_number(-0.5), "-0.5");
-    }
-
-    #[test]
-    fn scientific_large() {
+    fn delegates_to_shared_owner() {
         assert_eq!(format_js_number(1e21), "1e+21");
-        assert_eq!(
-            format_js_number(1.2345678912345678e53),
-            "1.2345678912345678e+53"
-        );
-    }
-
-    #[test]
-    fn scientific_small() {
-        assert_eq!(format_js_number(1e-7), "1e-7");
-    }
-
-    #[test]
-    fn negative_scientific() {
-        assert_eq!(format_js_number(-1e21), "-1e+21");
+        assert_eq!(format_js_number(-0.0), "0");
     }
 }

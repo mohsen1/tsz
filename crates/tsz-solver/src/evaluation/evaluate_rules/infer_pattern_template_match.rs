@@ -73,7 +73,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // tsc's isValidNumberString(s, roundTripOnly=true): the capture keeps
         // its literal type only when JS Number::toString reproduces the text.
-        if tsz_common::numeric::js_number_to_string(value) == captured {
+        if crate::utils::js_number_to_string(value) == captured {
             Some(self.interner().literal_number(value))
         } else {
             Some(TypeId::NUMBER)

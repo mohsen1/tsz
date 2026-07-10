@@ -5,10 +5,10 @@
 //! constraint admits a non-string primitive, the capture is coerced to the
 //! literal type of the highest-priority constituent it can inhabit. The
 //! sibling rule for conditional-type `infer` patterns lives in
-//! `evaluation::evaluate_rules::infer_pattern_template_match`; both share the
-//! `tsz_common::numeric` round-trip gates.
-
-use std::cell::LazyCell;
+//! `evaluation::evaluate_rules::infer_pattern_template_match`; the number
+//! round-trip comparison in both paths routes through the shared
+//! `js_number_to_string` owner (the sibling intentionally accepts more on the
+//! bigint side, mirroring tsc's `roundTripOnly = false` placeholder check).
 
 use crate::types::{LiteralValue, TypeData, TypeId};
 
@@ -43,10 +43,8 @@ impl InferenceContext<'_> {
             return self.interner.literal_string(captured);
         }
 
-        // `isValidNumberString(captured, roundTripOnly)`, computed at most
-        // once and only when a number-like constituent is present.
-        let round_trip_number =
-            LazyCell::new(|| tsz_common::numeric::round_trip_js_number(captured));
+        // `isValidNumberString(captured, roundTripOnly)`.
+        let round_trip_number = tsz_common::numeric::round_trip_js_number(captured);
 
         // tsc's reduceLeft chain expresses a fixed constituent priority;
         // lower rank wins. TemplateLiteral / StringMapping / Enum
@@ -56,7 +54,7 @@ impl InferenceContext<'_> {
         for &member in members {
             let candidate: Option<(u8, TypeId)> = match member {
                 TypeId::NUMBER => {
-                    (*round_trip_number).map(|value| (1, self.interner.literal_number(value)))
+                    round_trip_number.map(|value| (1, self.interner.literal_number(value)))
                 }
                 TypeId::BIGINT => {
                     tsz_common::numeric::round_trip_js_bigint(captured).map(|(negative, digits)| {
@@ -87,7 +85,7 @@ impl InferenceContext<'_> {
                             .then_some((0, member))
                     }
                     Some(TypeData::Literal(LiteralValue::Number(n))) => {
-                        (*round_trip_number == Some(n.0)).then_some((2, member))
+                        (round_trip_number == Some(n.0)).then_some((2, member))
                     }
                     Some(TypeData::Literal(LiteralValue::BigInt(atom))) => {
                         (self.interner.resolve_atom_ref(atom).as_ref() == captured)

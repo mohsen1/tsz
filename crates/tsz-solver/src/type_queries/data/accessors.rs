@@ -1383,20 +1383,13 @@ pub fn numeric_literal_index_valid_for_object(
             _ => return false,
         };
         // Convert the numeric value to its canonical JS property-name string.
-        // For non-negative integers this is simply the decimal representation.
-        let prop_name = numeric_value_to_property_name(num_val);
+        let prop_name = crate::utils::js_number_to_string(num_val);
         // Check if the object has a property with that name.
         if find_property_in_object_by_str(db, object_type, &prop_name).is_none() {
             return false;
         }
     }
     true
-}
-
-/// Convert an `f64` numeric literal value to its canonical JavaScript property
-/// name string (`Number.prototype.toString()`).
-fn numeric_value_to_property_name(value: f64) -> String {
-    crate::utils::js_number_to_string(value).into_owned()
 }
 
 /// Find a named property in any type shape (object or callable) by string name.

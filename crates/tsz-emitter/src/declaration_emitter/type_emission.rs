@@ -582,11 +582,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if lit.text.contains('_') {
                         if let Some(v) = lit.value {
                             // Use the pre-computed numeric value (handles hex/octal/binary with separators)
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                self.write(&format!("{}", v as i64));
-                            } else {
-                                self.write(&v.to_string());
-                            }
+                            self.write(&crate::text_utils::format_js_number(v));
                         } else {
                             // Fallback: just strip underscores
                             self.write(&lit.text.replace('_', ""));
