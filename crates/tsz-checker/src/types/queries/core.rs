@@ -1267,7 +1267,10 @@ impl<'a> CheckerState<'a> {
             // A merged lib symbol's declaration index can collide with an
             // unrelated node in the current arena; such a declaration is not
             // a local class declaration (issue #15687).
-            if !checker.declaration_is_local_to_current_arena(sym_id, decl_idx) {
+            if !checker
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            {
                 return None;
             }
             let node = checker.ctx.arena.get(decl_idx)?;

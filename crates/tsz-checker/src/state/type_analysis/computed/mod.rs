@@ -1538,11 +1538,26 @@ impl<'a> CheckerState<'a> {
             // (issue #15687: a single-member `JSX.ElementAttributesProperty`
             // colliding with a two-member local interface produced a false
             // TS2608).
-            let local_declarations: Vec<NodeIndex> = declarations
+            let filtered_local_declarations: Option<Vec<NodeIndex>> = declarations
                 .iter()
-                .copied()
-                .filter(|&decl_idx| self.declaration_is_local_to_current_arena(sym_id, decl_idx))
-                .collect();
+                .any(|&decl_idx| {
+                    !self
+                        .ctx
+                        .declaration_is_local_to_current_arena(sym_id, decl_idx)
+                })
+                .then(|| {
+                    declarations
+                        .iter()
+                        .copied()
+                        .filter(|&decl_idx| {
+                            self.ctx
+                                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+                        })
+                        .collect()
+                });
+            let local_declarations: &[NodeIndex] = filtered_local_declarations
+                .as_deref()
+                .unwrap_or(&declarations);
             let mut has_local_interface_decl = false;
             let mut has_local_interface_heritage_extends = false;
             let mut has_local_computed_property_name = false;
@@ -1730,8 +1745,8 @@ impl<'a> CheckerState<'a> {
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
                 let (computed_names, computed_symbol_names) = if needs_computed_name_map {
                     (
-                        self.precompute_computed_property_names(&local_declarations),
-                        self.precompute_symbol_named_computed_property_names(&local_declarations),
+                        self.precompute_computed_property_names(local_declarations),
+                        self.precompute_symbol_named_computed_property_names(local_declarations),
                     )
                 } else {
                     (
@@ -1740,7 +1755,7 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let prewarmed_type_params = if needs_prewarm {
-                    self.prewarm_member_type_reference_params(&local_declarations)
+                    self.prewarm_member_type_reference_params(local_declarations)
                 } else {
                     rustc_hash::FxHashMap::default()
                 };
@@ -1825,7 +1840,7 @@ impl<'a> CheckerState<'a> {
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
                 let mut interface_type =
-                    lowering.lower_interface_declarations_with_symbol(&local_declarations, sym_id);
+                    lowering.lower_interface_declarations_with_symbol(local_declarations, sym_id);
 
                 // Cross-file interface declaration merging: when declarations from
                 // other arenas exist, lower each with a TypeLowering bound to its
@@ -1867,7 +1882,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let mut interface_type = if needs_local_heritage_merge {
-                    self.merge_interface_heritage_types(&local_declarations, interface_type)
+                    self.merge_interface_heritage_types(local_declarations, interface_type)
                 } else {
                     interface_type
                 };

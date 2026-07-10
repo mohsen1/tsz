@@ -1226,14 +1226,10 @@ impl CheckerState<'_> {
             // `JSX.Element` resolving to `parseInt`'s type, issue #15687), so
             // the fallback only fires when this binder's symbol at that id
             // actually names the def.
-            let sym_id_opt = self.ctx.def_to_symbol_id(def_id).filter(|&sym_id| {
-                let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                    return true;
-                };
-                self.ctx
-                    .def_name_matches(def_id, &local_symbol.escaped_name)
-                    .unwrap_or(true)
-            });
+            let sym_id_opt = self
+                .ctx
+                .def_to_symbol_id(def_id)
+                .filter(|&sym_id| self.ctx.def_matches_local_symbol(def_id, sym_id));
             if let Some(sym_id) = sym_id_opt {
                 // Trigger type computation for this symbol first.
                 // For CLASS symbols, this populates symbol_instance_types as a side effect.

@@ -1514,13 +1514,11 @@ declare module "widgetlib" {
     let lib_root = lib_parser.parse_source_file();
     let mut lib_binder = BinderState::new();
     lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
-    let lib_export_ids: Vec<_> = lib_binder
-        .module_exports
-        .iter()
-        .flat_map(|(_, table)| table.iter().map(|(_, &id)| id))
-        .collect();
     assert!(
-        !lib_export_ids.is_empty(),
+        lib_binder
+            .module_exports
+            .iter()
+            .any(|(_, table)| !table.is_empty()),
         "lib binder should record ambient module exports"
     );
 

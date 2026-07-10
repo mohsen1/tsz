@@ -1530,13 +1530,15 @@ impl CheckerState<'_> {
         // verify the class name matches the symbol name to avoid picking up an
         // unrelated class from the arena.
         if decl_idx.is_none()
-            || !self.declaration_is_local_to_current_arena(sym_id, decl_idx)
+            || !self
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
             || self.ctx.arena.get_class_at(decl_idx).is_none()
         {
             let expected_name = &symbol.escaped_name;
             for &d in &symbol.declarations {
                 if d.is_some()
-                    && self.declaration_is_local_to_current_arena(sym_id, d)
+                    && self.ctx.declaration_is_local_to_current_arena(sym_id, d)
                     && let Some(class) = self.ctx.arena.get_class_at(d)
                     && self
                         .ctx
@@ -1553,7 +1555,9 @@ impl CheckerState<'_> {
         if decl_idx.is_none() {
             return None;
         }
-        if self.declaration_is_local_to_current_arena(sym_id, decl_idx)
+        if self
+            .ctx
+            .declaration_is_local_to_current_arena(sym_id, decl_idx)
             && let Some(class) = self.ctx.arena.get_class_at(decl_idx)
         {
             let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);

@@ -25,6 +25,17 @@ impl CheckerContext<'_> {
             .map(|name| &*self.types.resolve_atom_ref(name) == expected_name)
     }
 
+    /// Lenient raw-id collision guard: `true` unless THIS binder resolves
+    /// `sym_id` to a symbol whose name contradicts `def_id`'s recorded name.
+    /// Used where a missing local symbol or an unnamed def must not block
+    /// resolution (see [`CheckerContext::def_name_matches`]).
+    pub(crate) fn def_matches_local_symbol(&self, def_id: DefId, sym_id: SymbolId) -> bool {
+        self.binder.get_symbol(sym_id).is_none_or(|local| {
+            self.def_name_matches(def_id, &local.escaped_name)
+                .unwrap_or(true)
+        })
+    }
+
     pub(crate) fn def_info_matches_symbol_declaration(
         &self,
         info: &DefinitionInfo,

@@ -877,10 +877,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             // overlay for the local id space: `get_type_of_symbol` on the
             // unrelated local symbol would then delegate to the lib file and
             // adopt the wrong declaration (issue #15687).
-            && self.binder.get_symbol(sym_id).is_none_or(|local| {
-                self.def_name_matches(def_id, &local.escaped_name)
-                    .unwrap_or(true)
-            })
+            && self.def_matches_local_symbol(def_id, sym_id)
         {
             self.register_symbol_file_target(sym_id, file_idx);
         }

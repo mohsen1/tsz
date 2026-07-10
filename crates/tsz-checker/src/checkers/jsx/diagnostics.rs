@@ -283,7 +283,10 @@ impl<'a> CheckerState<'a> {
             // unrelated node. Besides yielding a wrong display, that
             // collision can land back on the very declaration currently
             // being displayed and recurse without bound (issue #15687).
-            if !self.declaration_is_local_to_current_arena(sym_id, decl_idx) {
+            if !self
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            {
                 continue;
             }
             if let Some(display) =

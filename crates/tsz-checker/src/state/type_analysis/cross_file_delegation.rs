@@ -23,30 +23,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.get_binder_for_file(file_idx)?.get_symbol(sym_id)
     }
 
-    /// Whether `decl_idx` on `sym_id` is a declaration owned by the current
-    /// file's arena.
-    ///
-    /// Symbols merged from lib contexts (`merge_lib_contexts_into_binder`)
-    /// carry declaration `NodeIndex`es that point into their originating lib
-    /// arena; the binder records that provenance in `declaration_arenas`. The
-    /// same numeric `NodeIndex` can also be a valid index into the current
-    /// arena where it names an unrelated node, so a plain `arena.get(idx)`
-    /// probe misclassifies foreign declarations as local (issue #15687).
-    /// When the binder has no provenance entry the declaration was bound
-    /// locally.
-    pub(crate) fn declaration_is_local_to_current_arena(
-        &self,
-        sym_id: SymbolId,
-        decl_idx: tsz_parser::NodeIndex,
-    ) -> bool {
-        match self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-            Some(arenas) => arenas
-                .iter()
-                .any(|arena| std::ptr::eq(arena.as_ref(), self.ctx.arena)),
-            None => true,
-        }
-    }
-
     /// Resolve a lib-merged symbol back to its originating lib context.
     ///
     /// `merge_lib_contexts_into_binder` clones lib symbols into the program
