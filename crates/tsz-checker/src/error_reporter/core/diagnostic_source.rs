@@ -1750,6 +1750,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if let Some(display) =
+            self.identifier_wide_symbol_object_literal_source_display(expr_idx, target)
+        {
+            return Some(display);
+        }
         if let Some(display) = self.identifier_array_object_literal_source_display(expr_idx, target)
         {
             return Some(display);

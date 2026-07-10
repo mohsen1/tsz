@@ -4,6 +4,85 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Recover the source spelling of an unannotated object-literal initializer
+    /// when an identifier is related to a target with a wide-symbol index.
+    ///
+    /// The semantic type correctly collapses a computed wide-symbol member into
+    /// a symbol index signature, but `tsc` keeps the computed expression spelling
+    /// in the assignment diagnostic (`{ [token]: number }`, not
+    /// `{ [x: symbol]: number }`). This helper follows the identifier to its
+    /// current-file initializer and delegates the rendering to the normal
+    /// object-literal source-display path.
+    pub(in crate::error_reporter) fn identifier_wide_symbol_object_literal_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        target: TypeId,
+    ) -> Option<String> {
+        let target = self.evaluate_type_for_assignability(target);
+        if !crate::query_boundaries::index_signature::has_symbol_index_signature(
+            self.ctx.types,
+            target,
+        ) {
+            return None;
+        }
+
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::VARIABLE) == 0 {
+            return None;
+        }
+        let stable_loc = match symbol.stable_declarations.first() {
+            Some(loc) if loc.is_known() => *loc,
+            _ if symbol.stable_value_declaration.is_known() => symbol.stable_value_declaration,
+            _ => return None,
+        };
+        if stable_loc.file_idx != u32::MAX
+            && self.ctx.current_file_idx != usize::MAX
+            && stable_loc.file_idx as usize != self.ctx.current_file_idx
+        {
+            return None;
+        }
+
+        let (initializer, computed_key_expressions) = {
+            let (decl_idx, arena) = self.ctx.node_at_stable_location(stable_loc)?;
+            let decl = arena.get_variable_declaration_at(decl_idx)?;
+            if decl.type_annotation.is_some() || decl.initializer.is_none() {
+                return None;
+            }
+            let initializer = arena.skip_parenthesized_and_assertions(decl.initializer);
+            let init_node = arena.get(initializer)?;
+            if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            let literal = arena.get_literal_expr(init_node)?;
+            let computed_key_expressions = literal
+                .elements
+                .nodes
+                .iter()
+                .filter_map(|child_idx| {
+                    let child = arena.get(*child_idx)?;
+                    let property = arena.get_property_assignment(child)?;
+                    let name = arena.get(property.name)?;
+                    let computed = arena.get_computed_property(name)?;
+                    Some(computed.expression)
+                })
+                .collect::<Vec<_>>();
+            (initializer, computed_key_expressions)
+        };
+        if !computed_key_expressions
+            .into_iter()
+            .any(|key| self.get_type_of_node(key) == TypeId::SYMBOL)
+        {
+            return None;
+        }
+
+        self.object_literal_source_type_display(initializer, Some(target))
+    }
+
     /// Render an identifier-source display for an array-of-object-literal
     /// initializer (e.g. `let foo = [{ a: 1 }, { a: 2 }];`) so the
     /// assignability diagnostic can show the inferred element shape rather

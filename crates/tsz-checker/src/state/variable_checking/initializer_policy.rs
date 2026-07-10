@@ -499,6 +499,21 @@ impl<'a> CheckerState<'a> {
                         )
                     })
                     .unwrap_or(false);
+                let initializer_has_computed_property_value_error = self
+                    .ctx
+                    .arena
+                    .get(facts.initializer)
+                    .is_some_and(|initializer| {
+                        self.ctx
+                            .recent_diagnostics(init_diagnostics_len)
+                            .iter()
+                            .any(|diag| {
+                                diag.code
+                                    == crate::diagnostics::diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+                                    && diag.start >= initializer.pos
+                                    && diag.start < initializer.end
+                            })
+                    });
                 // Check assignability (skip for 'any' since anything is assignable to any,
                 // and skip for TypeId::ERROR since the type annotation failed to resolve).
                 // Note: we intentionally do NOT use type_contains_error() here because it
@@ -608,6 +623,7 @@ impl<'a> CheckerState<'a> {
                             );
                             if !(elaborated_elements
                                 || function_initializer_body_has_error
+                                || initializer_has_computed_property_value_error
                                 || (initializer_is_function
                                     && jsdoc_declared_type.is_some()
                                     && self.async_function_jsdoc_return_type_suppression(

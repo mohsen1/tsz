@@ -776,12 +776,14 @@ impl<'a> CheckerState<'a> {
                     && !(is_computed_literal_key
                         && self.target_has_named_property_for_key(effective_param_type, &prop_name))
                 {
-                    // For TS2418, use the literal type from the initializer
-                    // expression when available.
-                    let computed_source = self.expression_display_type_preferring_literal(
-                        prop_value_idx,
-                        source_prop_type,
-                    );
+                    // `tsc` widens computed-property values in `TS2418`, even
+                    // when this elaboration path was entered because a sibling
+                    // property also failed. Keep this path aligned with the
+                    // contextual object-literal and union-index reporters.
+                    let computed_source = self
+                        .literal_type_from_initializer(prop_value_idx)
+                        .unwrap_or(source_prop_type);
+                    let computed_source = self.widen_literal_type(computed_source);
                     let src_str = self.format_type_for_assignability_message(computed_source);
                     let tgt_str =
                         self.format_type_for_assignability_message(target_prop_type_for_diagnostic);

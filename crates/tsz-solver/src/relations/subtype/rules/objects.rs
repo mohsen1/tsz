@@ -940,7 +940,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .map(|def_id| self.interner.lazy(def_id))
     }
 
-    fn bind_property_receiver_this(&self, receiver: Option<TypeId>, type_id: TypeId) -> TypeId {
+    pub(in crate::relations::subtype) fn bind_property_receiver_this(
+        &self,
+        receiver: Option<TypeId>,
+        type_id: TypeId,
+    ) -> TypeId {
         if let Some(receiver) = receiver.map(|receiver| self.normalize_receiver_type(receiver))
             && crate::contains_this_type(self.interner, type_id)
         {
@@ -1176,7 +1180,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
 
                 for prop in &source.properties {
-                    if self.is_symbol_named_property(prop.name) {
+                    if prop.is_symbol_named {
                         continue;
                     }
                     // Note: We do NOT check property readonly vs target index readonly
@@ -1356,8 +1360,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// 1. Named property compatibility (all target properties must exist in source)
     /// 2. String index signature compatibility
     /// 3. Number index signature compatibility
-    /// 4. All source properties must be compatible with target index signatures
-    /// 5. If source has both string and number indexes, they must be compatible
+    /// 4. Symbol index signature compatibility
+    /// 5. All source properties must be compatible with target index signatures
+    /// 6. If source has both string and number indexes, they must be compatible
     pub(crate) fn check_object_with_index_subtype(
         &mut self,
         source: &ObjectShape,
@@ -1401,6 +1406,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check number index signature compatibility
         if !self
             .check_number_index_compatibility(source, source_receiver, target, target_receiver)
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+
+        // Check symbol index signature compatibility
+        if !self
+            .check_symbol_index_compatibility(source, source_receiver, target, target_receiver)
             .is_true()
         {
             return SubtypeResult::False;
@@ -1547,11 +1560,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    fn is_symbol_named_property(&self, name: Atom) -> bool {
-        let text = self.interner.resolve_atom(name);
-        text.starts_with("__unique_") || text.starts_with("[Symbol.")
-    }
-
     fn property_name_matches_string_index_key(&mut self, name: Atom, key_type: TypeId) -> bool {
         if key_type == TypeId::STRING {
             return true;
@@ -1672,7 +1680,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if let Some(string_idx) = string_index {
-                if self.is_symbol_named_property(prop.name) {
+                if prop.is_symbol_named {
                     continue;
                 }
                 // Non-matching keys aren't constrained: `click` ∉ `on${string}`, so
@@ -1701,7 +1709,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             if let Some(symbol_idx) = symbol_index
-                && self.is_symbol_named_property(prop.name)
+                && prop.is_symbol_named
             {
                 let target_value =
                     self.bind_property_receiver_this(target_receiver, symbol_idx.value_type);
@@ -1794,6 +1802,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // numeric index access.
         if !self
             .check_number_index_compatibility(
+                &source_shape,
+                source_receiver,
+                target,
+                target_receiver,
+            )
+            .is_true()
+        {
+            return SubtypeResult::False;
+        }
+        if !self
+            .check_symbol_index_compatibility(
                 &source_shape,
                 source_receiver,
                 target,
