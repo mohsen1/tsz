@@ -4,7 +4,8 @@
 //! element-access assignment, TS2542 still fires for the readonly write, but the
 //! element type is also checked so TS2322 co-emits for mismatched values.
 
-use tsz_checker::test_utils::check_source_codes;
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::{check_source_codes, check_source_with_libs, load_lib_files};
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_codes(source)
@@ -16,6 +17,15 @@ fn codes(source: &str) -> Vec<u32> {
 fn has_both(source: &str, a: u32, b: u32) -> bool {
     let codes = codes(source);
     codes.contains(&a) && codes.contains(&b)
+}
+
+fn es5_codes(source: &str) -> Vec<u32> {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    assert!(!libs.is_empty(), "expected es5.d.ts to load");
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
+        .into_iter()
+        .map(|diag| diag.code)
+        .collect()
 }
 
 #[test]
@@ -82,9 +92,23 @@ fn readonly_array_generic_index_write_wrong_type_emits_2322_and_2542() {
 declare const arr: ReadonlyArray<number>;
 arr[0] = "hello";
 "#;
+    let codes = es5_codes(source);
     assert!(
-        has_both(source, 2322, 2542),
-        "ReadonlyArray<number> wrong-type write must emit TS2322 and TS2542"
+        codes.contains(&2322) && codes.contains(&2542),
+        "ReadonlyArray<number> wrong-type write must emit TS2322 and TS2542, got: {codes:?}"
+    );
+}
+
+#[test]
+fn readonly_array_generic_without_lib_does_not_synthesize_write_diagnostics() {
+    let source = r#"
+declare const arr: ReadonlyArray<number>;
+arr[0] = "hello";
+"#;
+    let codes = codes(source);
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2542),
+        "an unresolved ReadonlyArray must not synthesize write diagnostics, got: {codes:?}"
     );
 }
 
