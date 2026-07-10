@@ -11,6 +11,20 @@ use tsz_solver::def::{DefId, DefinitionInfo};
 use crate::context::CheckerContext;
 
 impl CheckerContext<'_> {
+    /// Whether `def_id`'s recorded name matches `expected_name`.
+    ///
+    /// Raw `SymbolId`s are binder-relative, so every def lookup that starts
+    /// from a raw id must validate the def's name against the symbol it
+    /// thinks it resolved (issue #15687). Returns `None` when the def has no
+    /// recorded name; callers choose strict (`unwrap_or(false)`) or lenient
+    /// (`unwrap_or(true)`) handling. Uses the non-allocating atom read — this
+    /// runs on lazy-resolution hot paths.
+    pub(crate) fn def_name_matches(&self, def_id: DefId, expected_name: &str) -> Option<bool> {
+        self.definition_store
+            .get_name(def_id)
+            .map(|name| &*self.types.resolve_atom_ref(name) == expected_name)
+    }
+
     pub(crate) fn def_info_matches_symbol_declaration(
         &self,
         info: &DefinitionInfo,

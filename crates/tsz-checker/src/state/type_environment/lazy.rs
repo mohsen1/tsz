@@ -1230,9 +1230,9 @@ impl CheckerState<'_> {
                 let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) else {
                     return true;
                 };
-                self.ctx.definition_store.get(def_id).is_none_or(|info| {
-                    self.ctx.types.resolve_atom(info.name) == local_symbol.escaped_name
-                })
+                self.ctx
+                    .def_name_matches(def_id, &local_symbol.escaped_name)
+                    .unwrap_or(true)
             });
             if let Some(sym_id) = sym_id_opt {
                 // Trigger type computation for this symbol first.

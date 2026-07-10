@@ -1413,23 +1413,16 @@ impl CheckerState<'_> {
             // clearing above, which would otherwise discard these mappings as
             // parent-space collisions.
             let lib_binder_ptr = std::sync::Arc::as_ptr(lib_binder) as usize;
-            let reverse_remap = std::sync::Arc::clone(&self.ctx.binder.lib_symbol_reverse_remap);
-            for (&merged_id, &(ptr, local_id)) in reverse_remap.iter() {
+            let mut child_symbol_to_def = checker.ctx.symbol_to_def.borrow_mut();
+            let mut child_def_to_symbol = checker.ctx.def_to_symbol.borrow_mut();
+            for (&merged_id, &(ptr, local_id)) in self.ctx.binder.lib_symbol_reverse_remap.iter() {
                 if ptr != lib_binder_ptr {
                     continue;
                 }
                 let def_id = self.ctx.get_or_create_def_id(merged_id);
                 if def_id != tsz_solver::def::DefId::INVALID {
-                    checker
-                        .ctx
-                        .symbol_to_def
-                        .borrow_mut()
-                        .insert(local_id, def_id);
-                    checker
-                        .ctx
-                        .def_to_symbol
-                        .borrow_mut()
-                        .insert(def_id, local_id);
+                    child_symbol_to_def.insert(local_id, def_id);
+                    child_def_to_symbol.insert(def_id, local_id);
                 }
             }
         }
@@ -1441,6 +1434,14 @@ impl CheckerState<'_> {
             let _class_boundary = Self::enter_cross_arena_class_boundary();
             checker.class_instance_type_with_params_from_symbol(delegate_sym_id)
         };
+        // Lib-merged symbols have no registered file target, so no other
+        // publish site runs for them; publish under the caller-visible id so
+        // repeated queries reuse the instance type instead of re-delegating.
+        if lib_merged_origin.is_some()
+            && let Some((instance_type, params)) = result.as_ref()
+        {
+            self.publish_delegated_class_instance_type(sym_id, *instance_type, params);
+        }
         if self.ctx.share_owner_symbol_type_results
             && let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
             && *type_id != TypeId::UNKNOWN

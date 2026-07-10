@@ -1529,16 +1529,14 @@ impl CheckerState<'_> {
         // Guard against NodeIndex collisions: check binder arena provenance and
         // verify the class name matches the symbol name to avoid picking up an
         // unrelated class from the arena.
-        let decl_is_local = |checker: &Self, d: NodeIndex| {
-            d.is_some() && checker.declaration_is_local_to_current_arena(sym_id, d)
-        };
         if decl_idx.is_none()
-            || !decl_is_local(self, decl_idx)
+            || !self.declaration_is_local_to_current_arena(sym_id, decl_idx)
             || self.ctx.arena.get_class_at(decl_idx).is_none()
         {
             let expected_name = &symbol.escaped_name;
             for &d in &symbol.declarations {
-                if decl_is_local(self, d)
+                if d.is_some()
+                    && self.declaration_is_local_to_current_arena(sym_id, d)
                     && let Some(class) = self.ctx.arena.get_class_at(d)
                     && self
                         .ctx
@@ -1555,7 +1553,7 @@ impl CheckerState<'_> {
         if decl_idx.is_none() {
             return None;
         }
-        if decl_is_local(self, decl_idx)
+        if self.declaration_is_local_to_current_arena(sym_id, decl_idx)
             && let Some(class) = self.ctx.arena.get_class_at(decl_idx)
         {
             let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);
@@ -1654,24 +1652,10 @@ impl CheckerState<'_> {
 
         // Cross-file fallback: class declaration is not in the current arena.
         // Delegate to a child checker with the symbol's arena.
-        let result = self.delegate_cross_arena_class_instance_type(sym_id);
-        // Lib-merged symbols have no registered file target, so the delegate
-        // branch at the top of this function (which publishes declaration-file
-        // results) never ran for them; publish here so repeated queries reuse
-        // the instance type instead of re-delegating (#15687).
-        if let Some((instance_type, params)) = result.as_ref()
-            && self
-                .ctx
-                .binder
-                .lib_symbol_reverse_remap
-                .contains_key(&sym_id)
-        {
-            self.publish_delegated_class_instance_type(sym_id, *instance_type, params);
-        }
-        result
+        self.delegate_cross_arena_class_instance_type(sym_id)
     }
 
-    fn publish_delegated_class_instance_type(
+    pub(crate) fn publish_delegated_class_instance_type(
         &mut self,
         sym_id: SymbolId,
         instance_type: TypeId,

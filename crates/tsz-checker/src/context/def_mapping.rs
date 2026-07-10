@@ -209,9 +209,8 @@ impl CheckerContext<'_> {
         if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
             && (file_idx != u32::MAX
                 || self
-                    .definition_store
-                    .get(def_id)
-                    .is_some_and(|info| self.types.resolve_atom(info.name) == symbol.escaped_name))
+                    .def_name_matches(def_id, &symbol.escaped_name)
+                    .unwrap_or(false))
         {
             // Populate local caches for future fast-path hits.
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);

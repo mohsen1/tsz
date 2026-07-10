@@ -201,16 +201,11 @@ impl<'a> CheckerState<'a> {
                 .iter()
                 .map(|info| info.name)
                 .collect();
-            let mut free_params = crate::query_boundaries::common::free_type_params_named(
+            let free_params = crate::query_boundaries::common::free_type_params_named(
                 self.ctx.types,
-                function_shape.return_type,
+                [function_shape.return_type, evaluated_return_type],
                 &own_param_names,
             );
-            free_params.extend(crate::query_boundaries::common::free_type_params_named(
-                self.ctx.types,
-                evaluated_return_type,
-                &own_param_names,
-            ));
             let scope_bindings: Vec<(String, Option<TypeId>)> = free_params
                 .into_iter()
                 .map(|(name_atom, param_type)| {
@@ -252,9 +247,8 @@ impl<'a> CheckerState<'a> {
             }
             .filter(|type_id| !matches!(*type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
 
-            // Restore in reverse: the same name can be bound twice (raw +
-            // evaluated return collections), and only the first-saved
-            // `previous` is the caller's binding.
+            // Restore in reverse so that if two distinct param TypeIds share a
+            // name, the first-saved `previous` (the caller's binding) wins.
             for (name, previous) in scope_bindings.into_iter().rev() {
                 match previous {
                     Some(previous) => {

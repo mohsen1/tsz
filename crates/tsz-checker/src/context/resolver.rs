@@ -878,9 +878,8 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             // unrelated local symbol would then delegate to the lib file and
             // adopt the wrong declaration (issue #15687).
             && self.binder.get_symbol(sym_id).is_none_or(|local| {
-                self.definition_store
-                    .get_name(def_id)
-                    .is_none_or(|name| self.types.resolve_atom(name) == local.escaped_name)
+                self.def_name_matches(def_id, &local.escaped_name)
+                    .unwrap_or(true)
             })
         {
             self.register_symbol_file_target(sym_id, file_idx);

@@ -277,8 +277,7 @@ impl<'a> CheckerState<'a> {
         props_name: &str,
     ) -> Option<String> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let declarations: Vec<NodeIndex> = symbol.all_declarations();
-        for decl_idx in declarations {
+        for decl_idx in symbol.all_declarations() {
             // A lib-merged symbol's declaration index belongs to its lib
             // arena; the same index read against the current arena is an
             // unrelated node. Besides yielding a wrong display, that

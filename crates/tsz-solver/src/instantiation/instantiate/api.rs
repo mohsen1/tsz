@@ -1250,8 +1250,9 @@ pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
     resolve_type_params_to_defaults_core(db, ty, |_param_id, info| names.contains(&info.name))
 }
 
-/// Free type parameters of `ty` whose declared name is in `names`, returned as
-/// `(name, exact interned TypeId)` pairs.
+/// Free type parameters of `roots` whose declared name is in `names`,
+/// returned as `(name, exact interned `TypeId`)` pairs, deduplicated across
+/// roots by the underlying visitor.
 ///
 /// The preserve-side complement of [`resolve_named_type_params_to_defaults`]:
 /// a caller that owns a generic scope (e.g. a synthesized construct signature
@@ -1263,7 +1264,7 @@ pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
 /// types actually reference.
 pub fn free_type_params_named<S: std::hash::BuildHasher>(
     db: &dyn TypeDatabase,
-    ty: TypeId,
+    roots: impl IntoIterator<Item = TypeId>,
     names: &std::collections::HashSet<tsz_common::Atom, S>,
 ) -> Vec<(tsz_common::Atom, TypeId)> {
     use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
@@ -1271,7 +1272,7 @@ pub fn free_type_params_named<S: std::hash::BuildHasher>(
     if names.is_empty() {
         return Vec::new();
     }
-    free_type_parameter_ids_in(db, [ty])
+    free_type_parameter_ids_in(db, roots)
         .into_iter()
         .filter_map(|param_id| match db.lookup(param_id) {
             Some(TypeData::TypeParameter(info)) if names.contains(&info.name) => {
