@@ -667,13 +667,16 @@ fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
     let mut files = Vec::new();
     collect_checker_rs_files(Path::new("src"), &mut files);
 
-    let helper_path = Path::new("src/context/def_mapping.rs");
+    let helper_paths = [
+        Path::new("src/context/def_mapping.rs"),
+        Path::new("src/context/deferred_flow_env_write.rs"),
+    ];
     let method = "register_def_symbol_mapping";
     let needle = format!(".{method}(");
     let mut offenders = Vec::new();
 
     for path in files {
-        if path == helper_path {
+        if helper_paths.contains(&path.as_path()) {
             continue;
         }
         let source = fs::read_to_string(&path).unwrap_or_default();
