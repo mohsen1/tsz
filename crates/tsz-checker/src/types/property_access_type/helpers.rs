@@ -1555,11 +1555,16 @@ impl<'a> CheckerState<'a> {
         let obj_eval = self.evaluate_application_type(obj_type);
         let (_, nullish) = self.split_nullish_type(obj_eval);
         if nullish.is_some() {
+            // The `| undefined` below is the chain short-circuit marker; track
+            // whether the member itself already carried `undefined` so outer
+            // chain continuations can strip only the marker.
+            self.record_optional_chain_marker(idx, result);
             crate::query_boundaries::optional_chain::add_undefined_if_missing(
                 self.ctx.types,
                 result,
             )
         } else {
+            self.set_optional_chain_marker_only(idx, false);
             result
         }
     }

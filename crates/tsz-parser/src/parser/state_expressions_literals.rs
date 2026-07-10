@@ -1059,6 +1059,7 @@ impl ParserState {
                 expression: import_node,
                 type_arguments: import_call_type_arguments,
                 arguments: Some(arguments),
+                question_dot_token: false,
             },
         )
     }
@@ -1729,6 +1730,7 @@ impl ParserState {
                 expression,
                 type_arguments,
                 arguments,
+                question_dot_token: false,
             },
         )
     }

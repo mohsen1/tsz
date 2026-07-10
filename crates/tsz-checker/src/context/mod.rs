@@ -877,6 +877,17 @@ pub struct CheckerContext<'a> {
     /// otherwise the declared type gets overridden with the narrowed type.
     pub daa_error_nodes: CowCache<FxHashSet<u32>>,
 
+    /// Optional-chain nodes whose computed type's `undefined` member exists
+    /// only because the chain can short-circuit — the equivalent of tsc's
+    /// optional-type marker (`addOptionalTypeMarker`). Chain continuations
+    /// (`o?.f()`, `o?.f.g`, `o?.f["g"]`) remove `undefined` from the receiver
+    /// or callee only for nodes recorded here, so a member's own inherent
+    /// `undefined`/`null` still drives the possibly-nullish diagnostics
+    /// (TS18047/TS18048/TS2721/TS2722). Entries are overwritten whenever the
+    /// producing access is recomputed, so stale speculative results
+    /// self-correct.
+    pub optional_chain_marker_only_nodes: FxHashSet<u32>,
+
     /// Deferred TS2454 diagnostics that survive speculative rollback.
     /// `check_flow_usage` can run inside speculative call-checker contexts
     /// (generic inference, overload probing) that truncate diagnostics on

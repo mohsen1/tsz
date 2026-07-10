@@ -65,16 +65,21 @@ impl<'a> CheckerState<'a> {
         // Only used when flow narrowing is skipped (skip_result_flow_for_result),
         // which guarantees the result is context-independent.
         let cache_generation = TypeResolver::resolver_generation(&self.ctx);
-        if skip_result_flow_for_result
-            && let Some(cached) = self
+        if skip_result_flow_for_result {
+            let cached = self
                 .ctx
                 .flow_shared
                 .narrowing_cache
                 .optional_chain_cache
                 .borrow()
-                .get(&(object_type, prop_atom), cache_generation)
-        {
-            return Some(cached);
+                .get(&(object_type, prop_atom), cache_generation);
+            if let Some(cached) = cached {
+                // The cache is keyed by type, not node: replay the marker bit
+                // for this node so chain continuations still know whether the
+                // result's `undefined` is chain-introduced only.
+                self.set_optional_chain_marker_only(idx, cached.undefined_is_marker_only);
+                return Some(cached.type_id);
+            }
         }
 
         let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
@@ -129,19 +134,31 @@ impl<'a> CheckerState<'a> {
                 property_name,
                 entry.type_id,
             );
-            if base_nullish.is_some() {
+            let marker_only = if base_nullish.is_some() {
+                let marker_only = self.record_optional_chain_marker(idx, result_type);
                 result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                     self.ctx.types,
                     result_type,
                 );
-            }
+                marker_only
+            } else {
+                self.set_optional_chain_marker_only(idx, false);
+                false
+            };
             if skip_result_flow_for_result {
                 self.ctx
                     .flow_shared
                     .narrowing_cache
                     .optional_chain_cache
                     .borrow_mut()
-                    .insert((object_type, prop_atom), resolver_generation, result_type);
+                    .insert(
+                        (object_type, prop_atom),
+                        resolver_generation,
+                        crate::query_boundaries::common::CachedChainType {
+                            type_id: result_type,
+                            undefined_is_marker_only: marker_only,
+                        },
+                    );
             }
             return Some(self.finalize_property_access_result(
                 idx,
@@ -213,19 +230,28 @@ impl<'a> CheckerState<'a> {
                         )),
                     );
                 let mut result_type = effective_write_result(refined_type_id, write_type);
-                if base_nullish.is_some() {
+                let marker_only = if base_nullish.is_some() {
+                    let marker_only = self.record_optional_chain_marker(idx, result_type);
                     result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
                     );
-                }
+                    marker_only
+                } else {
+                    self.set_optional_chain_marker_only(idx, false);
+                    false
+                };
+                let cached_chain = crate::query_boundaries::common::CachedChainType {
+                    type_id: result_type,
+                    undefined_is_marker_only: marker_only,
+                };
                 if skip_result_flow_for_result {
                     self.ctx
                         .flow_shared
                         .narrowing_cache
                         .optional_chain_cache
                         .borrow_mut()
-                        .insert((object_type, prop_atom), resolver_generation, result_type);
+                        .insert((object_type, prop_atom), resolver_generation, cached_chain);
                 }
                 if let Some(key) = optional_property_chain_cache_key {
                     self.ctx
@@ -233,7 +259,7 @@ impl<'a> CheckerState<'a> {
                         .narrowing_cache
                         .optional_property_chain_cache
                         .borrow_mut()
-                        .insert(key.clone(), resolver_generation, result_type);
+                        .insert(key.clone(), resolver_generation, cached_chain);
                 }
                 Some(self.finalize_property_access_result(
                     idx,
@@ -255,10 +281,13 @@ impl<'a> CheckerState<'a> {
                     );
                 let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                 if base_nullish.is_some() {
+                    self.record_optional_chain_marker(idx, result_type);
                     result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                         self.ctx.types,
                         result_type,
                     );
+                } else {
+                    self.set_optional_chain_marker_only(idx, false);
                 }
                 Some(self.finalize_property_access_result(
                     idx,

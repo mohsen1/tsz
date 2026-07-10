@@ -1392,6 +1392,9 @@ mod object_spread_optional_merge_tests;
 #[path = "tests/operator_chain_overload_resolution_tests.rs"]
 mod operator_chain_overload_resolution_tests;
 #[cfg(test)]
+#[path = "tests/optional_chain_inherent_nullish_tests.rs"]
+mod optional_chain_inherent_nullish_tests;
+#[cfg(test)]
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]

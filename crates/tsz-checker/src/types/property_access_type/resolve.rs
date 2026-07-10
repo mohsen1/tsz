@@ -67,14 +67,19 @@ impl<'a> CheckerState<'a> {
             self.optional_property_chain_cache_key(idx, request);
         let optional_property_chain_cache_generation = TypeResolver::resolver_generation(&self.ctx);
         if let Some(key) = optional_property_chain_cache_key.as_ref() {
-            let cache = self
+            let cached = self
                 .ctx
                 .flow_shared
                 .narrowing_cache
                 .optional_property_chain_cache
-                .borrow();
-            if let Some(cached) = cache.get(key, optional_property_chain_cache_generation) {
-                return cached;
+                .borrow()
+                .get(key, optional_property_chain_cache_generation);
+            if let Some(cached) = cached {
+                // The cache is keyed by root type and path, not node: replay
+                // the marker bit for this node so chain continuations still
+                // know whether the result's `undefined` is chain-introduced.
+                self.set_optional_chain_marker_only(idx, cached.undefined_is_marker_only);
+                return cached.type_id;
             }
         }
 
@@ -469,16 +474,21 @@ impl<'a> CheckerState<'a> {
 
         // Handle optional chain continuations: for `o?.b.c`, when processing `.c`,
         // the object type from `o?.b` includes `undefined` from the optional chain.
-        // But `.c` should only be reached when `o` is defined, so we strip nullish
-        // types. Only do this when this access is NOT itself an optional chain
-        // (`question_dot_token` is false) but is part of one (parent has `?.`).
+        // Remove only that chain-introduced marker (tsc's
+        // `removeOptionalTypeMarker`): when `b` itself is optional, its own
+        // `undefined` survives and the normal possibly-nullish path reports
+        // TS18048 exactly like tsc. Only do this when this access is NOT itself
+        // an optional chain (`question_dot_token` is false) but is part of one
+        // (parent has `?.`).
         object_type = if !access.question_dot_token
             && crate::types_domain::computation::access::is_optional_chain(
                 self.ctx.arena,
                 access.expression,
             ) {
-            let (non_nullish, _) = self.split_nullish_type(object_type);
-            non_nullish.unwrap_or(object_type)
+            let non_optional = self.remove_optional_chain_marker(access.expression, object_type);
+            // Honor guards (`if (o?.f) o?.f.g`) before diagnosing: tsc's
+            // receiver is the flow-narrowed reference.
+            self.flow_narrow_optional_chain_remainder(access.expression, non_optional)
         } else {
             object_type
         };

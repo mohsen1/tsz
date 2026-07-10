@@ -270,6 +270,12 @@ pub struct CallExprData {
     pub expression: NodeIndex,
     pub type_arguments: Option<NodeList>,
     pub arguments: Option<NodeList>,
+    /// `true` when the call itself is written with `?.` before its argument
+    /// list (`f?.()`, `o.m?.<T>()`), mirroring tsc's `questionDotToken` on
+    /// `CallChain`. A call that merely continues a chain (`o?.f()`) carries
+    /// the `OPTIONAL_CHAIN` node flag but leaves this `false`; the distinction
+    /// decides whether `?.` guards the invoked value itself.
+    pub question_dot_token: bool,
 }
 
 /// Data for property/element access

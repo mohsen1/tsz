@@ -1280,6 +1280,7 @@ impl ParserState {
                             expression: expr,
                             type_arguments: Some(Self::make_node_list(type_args)),
                             arguments: Some(args),
+                            question_dot_token: false,
                         },
                     ))
                 } else {
@@ -1305,6 +1306,7 @@ impl ParserState {
                         expression: expr,
                         type_arguments: None,
                         arguments: Some(args),
+                        question_dot_token: false,
                     },
                 ))
             }

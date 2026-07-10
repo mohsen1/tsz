@@ -98,6 +98,10 @@ impl<'a> CheckerState<'a> {
                 self.error_property_not_exist_at(property_name, TypeId::NEVER, name_or_argument);
             }
             let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
+            // The `| undefined` below is the chain short-circuit marker; track
+            // whether the member itself already carried `undefined` so chain
+            // continuations can strip only the marker.
+            self.record_optional_chain_marker(idx, base_type);
             return factory.union2(base_type, TypeId::UNDEFINED);
         }
 
