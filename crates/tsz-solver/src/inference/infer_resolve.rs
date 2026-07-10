@@ -58,9 +58,7 @@ impl<'a> InferenceContext<'a> {
     ) -> TypeId {
         let covariant_widened = if is_literal_type(self.interner, covariant_result) {
             covariant_result
-        } else if let (Some(mode), Some(TypeData::Tuple(_))) =
-            (spread_rest_mode, self.interner.lookup(covariant_result))
-        {
+        } else if let Some(mode) = spread_rest_mode {
             // Tuples packed from trailing rest arguments widen per element
             // against the rest type parameter's declared constraint (tsc's
             // `getSpreadArgumentType`); the blanket deep widening below would

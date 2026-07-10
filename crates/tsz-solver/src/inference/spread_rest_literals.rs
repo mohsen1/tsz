@@ -208,30 +208,6 @@ fn element_preserves_literal(
     }
 }
 
-/// Whether `constraint` reaches a tuple constituent, making the per-index
-/// verdict position-dependent. Array-flavored constraints answer the same
-/// for every index, letting [`widen_spread_rest_tuple`] cache verdicts per
-/// literal kind.
-fn constraint_is_index_dependent(db: &dyn TypeDatabase, constraint: TypeId, depth: u32) -> bool {
-    if depth > MAX_CONSTRAINT_DEPTH || constraint.is_intrinsic() {
-        return false;
-    }
-    match db.lookup(constraint) {
-        Some(TypeData::Tuple(_)) => true,
-        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-            constraint_is_index_dependent(db, inner, depth + 1)
-        }
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
-            .type_list(list_id)
-            .iter()
-            .any(|&m| constraint_is_index_dependent(db, m, depth + 1)),
-        Some(TypeData::TypeParameter(info)) => info
-            .constraint
-            .is_some_and(|c| constraint_is_index_dependent(db, c, depth + 1)),
-        _ => false,
-    }
-}
-
 /// Re-widen a spread-built rest tuple the way tsc's `getSpreadArgumentType` +
 /// `getWidenedType` pipeline leaves it: literal elements whose per-index
 /// constraint element preserves them stay literal; every other element widens
@@ -250,36 +226,19 @@ pub(crate) fn widen_spread_rest_tuple(
     };
     let elems = db.tuple_list(elems_id);
     let count = elems.len();
-    // Array-flavored constraints give every index the same answer; cache the
-    // verdict per literal kind so an N-argument call walks the constraint
-    // once per kind instead of once per argument.
-    let index_dependent = declared_constraint
-        .is_some_and(|constraint| constraint_is_index_dependent(db, constraint, 0));
-    let mut kind_verdicts: Vec<(TypeId, bool)> = Vec::new();
-    let mut preserves = |prim: TypeId, index: usize| -> bool {
-        let Some(constraint) = declared_constraint else {
-            return false;
-        };
-        if !index_dependent
-            && let Some(&(_, verdict)) = kind_verdicts.iter().find(|&&(k, _)| k == prim)
-        {
-            return verdict;
-        }
-        let verdict = constraint_preserves_literal_at(db, constraint, index, count, prim, mode, 0);
-        if !index_dependent {
-            kind_verdicts.push((prim, verdict));
-        }
-        verdict
-    };
-    let mut new_elems: Vec<TupleElement> = Vec::with_capacity(count);
-    let mut changed = false;
+    // Copy-on-first-change: the fully-preserved tuple (the feature's target
+    // case) allocates nothing and returns its own id.
+    let mut new_elems: Option<Vec<TupleElement>> = None;
     for (index, elem) in elems.iter().enumerate() {
         let widened = if elem.rest {
             // A spread segment (`f("a", ...rest)`) is pushed through
             // unchanged by tsc; its element types were never fresh literals.
             elem.type_id
         } else if let Some(prim) = literal_primitive_of(db, elem.type_id) {
-            if preserves(prim, index) {
+            let preserved = declared_constraint.is_some_and(|constraint| {
+                constraint_preserves_literal_at(db, constraint, index, count, prim, mode, 0)
+            });
+            if preserved {
                 elem.type_id
             } else {
                 crate::operations::widening::widen_literal_type(db, elem.type_id)
@@ -289,10 +248,19 @@ pub(crate) fn widen_spread_rest_tuple(
             // deep widening tsc applies via `getWidenedType`.
             crate::operations::widening::widen_type_for_inference(db, elem.type_id)
         };
-        changed |= widened != elem.type_id;
-        let mut new_elem = *elem;
-        new_elem.type_id = widened;
-        new_elems.push(new_elem);
+        if widened != elem.type_id && new_elems.is_none() {
+            let mut prefix = Vec::with_capacity(count);
+            prefix.extend_from_slice(&elems[..index]);
+            new_elems = Some(prefix);
+        }
+        if let Some(rebuilt) = new_elems.as_mut() {
+            let mut new_elem = *elem;
+            new_elem.type_id = widened;
+            rebuilt.push(new_elem);
+        }
     }
-    if changed { db.tuple(new_elems) } else { tuple }
+    match new_elems {
+        Some(rebuilt) => db.tuple(rebuilt),
+        None => tuple,
+    }
 }

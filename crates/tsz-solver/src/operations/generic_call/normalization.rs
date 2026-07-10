@@ -434,10 +434,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
-    /// The inference variable and literal-preservation mode for a tuple
-    /// packed from trailing rest arguments (tsc's `getSpreadArgumentType`).
+    /// Mark the inference variable a packed rest-argument tuple constrains
+    /// with its literal-preservation mode (tsc's `getSpreadArgumentType`).
     ///
-    /// Returns `None` — leaving the previous blanket widening in force — when
+    /// Marks nothing — leaving the previous blanket widening in force — when
     /// the packed tuple carries no literal element or the rest type parameter
     /// has no declared constraint, so the per-element gate could never
     /// preserve anything anyway. Otherwise the mode is `ContextuallyFixed`
@@ -448,17 +448,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// elements (`string`, `number`, …) no longer preserve literal arguments.
     /// Without that early fixing `T[i]` stays instantiable and its base
     /// constraint preserves matching literal kinds (`Unfixed`).
-    pub(super) fn spread_rest_literal_mode(
+    pub(super) fn mark_spread_rest_literal_mode(
         &mut self,
+        infer_ctx: &mut InferenceContext,
         func: &FunctionShape,
         rest_target_type: TypeId,
         packed_tuple: TypeId,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
         type_param_vars: &[crate::inference::infer::InferenceVar],
-    ) -> Option<(
-        crate::inference::infer::InferenceVar,
-        crate::inference::spread_rest_literals::SpreadRestLiteralMode,
-    )> {
+    ) {
         use crate::inference::spread_rest_literals::SpreadRestLiteralMode;
         let has_literal_element = match self.interner.lookup(packed_tuple) {
             Some(TypeData::Tuple(elems_id)) => {
@@ -474,15 +472,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             _ => false,
         };
         if !has_literal_element {
-            return None;
+            return;
         }
-        let var = self.spread_rest_infer_var(rest_target_type, var_map)?;
-        let tp = func
+        let Some(var) = self.spread_rest_infer_var(rest_target_type, var_map) else {
+            return;
+        };
+        let Some(tp) = func
             .type_params
             .iter()
             .zip(type_param_vars.iter())
-            .find_map(|(tp, &candidate)| (candidate == var).then_some(tp))?;
-        tp.constraint?;
+            .find_map(|(tp, &candidate)| (candidate == var).then_some(tp))
+        else {
+            return;
+        };
+        if tp.constraint.is_none() {
+            return;
+        }
         let mode = if self.contextual_type.is_some()
             && self.type_param_at_top_level_through_aliases(func.return_type, tp.name)
         {
@@ -490,7 +495,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             SpreadRestLiteralMode::Unfixed
         };
-        Some((var, mode))
+        infer_ctx.mark_spread_rest_var(var, mode);
     }
 
     /// The inference variable a spread-built rest tuple is constrained
@@ -1127,15 +1132,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Process rest tuple in Round 1
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
-            if let Some((var, literal_mode)) = self.spread_rest_literal_mode(
+            self.mark_spread_rest_literal_mode(
+                &mut infer_ctx,
                 func,
                 target_type,
                 tuple_type,
                 &var_map,
                 &type_param_vars,
-            ) {
-                infer_ctx.mark_spread_rest_var(var, literal_mode);
-            }
+            );
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,

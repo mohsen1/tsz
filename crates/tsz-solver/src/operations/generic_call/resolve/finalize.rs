@@ -570,13 +570,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     widening::widen_literal_type(db, ty)
                                 }
                             }
-                        } else if let Some(literal_mode) =
-                            infer_ctx.spread_rest_mode_of(var).filter(|_| {
-                                matches!(
-                                    self.interner.lookup(ty),
-                                    Some(crate::types::TypeData::Tuple(_))
-                                ) && !infer_ctx.has_type_annotation_candidates(var)
-                            })
+                        } else if matches!(
+                            self.interner.lookup(ty),
+                            Some(crate::types::TypeData::Tuple(_))
+                        ) && let Some(literal_mode) = infer_ctx.spread_rest_mode_of(var)
+                            && !infer_ctx.has_type_annotation_candidates(var)
                         {
                             // A tuple packed from trailing rest arguments widens
                             // per element against the rest type parameter's
