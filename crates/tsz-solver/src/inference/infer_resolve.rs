@@ -53,11 +53,14 @@ impl<'a> InferenceContext<'a> {
         concrete_contra_candidates: &[InferenceCandidate],
         from_array_element: bool,
         declared_constraint: Option<TypeId>,
+        spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
         mut external_is_subtype: Option<&mut dyn FnMut(TypeId, TypeId) -> bool>,
     ) -> TypeId {
         let covariant_widened = if is_literal_type(self.interner, covariant_result) {
             covariant_result
-        } else if let Some(&mode) = self.spread_rest_tuple_modes.get(&covariant_result) {
+        } else if let (Some(mode), Some(TypeData::Tuple(_))) =
+            (spread_rest_mode, self.interner.lookup(covariant_result))
+        {
             // Tuples packed from trailing rest arguments widen per element
             // against the rest type parameter's declared constraint (tsc's
             // `getSpreadArgumentType`); the blanket deep widening below would
@@ -567,6 +570,7 @@ impl<'a> InferenceContext<'a> {
         let declared_constraint_preserves_literals =
             self.literal_preserving_declared_constraints.contains(&root);
         let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
+        let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
 
         let result = if !candidates.is_empty() {
             // Covariant candidates exist: use union/BCT (matches tsc's getInferredType)
@@ -577,6 +581,7 @@ impl<'a> InferenceContext<'a> {
                 declared_constraint,
                 declared_constraint_preserves_literals,
                 skip_literal_widening,
+                spread_rest_mode,
             );
             if !concrete_contra_candidates.is_empty() {
                 // Match tsc's getInferredType: when both co- and contra-variant
@@ -600,6 +605,7 @@ impl<'a> InferenceContext<'a> {
                     &concrete_contra_candidates,
                     candidates.iter().any(|c| c.from_array_element),
                     declared_constraint,
+                    spread_rest_mode,
                     external_is_subtype
                         .as_mut()
                         .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
@@ -661,6 +667,7 @@ impl<'a> InferenceContext<'a> {
         declared_constraint: Option<TypeId>,
         declared_constraint_preserves_literals: bool,
         skip_literal_widening: bool,
+        spread_rest_mode: Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
     ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
         if filtered.is_empty() {
@@ -944,7 +951,7 @@ impl<'a> InferenceContext<'a> {
                 Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
                     if has_type_annotation_candidate {
                         resolved
-                    } else if let Some(&mode) = self.spread_rest_tuple_modes.get(&resolved) {
+                    } else if let Some(mode) = spread_rest_mode {
                         // A tuple packed from trailing rest arguments widens per
                         // element against the rest type parameter's declared
                         // constraint (tsc's `getSpreadArgumentType`), so
@@ -1839,6 +1846,7 @@ impl<'a> InferenceContext<'a> {
                 concrete_contra_candidates.retain(|c| c.priority <= best_cov_priority);
             }
             let skip_literal_widening = self.top_level_in_return_type_unfixed.contains(&root);
+            let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
             let result = if !candidates.is_empty() {
                 let covariant_result = self.resolve_from_candidates(
                     &candidates,
@@ -1847,6 +1855,7 @@ impl<'a> InferenceContext<'a> {
                     dc,
                     dc_preserves_literals,
                     skip_literal_widening,
+                    spread_rest_mode,
                 );
                 // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
@@ -1856,6 +1865,7 @@ impl<'a> InferenceContext<'a> {
                         &concrete_contra_candidates,
                         candidates.iter().any(|c| c.from_array_element),
                         dc,
+                        spread_rest_mode,
                         external_is_subtype
                             .as_mut()
                             .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
@@ -1964,6 +1974,7 @@ impl<'a> InferenceContext<'a> {
                             self.literal_preserving_declared_constraints.contains(&root);
                         let skip_literal_widening =
                             self.top_level_in_return_type_unfixed.contains(&root);
+                        let spread_rest_mode = self.spread_rest_var_modes.get(&root).copied();
                         let covariant_result = self.resolve_from_candidates(
                             &candidates,
                             is_const,
@@ -1971,6 +1982,7 @@ impl<'a> InferenceContext<'a> {
                             dc,
                             dc_preserves_literals,
                             skip_literal_widening,
+                            spread_rest_mode,
                         );
                         if !contra_candidates.is_empty() {
                             let covariant_is_uninformative = matches!(

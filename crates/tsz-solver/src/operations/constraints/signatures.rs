@@ -1054,7 +1054,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
-        source_tuple: TypeId,
         source: &[TupleElement],
         target: &[TupleElement],
         priority: crate::types::InferencePriority,
@@ -1104,7 +1103,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     );
                                 } else {
                                     let tail_tuple = self.interner.tuple(tail);
-                                    ctx.propagate_spread_rest_tuple_mode(source_tuple, tail_tuple);
                                     self.constrain_types(
                                         ctx,
                                         var_map,
@@ -1175,7 +1173,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         );
                     } else {
                         let tail_tuple = self.interner.tuple(tail);
-                        ctx.propagate_spread_rest_tuple_mode(source_tuple, tail_tuple);
                         self.constrain_types(ctx, var_map, tail_tuple, t_elem.type_id, priority);
                     }
                     // Constrain each fixed suffix target element against its matching source
