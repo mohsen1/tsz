@@ -1431,14 +1431,15 @@ impl<'a> CheckerState<'a> {
         chain_can_short_circuit: bool,
     ) -> (TypeId, bool) {
         if chain_can_short_circuit {
-            let marker_only = self.record_optional_chain_marker(idx, type_id);
-            (
-                crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                    self.ctx.types,
-                    type_id,
-                ),
-                marker_only,
-            )
+            let result = crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                type_id,
+            );
+            // `undefined` was newly added exactly when the member lacked its
+            // own `undefined` — the marker-only case.
+            let marker_only = result != type_id;
+            self.set_optional_chain_marker_only(idx, marker_only);
+            (result, marker_only)
         } else {
             self.set_optional_chain_marker_only(idx, false);
             (type_id, false)

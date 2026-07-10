@@ -129,7 +129,8 @@ impl<'a> CheckerState<'a> {
             self.record_optional_chain_marker(call_idx, return_type);
             call_checker::call_result_optional_chain_return(self.ctx.types, return_type)
         } else {
-            self.set_optional_chain_marker_only(call_idx, false);
+            // No clear needed: only the chain arm above ever records a bit
+            // for a call node, so a non-chain call was never inserted.
             return_type
         }
     }
