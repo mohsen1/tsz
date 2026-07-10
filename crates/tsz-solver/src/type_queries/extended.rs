@@ -587,13 +587,15 @@ pub fn stringify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
             Some(db.resolve_atom_ref(atom).to_string())
         }
         Some(TypeData::Literal(crate::types::LiteralValue::Boolean(b))) => Some(b.to_string()),
-        Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => Some(format!("{}", n.0)),
+        Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => {
+            Some(crate::utils::js_number_to_string(n.0).into_owned())
+        }
         Some(TypeData::Enum(_, structural_type)) => match db.lookup(structural_type) {
             Some(TypeData::Literal(crate::types::LiteralValue::String(atom))) => {
                 Some(db.resolve_atom_ref(atom).to_string())
             }
             Some(TypeData::Literal(crate::types::LiteralValue::Number(n))) => {
-                Some(format!("{}", n.0))
+                Some(crate::utils::js_number_to_string(n.0).into_owned())
             }
             _ => None,
         },

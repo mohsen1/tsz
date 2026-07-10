@@ -297,7 +297,9 @@ impl<'a> CheckerState<'a> {
                 {
                     return Some(match lit {
                         tsz_solver::LiteralValue::String(s) => self.ctx.types.resolve_atom(s),
-                        tsz_solver::LiteralValue::Number(n) => n.0.to_string(),
+                        tsz_solver::LiteralValue::Number(n) => {
+                            tsz_solver::utils::js_number_to_string(n.0).into_owned()
+                        }
                         tsz_solver::LiteralValue::Boolean(b) => b.to_string(),
                         tsz_solver::LiteralValue::BigInt(b) => self.ctx.types.resolve_atom(b),
                     });

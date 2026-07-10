@@ -12,8 +12,11 @@ use crate::query_boundaries::indexed_access_key_space;
 use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::query_boundaries::type_construction;
 
-/// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
-/// In type position, the index is a `LiteralType` node wrapping a string literal.
+/// Extract the property name from a type-level literal index (e.g., `'y'`
+/// from `T['y']`). In type position, the index is a `LiteralType` node
+/// wrapping the literal. A numeric literal index names the property spelled
+/// by the value's `Number::toString` (`1e21` names `"1e+21"`), not its
+/// source text.
 pub(crate) fn get_string_literal_from_type_index(
     arena: &tsz_parser::parser::NodeArena,
     idx: NodeIndex,
@@ -21,15 +24,29 @@ pub(crate) fn get_string_literal_from_type_index(
     let node = arena.get(idx)?;
     // Try direct literal first (for expression-like contexts)
     if let Some(lit) = arena.get_literal(node) {
-        return Some(lit.text.to_string());
+        return Some(literal_index_property_name(node, lit));
     }
     // In type position, the index is a LiteralType wrapping an inner literal
     if let Some(lit_type) = arena.get_literal_type(node) {
         let inner = arena.get(lit_type.literal)?;
         let lit = arena.get_literal(inner)?;
-        return Some(lit.text.to_string());
+        return Some(literal_index_property_name(inner, lit));
     }
     None
+}
+
+/// Canonical property name named by a literal index node, shared by the
+/// type-position (`T[1e21]`) and value-position (`o[1e21]`) lookup paths.
+pub(crate) fn literal_index_property_name(
+    node: &tsz_parser::parser::node::Node,
+    lit: &tsz_parser::parser::node::LiteralData,
+) -> String {
+    if node.kind == SyntaxKind::NumericLiteral as u16
+        && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+    {
+        return canonical;
+    }
+    lit.text.to_string()
 }
 
 /// Check if a type node is `typeof globalThis`, possibly wrapped in parentheses.

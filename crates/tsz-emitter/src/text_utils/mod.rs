@@ -6,55 +6,13 @@
 
 /// Format an f64 value the way JavaScript's `Number.toString()` would.
 ///
-/// Handles `NaN`, `+/-Infinity`, and the scientific-notation threshold
-/// (magnitudes >= 1e21 or < 1e-6). Uses Rust's shortest-roundtrip formatter
-/// which matches JS `Number.prototype.toString()` for the normal range.
+/// Delegates to the workspace-wide ECMAScript `Number::toString(10)` owner in
+/// `tsz_common`; see [`tsz_common::numeric::js_number_to_string`]. (A previous
+/// local implementation switched to scientific notation one decimal digit too
+/// early, emitting `1e+20` where JavaScript prints
+/// `100000000000000000000`.)
 pub(crate) fn format_js_number(value: f64) -> String {
-    if value.is_nan() {
-        return "NaN".to_string();
-    }
-    if value.is_infinite() {
-        return if value.is_sign_positive() {
-            "Infinity".to_string()
-        } else {
-            "-Infinity".to_string()
-        };
-    }
-    let abs = value.abs();
-    if abs != 0.0 && abs < 1e-6 {
-        return format_js_scientific(value);
-    }
-    let s = value.to_string();
-    let abs_s = s.strip_prefix('-').unwrap_or(&s);
-    let needs_scientific = if let Some(dot_pos) = abs_s.find('.') {
-        dot_pos >= 21
-    } else {
-        abs_s.len() >= 21
-    };
-    if needs_scientific {
-        format_js_scientific(value)
-    } else {
-        s
-    }
-}
-
-/// Format a number in JavaScript-style scientific notation (e.g., `1.2345678912345678e+53`).
-fn format_js_scientific(n: f64) -> String {
-    let neg = n < 0.0;
-    let abs_n = n.abs();
-    let s = format!("{abs_n:e}");
-    let result = if let Some(pos) = s.find('e') {
-        let (mantissa, exp_part) = s.split_at(pos);
-        let exp_str = &exp_part[1..];
-        if exp_str.starts_with('-') {
-            format!("{mantissa}e{exp_str}")
-        } else {
-            format!("{mantissa}e+{exp_str}")
-        }
-    } else {
-        s
-    };
-    if neg { format!("-{result}") } else { result }
+    tsz_common::numeric::js_number_to_string(value).into_owned()
 }
 
 #[cfg(test)]
@@ -84,6 +42,19 @@ mod tests {
     fn floats() {
         assert_eq!(format_js_number(3.15), "3.15");
         assert_eq!(format_js_number(-0.5), "-0.5");
+    }
+
+    #[test]
+    fn positional_up_to_21_digits() {
+        // JavaScript stays positional below 1e21; the old local formatter
+        // switched to scientific one digit early.
+        assert_eq!(format_js_number(1e20), "100000000000000000000");
+        assert_eq!(format_js_number(-1e20), "-100000000000000000000");
+    }
+
+    #[test]
+    fn negative_zero_prints_as_zero() {
+        assert_eq!(format_js_number(-0.0), "0");
     }
 
     #[test]

@@ -1,4 +1,65 @@
-//! Utilities for parsing numeric literals.
+//! Utilities for parsing and formatting numeric literals.
+
+use std::borrow::Cow;
+
+/// ECMAScript `Number::toString(10)`
+/// (<https://tc39.es/ecma262/#sec-numeric-types-number-tostring>).
+///
+/// This is the single workspace-wide owner for converting a JavaScript number
+/// to its runtime string form. Every semantic or emit decision that needs a
+/// number's string representation (template literal type evaluation, numeric
+/// property-key canonicalization, enum value emit, declaration-file literal
+/// text) must route through it — raw `f64::to_string()`/`format!` diverge from
+/// JavaScript on the exponential-notation thresholds (`1e21` → `"1e+21"`,
+/// `1e-7` → `"1e-7"`) and on negative zero (`-0` → `"0"`).
+///
+/// Rust's shortest-roundtrip formatter produces the same digits as the spec's
+/// shortest-`s` requirement; the remaining work is the positional/exponential
+/// switch (exponential when the magnitude is `>= 1e21` or `< 1e-6`) and the
+/// `e+`/`e-` exponent sign JavaScript always includes.
+///
+/// Returns `Cow::Borrowed` for static special cases (`NaN`, `0`, infinities)
+/// and `Cow::Owned` for dynamically formatted numbers.
+#[must_use]
+pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
+    if value.is_nan() {
+        return Cow::Borrowed("NaN");
+    }
+    if value == 0.0 {
+        // Matches JavaScript `String(-0) === "0"`.
+        return Cow::Borrowed("0");
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            Cow::Borrowed("-Infinity")
+        } else {
+            Cow::Borrowed("Infinity")
+        };
+    }
+
+    let abs = value.abs();
+    if !(1e-6..1e21).contains(&abs) {
+        // Rust `{:e}` produces the shortest mantissa but bare exponents
+        // (`1e21`, `1.5e-7`); JavaScript prints an explicit exponent sign and
+        // no leading zeros (`1e+21`, `1.5e-7`).
+        let mut formatted = format!("{value:e}");
+        if let Some(split) = formatted.find('e') {
+            let (mantissa, exp) = formatted.split_at(split);
+            let exp_digits = exp.strip_prefix('e').unwrap_or("");
+            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
+                ('-', digits)
+            } else {
+                ('+', exp_digits)
+            };
+            let trimmed = digits.trim_start_matches('0');
+            let digits = if trimmed.is_empty() { "0" } else { trimmed };
+            formatted = format!("{mantissa}e{sign}{digits}");
+        }
+        return Cow::Owned(formatted);
+    }
+
+    Cow::Owned(value.to_string())
+}
 
 /// Parse a numeric literal text representation into a f64 value.
 /// Supports standard floating point literals as well as 0x, 0b, and 0o prefixes.
@@ -220,6 +281,51 @@ mod tests {
         assert_eq!(to_int32(3_000_000_000.0), -1_294_967_296);
         assert_eq!(to_int32(4_294_967_296.0), 0);
         assert_eq!(to_int32(f64::NAN), 0);
+    }
+
+    #[test]
+    fn js_number_to_string_matches_ecmascript_special_values() {
+        assert_eq!(js_number_to_string(f64::NAN), "NaN");
+        assert_eq!(js_number_to_string(f64::INFINITY), "Infinity");
+        assert_eq!(js_number_to_string(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(js_number_to_string(0.0), "0");
+        // SameValueZero: JavaScript `String(-0)` is `"0"`, not `"-0"`.
+        assert_eq!(js_number_to_string(-0.0), "0");
+    }
+
+    #[test]
+    fn js_number_to_string_positional_range() {
+        assert_eq!(js_number_to_string(1.0), "1");
+        assert_eq!(js_number_to_string(-3.5), "-3.5");
+        assert_eq!(js_number_to_string(42.0), "42");
+        // Smallest positional magnitude: JS `String(1e-6)` is `"0.000001"`.
+        assert_eq!(js_number_to_string(1e-6), "0.000001");
+        // Largest positional magnitudes: 21-digit integers stay positional.
+        assert_eq!(js_number_to_string(1e20), "100000000000000000000");
+        assert_eq!(
+            js_number_to_string(123456789123456790000.0),
+            "123456789123456800000"
+        );
+    }
+
+    #[test]
+    fn js_number_to_string_exponential_range() {
+        // JS switches to exponential at 1e21 and below 1e-6, always with an
+        // explicit exponent sign.
+        assert_eq!(js_number_to_string(1e21), "1e+21");
+        assert_eq!(js_number_to_string(-1e21), "-1e+21");
+        assert_eq!(js_number_to_string(1.5e22), "1.5e+22");
+        assert_eq!(js_number_to_string(1e-7), "1e-7");
+        assert_eq!(js_number_to_string(-1.5e-7), "-1.5e-7");
+        assert_eq!(
+            js_number_to_string(5.462437423415177e244),
+            "5.462437423415177e+244"
+        );
+        // Shortest round-trip digits, same as V8.
+        assert_eq!(
+            js_number_to_string(1.2345678912345678e53),
+            "1.2345678912345678e+53"
+        );
     }
 
     #[test]

@@ -41,8 +41,20 @@ impl TypeInterner {
         self.intern(TypeData::Literal(LiteralValue::String(atom)))
     }
 
-    /// Intern a literal number type
+    /// Intern a literal number type.
+    ///
+    /// Number literal types are keyed by `SameValueZero`, matching tsc's
+    /// `numberLiteralTypes` map: `-0` interns as the same type as `0`, and
+    /// every `NaN` bit pattern interns as one canonical `NaN` type. The
+    /// interner hashes raw `f64` bits, so canonicalization must happen here.
     pub fn literal_number(&self, value: f64) -> TypeId {
+        let value = if value == 0.0 {
+            0.0
+        } else if value.is_nan() {
+            f64::NAN
+        } else {
+            value
+        };
         self.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(value))))
     }
 

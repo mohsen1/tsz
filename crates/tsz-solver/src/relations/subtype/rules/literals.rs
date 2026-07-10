@@ -1045,28 +1045,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 // Helper functions for template literal matching
 // =============================================================================
 
-/// Format a number for template literal string coercion.
-/// Follows JavaScript's number-to-string conversion rules.
+/// Format a number for template literal string coercion with ECMAScript
+/// `Number::toString` semantics. (A previous local implementation trimmed
+/// trailing zeros off large integers, turning `1e21` into `"1"`.)
 pub(crate) fn format_number_for_template(num: f64) -> String {
-    if num.is_nan() {
-        return "NaN".to_string();
-    }
-    if num.is_infinite() {
-        return if num.is_sign_positive() {
-            "Infinity".to_string()
-        } else {
-            "-Infinity".to_string()
-        };
-    }
-    // Use JavaScript-like formatting (no trailing .0 for integers)
-    if num.fract() == 0.0 && num.abs() < 1e15 {
-        format!("{num:.0}")
-    } else {
-        // Use default Rust formatting which is close enough for most cases
-        let s = format!("{num}");
-        // Remove unnecessary trailing zeros after decimal point
-        s.trim_end_matches('0').trim_end_matches('.').to_string()
-    }
+    crate::utils::js_number_to_string(num).into_owned()
 }
 
 /// Find the length of a valid number at the start of a string.

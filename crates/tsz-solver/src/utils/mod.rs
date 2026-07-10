@@ -3,8 +3,6 @@
 //! This module contains common utilities used across multiple solver components
 //! to avoid code duplication.
 
-use std::borrow::Cow;
-
 use crate::caches::db::TypeDatabase;
 use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeId};
 use crate::visitor::{array_element_type, readonly_inner_type, tuple_list_id};
@@ -188,51 +186,10 @@ pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
 
 /// Converts a JavaScript number to its string representation.
 ///
-/// This matches JavaScript's `Number.prototype.toString()` behavior for proper
-/// numeric literal name checking.
-///
-/// Returns `Cow::Borrowed` for static special cases (NaN, 0, Infinity) and
-/// `Cow::Owned` for dynamically formatted numbers.
-pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
-    if value.is_nan() {
-        return Cow::Borrowed("NaN");
-    }
-    if value == 0.0 {
-        return Cow::Borrowed("0");
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            Cow::Borrowed("-Infinity")
-        } else {
-            Cow::Borrowed("Infinity")
-        };
-    }
-
-    let abs = value.abs();
-    if !(1e-6..1e21).contains(&abs) {
-        let mut formatted = format!("{value:e}");
-        if let Some(split) = formatted.find('e') {
-            let (mantissa, exp) = formatted.split_at(split);
-            let exp_digits = exp.strip_prefix('e').unwrap_or("");
-            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
-                ('-', digits)
-            } else {
-                ('+', exp_digits)
-            };
-            let trimmed = digits.trim_start_matches('0');
-            let digits = if trimmed.is_empty() { "0" } else { trimmed };
-            formatted = format!("{mantissa}e{sign}{digits}");
-        }
-        return Cow::Owned(formatted);
-    }
-
-    let formatted = value.to_string();
-    if formatted == "-0" {
-        Cow::Borrowed("0")
-    } else {
-        Cow::Owned(formatted)
-    }
-}
+/// Re-export of the workspace-wide ECMAScript `Number::toString(10)` owner so
+/// solver-internal callers keep a local path; see
+/// [`tsz_common::numeric::js_number_to_string`] for the contract.
+pub use tsz_common::numeric::js_number_to_string;
 
 /// Reduces a vector of types to a union, single type, or NEVER.
 ///

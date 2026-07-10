@@ -321,3 +321,17 @@ fn is_numeric_property_name_via_interner_round_trip() {
         "non-canonical numeric forms (e.g. '01') must not classify as numeric property names"
     );
 }
+
+/// Number literal types are keyed by `SameValueZero`, matching tsc's
+/// `numberLiteralTypes` map: `-0` interns as `0`, and every NaN bit pattern
+/// interns as one canonical NaN literal type.
+#[test]
+fn literal_number_interning_uses_same_value_zero() {
+    let interner = TypeInterner::new();
+    assert_eq!(interner.literal_number(0.0), interner.literal_number(-0.0));
+    assert_eq!(
+        interner.literal_number(f64::NAN),
+        interner.literal_number(-f64::NAN),
+    );
+    assert_ne!(interner.literal_number(0.0), interner.literal_number(1.0));
+}

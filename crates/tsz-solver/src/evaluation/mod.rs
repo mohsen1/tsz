@@ -8,3 +8,4 @@ pub(crate) mod recursive_growth;
 pub mod request;
 pub mod result;
 pub mod session;
+pub(crate) mod template_capture;

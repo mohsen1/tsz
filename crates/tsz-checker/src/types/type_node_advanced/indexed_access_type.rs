@@ -467,18 +467,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Collect the string-literal keys named by an indexed-access index type.
-    /// Returns one entry per string-literal union member (or the single literal),
-    /// so union-key access (`I["x" | "y"]`) is validated the same way as a single
-    /// literal regardless of where the indexed access appears syntactically.
+    /// Collect the literal keys named by an indexed-access index type.
+    /// Returns one entry per string- or number-literal union member (or the
+    /// single literal), so union-key access (`I["x" | "y"]`) is validated the
+    /// same way as a single literal regardless of where the indexed access
+    /// appears syntactically. Number-literal keys use the value's canonical
+    /// `Number::toString` name (`1e21` names the property `"1e+21"`).
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
-        use crate::query_boundaries::common::{string_literal_value, union_members};
+        use crate::query_boundaries::common::{
+            number_literal_value, string_literal_value, union_members,
+        };
         let members =
             union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type].into());
         let keys: Vec<String> = members
             .iter()
-            .filter_map(|&member| string_literal_value(self.ctx.types, member))
-            .map(|atom| self.ctx.types.resolve_atom(atom))
+            .filter_map(|&member| {
+                string_literal_value(self.ctx.types, member)
+                    .map(|atom| self.ctx.types.resolve_atom(atom))
+                    .or_else(|| {
+                        number_literal_value(self.ctx.types, member)
+                            .map(|value| tsz_solver::utils::js_number_to_string(value).into_owned())
+                    })
+            })
             .collect();
         if keys.is_empty() {
             get_string_literal_from_type_index(self.ctx.arena, index_node)

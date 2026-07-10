@@ -1774,10 +1774,29 @@ impl<'a> InferenceContext<'a> {
         if let Some(source_str) = self.extract_string_literal(source)
             && let Some(captures) = self.match_template_pattern(&source_str, &spans)
         {
-            // Convert captured strings to literal types and add as candidates
+            // Convert captured strings to literal types and add as candidates.
+            // When the type variable's declared constraint admits a non-string
+            // primitive, tsc re-interprets the captured text as that primitive
+            // (`"42"` -> the `42` literal for `T extends number`); the shared
+            // capture-coercion owner applies the same rule as `infer` patterns.
+            let mut checker = (!self.declared_constraints.is_empty())
+                .then(|| crate::relations::subtype::SubtypeChecker::new(self.interner));
             for (infer_var, captured_string) in captures {
                 let literal_type = self.interner.literal_string(&captured_string);
-                self.add_candidate(infer_var, literal_type, priority);
+                let candidate = checker
+                    .as_mut()
+                    .zip(self.declared_constraints.get(&infer_var))
+                    .and_then(|(checker, &constraint)| {
+                        crate::evaluation::template_capture::capture_for_constraint(
+                            self.interner,
+                            checker,
+                            &captured_string,
+                            literal_type,
+                            constraint,
+                        )
+                    })
+                    .unwrap_or(literal_type);
+                self.add_candidate(infer_var, candidate, priority);
             }
         }
 

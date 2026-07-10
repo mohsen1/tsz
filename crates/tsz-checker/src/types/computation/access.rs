@@ -1147,9 +1147,13 @@ impl<'a> CheckerState<'a> {
             && node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.ctx.arena.get_literal(node)
         {
-            let property_name = &lit.text;
+            // tsc looks the property up by the *value's* canonical string
+            // (`Number::toString`), not the source spelling: `o[1e21]` reads
+            // the property named `"1e+21"`.
+            let property_name =
+                crate::types_domain::type_node_helpers::literal_index_property_name(node, lit);
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self.resolve_property_access_with_env(resolved_type, property_name);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,
