@@ -1836,7 +1836,7 @@ impl<'a> InferenceContext<'a> {
         // constituents (and unresolved Lazy constraints) fall through to the
         // string capture, as does a text that matches no constituent.
         let mut best: Option<(u8, TypeId)> = None;
-        let mut consider = |rank: u8, result: TypeId, best: &mut Option<(u8, TypeId)>| {
+        let consider = |rank: u8, result: TypeId, best: &mut Option<(u8, TypeId)>| {
             if best.is_none_or(|(existing, _)| rank < existing) {
                 *best = Some((rank, result));
             }
