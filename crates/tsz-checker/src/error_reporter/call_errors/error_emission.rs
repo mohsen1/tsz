@@ -205,11 +205,6 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                 )
             };
-            if code
-                == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
-            {
-                arg_str = self.widen_weak_type_callable_source_display(arg_type, arg_str);
-            }
             let (arg_str, param_str) =
                 self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
             let message = format_message(msg_template, &[&arg_str, &param_str]);
@@ -703,26 +698,6 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
-    }
-
-    /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
-    /// expects widened primitive names for callable sources: widen literal
-    /// annotations at the type level and reprint (#13075).
-    fn widen_weak_type_callable_source_display(
-        &self,
-        arg_type: TypeId,
-        _arg_str: String,
-    ) -> String {
-        let widened = self.widen_annotation_literals_for_display(
-            self.widen_literal_type(arg_type),
-            crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
-        );
-        if widened.display_residue {
-            // Literal spellings live only in display provenance; render the
-            // canonical (display-property-free) form.
-            return self.format_type_diagnostic_widened(widened.type_id);
-        }
-        self.format_type_diagnostic(widened.type_id)
     }
 
     /// Check if a node is a `new` expression.
