@@ -73,7 +73,7 @@ declare const value: number;
 export = value;
 "#;
     let consumer = r#"
-import value from "./component.html";
+import value = require("./component.html");
 const n: number = value;
 "#;
     let codes = diagnostic_codes(
@@ -98,7 +98,7 @@ declare const config: { url: string };
 export = config;
 "#;
     let consumer = r#"
-import config from "./Button.svelte";
+import config = require("./Button.svelte");
 const u: string = config.url;
 "#;
     let codes = diagnostic_codes(
@@ -124,7 +124,7 @@ declare const config: { title: string };
 export = config;
 "#;
     let consumer = r#"
-import config from "./widgets/Card.svelte";
+import config = require("./widgets/Card.svelte");
 const t: string = config.title;
 "#;
     let codes = diagnostic_codes(
