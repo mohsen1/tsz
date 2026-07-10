@@ -1394,18 +1394,12 @@ impl<'a> CheckerState<'a> {
     /// contains `undefined`, that `undefined` is inherent and must survive
     /// marker removal. Mirrors tsc's `addOptionalTypeMarker`, which keeps the
     /// chain-introduced `undefined` distinguishable from a member's own.
-    /// Returns the recorded marker-only bit.
-    pub(crate) fn record_optional_chain_marker(
-        &mut self,
-        idx: NodeIndex,
-        pre_marker: TypeId,
-    ) -> bool {
+    pub(crate) fn record_optional_chain_marker(&mut self, idx: NodeIndex, pre_marker: TypeId) {
         let inherent = crate::query_boundaries::common::type_contains_undefined(
             self.ctx.types.as_type_database(),
             pre_marker,
         );
         self.set_optional_chain_marker_only(idx, !inherent);
-        !inherent
     }
 
     /// Set or clear the marker-only bit for an optional-chain node. Producers
