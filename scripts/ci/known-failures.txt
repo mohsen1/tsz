@@ -12,7 +12,7 @@
 # this list may only shrink; a deliberate re-reconcile must bump the marker's
 # `r<N>` generation in the same diff (`--update --bump-generation`), which is
 # what scripts/ci/check-known-failures-growth.py accepts as authorization.
-# baseline-status: reconciled r1
+# baseline-status: reconciled r2
 tsz-checker::arbitrary_ext_decl_module_resolution_tests::html_arbitrary_ext_decl_renamed_extension_still_resolves
 tsz-checker::arbitrary_ext_decl_module_resolution_tests::html_arbitrary_ext_decl_resolves_under_user_form
 tsz-checker::arbitrary_ext_decl_module_resolution_tests::nested_arbitrary_ext_decl_resolves_with_directory_prefix
@@ -60,6 +60,7 @@ tsz-checker::issue_9692_function_candidate_inference::callback_parameter_functio
 tsz-checker::jsdoc_cross_file_typedef_tests::jsdoc_class_self_param_uses_instance_type_across_commonjs_file
 tsz-checker::jsx_component_attribute_tests::part_00::cross_file_react_class_empty_attrs_reports_missing_props_not_whole_target_ts2322
 tsz-checker::jsx_component_attribute_tests::part_00::test_cross_file_react_class_generic_props_emit_errors
+tsz-checker::jsx_component_attribute_tests::part_03::jsx_react_class_tuple_children_prefer_declared_tuple_over_injected_react_node
 tsz-checker::jsx_component_attribute_tests::part_03::test_generic_jsx_function_attr_error_anchors_at_attribute_not_body
 tsz-checker::kysely_callback_context_tests::kysely_schemable_identifier_factory_preserves_nested_imported_literal_kind
 tsz-checker::lib_global_namespace_shadowing_tests::module_local_interface_regexp_does_not_augment_lib_constructor_return
