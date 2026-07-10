@@ -872,12 +872,17 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         if let Some((sym_id, Some(file_idx))) = def_identity
             && file_idx != self.current_file_idx
             // A def minted in a lib-binder child context carries a lib-LOCAL
-            // raw id. When this binder resolves the same raw id to a
-            // different-named symbol, registering the target would poison the
-            // overlay for the local id space: `get_type_of_symbol` on the
-            // unrelated local symbol would then delegate to the lib file and
-            // adopt the wrong declaration (issue #15687).
-            && self.def_matches_local_symbol(def_id, sym_id)
+            // raw id. When this MERGED binder already owns the same raw id as
+            // a different-named lib-merged symbol, registering the target
+            // would poison the overlay for the merged id space:
+            // `get_type_of_symbol` on the unrelated merged symbol would then
+            // delegate to the lib file and adopt the wrong declaration
+            // (issue #15687). Genuine multi-root raw-id collisions (per-file
+            // binders minting overlapping ids) must keep registering — the
+            // overlay IS their cross-file resolution mechanism — so the skip
+            // is gated on lib-merge provenance for the colliding local id.
+            && (!self.binder.lib_symbol_reverse_remap.contains_key(&sym_id)
+                || self.def_matches_local_symbol(def_id, sym_id))
         {
             self.register_symbol_file_target(sym_id, file_idx);
         }

@@ -37,6 +37,7 @@ mod cross_file_env_merge;
 mod cross_file_globals;
 mod cross_file_import_alias_pin;
 mod cross_file_interface_depth;
+pub(crate) mod cross_file_lib_merged;
 mod cross_file_overlay_gate;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;

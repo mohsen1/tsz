@@ -779,6 +779,16 @@ impl CheckerState<'_> {
                 return Some((direct_type, direct_params));
             }
 
+            // Lib-merged ids exist in no per-file binder: when every direct
+            // shortcut above missed, the generic child path below would
+            // interpret the merged id in the wrong id space, so delegate into
+            // the owning lib context instead (issue #15687). Runs after the
+            // shortcuts so actual-lib aliases keep their canonical name-keyed
+            // resolution (and its materialization ratchets).
+            if let Some(result) = self.delegate_lib_merged_symbol_type(sym_id) {
+                return Some(result);
+            }
+
             if let Some(p) = perf {
                 p.delegate_cross_arena_misses
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1369,16 +1379,6 @@ impl CheckerState<'_> {
         // the symbol-cache invalidation stays gated on the concrete path to
         // preserve ambient classes' cached-type reuse.
         checker.ctx.copy_cross_file_state_from(&self.ctx);
-        if lib_merged_origin.is_some() {
-            // The child resolves lib-LOCAL SymbolIds, but the copied dynamic
-            // overlay and declaring-file index are keyed in the parent's
-            // (merged / program) id space. A raw-id coincidence would route a
-            // lib-local symbol to an unrelated file's binder and poison its
-            // def identity (issue #15687). Lib binders are self-contained, so
-            // the child needs neither map.
-            *checker.ctx.cross_file_symbol_targets.borrow_mut() = Default::default();
-            checker.ctx.global_symbol_file_index = None;
-        }
         if !delegated_class_is_ambient {
             checker.ctx.symbol_types.remove(&delegate_sym_id);
             checker.ctx.symbol_instance_types.remove(&delegate_sym_id);
@@ -1389,42 +1389,17 @@ impl CheckerState<'_> {
                 .remove(&delegate_sym_id);
         }
         checker.propagate_class_delegation_setup(self, delegate_sym_id);
-        // Lib-merged delegation always clears collisions, ambient or not: the
-        // parent's symbol-keyed caches are keyed by MERGED ids, so every
-        // lib-local id the child resolves (e.g. `JSX.Element` inside a member
-        // annotation) would otherwise read an unrelated merged symbol's
-        // cached def/type through the copied state (issue #15687).
-        if !delegated_class_is_ambient || lib_merged_origin.is_some() {
+        if let Some((lib_binder, _)) = lib_merged_origin.as_ref() {
+            // Lib-merged delegation always prepares the child, ambient or
+            // not: the parent's copied state is keyed in the MERGED id space
+            // (issue #15687).
+            self.prepare_lib_merged_delegation_child(&mut checker, lib_binder, delegate_sym_id);
+        } else if !delegated_class_is_ambient {
             self.clear_delegated_symbol_cache_collisions(
                 &mut checker,
                 delegate_binder,
                 delegate_sym_id,
             );
-        }
-        if let Some((lib_binder, _)) = lib_merged_origin.as_ref() {
-            // Share definition identity between the two id spaces: every
-            // lib-local symbol of the delegated binder maps onto the parent's
-            // def for the corresponding MERGED symbol. Without this the child
-            // mints duplicate defs for the same declarations (the merged defs
-            // carry the `u32::MAX` file sentinel, so decl-site convergence
-            // cannot unify them), and the relation layer later treats e.g.
-            // the child's `JSX.Element` and the parent's as distinct,
-            // unresolved definitions (false TS2416). Runs after the collision
-            // clearing above, which would otherwise discard these mappings as
-            // parent-space collisions.
-            let lib_binder_ptr = std::sync::Arc::as_ptr(lib_binder) as usize;
-            let mut child_symbol_to_def = checker.ctx.symbol_to_def.borrow_mut();
-            let mut child_def_to_symbol = checker.ctx.def_to_symbol.borrow_mut();
-            for (&merged_id, &(ptr, local_id)) in self.ctx.binder.lib_symbol_reverse_remap.iter() {
-                if ptr != lib_binder_ptr {
-                    continue;
-                }
-                let def_id = self.ctx.get_or_create_def_id(merged_id);
-                if def_id != tsz_solver::def::DefId::INVALID {
-                    child_symbol_to_def.insert(local_id, def_id);
-                    child_def_to_symbol.insert(def_id, local_id);
-                }
-            }
         }
 
         // Record a class instance-type boundary on the cross-arena alias stack:

@@ -148,15 +148,24 @@ impl<'a> CheckerContext<'a> {
     /// probe misclassifies foreign declarations as local (issue #15687).
     /// When the binder has no provenance entry the declaration was bound
     /// locally.
+    /// A provenance entry does NOT prove the declaration is foreign-only: a
+    /// local declaration merged into a lib symbol (e.g. a `declare global`
+    /// `interface Array` augmentation) can share its `NodeIndex` value with a
+    /// lib declaration recorded under the same key. The binder's own
+    /// `node_symbols` disambiguates — a current-arena node bound to this very
+    /// symbol is a genuine local declaration.
     pub(crate) fn declaration_is_local_to_current_arena(
         &self,
         sym_id: SymbolId,
         decl_idx: tsz_parser::NodeIndex,
     ) -> bool {
         match self.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-            Some(arenas) => arenas
-                .iter()
-                .any(|arena| std::ptr::eq(arena.as_ref(), self.arena)),
+            Some(arenas) => {
+                arenas
+                    .iter()
+                    .any(|arena| std::ptr::eq(arena.as_ref(), self.arena))
+                    || self.binder.get_node_symbol(decl_idx) == Some(sym_id)
+            }
             None => true,
         }
     }

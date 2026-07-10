@@ -107,6 +107,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "find_property_in_object",
     "find_property_in_object_by_str",
     "format_excess_property_name",
+    "free_type_params_named",
     "function_shape_for_type",
     "function_shape_id",
     "get_application_base",
