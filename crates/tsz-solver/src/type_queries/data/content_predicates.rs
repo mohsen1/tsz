@@ -1128,14 +1128,22 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::visitors::visitor_predicates::contains_error_type(db, type_id)
 }
 
-/// Check if a type contains a generic application with an `unknown` argument.
+/// Check if a type or its preserved display alias contains a generic
+/// application with an `unknown` argument.
 pub fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(db, type_id, |key| {
-        let TypeData::Application(app_id) = key else {
-            return false;
-        };
-        db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
-    })
+    let direct_hit = |root| {
+        contains_type_matching(db, root, |key| {
+            let TypeData::Application(app_id) = key else {
+                return false;
+            };
+            db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
+        })
+    };
+
+    direct_hit(type_id)
+        || db
+            .get_display_alias(type_id)
+            .is_some_and(|alias| alias != type_id && direct_hit(alias))
 }
 
 /// `Never`-only content predicate plus its dedicated project-wide cache slot.
@@ -1847,6 +1855,23 @@ pub fn union_has_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -
             })
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod application_unknown_arg_tests {
+    use super::contains_application_unknown_arg;
+    use crate::construction::TypeInterner;
+    use crate::types::TypeId;
+
+    #[test]
+    fn follows_preserved_application_display_alias() {
+        let interner = TypeInterner::new();
+        let structural = interner.object(vec![]);
+        let alias = interner.application(TypeId::OBJECT, vec![TypeId::UNKNOWN]);
+        interner.store_display_alias(structural, alias);
+
+        assert!(contains_application_unknown_arg(&interner, structural));
     }
 }
 
