@@ -1250,6 +1250,38 @@ pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
     resolve_type_params_to_defaults_core(db, ty, |_param_id, info| names.contains(&info.name))
 }
 
+/// Free type parameters of `ty` whose declared name is in `names`, returned as
+/// `(name, exact interned TypeId)` pairs.
+///
+/// The preserve-side complement of [`resolve_named_type_params_to_defaults`]:
+/// a caller that owns a generic scope (e.g. a synthesized construct signature
+/// whose parameters ARE the binding context for a member read) uses the exact
+/// `TypeId`s to mark those parameters in scope, so the unbound-defaults fill
+/// ([`resolve_unbound_type_params_to_declared_fallbacks`]) does not collapse
+/// them. Matching by name is required because a semantically identical
+/// `TypeParamInfo` can intern to a distinct `TypeId` from the one the member
+/// types actually reference.
+pub fn free_type_params_named<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    ty: TypeId,
+    names: &std::collections::HashSet<tsz_common::Atom, S>,
+) -> Vec<(tsz_common::Atom, TypeId)> {
+    use crate::visitors::visitor_predicates::free_type_parameter_ids_in;
+
+    if names.is_empty() {
+        return Vec::new();
+    }
+    free_type_parameter_ids_in(db, [ty])
+        .into_iter()
+        .filter_map(|param_id| match db.lookup(param_id) {
+            Some(TypeData::TypeParameter(info)) if names.contains(&info.name) => {
+                Some((info.name, param_id))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Shared driver for the default-type-argument fallback. `should_resolve`
 /// decides, per free type parameter, whether it is replaced by its
 /// `default → constraint → unknown` fill (true) or preserved (false). The

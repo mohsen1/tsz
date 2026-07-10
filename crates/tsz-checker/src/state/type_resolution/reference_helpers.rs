@@ -1526,12 +1526,19 @@ impl CheckerState<'_> {
         // arena (e.g., class+interface merged symbol where value_declaration was
         // not propagated through program-level symbol merging), search all
         // declarations for a class node in the current arena.
-        // Guard against NodeIndex collisions: verify the class name matches
-        // the symbol name to avoid picking up an unrelated class from the arena.
-        if decl_idx.is_none() || self.ctx.arena.get_class_at(decl_idx).is_none() {
+        // Guard against NodeIndex collisions: check binder arena provenance and
+        // verify the class name matches the symbol name to avoid picking up an
+        // unrelated class from the arena.
+        let decl_is_local = |checker: &Self, d: NodeIndex| {
+            d.is_some() && checker.declaration_is_local_to_current_arena(sym_id, d)
+        };
+        if decl_idx.is_none()
+            || !decl_is_local(self, decl_idx)
+            || self.ctx.arena.get_class_at(decl_idx).is_none()
+        {
             let expected_name = &symbol.escaped_name;
             for &d in &symbol.declarations {
-                if d.is_some()
+                if decl_is_local(self, d)
                     && let Some(class) = self.ctx.arena.get_class_at(d)
                     && self
                         .ctx
@@ -1548,7 +1555,9 @@ impl CheckerState<'_> {
         if decl_idx.is_none() {
             return None;
         }
-        if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
+        if decl_is_local(self, decl_idx)
+            && let Some(class) = self.ctx.arena.get_class_at(decl_idx)
+        {
             let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);
             let active_class_sym = canonical_sym.unwrap_or(sym_id);
             // Check if we're already resolving this class - return fallback to break cycle.
@@ -1645,7 +1654,21 @@ impl CheckerState<'_> {
 
         // Cross-file fallback: class declaration is not in the current arena.
         // Delegate to a child checker with the symbol's arena.
-        self.delegate_cross_arena_class_instance_type(sym_id)
+        let result = self.delegate_cross_arena_class_instance_type(sym_id);
+        // Lib-merged symbols have no registered file target, so the delegate
+        // branch at the top of this function (which publishes declaration-file
+        // results) never ran for them; publish here so repeated queries reuse
+        // the instance type instead of re-delegating (#15687).
+        if let Some((instance_type, params)) = result.as_ref()
+            && self
+                .ctx
+                .binder
+                .lib_symbol_reverse_remap
+                .contains_key(&sym_id)
+        {
+            self.publish_delegated_class_instance_type(sym_id, *instance_type, params);
+        }
+        result
     }
 
     fn publish_delegated_class_instance_type(

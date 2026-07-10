@@ -1218,7 +1218,22 @@ impl CheckerState<'_> {
 
             // If not in the definition store or type_env, try to resolve via symbol lookup
             // This handles type aliases that are resolved through compute_type_of_symbol
-            let sym_id_opt = self.ctx.def_to_symbol_id(def_id);
+            //
+            // Raw `SymbolId`s are binder-relative: a def minted in a delegated
+            // child checker (lib binder) carries a lib-local id that can
+            // collide with an unrelated symbol in THIS binder. Resolving the
+            // colliding id would silently substitute that symbol's type (e.g.
+            // `JSX.Element` resolving to `parseInt`'s type, issue #15687), so
+            // the fallback only fires when this binder's symbol at that id
+            // actually names the def.
+            let sym_id_opt = self.ctx.def_to_symbol_id(def_id).filter(|&sym_id| {
+                let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                    return true;
+                };
+                self.ctx.definition_store.get(def_id).is_none_or(|info| {
+                    self.ctx.types.resolve_atom(info.name) == local_symbol.escaped_name
+                })
+            });
             if let Some(sym_id) = sym_id_opt {
                 // Trigger type computation for this symbol first.
                 // For CLASS symbols, this populates symbol_instance_types as a side effect.

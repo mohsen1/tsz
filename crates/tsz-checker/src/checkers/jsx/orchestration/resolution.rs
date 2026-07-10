@@ -185,6 +185,43 @@ impl<'a> CheckerState<'a> {
             use crate::query_boundaries::common::PropertyAccessResult;
 
             let evaluated_return_type = self.evaluate_type_with_env(function_shape.return_type);
+
+            // Bind the construct signature's own type parameters while
+            // resolving the instance props member: this signature IS the
+            // binding scope for them, so the property-access layer's
+            // unbound-parameter fallback (`resolve_unbound_property_member_defaults`)
+            // must not collapse `Props & BaseProps<Values>` to the parameter
+            // defaults before attribute inference has run (issue #15687).
+            // The exact interned param `TypeId`s referenced by the instance
+            // members are collected by name from the return type; a freshly
+            // interned `TypeParamInfo` copy can carry a distinct `TypeId` the
+            // scope check would not match.
+            let own_param_names: std::collections::HashSet<tsz_common::Atom> = function_shape
+                .type_params
+                .iter()
+                .map(|info| info.name)
+                .collect();
+            let mut free_params = crate::query_boundaries::common::free_type_params_named(
+                self.ctx.types,
+                function_shape.return_type,
+                &own_param_names,
+            );
+            free_params.extend(crate::query_boundaries::common::free_type_params_named(
+                self.ctx.types,
+                evaluated_return_type,
+                &own_param_names,
+            ));
+            let scope_bindings: Vec<(String, Option<TypeId>)> = free_params
+                .into_iter()
+                .map(|(name_atom, param_type)| {
+                    let name = self.ctx.types.resolve_atom(name_atom);
+                    let previous = self.ctx.type_parameter_scope.get(&name).copied();
+                    self.ctx
+                        .type_parameter_scope
+                        .insert(name.clone(), param_type);
+                    (name, previous)
+                })
+                .collect();
             let synthesized_param_type = match self
                 .get_element_attributes_property_name_with_check(None)
             {
@@ -214,6 +251,20 @@ impl<'a> CheckerState<'a> {
                 }
             }
             .filter(|type_id| !matches!(*type_id, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+
+            // Restore in reverse: the same name can be bound twice (raw +
+            // evaluated return collections), and only the first-saved
+            // `previous` is the caller's binding.
+            for (name, previous) in scope_bindings.into_iter().rev() {
+                match previous {
+                    Some(previous) => {
+                        self.ctx.type_parameter_scope.insert(name, previous);
+                    }
+                    None => {
+                        self.ctx.type_parameter_scope.remove(&name);
+                    }
+                }
+            }
 
             if let Some(type_id) = synthesized_param_type {
                 let props_name = self.ctx.types.intern_string("props");

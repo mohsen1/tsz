@@ -1530,11 +1530,24 @@ impl<'a> CheckerState<'a> {
                                 .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
                     })
             });
+            // Declarations owned by the current arena, per binder provenance.
+            // A merged lib symbol's declaration index may also be a valid
+            // index into the current arena where it names an unrelated
+            // interface; treating that collision as a local declaration
+            // lowers the wrong interface's members into this symbol's type
+            // (issue #15687: a single-member `JSX.ElementAttributesProperty`
+            // colliding with a two-member local interface produced a false
+            // TS2608).
+            let local_declarations: Vec<NodeIndex> = declarations
+                .iter()
+                .copied()
+                .filter(|&decl_idx| self.declaration_is_local_to_current_arena(sym_id, decl_idx))
+                .collect();
             let mut has_local_interface_decl = false;
             let mut has_local_interface_heritage_extends = false;
             let mut has_local_computed_property_name = false;
             let mut namespace_prefix = None;
-            for decl_idx in declarations.iter().copied() {
+            for decl_idx in local_declarations.iter().copied() {
                 let Some(node) = self.ctx.arena.get(decl_idx) else {
                     continue;
                 };
@@ -1681,7 +1694,7 @@ impl<'a> CheckerState<'a> {
                 let mut updates = Vec::new();
 
                 if has_out_of_arena_decl {
-                    for &decl_idx in declarations.iter() {
+                    for &decl_idx in local_declarations.iter() {
                         if let Some(node) = self.ctx.arena.get(decl_idx)
                             && let Some(interface) = self.ctx.arena.get_interface(node)
                         {
@@ -1691,7 +1704,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else {
-                    let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
+                    let first_decl = local_declarations
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
                     if let Some(node) = self.ctx.arena.get(first_decl)
                         && let Some(interface) = self.ctx.arena.get_interface(node)
                     {
@@ -1714,8 +1730,8 @@ impl<'a> CheckerState<'a> {
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
                 let (computed_names, computed_symbol_names) = if needs_computed_name_map {
                     (
-                        self.precompute_computed_property_names(&declarations),
-                        self.precompute_symbol_named_computed_property_names(&declarations),
+                        self.precompute_computed_property_names(&local_declarations),
+                        self.precompute_symbol_named_computed_property_names(&local_declarations),
                     )
                 } else {
                     (
@@ -1724,7 +1740,7 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 let prewarmed_type_params = if needs_prewarm {
-                    self.prewarm_member_type_reference_params(&declarations)
+                    self.prewarm_member_type_reference_params(&local_declarations)
                 } else {
                     rustc_hash::FxHashMap::default()
                 };
@@ -1809,7 +1825,7 @@ impl<'a> CheckerState<'a> {
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
                 let mut interface_type =
-                    lowering.lower_interface_declarations_with_symbol(&declarations, sym_id);
+                    lowering.lower_interface_declarations_with_symbol(&local_declarations, sym_id);
 
                 // Cross-file interface declaration merging: when declarations from
                 // other arenas exist, lower each with a TypeLowering bound to its
@@ -1836,8 +1852,14 @@ impl<'a> CheckerState<'a> {
                                 let cross_type =
                                     self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
                                 if cross_type != TypeId::ERROR {
-                                    interface_type =
-                                        self.merge_interface_types(interface_type, cross_type);
+                                    // With no local declarations the local
+                                    // lowering above is ERROR; the first
+                                    // cross-file lowering becomes the base.
+                                    interface_type = if interface_type == TypeId::ERROR {
+                                        cross_type
+                                    } else {
+                                        self.merge_interface_types(interface_type, cross_type)
+                                    };
                                 }
                             }
                         }
@@ -1845,7 +1867,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let mut interface_type = if needs_local_heritage_merge {
-                    self.merge_interface_heritage_types(&declarations, interface_type)
+                    self.merge_interface_heritage_types(&local_declarations, interface_type)
                 } else {
                     interface_type
                 };

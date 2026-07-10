@@ -469,6 +469,47 @@ impl BinderState {
             }
         }
 
+        // Phase 3.5: Merge ambient module export tables with remapped SymbolIds.
+        //
+        // A lib context can declare ambient modules (`declare module "react"
+        // { export = __React }`). Their export tables live in the lib binder's
+        // `module_exports` keyed by module specifier and reference lib-local
+        // `SymbolId`s. Without remapping them into the program binder, module
+        // member resolution (e.g. `import React = require('react')` followed
+        // by `React.Component`) falls back to raw lib-binder ids, which
+        // collide with unrelated merged symbols in this binder (issue #15687).
+        // First lib to declare a module wins a name within its table; names
+        // absent from an existing table are merged in (declaration merging).
+        for lib_ctx in lib_contexts {
+            let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
+
+            for (module_key, exports) in lib_ctx.binder.module_exports.iter() {
+                let mut remapped = SymbolTable::new();
+                for (name, &export_id) in exports.iter() {
+                    if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, export_id)) {
+                        remapped.set(name.clone(), new_id);
+                    }
+                }
+                if remapped.is_empty() {
+                    continue;
+                }
+                let module_exports_mut = Arc::make_mut(&mut self.module_exports);
+                match module_exports_mut.entry(module_key.clone()) {
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        entry.insert(remapped);
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut entry) => {
+                        let existing = entry.get_mut();
+                        for (name, id) in remapped.iter() {
+                            if !existing.has(name) {
+                                existing.set(name.clone(), *id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Phase 4: Propagate semantic_defs from lib binders with remapped SymbolIds.
         //
         // Lib binders record `semantic_defs` for their top-level declarations during

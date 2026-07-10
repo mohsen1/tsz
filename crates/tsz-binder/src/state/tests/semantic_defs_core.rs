@@ -1490,3 +1490,76 @@ const myVar = 1;
         );
     }
 }
+
+#[test]
+fn merge_lib_contexts_remaps_ambient_module_exports() {
+    // A lib context can declare ambient modules whose export tables reference
+    // lib-local SymbolIds (`declare module "widgetlib" { export = __Lib }`).
+    // Phase 3.5 of `merge_lib_contexts_into_binder` must remap those tables
+    // into the program binder so member resolution through the module
+    // (`import W = require('widgetlib'); W.Widget`) resolves MERGED ids
+    // instead of leaking raw lib-binder ids that collide with unrelated
+    // merged symbols (issue #15687).
+    let lib_source = r#"
+declare namespace __Lib {
+    class Widget<P, S = {}> {
+        props: P;
+    }
+}
+declare module "widgetlib" {
+    export = __Lib;
+}
+"#;
+    let mut lib_parser = ParserState::new("widget.d.ts".to_string(), lib_source.to_string());
+    let lib_root = lib_parser.parse_source_file();
+    let mut lib_binder = BinderState::new();
+    lib_binder.bind_source_file(lib_parser.get_arena(), lib_root);
+    let lib_export_ids: Vec<_> = lib_binder
+        .module_exports
+        .iter()
+        .flat_map(|(_, table)| table.iter().map(|(_, &id)| id))
+        .collect();
+    assert!(
+        !lib_export_ids.is_empty(),
+        "lib binder should record ambient module exports"
+    );
+
+    let lib_ctx = super::LibContext {
+        arena: std::sync::Arc::new(lib_parser.get_arena().clone()),
+        binder: std::sync::Arc::new(lib_binder),
+    };
+
+    let user_source = "let shift = 1;\nlet more = 2;\nlet padding = 3;";
+    let mut user_parser = ParserState::new("test.ts".to_string(), user_source.to_string());
+    let user_root = user_parser.parse_source_file();
+    let mut main_binder = BinderState::new();
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    main_binder.bind_source_file(user_parser.get_arena(), user_root);
+
+    let merged_table = main_binder
+        .module_exports
+        .iter()
+        .find(|(key, _)| key.contains("widgetlib"))
+        .map(|(_, table)| table)
+        .expect("merged binder should carry the ambient module's export table");
+    let export_equals = merged_table
+        .get("export=")
+        .expect("export= entry should be remapped into the merged table");
+    main_binder
+        .get_symbol(export_equals)
+        .expect("remapped export= symbol must exist in the merged binder");
+    // The remapped alias resolves within the merged binder; following its
+    // namespace exports must reach the merged Widget class symbol.
+    let namespace = main_binder
+        .file_locals
+        .get("__Lib")
+        .expect("merged binder should carry the namespace");
+    let namespace_symbol = main_binder.get_symbol(namespace).expect("namespace symbol");
+    let widget = namespace_symbol
+        .exports
+        .as_ref()
+        .and_then(|exports| exports.get("Widget"))
+        .expect("namespace exports should include Widget");
+    let widget_symbol = main_binder.get_symbol(widget).expect("Widget symbol");
+    assert_eq!(widget_symbol.escaped_name, "Widget");
+}

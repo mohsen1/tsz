@@ -871,6 +871,17 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         let def_identity = self.def_symbol_identity(def_id);
         if let Some((sym_id, Some(file_idx))) = def_identity
             && file_idx != self.current_file_idx
+            // A def minted in a lib-binder child context carries a lib-LOCAL
+            // raw id. When this binder resolves the same raw id to a
+            // different-named symbol, registering the target would poison the
+            // overlay for the local id space: `get_type_of_symbol` on the
+            // unrelated local symbol would then delegate to the lib file and
+            // adopt the wrong declaration (issue #15687).
+            && self.binder.get_symbol(sym_id).is_none_or(|local| {
+                self.definition_store
+                    .get_name(def_id)
+                    .is_none_or(|name| self.types.resolve_atom(name) == local.escaped_name)
+            })
         {
             self.register_symbol_file_target(sym_id, file_idx);
         }

@@ -199,8 +199,20 @@ impl CheckerContext<'_> {
         };
         // ---- Step 3b: composite key lookup ----
         // The composite key (symbol_id, file_idx) uniquely identifies a symbol
-        // across all binders, so no name-validation is needed.
-        if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx) {
+        // across all binders — except under the `u32::MAX` declaration-file
+        // sentinel that every lib-binder symbol shares. There a raw-id
+        // collision across binders (e.g. a lib-local id inside a delegated
+        // child checker vs the program binder's merged id space) can hit an
+        // unrelated def, so validate by name exactly like Step 2; a mismatch
+        // falls through to Step 4, whose decl-site guard resolves collisions
+        // (issue #15687).
+        if let Some(def_id) = self.definition_store.lookup_by_symbol(sym_id.0, file_idx)
+            && (file_idx != u32::MAX
+                || self
+                    .definition_store
+                    .get(def_id)
+                    .is_some_and(|info| self.types.resolve_atom(info.name) == symbol.escaped_name))
+        {
             // Populate local caches for future fast-path hits.
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
