@@ -151,11 +151,9 @@ impl CheckerContext<'_> {
                     .map(|idx| idx as u32)
                     .unwrap_or(symbol.decl_file_idx),
             )
-            && self.definition_store.get(def_id).is_some_and(|info| {
-                symbol_name
-                    .as_ref()
-                    .is_some_and(|name| self.types.resolve_atom(info.name) == *name)
-            })
+            && symbol_name
+                .as_ref()
+                .is_some_and(|name| self.def_name_matches(def_id, name).unwrap_or(false))
         {
             // Populate local caches for future fast-path hits.
             self.symbol_to_def.borrow_mut().insert(sym_id, def_id);

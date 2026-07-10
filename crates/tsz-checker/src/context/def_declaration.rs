@@ -44,7 +44,7 @@ impl CheckerContext<'_> {
         file_idx: u32,
         expected_name: &str,
     ) -> bool {
-        if self.types.resolve_atom(info.name) != expected_name
+        if &*self.types.resolve_atom_ref(info.name) != expected_name
             || info.symbol_id != Some(sym_id.0)
             || info.file_id != Some(file_idx)
         {
@@ -78,9 +78,8 @@ impl CheckerContext<'_> {
             .definition_store
             .lookup_by_symbol(sym_id.0, file_idx_u32)
             && self
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+                .def_name_matches(def_id, expected_name)
+                .unwrap_or(false)
         {
             return Some(def_id);
         }

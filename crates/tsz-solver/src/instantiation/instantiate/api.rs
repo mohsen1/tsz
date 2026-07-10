@@ -1251,8 +1251,8 @@ pub fn resolve_named_type_params_to_defaults<S: std::hash::BuildHasher>(
 }
 
 /// Free type parameters of `roots` whose declared name is in `names`,
-/// returned as `(name, exact interned `TypeId`)` pairs, deduplicated across
-/// roots by the underlying visitor.
+/// returned as `(name, TypeId)` pairs — the exact interned parameter ids,
+/// deduplicated across roots by the underlying visitor.
 ///
 /// The preserve-side complement of [`resolve_named_type_params_to_defaults`]:
 /// a caller that owns a generic scope (e.g. a synthesized construct signature
