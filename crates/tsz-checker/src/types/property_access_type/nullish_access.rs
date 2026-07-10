@@ -1,4 +1,8 @@
-//! Diagnostics for property access on possibly nullish receivers.
+//! Diagnostics for property access on possibly nullish receivers, plus the
+//! shared possibly-nullish expression reporter (tsc's
+//! `reportObjectPossiblyNullOrUndefinedError`) also consumed by the
+//! declaration-inferred call-callee companion in
+//! `computation::call_quick_type_nullish`.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
