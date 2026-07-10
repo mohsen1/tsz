@@ -1728,7 +1728,11 @@ impl<'a> CheckerState<'a> {
         }
         let deep_reduced = {
             let env = self.ctx.type_env.borrow();
-            tsz_solver::deep_reduce_for_display(self.ctx.types, &*env, evaluated)
+            crate::query_boundaries::diagnostics::deep_reduce_for_display(
+                self.ctx.types,
+                &*env,
+                evaluated,
+            )
         };
         if deep_reduced != evaluated && deep_reduced != target {
             return self.find_string_literal_spelling_suggestion(source, deep_reduced);
