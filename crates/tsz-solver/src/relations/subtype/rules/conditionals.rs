@@ -693,19 +693,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Strategy 2: Branch compatibility — both branches must be supertypes
-        // of source. The true branch is checked FIRST and is decisive on
-        // failure: descending into the false branch after the true branch has
-        // already failed cannot change the conjunction, but for a recursive
+        // of source, and a failed true branch is decisive: a recursive
         // conditional alias whose false branch re-applies the alias
-        // (`Grow<T, N> = ... ? T : Grow<[X, ...T], N>`) it re-enters this rule
-        // with a fresh, ever-growing target each level. That divergence burns
-        // the relation depth budget and surfaces as a spurious TS2859 (or a
-        // depth-exceeded "assume related" false negative) where tsc reports a
-        // plain relation failure. tsc's structuredTypeRelatedTo likewise
-        // relates the source to the target's true branch first and only
-        // consults the false branch when the true branch succeeded.
-        let true_result = self.check_subtype(source, target.true_type);
-        if !true_result.is_true() {
+        // (`Grow<T, N> = ... ? T : Grow<[X, ...T], N>`) re-enters this rule
+        // with an ever-growing target each level, burning the relation depth
+        // budget (spurious TS2859, or a depth-exceeded "assume related" false
+        // negative) where tsc reports a plain relation failure. tsc's
+        // `structuredTypeRelatedTo` likewise consults the false branch only
+        // after the true branch succeeded.
+        if !self.check_subtype(source, target.true_type).is_true() {
             return SubtypeResult::False;
         }
 

@@ -1644,16 +1644,8 @@ impl<'a> CheckerState<'a> {
                 if !actual_has_holes {
                     return true;
                 }
-                let actual_type_params: rustc_hash::FxHashSet<_> =
-                    common::collect_referenced_types(self.ctx.types, refined_actual)
-                        .into_iter()
-                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                        .collect();
-                let expected_type_params: rustc_hash::FxHashSet<_> =
-                    common::collect_referenced_types(self.ctx.types, refined_expected)
-                        .into_iter()
-                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                        .collect();
+                let actual_type_params = self.referenced_type_params(refined_actual);
+                let expected_type_params = self.referenced_type_params(refined_expected);
                 if !actual_type_params.is_empty()
                     && actual_type_params
                         .iter()
@@ -1717,33 +1709,34 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            // Generalization of the bare-parameter rule: when both sides
-            // reference exactly the same non-empty set of type parameters (and
-            // carry no in-flight `infer` holes — those returned above), every
-            // future substitution applies to both sides identically, and the
-            // solver already rejected the relation against those same rigid
-            // enclosing-scope parameters. Nothing re-instantiates this call
-            // later, so the rejection is permanent — e.g. two structurally
-            // divergent recursive conditional aliases applied to the same
-            // parameter (`Grow2<[], T>` vs `Grow1<[], T>`). Deferring would
-            // silently drop a real TS2345; tsc checks the instantiated
-            // signature directly and reports.
-            let actual_type_params: rustc_hash::FxHashSet<_> =
-                common::collect_referenced_types(self.ctx.types, actual)
-                    .into_iter()
-                    .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                    .collect();
-            let expected_type_params: rustc_hash::FxHashSet<_> =
-                common::collect_referenced_types(self.ctx.types, expected)
-                    .into_iter()
-                    .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                    .collect();
-            if !actual_type_params.is_empty() && actual_type_params == expected_type_params {
+            // Generalization of the bare-parameter rule above: the in-flight
+            // `infer` holes already returned early, so every type parameter
+            // reaching this point is a RIGID enclosing-scope parameter that
+            // no later inference pass will substitute. When
+            // both sides reference exactly the same non-empty parameter set,
+            // the solver's rejection was computed against those rigid
+            // parameters and is permanent (e.g. two structurally divergent
+            // recursive conditional aliases applied to the same parameter);
+            // deferring would silently drop a real TS2345, where tsc checks
+            // the instantiated signature directly and reports.
+            let actual_type_params = self.referenced_type_params(actual);
+            if !actual_type_params.is_empty()
+                && actual_type_params == self.referenced_type_params(expected)
+            {
                 return false;
             }
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    /// Collect the type parameters referenced anywhere inside `ty`
+    /// (`TypeParameter` and `Infer` leaves), as a set of `TypeId`s.
+    fn referenced_type_params(&self, ty: TypeId) -> FxHashSet<TypeId> {
+        common::collect_referenced_types(self.ctx.types, ty)
+            .into_iter()
+            .filter(|&referenced| common::type_param_info(self.ctx.types, referenced).is_some())
+            .collect()
     }
 
     /// Check if `actual` and `expected` are generic instantiations of different classes.
