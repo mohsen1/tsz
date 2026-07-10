@@ -264,31 +264,61 @@ export {};
 const propKey = "__unique_1" as const;
 const methodKey = "__unique_2" as const;
 const accessorKey = "__unique_3" as const;
+const syntheticPrefixKey = "__symbol_4_9" as const;
+declare const annotatedKey: "__unique_18";
+declare const realKey: unique symbol;
 
 interface Source {
   [propKey]: number;
   [methodKey](): string;
   get [accessorKey](): boolean;
+  [syntheticPrefixKey]: 4;
+  [annotatedKey]: 18;
+  ["__unique_19"]: 19;
+}
+
+interface RealSymbolSource {
+  [realKey]: number;
 }
 
 type Assert<T extends true> = T;
 type Keys = keyof Source;
+type ExpectedKeys =
+  | "__unique_1"
+  | "__unique_2"
+  | "__unique_3"
+  | "__symbol_4_9"
+  | "__unique_18"
+  | "__unique_19";
 type KeyCheck =
-  Keys extends "__unique_1" | "__unique_2" | "__unique_3"
-    ? ("__unique_1" | "__unique_2" | "__unique_3") extends Keys
+  Keys extends ExpectedKeys
+    ? ExpectedKeys extends Keys
       ? true
       : false
     : false;
 type _Proof = Assert<KeyCheck>;
+type RealKeyCheck = Assert<
+  keyof RealSymbolSource extends typeof realKey
+    ? typeof realKey extends keyof RealSymbolSource
+      ? true
+      : false
+    : false
+>;
 
 declare const src: Source;
 const n: number = src[propKey];
 const s: string = src[methodKey]();
 const b: boolean = src[accessorKey];
+const synthetic: 4 = src[syntheticPrefixKey];
+const annotated: 18 = src[annotatedKey];
+const inline: 19 = src["__unique_19"];
 
 n;
 s;
 b;
+synthetic;
+annotated;
+inline;
 "#,
         CheckerOptions {
             strict: true,
@@ -300,6 +330,56 @@ b;
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics for computed __unique_* string keys, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_cross_file_computed_prefix_strings_keep_string_key_provenance() {
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "./src/keys.ts",
+                r#"
+export const fakeKey = "__unique_41" as const;
+"#,
+            ),
+            (
+                "./src/shape.ts",
+                r#"
+import { fakeKey } from "./keys";
+
+export interface Shape {
+  [fakeKey]: number;
+}
+"#,
+            ),
+            (
+                "./src/main.ts",
+                r#"
+import type { Shape } from "./shape";
+
+declare const shape: Shape;
+const fakeValue: number = shape["__unique_41"];
+const fakeKey: keyof Shape = "__unique_41";
+
+fakeValue;
+fakeKey;
+"#,
+            ),
+        ],
+        "./src/main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+        &[],
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "foreign-arena computed keys must preserve string versus symbol provenance: {diagnostics:#?}"
     );
 }
 
