@@ -452,8 +452,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "assignability_checker infer-shape cacheability checks should route through query_boundaries::assignability"
     );
     assert!(
-        assignability_checker_src.contains("is_relation_cacheable("),
-        "assignability_checker should use query_boundaries::assignability::is_relation_cacheable for relation-cache gating"
+        !assignability_checker_src.contains("is_relation_cacheable("),
+        "assignability_checker should delegate relation-cache policy to boundary-owned cached_* helpers"
     );
 
     let mut state_type_environment_src = fs::read_to_string("src/state/type_environment/mod.rs")
@@ -488,8 +488,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment relation precondition setup should route through ensure_relation_input_ready"
     );
     assert!(
-        state_type_environment_src.contains("collect_type_queries("),
-        "state_type_environment should use solver collect_type_queries visitor helper for type-query symbol preconditions"
+        state_type_environment_src.contains("collect_type_queries_cached("),
+        "state_type_environment should use the context-memoized solver type-query collector for symbol preconditions"
     );
     assert!(
         state_type_environment_src.contains("resolve_lazy_def_for_type_env("),
