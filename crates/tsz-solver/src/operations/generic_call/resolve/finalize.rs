@@ -567,6 +567,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     widening::widen_literal_type(db, ty)
                                 }
                             }
+                        } else if let Some(&literal_mode) =
+                            infer_ctx.spread_rest_tuple_modes.get(&ty)
+                        {
+                            // A tuple packed from trailing rest arguments widens
+                            // per element against the rest type parameter's
+                            // declared constraint (tsc's `getSpreadArgumentType`):
+                            // `f<T extends string[]>(...args: T)` keeps
+                            // `["a", "b"]` while `T extends any[]` widens to
+                            // `[string, string]`.
+                            crate::inference::spread_rest_literals::widen_spread_rest_tuple(
+                                self.interner.as_type_database(),
+                                ty,
+                                tp.constraint.map(|constraint| {
+                                    instantiate_call_type(
+                                        self.interner,
+                                        constraint,
+                                        substitution,
+                                        actual_this_type,
+                                    )
+                                }),
+                                literal_mode,
+                            )
                         } else if self.inference_type_contains_fresh_object_or_array(ty)
                             && !infer_ctx.has_type_annotation_candidates(var)
                         {

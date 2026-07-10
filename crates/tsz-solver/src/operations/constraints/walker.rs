@@ -1042,7 +1042,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Tuple(s_elems)), Some(TypeData::Tuple(t_elems))) => {
                 let s_elems = self.interner.tuple_list(s_elems);
                 let t_elems = self.interner.tuple_list(t_elems);
-                self.constrain_tuple_types(ctx, var_map, &s_elems, &t_elems, priority);
+                self.constrain_tuple_types(ctx, var_map, source, &s_elems, &t_elems, priority);
             }
             // Array/Tuple → Object/ObjectWithIndex: constrain elements against index signatures
             (

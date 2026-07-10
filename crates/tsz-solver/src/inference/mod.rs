@@ -11,6 +11,7 @@ pub(crate) mod infer_matching_tuples;
 pub(crate) mod infer_resolve;
 pub(crate) mod infer_variance;
 mod partially_inferable;
+pub(crate) mod spread_rest_literals;
 mod template_anchor;
 mod template_segment_prefix;
 pub(crate) mod xarena_base;

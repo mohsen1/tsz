@@ -1684,6 +1684,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let should_defer_to_other_param =
                 appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
             if !should_defer_to_other_param {
+                let literal_mode =
+                    self.spread_rest_literal_mode(func, target_type, &var_map, &type_param_vars);
+                infer_ctx.mark_spread_rest_tuple(tuple_type, literal_mode);
                 self.constrain_types(
                     &mut infer_ctx,
                     &var_map,

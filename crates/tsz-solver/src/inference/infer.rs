@@ -340,6 +340,15 @@ pub(crate) struct InferenceContext<'a> {
     /// when source and target are the same type parameter, which tsz's
     /// placeholder rename would otherwise miss.
     pub(crate) original_type_param_for_var: FxHashMap<Atom, InferenceVar>,
+    /// Tuples packed from trailing rest arguments (tsc's
+    /// `getSpreadArgumentType` output), keyed to the literal-preservation mode
+    /// of the call site. Candidate resolution widens these per element against
+    /// the rest type parameter's declared constraint instead of blanket
+    /// literal-widening the whole tuple. Sub-tuples the constraint walker
+    /// slices out of a marked tuple inherit its mode
+    /// ([`InferenceContext::propagate_spread_rest_tuple_mode`]).
+    pub(crate) spread_rest_tuple_modes:
+        FxHashMap<TypeId, crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -377,6 +386,7 @@ impl<'a> InferenceContext<'a> {
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
+            spread_rest_tuple_modes: FxHashMap::default(),
         }
     }
 
@@ -403,6 +413,7 @@ impl<'a> InferenceContext<'a> {
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
+            spread_rest_tuple_modes: FxHashMap::default(),
         }
     }
 
@@ -426,6 +437,27 @@ impl<'a> InferenceContext<'a> {
     pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
         let root = self.table.find(var);
         self.top_level_in_return_type_unfixed.insert(root);
+    }
+
+    /// Record that `tuple` was packed from trailing rest arguments so
+    /// candidate resolution widens its literal elements per the rest type
+    /// parameter's declared constraint (tsc's `getSpreadArgumentType` rule)
+    /// instead of blanket-widening the whole tuple.
+    pub fn mark_spread_rest_tuple(
+        &mut self,
+        tuple: TypeId,
+        mode: crate::inference::spread_rest_literals::SpreadRestLiteralMode,
+    ) {
+        self.spread_rest_tuple_modes.insert(tuple, mode);
+    }
+
+    /// Propagate a spread-rest mark from a packed source tuple to a sub-tuple
+    /// the constraint walker sliced out of it, so the slice keeps the same
+    /// per-element literal treatment when it becomes an inference candidate.
+    pub fn propagate_spread_rest_tuple_mode(&mut self, source: TypeId, derived: TypeId) {
+        if let Some(&mode) = self.spread_rest_tuple_modes.get(&source) {
+            self.spread_rest_tuple_modes.insert(derived, mode);
+        }
     }
 
     /// Create a fresh inference variable

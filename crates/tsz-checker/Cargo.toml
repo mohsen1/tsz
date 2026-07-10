@@ -2439,3 +2439,7 @@ path = "tests/vendored_fixture_drift_tests.rs"
 [[test]]
 name = "generic_mapped_intersection_deferral_tests"
 path = "tests/generic_mapped_intersection_deferral_tests.rs"
+
+[[test]]
+name = "spread_rest_literal_preservation_tests"
+path = "tests/spread_rest_literal_preservation_tests.rs"

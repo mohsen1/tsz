@@ -52,10 +52,22 @@ impl<'a> InferenceContext<'a> {
         covariant_has_readonly_source: bool,
         concrete_contra_candidates: &[InferenceCandidate],
         from_array_element: bool,
+        declared_constraint: Option<TypeId>,
         mut external_is_subtype: Option<&mut dyn FnMut(TypeId, TypeId) -> bool>,
     ) -> TypeId {
         let covariant_widened = if is_literal_type(self.interner, covariant_result) {
             covariant_result
+        } else if let Some(&mode) = self.spread_rest_tuple_modes.get(&covariant_result) {
+            // Tuples packed from trailing rest arguments widen per element
+            // against the rest type parameter's declared constraint (tsc's
+            // `getSpreadArgumentType`); the blanket deep widening below would
+            // discard literal elements a literal-flavored constraint keeps.
+            crate::inference::spread_rest_literals::widen_spread_rest_tuple(
+                self.interner,
+                covariant_result,
+                declared_constraint,
+                mode,
+            )
         } else {
             widening::widen_type_for_inference(self.interner, covariant_result)
         };
@@ -587,6 +599,7 @@ impl<'a> InferenceContext<'a> {
                     candidates.iter().any(|c| c.from_readonly_source),
                     &concrete_contra_candidates,
                     candidates.iter().any(|c| c.from_array_element),
+                    declared_constraint,
                     external_is_subtype
                         .as_mut()
                         .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
@@ -931,6 +944,19 @@ impl<'a> InferenceContext<'a> {
                 Some(TypeData::Array(_) | TypeData::Tuple(_)) => {
                     if has_type_annotation_candidate {
                         resolved
+                    } else if let Some(&mode) = self.spread_rest_tuple_modes.get(&resolved) {
+                        // A tuple packed from trailing rest arguments widens per
+                        // element against the rest type parameter's declared
+                        // constraint (tsc's `getSpreadArgumentType`), so
+                        // `f<T extends string[]>(...args: T)` keeps `["a", "b"]`
+                        // while `T extends any[]` still widens to
+                        // `[string, string]`.
+                        crate::inference::spread_rest_literals::widen_spread_rest_tuple(
+                            self.interner,
+                            resolved,
+                            declared_constraint,
+                            mode,
+                        )
                     } else {
                         widening::widen_type_for_inference(self.interner, resolved)
                     }
@@ -1829,6 +1855,7 @@ impl<'a> InferenceContext<'a> {
                         candidates.iter().any(|c| c.from_readonly_source),
                         &concrete_contra_candidates,
                         candidates.iter().any(|c| c.from_array_element),
+                        dc,
                         external_is_subtype
                             .as_mut()
                             .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
