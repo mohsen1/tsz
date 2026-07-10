@@ -97,8 +97,6 @@ impl<'a> CheckerState<'a> {
             return factory.union2(base_type, TypeId::UNDEFINED);
         }
 
-        use crate::diagnostics::diagnostic_codes;
-
         if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
             return property_type.unwrap_or(TypeId::ERROR);
         }
@@ -177,31 +175,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let is_literal_nullish = if let Some(expr_node) = self.ctx.arena.get(expression) {
-            expr_node.kind == SyntaxKind::NullKeyword as u16
-                || (expr_node.kind == SyntaxKind::Identifier as u16
-                    && self
-                        .ctx
-                        .arena
-                        .get_identifier(expr_node)
-                        .is_some_and(|ident| ident.escaped_text == "undefined"))
-        } else {
-            false
-        };
-
-        if is_literal_nullish {
-            let value_name = if cause == TypeId::NULL {
-                "null"
-            } else if cause == TypeId::UNDEFINED {
-                "undefined"
-            } else {
-                "null | undefined"
-            };
-            self.error_at_node_msg(
-                expression,
-                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                &[value_name],
-            );
+        if self.report_literal_nullish_value_error(expression, cause) {
             return self.finalize_property_access_result(
                 idx,
                 property_type.unwrap_or(TypeId::ERROR),
@@ -230,12 +204,96 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let name = self.expression_text(expression).or_else(|| {
-            (self.is_this_expression(expression)
-                && (self.enclosing_function_has_explicit_this_parameter(expression)
-                    || self.enclosing_function_has_contextual_this_type(expression)))
-            .then(|| "this".to_string())
-        });
+        self.report_named_possibly_nullish_expression(expression, cause);
+
+        self.finalize_property_access_result(
+            idx,
+            property_type.unwrap_or(TypeId::ERROR),
+            skip_flow_narrowing,
+            false,
+        )
+    }
+
+    /// Report a possibly-nullish `expression` the way tsc's
+    /// `reportObjectPossiblyNullOrUndefinedError` does: a literal `null` or
+    /// `undefined` reports TS18050, entity names report the
+    /// TS18047/TS18048/TS18049 family, and everything else reports the
+    /// `Object is possibly ...` TS2531/TS2532/TS2533 family.
+    pub(crate) fn report_possibly_nullish_expression(
+        &mut self,
+        expression: NodeIndex,
+        cause: TypeId,
+    ) {
+        if !self.report_literal_nullish_value_error(expression, cause) {
+            self.report_named_possibly_nullish_expression(expression, cause);
+        }
+    }
+
+    /// Mirror the literal arm of tsc's
+    /// `reportObjectPossiblyNullOrUndefinedError`: a `null` keyword or an
+    /// `undefined` identifier reports TS18050 `The value '{0}' cannot be used
+    /// here.` instead of a possibly-nullish message. Returns whether the
+    /// diagnostic was emitted.
+    pub(crate) fn report_literal_nullish_value_error(
+        &mut self,
+        expression: NodeIndex,
+        cause: TypeId,
+    ) -> bool {
+        use crate::diagnostics::diagnostic_codes;
+
+        let is_literal_nullish = if let Some(expr_node) = self.ctx.arena.get(expression) {
+            expr_node.kind == SyntaxKind::NullKeyword as u16
+                || (expr_node.kind == SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(expr_node)
+                        .is_some_and(|ident| ident.escaped_text == "undefined"))
+        } else {
+            false
+        };
+        if !is_literal_nullish {
+            return false;
+        }
+
+        let value_name = if cause == TypeId::NULL {
+            "null"
+        } else if cause == TypeId::UNDEFINED {
+            "undefined"
+        } else {
+            "null | undefined"
+        };
+        self.error_at_node_msg(
+            expression,
+            diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+            &[value_name],
+        );
+        true
+    }
+
+    /// Mirror the naming arms of tsc's
+    /// `reportObjectPossiblyNullOrUndefinedError`: entity-name expressions
+    /// shorter than 100 characters report `'{0}' is possibly ...`
+    /// (TS18047/TS18048/TS18049); other expressions report the anonymous
+    /// `Object is possibly ...` forms (TS2531/TS2532/TS2533).
+    pub(crate) fn report_named_possibly_nullish_expression(
+        &mut self,
+        expression: NodeIndex,
+        cause: TypeId,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+
+        let name = self
+            .expression_text(expression)
+            .or_else(|| {
+                (self.is_this_expression(expression)
+                    && (self.enclosing_function_has_explicit_this_parameter(expression)
+                        || self.enclosing_function_has_contextual_this_type(expression)))
+                .then(|| "this".to_string())
+            })
+            // tsc falls back to the anonymous `Object is possibly ...` form
+            // when the rendered entity name reaches 100 UTF-16 units.
+            .filter(|name| name.encode_utf16().count() < 100);
 
         let (code, message): (u32, String) = if let Some(ref name) = name {
             if cause == TypeId::NULL {
@@ -272,13 +330,6 @@ impl<'a> CheckerState<'a> {
         };
 
         self.error_at_node(expression, &message, code);
-
-        self.finalize_property_access_result(
-            idx,
-            property_type.unwrap_or(TypeId::ERROR),
-            skip_flow_narrowing,
-            false,
-        )
     }
 
     fn explicit_variable_annotation_type_for_nullish_receiver(
