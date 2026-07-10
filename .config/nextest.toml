@@ -20,7 +20,7 @@ retries = 0
 test-threads = "num-cpus"
 
 [[profile.default.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
+filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.default.overrides]]
@@ -47,40 +47,13 @@ filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib
 slow-timeout = { period = "120s", terminate-after = 2 }
 threads-required = "num-test-threads"
 
+# junit `path` resolves relative to the per-profile store directory
+# (`target/nextest/default/`), so a bare file name lands the report at
+# `target/nextest/default/junit.xml`. A root-relative path here would be
+# APPENDED to the store dir and bury the report at
+# `target/nextest/default/target/nextest/default/junit.xml` (#15646).
 [profile.default.junit]
-path = "target/nextest/default/junit.xml"
-
-# CI profile - stricter timeouts, catches hanging tests faster
-[profile.ci]
-slow-timeout = { period = "30s", terminate-after = 2 }
-leak-timeout = "3s"
-fail-fast = false
-retries = 0
-# Keep CI unit execution below the 8-vCPU runner count. Several checker
-# integration tests are memory-heavy enough that running the full discovered
-# set at num-cpus can SIGKILL otherwise-passing tests after compilation.
-test-threads = 4
-
-[[profile.ci.overrides]]
-filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-
-[[profile.ci.overrides]]
-filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
-threads-required = "num-test-threads"
-
-# Issue #10677 / #10683 regression — see the matching default-profile override.
-[[profile.ci.overrides]]
-filter = 'test(fuel_drained_earlier_statements_keep_select_callback_context) | test(fuel_drained_inside_function_body_keeps_select_callback_context)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-threads-required = "num-test-threads"
-
-# DOM lib-heritage publication witnesses — see the matching default-profile
-# override.
-[[profile.ci.overrides]]
-filter = 'test(dom_element_heritage_clean_sequential) | test(forced_parallel_lib_iterator_heritage_matches_sequential)'
-slow-timeout = { period = "120s", terminate-after = 2 }
-threads-required = "num-test-threads"
+path = "junit.xml"
 
 # Quick profile for fast feedback during development
 [profile.quick]
@@ -101,26 +74,40 @@ status-level = "fail"
 filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
 slow-timeout = { period = "90s", terminate-after = 2 }
 
-# Signoff profile (#15399) - precommit timeouts, but fail-fast disabled and junit
-# on. While main carries a known-failing set and CI is reduced, `precommit`'s
-# `fail-fast = true` bails on the first red test, so it can never produce a full
-# failure inventory to distinguish NEW regressions from the known baseline. This
-# profile runs the whole suite, writes junit, and lets
-# scripts/ci/known-failures-check.mjs adjudicate against
-# scripts/ci/known-failures.txt.
+# Signoff profile (#15399) - fail-fast disabled and junit on. While main
+# carries a known-failing set, `precommit`'s `fail-fast = true` bails on the
+# first red test, so it can never produce a full failure inventory to
+# distinguish NEW regressions from the known baseline. This profile runs the
+# whole suite, writes junit, and lets scripts/ci/known-failures-check.mjs
+# adjudicate against scripts/ci/known-failures.txt.
+#
+# Since #15646 this profile is what BOTH the unit CI job and local signoff
+# run (it replaced the retired `[profile.ci]`), so it is the one owner of the
+# unit lane's timeout policy: 30s base period, and the shared heavy-test
+# lists arrive by inheritance — nextest consults
+# `[[profile.default.overrides]]` for any profile that does not override the
+# same setting, so the 120s / threads-required blocks above apply to signoff
+# runs as-is. One policy for both environments keeps the shared
+# known-failures baseline meaningful: a stricter local-only policy would seed
+# it with timeouts that pass in CI, and a laxer one would hide CI timeouts
+# from local runs. Hosted runners additionally cap test threads via
+# UNIT_NEXTEST_TEST_THREADS / CHECKER_NEXTEST_TEST_THREADS (full-ci.sh);
+# memory-heavy checker tests can be SIGKILLed at num-cpus there.
+# The base values below deliberately PIN the unit-lane policy even where
+# they currently equal [profile.default]: retuning the local dev profile must
+# not silently retune the CI gate.
 [profile.signoff]
-slow-timeout = { period = "15s", terminate-after = 2 }
-leak-timeout = "2s"
+slow-timeout = { period = "30s", terminate-after = 2 }
+leak-timeout = "3s"
 fail-fast = false
 test-threads = "num-cpus"
 status-level = "fail"
 
-[[profile.signoff.overrides]]
-filter = 'test(test_ts2536_with_lib_mismatched_keyof_source) | test(compile_document_create_element_overload_augmentation_no_false_ts2430)'
-slow-timeout = { period = "90s", terminate-after = 2 }
-
+# See the `[profile.default.junit]` note: `path` resolves relative to the
+# per-profile store dir, so this lands at `target/nextest/signoff/junit.xml`
+# (the path scripts/ci/unit-nextest.sh collects).
 [profile.signoff.junit]
-path = "target/nextest/signoff/junit.xml"
+path = "junit.xml"
 
 # Long-running tests profile (for conformance tests)
 [profile.conformance]

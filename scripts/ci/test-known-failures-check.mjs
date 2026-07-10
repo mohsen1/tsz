@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   parseJunitFailures,
   parseBaseline,
+  baselineGeneration,
   baselineIsReconciled,
   evaluate,
   renderBaseline,
+  unionRuns,
 } from "./known-failures-check.mjs";
 
 let passed = 0;
@@ -128,6 +130,39 @@ check("a baselined test absent from this run is neither new nor shrink (never bl
   assert.equal(nowPassing.length, 0);
 });
 
+check("unionRuns merges per-pass reports into one adjudicated run (#15646)", () => {
+  // The unit lane records one junit per nextest pass; the gate judges their
+  // union. A test failing in ANY pass stays failing, and passes contribute
+  // disjoint test populations.
+  const passA = parseJunitFailures(
+    `<testcase name="a_ok" classname="tsz-core::x"/>` +
+      `<testcase name="a_bad" classname="tsz-core::x"><failure/></testcase>`,
+  );
+  const passB = parseJunitFailures(
+    `<testcase name="b_ok" classname="tsz-checker::y"/>`,
+  );
+  const merged = unionRuns([passA, passB]);
+  assert.deepEqual([...merged.all].sort(), [
+    "tsz-checker::y::b_ok",
+    "tsz-core::x::a_ok",
+    "tsz-core::x::a_bad",
+  ].sort());
+  assert.deepEqual([...merged.failing], ["tsz-core::x::a_bad"]);
+  // union with an empty list is empty (callers guard the no-reports case)
+  assert.equal(unionRuns([]).all.size, 0);
+});
+
+check("a test failing in one pass and passing in another stays failing", () => {
+  // Overlapping populations can only happen when two passes ran the same
+  // test (e.g. a retry pass); the conservative reading is "it failed".
+  const failed = parseJunitFailures(
+    `<testcase name="flaky" classname="tsz-core::x"><failure/></testcase>`,
+  );
+  const passed = parseJunitFailures(`<testcase name="flaky" classname="tsz-core::x"/>`);
+  assert.deepEqual([...unionRuns([failed, passed]).failing], ["tsz-core::x::flaky"]);
+  assert.deepEqual([...unionRuns([passed, failed]).failing], ["tsz-core::x::flaky"]);
+});
+
 check("renderBaseline round-trips through parseBaseline and is sorted + deduped", () => {
   const body = renderBaseline(["tsz-b::t::z", "tsz-a::t::a", "tsz-b::t::z"]);
   assert.ok(body.startsWith("# Known-failures baseline"));
@@ -147,6 +182,21 @@ check("committed bootstrap render is unreconciled -> advisory (does not block)",
   const body = renderBaseline([], { reconciled: false });
   assert.equal(parseBaseline(body).size, 0);
   assert.ok(!baselineIsReconciled(body), "bootstrap baseline must be unreconciled");
+});
+
+check("reconcile generation: 0 unreconciled, bare marker reads as r1, rN parses", () => {
+  assert.equal(baselineGeneration("# header only\n"), 0);
+  // legacy bare marker (pre-generation baselines) still reads as reconciled
+  assert.equal(baselineGeneration("# h\n# baseline-status: reconciled\n"), 1);
+  assert.equal(baselineGeneration("# h\n# baseline-status: reconciled r4\n"), 4);
+  assert.ok(baselineIsReconciled("# baseline-status: reconciled r4\n"));
+});
+
+check("renderBaseline stamps the requested generation and round-trips", () => {
+  const body = renderBaseline(["tsz-a::t::x"], { generation: 2 });
+  assert.equal(baselineGeneration(body), 2);
+  // default generation is r1 (first reconcile)
+  assert.equal(baselineGeneration(renderBaseline([])), 1);
 });
 
 console.log(`\nAll ${passed} known-failures-check tests passed.`);

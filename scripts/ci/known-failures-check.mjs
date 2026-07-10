@@ -27,8 +27,16 @@
 // and compare the reported failures to scripts/ci/known-failures.txt by hand, or
 // pin a nextest `default-filter` that excludes the known set.
 //
+// The unit CI lane runs several nextest passes (a general workspace pass plus
+// batched checker integration targets, #15646), each writing junit to a
+// distinct path. `--junit` may be repeated and `--junit-dir` reads every
+// `*.xml` in a directory; the run under adjudication is the UNION of all
+// provided reports. Every provided report must be readable and non-empty —
+// a pass that died before recording tests must fail the gate, not shrink it.
+//
 // Usage:
-//   node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]
+//   node scripts/ci/known-failures-check.mjs [--junit <path>]... [--junit-dir <dir>] \
+//     [--baseline <path>] [--allow-no-reports] [--update [--bump-generation]]
 //
 // Exit codes:
 //   0 - no new failures (or advisory bootstrap / shrink-only)
@@ -45,7 +53,15 @@ const DEFAULT_BASELINE = "scripts/ci/known-failures.txt";
 // list + marker -> strict, blocks any failure) distinct from "never reconciled"
 // (no marker -> advisory), so the gate does not silently disable itself on a
 // clean tree.
+//
+// The marker carries a reconcile GENERATION (`reconciled r<N>`; the bare form
+// reads as r1). check-known-failures-growth.py rejects baseline additions
+// unless the generation was bumped in the same diff, so a deliberate
+// re-reconcile is authorized by the reviewed artifact itself: regenerate with
+// `--update --bump-generation` (or edit the marker line by hand) and the
+// growth is legal exactly once.
 const RECONCILED_MARKER = "# baseline-status: reconciled";
+const RECONCILED_MARKER_RE = /^# baseline-status: reconciled(?: r(\d+))?$/;
 
 const BASELINE_HEADER = [
   "# Known-failures baseline for scripts/ci/known-failures-check.mjs (#15399).",
@@ -59,7 +75,9 @@ const BASELINE_HEADER = [
   "# runs in advisory mode (never blocks). `--update` stamps the marker and",
   "# switches the checker to strict: any failing test not listed here is a new",
   "# regression, even when the list is empty (a fully green tree). In normal PRs",
-  "# this list may only shrink.",
+  "# this list may only shrink; a deliberate re-reconcile must bump the marker's",
+  "# `r<N>` generation in the same diff (`--update --bump-generation`), which is",
+  "# what scripts/ci/check-known-failures-growth.py accepts as authorization.",
 ];
 
 const TESTCASE_RE = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g;
@@ -109,10 +127,34 @@ export function parseBaseline(text) {
   return set;
 }
 
+// Reconcile generation of a baseline text: 0 when unreconciled (advisory),
+// 1 for the bare legacy marker, N for `reconciled rN`.
+export function baselineGeneration(text) {
+  for (const raw of text.split(/\r?\n/)) {
+    const m = RECONCILED_MARKER_RE.exec(raw.trim());
+    if (m) return m[1] ? Number(m[1]) : 1;
+  }
+  return 0;
+}
+
 // A baseline is reconciled once `--update` has stamped the marker; only then
 // does the checker enforce strictly. Unreconciled baselines are advisory.
 export function baselineIsReconciled(text) {
-  return text.split(/\r?\n/).some((line) => line.trim() === RECONCILED_MARKER);
+  return baselineGeneration(text) > 0;
+}
+
+// Union several parsed junit results ({all, failing} pairs) into one run.
+// The unit lane produces one junit per nextest pass (#15646); the run under
+// adjudication is their union. A test can only appear in multiple reports if
+// two passes ran it; a failure in any pass keeps it failing.
+export function unionRuns(runs) {
+  const all = new Set();
+  const failing = new Set();
+  for (const run of runs) {
+    for (const id of run.all) all.add(id);
+    for (const id of run.failing) failing.add(id);
+  }
+  return { all, failing };
 }
 
 // Diff a junit result against the baseline set.
@@ -127,21 +169,33 @@ export function evaluate(baseline, junit) {
 }
 
 // Render a baseline file body from a set/iterable of failing ids. `--update`
-// produces a reconciled file (marker stamped); the committed bootstrap file is
-// rendered unreconciled.
-export function renderBaseline(ids, { reconciled = true } = {}) {
+// produces a reconciled file (marker stamped with its generation); the
+// committed bootstrap file is rendered unreconciled.
+export function renderBaseline(ids, { reconciled = true, generation = 1 } = {}) {
   const sorted = [...new Set(ids)].sort();
-  const header = reconciled ? [...BASELINE_HEADER, RECONCILED_MARKER] : BASELINE_HEADER;
+  const header = reconciled
+    ? [...BASELINE_HEADER, `${RECONCILED_MARKER} r${generation}`]
+    : BASELINE_HEADER;
   return [...header, ...sorted].join("\n") + "\n";
 }
 
 function parseArgs(argv) {
-  const out = { junit: DEFAULT_JUNIT, baseline: DEFAULT_BASELINE, update: false };
+  const out = {
+    junits: [],
+    junitDirs: [],
+    baseline: DEFAULT_BASELINE,
+    update: false,
+    bumpGeneration: false,
+    allowNoReports: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--junit") out.junit = argv[++i];
+    if (a === "--junit") out.junits.push(argv[++i]);
+    else if (a === "--junit-dir") out.junitDirs.push(argv[++i]);
     else if (a === "--baseline") out.baseline = argv[++i];
     else if (a === "--update") out.update = true;
+    else if (a === "--bump-generation") out.bumpGeneration = true;
+    else if (a === "--allow-no-reports") out.allowNoReports = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else {
       out.error = `unknown argument '${a}'`;
@@ -151,11 +205,43 @@ function parseArgs(argv) {
   return out;
 }
 
+// Expand --junit/--junit-dir into the concrete report list. With neither flag,
+// fall back to the single default path (the local signoff flow before #15646).
+// An empty/missing --junit-dir is a configuration error unless the caller
+// passed --allow-no-reports (the unit lane does: a narrowed package override
+// can legitimately select zero tests, and this checker owns that verdict).
+function resolveJunitPaths(args) {
+  const paths = [...args.junits];
+  for (const dir of args.junitDirs) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir);
+    } catch (err) {
+      if (args.allowNoReports) continue;
+      return { error: `cannot read junit dir ${dir}: ${err.message}` };
+    }
+    const xml = entries.filter((name) => name.endsWith(".xml")).sort();
+    if (xml.length === 0 && !args.allowNoReports) {
+      return { error: `junit dir ${dir} contains no *.xml reports` };
+    }
+    for (const name of xml) paths.push(path.join(dir, name));
+  }
+  // Reachable only with --allow-no-reports: without it, an empty/unreadable
+  // --junit-dir already returned an error above.
+  if (paths.length === 0 && args.junitDirs.length > 0) {
+    return { paths: [], noReports: true };
+  }
+  if (paths.length === 0) paths.push(DEFAULT_JUNIT);
+  return { paths };
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     process.stdout.write(
-      "usage: node scripts/ci/known-failures-check.mjs [--junit <path>] [--baseline <path>] [--update]\n",
+      "usage: node scripts/ci/known-failures-check.mjs [--junit <path>]... " +
+        "[--junit-dir <dir>] [--baseline <path>] [--allow-no-reports] " +
+        "[--update [--bump-generation]]\n",
     );
     process.exit(0);
   }
@@ -164,36 +250,65 @@ function main() {
     process.exit(2);
   }
 
-  let junitXml;
-  try {
-    junitXml = fs.readFileSync(args.junit, "utf8");
-  } catch (err) {
-    process.stderr.write(
-      `known-failures-check: cannot read junit ${args.junit}: ${err.message}\n` +
-        `Run the suite first: cargo nextest run --profile signoff --workspace || true\n`,
-    );
+  const resolved = resolveJunitPaths(args);
+  if (resolved.error) {
+    process.stderr.write(`known-failures-check: ${resolved.error}\n`);
     process.exit(2);
   }
-  const junit = parseJunitFailures(junitXml);
+  if (resolved.noReports) {
+    process.stdout.write(
+      "known-failures-check: no junit reports (no tests in selection); nothing to adjudicate.\n",
+    );
+    process.exit(0);
+  }
 
-  // A junit with zero testcases means the run produced no results (build failed,
-  // or the runner was killed before any test recorded). Treat it as an infra
-  // error rather than "nothing failed" so a truncated run can neither pass the
-  // gate nor be written as an empty baseline. (Partial runs that record most but
-  // not all tests are not caught here; the slice-2 full CI tier owns that.)
-  if (junit.all.size === 0) {
-    process.stderr.write(
-      `known-failures-check: junit ${args.junit} recorded no testcases; ` +
-        `treating as a failed/incomplete run.\n`,
-    );
-    process.exit(2);
+  const runs = [];
+  for (const junitPath of resolved.paths) {
+    let junitXml;
+    try {
+      junitXml = fs.readFileSync(junitPath, "utf8");
+    } catch (err) {
+      process.stderr.write(
+        `known-failures-check: cannot read junit ${junitPath}: ${err.message}\n` +
+          `Run the suite first: cargo nextest run --profile signoff --workspace || true\n`,
+      );
+      process.exit(2);
+    }
+    const run = parseJunitFailures(junitXml);
+
+    // A junit with zero testcases means the pass produced no results (build
+    // failed, or the runner was killed before any test recorded). Treat it as
+    // an infra error rather than "nothing failed" so a truncated pass can
+    // neither pass the gate nor be written as an empty baseline. (Partial runs
+    // that record most but not all tests are not caught here; the slice-2 full
+    // CI tier owns that.)
+    if (run.all.size === 0) {
+      process.stderr.write(
+        `known-failures-check: junit ${junitPath} recorded no testcases; ` +
+          `treating as a failed/incomplete run.\n`,
+      );
+      process.exit(2);
+    }
+    runs.push(run);
   }
+  const junit = unionRuns(runs);
 
   if (args.update) {
+    // Preserve the reconcile generation across rewrites; growth authorization
+    // is an explicit `--bump-generation` (see the marker note above). The
+    // first reconcile of an unreconciled baseline starts at r1.
+    let existingGeneration = 0;
+    try {
+      existingGeneration = baselineGeneration(fs.readFileSync(args.baseline, "utf8"));
+    } catch {
+      // No baseline yet: bootstrap.
+    }
+    const generation = Math.max(existingGeneration, 1) + (args.bumpGeneration ? 1 : 0);
     fs.mkdirSync(path.dirname(args.baseline), { recursive: true });
-    fs.writeFileSync(args.baseline, renderBaseline(junit.failing));
+    fs.writeFileSync(args.baseline, renderBaseline(junit.failing, { generation }));
     process.stdout.write(
-      `known-failures-check: wrote ${junit.failing.size} known failure(s) to ${args.baseline}.\n`,
+      `known-failures-check: wrote ${junit.failing.size} known failure(s) to ` +
+        `${args.baseline} (reconcile generation r${generation}).\n`,
     );
     process.exit(0);
   }
@@ -226,8 +341,8 @@ function main() {
 
   const { newFailures, nowPassing } = evaluate(baseline, junit);
   process.stdout.write(
-    `known-failures-check: ${junit.all.size} test(s) ran, ${junit.failing.size} failing, ` +
-      `baseline has ${baseline.size} known failure(s).\n`,
+    `known-failures-check: ${junit.all.size} test(s) ran across ${runs.length} report(s), ` +
+      `${junit.failing.size} failing, baseline has ${baseline.size} known failure(s).\n`,
   );
   for (const id of nowPassing) {
     process.stdout.write(`  shrink: ${id} is baselined but now passes -> drop it with --update.\n`);
