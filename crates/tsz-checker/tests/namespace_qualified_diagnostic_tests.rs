@@ -39,6 +39,150 @@ let useIt: T;
 }
 
 #[test]
+fn typeof_missing_namespace_value_member_rule_is_name_agnostic_and_nested() {
+    let source = r#"
+namespace Cabinet {
+    export const present = 1;
+}
+namespace Outer {
+    export namespace Inner {
+        export const present = 1;
+    }
+}
+import Alias = Outer.Inner;
+
+type Renamed = typeof Cabinet.Absent;
+type Nested = typeof Outer.Inner.Missing;
+type Aliased = typeof Alias.Gone;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert_eq!(
+        diags,
+        vec![
+            (
+                2339,
+                "Property 'Absent' does not exist on type 'typeof Cabinet'.".to_string(),
+            ),
+            (
+                2339,
+                "Property 'Missing' does not exist on type 'typeof Inner'.".to_string(),
+            ),
+            (
+                2339,
+                "Property 'Gone' does not exist on type 'typeof Inner'.".to_string(),
+            ),
+        ],
+        "renamed, nested, and aliased namespace value misses should use TS2339"
+    );
+}
+
+#[test]
+fn typeof_non_exported_namespace_value_member_reports_ts2339() {
+    let source = r#"
+namespace Ns {
+    const hidden = 1;
+    export const visible = 2;
+}
+
+type Hidden = typeof Ns.hidden;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert_eq!(
+        diags,
+        vec![(
+            2339,
+            "Property 'hidden' does not exist on type 'typeof Ns'.".to_string(),
+        )],
+        "non-exported namespace values should not become deferred members"
+    );
+}
+
+#[test]
+fn typeof_missing_namespace_value_member_under_type_operators_reports_ts2339() {
+    let source = r#"
+namespace Catalog {
+    export const present = 1;
+}
+namespace Registry {
+    export const available = 2;
+}
+
+type Keys = keyof typeof Catalog.Absent;
+type Flags = { [K in keyof typeof Registry.Missing]: boolean };
+"#;
+    let diags = get_diagnostics(source);
+
+    assert_eq!(
+        diags,
+        vec![
+            (
+                2339,
+                "Property 'Absent' does not exist on type 'typeof Catalog'.".to_string(),
+            ),
+            (
+                2339,
+                "Property 'Missing' does not exist on type 'typeof Registry'.".to_string(),
+            ),
+        ],
+        "type operators must not hide missing namespace value members behind deferral"
+    );
+}
+
+#[test]
+fn typeof_existing_namespace_value_members_stay_clean() {
+    let source = r#"
+namespace Ns {
+    export const value = 1;
+    export namespace Nested {
+        export const leaf = 2;
+    }
+}
+
+type Value = typeof Ns.value;
+type Leaf = typeof Ns.Nested.leaf;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert!(
+        diags.is_empty(),
+        "exported namespace value members should continue to resolve, got: {diags:?}"
+    );
+}
+
+#[test]
+fn typeof_missing_class_and_enum_value_members_report_ts2339() {
+    let source = r#"
+class Container {
+    static present = 1;
+}
+enum Choice {
+    Present,
+}
+
+type ClassMiss = typeof Container.Absent;
+type EnumMiss = typeof Choice.Missing;
+"#;
+    let diags = get_diagnostics(source);
+
+    assert_eq!(
+        diags,
+        vec![
+            (
+                2339,
+                "Property 'Absent' does not exist on type 'typeof Container'.".to_string(),
+            ),
+            (
+                2339,
+                "Property 'Missing' does not exist on type 'typeof Choice'.".to_string(),
+            ),
+        ],
+        "class and enum value surfaces should report missing static members"
+    );
+}
+
+#[test]
 fn plain_missing_namespace_type_member_still_reports_ts2694() {
     let source = r#"
 namespace Ns {

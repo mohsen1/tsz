@@ -1130,9 +1130,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if from_typeof && left_symbol.import_module().is_none() {
-            let left_text = self
-                .entity_name_text(qn.left)
-                .unwrap_or_else(|| left_symbol.escaped_name.clone());
+            // `tsc` displays the resolved value symbol here, not the source
+            // spelling of its qualification. Thus `typeof Outer.Inner.Missing`
+            // and an import-equals alias to `Outer.Inner` both name `Inner`.
+            let left_text = left_symbol.escaped_name.clone();
             let Some(right_node) = self.ctx.arena.get(qn.right) else {
                 return false;
             };

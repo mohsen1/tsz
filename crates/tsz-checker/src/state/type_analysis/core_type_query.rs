@@ -428,8 +428,20 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    // Namespace resolution did not apply: resolve the value member
-                    // lazily through the deferred indexed access recorded above.
+                    // A namespace/class/enum has a complete binder-owned value
+                    // surface. If its export/static lookup missed, report that
+                    // name-resolution failure now instead of hiding it behind an
+                    // unresolved indexed access. Ordinary value objects are not
+                    // namespace-like, so they keep the materialization-order-safe
+                    // deferred path below.
+                    if deferred_value_member_access.is_some()
+                        && self.report_type_query_missing_member(type_query.expr_name)
+                    {
+                        return TypeId::ERROR;
+                    }
+
+                    // Namespace resolution did not apply: resolve an ordinary value
+                    // member lazily through the deferred indexed access recorded above.
                     if let Some(deferred) = deferred_value_member_access {
                         let resolved = self.apply_type_query_instantiation_arguments(
                             deferred,
