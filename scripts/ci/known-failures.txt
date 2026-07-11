@@ -75,7 +75,6 @@ tsz-cli::driver::core::check::check_tests::skip_lib_check_skips_default_lib_rech
 tsz-cli::driver::declare_global_interface_keyof_merge_tests::cross_file_global_blocks_merge_type_level
 tsz-cli::driver::declare_global_interface_keyof_merge_tests::two_global_blocks_in_one_file_merge_type_level
 tsz-cli::driver_tests::checked_js_declaration_emit_self_referential_prototype_method_type_does_not_recurse
-tsz-cli::driver_tests::compile_cross_module_nested_interface_method_allows_optional_argument_currently
 tsz-cli::driver_tests::compile_import_equals_const_enum_only_elides_require
 tsz-cli::driver_tests::compile_incremental_reports_ts5033_when_tsbuildinfo_is_not_writable
 tsz-cli::driver_tests::compile_jsdoc_enum_initializer_values_are_checked

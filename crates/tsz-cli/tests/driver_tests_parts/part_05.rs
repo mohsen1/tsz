@@ -601,7 +601,7 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
-fn compile_cross_module_nested_interface_method_allows_optional_argument_currently() {
+fn compile_cross_module_nested_interface_method_rejects_optional_argument() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -646,9 +646,36 @@ cfg.workspace.toAbsolutePath(cfg.server);
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
+    // Passing the optional `cfg.server` (`IServer | undefined`) to a method
+    // whose parameter is `IServer` must error, matching tsc 6.0-dev:
+    //   consumer.ts(5,30): error TS2345: Argument of type 'IServer | undefined'
+    //     is not assignable to parameter of type 'IServer'.
+    //       Type 'undefined' is not assignable to type 'IServer'.
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345 for the optional-argument mismatch, got: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        ts2345[0].message_text,
+        "Argument of type 'IServer | undefined' is not assignable to parameter of type 'IServer'.",
+        "TS2345 message must match tsc, got: {:?}",
+        result.diagnostics
+    );
     assert!(
-        result.diagnostics.is_empty(),
-        "expected no diagnostics for current cross-module nested-interface optional argument behavior, got: {:?}",
+        ts2345[0]
+            .related_information
+            .iter()
+            .any(|related| related.code == 2322
+                && related.message_text
+                    == "Type 'undefined' is not assignable to type 'IServer'."),
+        "TS2345 must elaborate the undefined-not-assignable reason, got: {:?}",
         result.diagnostics
     );
 }
