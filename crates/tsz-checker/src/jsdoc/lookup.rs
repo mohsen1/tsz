@@ -447,22 +447,14 @@ impl<'a> CheckerState<'a> {
 
                 let comments = source_file.comments.clone();
                 let source_text = source_file.text.to_string();
-                let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
+                let mut checker = CheckerState::delegate_for_arena(
                     arena.as_ref(),
                     binder.as_ref(),
-                    self.ctx.types,
                     source_file.file_name.clone(),
-                    self.ctx.compiler_options.clone(),
                     self,
                     tsz_common::perf_counters::CheckerCreationReason::JsDocLookup,
-                ));
-                checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-                checker.ctx.copy_cross_file_state_from(&self.ctx);
-                checker.ctx.current_file_idx = file_idx;
-                self.ctx.copy_symbol_file_targets_to_attributed(
-                    &mut checker.ctx,
-                    tsz_common::perf_counters::CheckerCreationReason::JsDocLookup,
                 );
+                checker.ctx.current_file_idx = file_idx;
 
                 if let Some(info) =
                     checker.resolve_jsdoc_typedef_info(name, &comments, &source_text)

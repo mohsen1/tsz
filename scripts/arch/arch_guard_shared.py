@@ -248,7 +248,11 @@ LINE_LIMIT_CHECKS = [
     ),
 ]
 
-QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1901
+# Ratcheted 1901 -> 1740 by the #15643 arch-health paydown: FunctionShape
+# instantiation, parameter-list transformation, and redeclaration-widening
+# helpers moved to `generic_instantiation`, `signature_building`, and
+# `widening` (parent #8225).
+QUERY_BOUNDARY_COMMON_LINE_BASELINE = 1740
 
 # Temporary green-campaign headroom for #14351. The live baseline remains
 # explicit; this reserve lets urgent parity PRs land while #8225 follow-up
@@ -287,6 +291,39 @@ FILE_LINE_LIMIT_CHECKS = [
         "Emitter transform boundary: class_es5_ir.rs must not grow",
         ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "class_es5_ir.rs",
         2101,
+    ),
+    # The five entries below pin files that crossed 2000 lines while the
+    # guard ran in no CI job (#15643). Pinned at their observed size so they
+    # cannot grow further; ratchet down as split-out submodules land.
+    (
+        "Solver type-queries boundary: type_queries/core.rs must not grow",
+        ROOT / "crates" / "tsz-solver" / "src" / "type_queries" / "core.rs",
+        2174,
+    ),
+    (
+        "Emitter transform boundary: transforms/helpers.rs must not grow",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "helpers.rs",
+        2099,
+    ),
+    (
+        "Emitter transform boundary: class_es5_ir_members.rs must not grow",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "class_es5_ir_members.rs",
+        2037,
+    ),
+    (
+        "Emitter statements boundary: emitter/statements/core.rs must not grow",
+        ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "statements" / "core.rs",
+        2029,
+    ),
+    (
+        "Solver relation-explain boundary: subtype/explain.rs must not grow",
+        ROOT / "crates" / "tsz-solver" / "src" / "relations" / "subtype" / "explain.rs",
+        2026,
     ),
     (
         "Solver instantiation boundary: instantiate.rs must not grow",
@@ -1191,7 +1228,10 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        80,
+        # Ratcheted 80 -> 75 by the #15643 arch-health paydown: lib-builtin
+        # registry accessors split onto the narrower `TypeBuiltinAccess`
+        # supertrait.
+        75,
     ),
 ]
 
@@ -1364,7 +1404,11 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
 # compatibility/quarantine barrel tracked by #8225. Existing sites are
 # tolerated as migration debt; new checker code should prefer a narrower
 # request-shaped boundary module, or intentionally bump this cap.
-QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3082
+# Ratcheted 3082 -> 3050 by the #15643 arch-health paydown: FunctionShape
+# instantiation / parameter-list / redeclaration-widening callers now route
+# through their domain boundaries instead of the common barrel, and the
+# arch-smoke run caught remaining live-count slack.
+QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3050
 
 # Temporary green-campaign headroom for #14351. Guard tests keep the baseline
 # tight underneath this reserve, so reductions still force ratchets while urgent
@@ -1636,7 +1680,10 @@ REGEX_LINE_COUNT_CHECKS = [
             r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
             r".*\bwith_parent_cache_attributed\s*\("
         ),
-        28,
+        # Ratcheted 28 -> 16 by the #15643 arch-health paydown: fifteen
+        # delegation sites consolidated onto the single
+        # `CheckerState::delegate_for_arena` factory.
+        16,
     ),
     (
         "Checker residency boundary: copy_symbol_file_targets_to_attributed migration callsites (Track 10)",
@@ -1645,7 +1692,9 @@ REGEX_LINE_COUNT_CHECKS = [
             r"^(?!\s*(?:pub(?:\([^)]*\))?\s+)?fn\b)"
             r".*\bcopy_symbol_file_targets_to_attributed\s*\("
         ),
-        18,
+        # Ratcheted 18 -> 5 by the #15643 arch-health paydown (see
+        # `CheckerState::delegate_for_arena`).
+        5,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",

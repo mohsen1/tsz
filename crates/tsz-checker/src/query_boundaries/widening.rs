@@ -91,3 +91,69 @@ pub(crate) fn rebuild_object_with_shape_metadata(
         db, original, shape, new_props,
     )
 }
+
+// ── Redeclaration widening helpers ──
+
+/// Widen a literal return type in a function-shaped type for TS2403 comparison.
+///
+/// For `Function` types (e.g., `(s: string) => 3`), widens the return type
+/// from a literal to its base (e.g., `3` → `number`). Returns the original
+/// type unchanged if it is not a `Function` or no widening is needed.
+///
+/// This is a thin boundary wrapper that keeps direct `type_queries` and
+/// `widen_literal_type` calls out of checker modules.
+pub(crate) fn widen_function_literal_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    let widened_return =
+        tsz_solver::operations::widening::widen_literal_type(db, shape.return_type);
+    if widened_return != shape.return_type {
+        tsz_solver::type_queries::replace_function_return_type(db, type_id, widened_return)
+    } else {
+        type_id
+    }
+}
+
+/// Widen literal return types in callable call-signatures for TS2403 comparison.
+///
+/// For `Callable` types (e.g., `{ (s: string): 3 }`), widens each call
+/// signature's return type from a literal to its base (e.g., `3` → `number`).
+/// Returns the original type unchanged if it is not a `Callable` or no
+/// widening is needed.
+///
+/// This is a thin boundary wrapper that encapsulates solver `TypeData::Callable`
+/// inspection so checker modules never touch `.lookup()` or `TypeData` directly.
+pub(crate) fn widen_callable_literal_return_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(callable) = tsz_solver::type_queries::get_callable_shape(db, type_id) else {
+        return type_id;
+    };
+
+    let mut any_changed = false;
+    let new_call_sigs: Vec<_> = callable
+        .call_signatures
+        .iter()
+        .map(|sig| {
+            let widened = tsz_solver::operations::widening::widen_literal_type(db, sig.return_type);
+            if widened != sig.return_type {
+                any_changed = true;
+                let mut new_sig = sig.clone();
+                new_sig.return_type = widened;
+                new_sig
+            } else {
+                sig.clone()
+            }
+        })
+        .collect();
+
+    if any_changed {
+        let mut new_shape = (*callable).clone();
+        new_shape.call_signatures = new_call_sigs;
+        db.callable(new_shape)
+    } else {
+        type_id
+    }
+}

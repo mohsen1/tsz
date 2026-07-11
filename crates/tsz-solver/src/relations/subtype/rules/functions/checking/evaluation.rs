@@ -121,7 +121,7 @@ mod tests {
     use crate::construction::TypeInterner;
     use crate::def::DefId;
     use crate::relations::subtype::TypeResolver;
-    use crate::types::{PropertyInfo, TypeData};
+    use crate::types::PropertyInfo;
     use std::cell::Cell;
 
     struct GenerationBodyResolver {
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn relation_evaluation_session_memo_partitions_by_resolver_generation() {
         let interner = TypeInterner::new();
-        let lazy = interner.intern(TypeData::Lazy(DefId(701)));
+        let lazy = interner.lazy(DefId(701));
         let session = EvaluationSession::new();
 
         let resolver_one = GenerationBodyResolver {
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn relation_evaluation_session_memo_partitions_by_resolver_identity() {
         let interner = TypeInterner::new();
-        let lazy = interner.intern(TypeData::Lazy(DefId(703)));
+        let lazy = interner.lazy(DefId(703));
         let session = EvaluationSession::new();
 
         let resolver_one = GenerationBodyResolver {
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn relation_local_eval_cache_partitions_by_resolver_generation() {
         let interner = TypeInterner::new();
-        let lazy = interner.intern(TypeData::Lazy(DefId(702)));
+        let lazy = interner.lazy(DefId(702));
         let session = EvaluationSession::new();
         let resolver = MutableGenerationBodyResolver {
             generation: Cell::new(1),

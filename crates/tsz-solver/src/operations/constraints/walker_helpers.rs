@@ -435,7 +435,9 @@ mod tests {
         );
 
         assert_eq!(
-            infer_ctx.resolve_with_constraints(var_t).unwrap(),
+            infer_ctx
+                .resolve_with_constraints(var_t)
+                .expect("equivalent application bases must constrain the type arg"),
             TypeId::STRING
         );
     }
@@ -472,7 +474,9 @@ mod tests {
         );
 
         assert_eq!(
-            infer_ctx.resolve_with_constraints(var_t).unwrap(),
+            infer_ctx
+                .resolve_with_constraints(var_t)
+                .expect("unconstrained inference var must still resolve (to unknown)"),
             TypeId::UNKNOWN
         );
     }

@@ -8,9 +8,9 @@ use crate::caches::application_eval_index::{
     self, ApplicationEvalDependencyIndex, ApplicationEvalDependencyIndexState,
 };
 use crate::caches::db::{
-    IntersectionMergeCacheEntry, QueryDatabase, TypeCompilerOptions, TypeContainsByIdCache,
-    TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache, TypePruneUnionCache,
-    TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
+    TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
+    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -859,6 +859,32 @@ impl TypePruneUnionCache for QueryCache<'_> {
     }
 }
 
+impl TypeBuiltinAccess for QueryCache<'_> {
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.interner.get_array_base_type_params()
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_display_base_type()
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_readonly_array_base_type()
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.interner.get_boxed_type(kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.interner.is_boxed_def_id(def_id, kind)
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn type_database_identity(&self) -> usize {
         self.interner.type_database_identity()
@@ -1141,30 +1167,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
         self.interner.is_identity_comparable_type(type_id)
-    }
-
-    fn get_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_array_base_type()
-    }
-
-    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        self.interner.get_array_base_type_params()
-    }
-
-    fn get_array_display_base_type(&self) -> Option<TypeId> {
-        self.interner.get_array_display_base_type()
-    }
-
-    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_readonly_array_base_type()
-    }
-
-    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
-        self.interner.get_boxed_type(kind)
-    }
-
-    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
-        self.interner.is_boxed_def_id(def_id, kind)
     }
 
     fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {

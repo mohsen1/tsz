@@ -115,9 +115,21 @@ name = "Checker boundary: ObjectFlags stay behind query boundaries"
 base = "crates/tsz-checker/src"
 pattern = '\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::'
 exclude_dirs = ["tests"]
+# Must stay in sync with OBJECT_FLAG_BOUNDARIES /
+# OBJECT_FLAG_FACTORY_BOUNDARIES in
+# crates/tsz-checker/tests/arch_source_scans/object_flags_boundary_scans.rs
+# (issue #14351): named per-surface construction boundaries own their flag
+# policy, pinned by their companion *_construction_boundary_scans tests.
+# test_arch_guard_policy.py verifies this list against the Rust scan.
 exclude_files = [
   "crates/tsz-checker/src/query_boundaries/lib_augmentations.rs",
   "crates/tsz-checker/src/query_boundaries/type_construction.rs",
+  "crates/tsz-checker/src/query_boundaries/binding_patterns.rs",
+  "crates/tsz-checker/src/query_boundaries/declaration_exports.rs",
+  "crates/tsz-checker/src/query_boundaries/interface_merge.rs",
+  "crates/tsz-checker/src/query_boundaries/module_augmentation.rs",
+  "crates/tsz-checker/src/query_boundaries/type_computation/complex.rs",
+  "crates/tsz-checker/src/query_boundaries/type_computation/object_literals.rs",
 ]
 ignore_comment_lines = true
 
@@ -341,6 +353,9 @@ base = "crates/tsz-checker/tests"
 pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
 exclude_files = [
   "crates/tsz-checker/tests/architecture_contract_tests.rs",
+  # Source-scan test whose forbidden-pattern fixture strings include
+  # `intern(TypeData::` for its own boundary scan.
+  "crates/tsz-checker/tests/arch_source_scans/assignability_surface_construction_boundary_scans.rs",
 ]
 
 [[pattern_checks]]

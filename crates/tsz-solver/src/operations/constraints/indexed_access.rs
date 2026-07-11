@@ -216,7 +216,8 @@ mod tests {
         );
 
         assert_eq!(
-            ctx.resolve_with_constraints(payload_var).unwrap(),
+            ctx.resolve_with_constraints(payload_var)
+                .expect("keyed index access with key evidence must resolve the payload var"),
             TypeId::NUMBER
         );
     }
@@ -265,7 +266,8 @@ mod tests {
         );
 
         assert_eq!(
-            ctx.resolve_with_constraints(payload_var).unwrap(),
+            ctx.resolve_with_constraints(payload_var)
+                .expect("keyed index access with key evidence must resolve the payload var"),
             TypeId::NUMBER
         );
     }

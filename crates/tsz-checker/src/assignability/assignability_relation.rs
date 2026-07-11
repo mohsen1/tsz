@@ -677,6 +677,16 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether `unknown` satisfies `constraint`: the constraint is a top type
+    /// not only in canonical `any`/`unknown` form but also structurally (e.g.
+    /// `{} | null | undefined`, TypeScript's `NonReducibleUnknown` idiom).
+    ///
+    /// Named outcome for the TS2344/TS2345 unknown-argument constraint check
+    /// so the raw relation call stays behind the assignability boundary.
+    pub(crate) fn unknown_satisfies_top_type_constraint(&mut self, constraint: TypeId) -> bool {
+        self.is_assignable_to(TypeId::UNKNOWN, constraint)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout

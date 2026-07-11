@@ -670,7 +670,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let kind = apparent_intrinsic_kind_for_reverse_mapped(self.interner, source_value)?;
-        if let Some(boxed) = crate::caches::db::TypeDatabase::get_boxed_type(self.interner, kind) {
+        if let Some(boxed) =
+            crate::caches::db::TypeBuiltinAccess::get_boxed_type(self.interner, kind)
+        {
             let boxed = self.checker.evaluate_type(boxed);
             if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
                 self.interner.lookup(boxed)

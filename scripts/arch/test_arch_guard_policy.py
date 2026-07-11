@@ -1,3 +1,5 @@
+import re
+
 from test_arch_guard_support import load_arch_guard_module, pathlib, tempfile, unittest
 
 
@@ -1061,3 +1063,36 @@ pattern = '^\\s*forbidden-dep\\s*='
         self.assertEqual(name, "No forbidden-dep")
         self.assertIsNone(pattern.search("[dev-dependencies]\nallowed = \"1\"\n"))
         self.assertIsNotNone(pattern.search("forbidden-dep = \"0.1\"\n"))
+
+    def test_object_flags_excludes_match_rust_boundary_scan(self):
+        """The ObjectFlags pattern-check exclude list must stay in sync with
+        OBJECT_FLAG_BOUNDARIES / OBJECT_FLAG_FACTORY_BOUNDARIES in the Rust
+        object_flags_boundary_scans test (issue #14351): the named per-surface
+        construction boundaries own their flag policy, so the TOML rule and
+        the Rust scan must agree on the boundary set."""
+        scan_path = (
+            self.arch_guard.ROOT
+            / "crates"
+            / "tsz-checker"
+            / "tests"
+            / "arch_source_scans"
+            / "object_flags_boundary_scans.rs"
+        )
+        source = scan_path.read_text(encoding="utf-8")
+
+        def extract(const_name):
+            match = re.search(const_name + r"[^=]*=\s*&\[(.*?)\];", source, re.S)
+            self.assertIsNotNone(match, f"{const_name} not found in {scan_path}")
+            return set(re.findall(r'"([^"]+)"', match.group(1)))
+
+        rust_boundaries = extract("OBJECT_FLAG_BOUNDARIES") | extract(
+            "OBJECT_FLAG_FACTORY_BOUNDARIES"
+        )
+        expected = {f"crates/tsz-checker/{path}" for path in rust_boundaries}
+
+        for name, _base, _pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker boundary: ObjectFlags stay behind query boundaries":
+                self.assertEqual(excludes.get("exclude_files"), expected)
+                break
+        else:
+            self.fail("ObjectFlags pattern check missing from policy TOML")

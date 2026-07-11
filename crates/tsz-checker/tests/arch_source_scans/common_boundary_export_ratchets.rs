@@ -140,9 +140,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "homomorphic_mapped_source",
     "index_access_parts",
     "index_access_types",
-    "instantiate_function_shape",
     "instantiate_function_with_type_args",
-    "instantiate_shape_to_defaults",
     "instantiate_type_preserving_meta",
     "instantiate_type_with_depth_status",
     "intersect_constructor_returns",
@@ -236,7 +234,6 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "object_shape_id",
     "object_symbol",
     "object_with_index_shape_id",
-    "params_to_tuple_elements",
     "raw_property_type",
     "readonly_inner_type",
     "references_any_type_param_named",
@@ -248,8 +245,6 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "rest_argument_element_type",
     "return_type_for_type",
     "return_type_is_unresolved",
-    "sanitize_callable_shape_binding_pattern_params",
-    "sanitize_params_at_positions",
     "should_preserve_application_for_inference",
     "split_nullish_type",
     "string_intrinsic_components",
@@ -285,9 +280,7 @@ const ALLOWED_COMMON_PUB_CRATE_FNS: &[&str] = &[
     "unwrap_readonly",
     "unwrap_readonly_or_noinfer",
     "walk_referenced_types",
-    "widen_callable_literal_return_types",
     "widen_freshness",
-    "widen_function_literal_return_type",
     "widen_literal_to_primitive",
     "widen_literal_type",
     "widen_type",
@@ -316,6 +309,20 @@ const MIGRATED_OUT_OF_COMMON_12916: &[&str] = &[
     "function_signature_has_typeof",
 ];
 
+/// `FunctionShape` instantiation, parameter-list transformation, and
+/// redeclaration-widening helpers migrated to `generic_instantiation`,
+/// `signature_building`, and `widening` by the #15643 arch-health paydown
+/// (parent #8225).
+const MIGRATED_OUT_OF_COMMON_15643: &[&str] = &[
+    "instantiate_function_shape",
+    "instantiate_shape_to_defaults",
+    "sanitize_params_at_positions",
+    "params_to_tuple_elements",
+    "sanitize_callable_shape_binding_pattern_params",
+    "widen_function_literal_return_type",
+    "widen_callable_literal_return_types",
+];
+
 /// All helpers that have been migrated out of `common.rs` to a named domain
 /// owner and must not reappear as a `common.rs` definition. Derived from the
 /// per-campaign slices so the two lists cannot drift apart.
@@ -323,6 +330,7 @@ fn migrated_out_of_common() -> Vec<&'static str> {
     MIGRATED_OUT_OF_COMMON_12916
         .iter()
         .chain(DISPLAY_WIDENING_IN_DIAGNOSTICS)
+        .chain(MIGRATED_OUT_OF_COMMON_15643)
         .copied()
         .collect()
 }
