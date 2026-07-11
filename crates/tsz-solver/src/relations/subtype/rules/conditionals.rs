@@ -692,24 +692,33 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Strategy 2: Branch compatibility. A distributive
-        // `T extends any|unknown ? X : never` target is the canonical shape of
-        // utility aliases that map over each constituent of `T`. For any
-        // non-empty constituent the false branch is unreachable; for `never`,
-        // distribution produces `never` rather than a value outside `X`. When
-        // the source already fits `X`, do not require it to also fit `never`.
-        let true_result = self.check_subtype(source, target.true_type);
-        if true_result.is_true()
-            && target.is_distributive
+        // Strategy 2: Branch compatibility — both branches must be supertypes
+        // of source, and a failed true branch is decisive: a recursive
+        // conditional alias whose false branch re-applies the alias
+        // (`Grow<T, N> = ... ? T : Grow<[X, ...T], N>`) re-enters this rule
+        // with an ever-growing target each level, burning the relation depth
+        // budget (spurious TS2859, or a depth-exceeded "assume related" false
+        // negative) where tsc reports a plain relation failure. tsc's
+        // `structuredTypeRelatedTo` likewise consults the false branch only
+        // after the true branch succeeded.
+        if !self.check_subtype(source, target.true_type).is_true() {
+            return SubtypeResult::False;
+        }
+
+        // A distributive `T extends any|unknown ? X : never` target is the
+        // canonical shape of utility aliases that map over each constituent of
+        // `T`. For any non-empty constituent the false branch is unreachable;
+        // for `never`, distribution produces `never` rather than a value
+        // outside `X`. When the source already fits `X`, do not require it to
+        // also fit `never`.
+        if target.is_distributive
             && target.false_type == TypeId::NEVER
             && (target.extends_type == TypeId::ANY || target.extends_type == TypeId::UNKNOWN)
         {
             return SubtypeResult::True;
         }
 
-        // Otherwise both branches must be supertypes of source.
-        let false_result = self.check_subtype(source, target.false_type);
-        if true_result.is_true() && false_result.is_true() {
+        if self.check_subtype(source, target.false_type).is_true() {
             SubtypeResult::True
         } else {
             SubtypeResult::False

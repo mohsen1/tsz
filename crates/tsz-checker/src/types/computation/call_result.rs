@@ -1644,20 +1644,9 @@ impl<'a> CheckerState<'a> {
                 if !actual_has_holes {
                     return true;
                 }
-                let actual_type_params: rustc_hash::FxHashSet<_> =
-                    common::collect_referenced_types(self.ctx.types, refined_actual)
-                        .into_iter()
-                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                        .collect();
-                let expected_type_params: rustc_hash::FxHashSet<_> =
-                    common::collect_referenced_types(self.ctx.types, refined_expected)
-                        .into_iter()
-                        .filter(|&ty| common::type_param_info(self.ctx.types, ty).is_some())
-                        .collect();
+                let actual_type_params = self.referenced_type_params(refined_actual);
                 if !actual_type_params.is_empty()
-                    && actual_type_params
-                        .iter()
-                        .all(|ty| expected_type_params.contains(ty))
+                    && actual_type_params.is_subset(&self.referenced_type_params(refined_expected))
                 {
                     return true;
                 }
@@ -1717,9 +1706,51 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
+            // Generalization of the bare-parameter rule above, restricted to
+            // two *deferred generic aliases* — a conditional type or a generic
+            // application blocked on a rigid parameter — over the SAME rigid
+            // enclosing-scope parameter set. The in-flight `infer` holes already
+            // returned early, so no later inference pass substitutes these
+            // parameters; two structurally divergent recursive conditional
+            // aliases applied to the same parameter (`Grow2<[], T>` vs
+            // `Grow1<[], T>`) can never relate, and tsc reports the
+            // instantiated-signature mismatch. The alias-shape gate keeps two
+            // families that tsc accepts (or reports elsewhere) on the deferring
+            // path: a union vs a bare parameter, where tsc narrows the
+            // destructured source before the call (`dependentDestructuredVariables`),
+            // and template-literal / intrinsic-string mismatches, reported
+            // through a different elaboration (`templateLiteralTypes3`).
+            let actual_type_params = self.referenced_type_params(actual);
+            if !actual_type_params.is_empty()
+                && actual_type_params == self.referenced_type_params(expected)
+                && self.is_deferred_generic_alias(actual)
+                && self.is_deferred_generic_alias(expected)
+            {
+                return false;
+            }
             return true;
         }
         assign_query::is_any_type(self.ctx.types, expected)
+    }
+
+    /// Collect the type parameters referenced anywhere inside `ty`
+    /// (`TypeParameter` and `Infer` leaves), as a set of `TypeId`s.
+    fn referenced_type_params(&self, ty: TypeId) -> FxHashSet<TypeId> {
+        common::collect_referenced_types(self.ctx.types, ty)
+            .into_iter()
+            .filter(|&referenced| common::type_param_info(self.ctx.types, referenced).is_some())
+            .collect()
+    }
+
+    /// A deferred generic alias: a conditional type or a generic type
+    /// application whose evaluation is blocked on a rigid type parameter.
+    /// Two such aliases over the same parameter set are compared as written —
+    /// no later inference pass substitutes their parameters — so a rejection is
+    /// permanent. Unions, bare parameters, and template-literal / intrinsic
+    /// string types are deliberately excluded.
+    fn is_deferred_generic_alias(&self, ty: TypeId) -> bool {
+        common::is_conditional_type(self.ctx.types, ty)
+            || common::is_generic_application(self.ctx.types, ty)
     }
 
     /// Check if `actual` and `expected` are generic instantiations of different classes.
