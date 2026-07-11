@@ -771,11 +771,15 @@ fn parse_diagnostic_fingerprints_from_text(
     use regex::Regex;
 
     static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
             .expect("valid regex")
     });
-    static DIAG_NO_POS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"^(:\s*)?(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$",
+        )
+        .unwrap()
+    });
 
     let mut fingerprints = Vec::new();
     for raw_line in text.lines() {
@@ -1333,7 +1337,11 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
                 return false;
             }
             // Also check /private/var variant on macOS
-            if trimmed.contains("/.lib/") && trimmed.contains("error TS") {
+            if trimmed.contains("/.lib/")
+                && ["error", "warning", "suggestion", "message"]
+                    .iter()
+                    .any(|category| trimmed.contains(&format!("{category} TS")))
+            {
                 return false;
             }
             true
@@ -1368,7 +1376,7 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*|error\s+TS(?P<code3>\d+):.*)$",
+            r"^(?:.+\(\d+,\d+\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):.*|:\s*(?:error|warning|suggestion|message)\s+TS(?P<code2>\d+):.*|(?:error|warning|suggestion|message)\s+TS(?P<code3>\d+):.*)$",
         )
         .expect("valid regex")
     });

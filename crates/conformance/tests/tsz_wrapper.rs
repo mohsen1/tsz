@@ -1544,6 +1544,28 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
 }
 
 #[test]
+fn test_parse_diagnostic_categories_from_native_typescript_output() {
+    let root = std::path::Path::new("/tmp/project");
+    let output = "error.ts(1,1): error TS1001: error text\n\
+warning.ts(2,2): warning TS1002: warning text\n\
+suggestion.ts(3,3): suggestion TS1003: suggestion text\n\
+message.ts(4,4): message TS1450: message text";
+
+    assert_eq!(
+        parse_error_codes_from_text(output),
+        [1001, 1002, 1003, 1450]
+    );
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
+    assert_eq!(
+        fingerprints
+            .iter()
+            .map(|fingerprint| fingerprint.code)
+            .collect::<Vec<_>>(),
+        [1001, 1002, 1003, 1450]
+    );
+}
+
+#[test]
 fn test_parse_batch_output_retains_bare_no_pos_diagnostics() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let output = "error TS2468: Cannot find global value 'Promise'.";
