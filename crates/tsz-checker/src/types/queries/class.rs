@@ -314,7 +314,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut used = vec![false; params.len()];
+        // Underscore-prefixed parameters are exempt from unused diagnostics and
+        // therefore count as referenced for the all-unused aggregate decision.
+        let mut used: Vec<bool> = params.iter().map(|param| param.4).collect();
         let is_identifier_in_type_context =
             |arena: &tsz_parser::parser::NodeArena, idx: NodeIndex, stop_at: NodeIndex| {
                 let mut current = idx;
@@ -353,7 +355,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(candidate)
             {
                 let name_str = ident.escaped_text.as_str();
-                for (j, (param_name, _, _, _)) in params.iter().enumerate() {
+                for (j, (param_name, _, _, _, _)) in params.iter().enumerate() {
                     if !used[j] && param_name == name_str {
                         used[j] = true;
                     }
@@ -362,82 +364,36 @@ impl<'a> CheckerState<'a> {
         }
 
         for type_expr in Self::jsdoc_type_expressions(raw_comment) {
-            for (j, (param_name, _, _, _)) in params.iter().enumerate() {
+            for (j, (param_name, _, _, _, _)) in params.iter().enumerate() {
                 if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
                     used[j] = true;
                 }
             }
         }
 
-        // Also scan JSDoc comments within the declaration body for type
-        // expressions (e.g., `/** @type {T} */ this.p;` inside a class).
-        // The leading JSDoc only covers the class-level comment; body-level
-        // JSDoc comments may reference template type parameters.
-        {
-            use tsz_common::comments::is_jsdoc_comment;
-            let body_start = node.pos as usize;
-            let body_end = node.end as usize;
-            for comment in comments {
-                let cpos = comment.pos as usize;
-                let cend = comment.end as usize;
-                if cpos < body_start || cend > body_end {
-                    continue;
-                }
-                if !is_jsdoc_comment(comment, source_text) {
-                    continue;
-                }
-                let comment_text = comment.get_text(source_text);
-                for type_expr in Self::jsdoc_type_expressions(comment_text) {
-                    for (j, (param_name, _, _, _)) in params.iter().enumerate() {
-                        if !used[j] && Self::jsdoc_type_expr_mentions_name(type_expr, param_name) {
-                            used[j] = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Group params by their `@template` tag (identified by the tag's
-        // start offset). tsc anchors the diagnostic differently depending on
-        // whether the whole tag is "all unused" or only some of its params:
-        //   - Multi-param tag, all unused  → TS6205 at the `@template` keyword
-        //   - Single-param tag, unused     → TS6196 at the parameter name
-        //   - Multi-param tag, some unused → TS6196 at each unused name
-        // Length-wise tsc uses `@template` (9 chars) for the tag anchor.
-        use rustc_hash::FxHashMap;
-        let mut tag_groups: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
-        for (j, (_name, _name_pos, _name_len, tag_start)) in params.iter().enumerate() {
-            tag_groups.entry(*tag_start).or_default().push(j);
-        }
-
-        const TEMPLATE_KEYWORD_LEN: u32 = "@template".len() as u32;
-        for (tag_start, group_indices) in tag_groups.iter() {
-            let all_unused = group_indices.iter().all(|&j| !used[j]);
-            if all_unused && group_indices.len() > 1 {
-                self.error_all_type_parameters_unused(*tag_start, TEMPLATE_KEYWORD_LEN);
-            } else if all_unused && group_indices.len() == 1 {
-                let j = group_indices[0];
-                let (name, name_pos, name_len, _) = &params[j];
-                self.error_declared_but_never_used(name, *name_pos, *name_len);
-            } else {
-                for &j in group_indices {
-                    if !used[j] {
-                        let (name, name_pos, name_len, _) = &params[j];
-                        self.error_declared_but_never_used(name, *name_pos, *name_len);
-                    }
+        // TypeScript 7 flattens every `@template` tag attached to this
+        // declaration into one type-parameter list before checking usage.
+        if params.len() > 1 && used.iter().all(|is_used| !is_used) {
+            let start = params[0].3.saturating_sub(1);
+            let end = node.pos;
+            self.error_all_type_parameters_unused(start, end.saturating_sub(start));
+        } else {
+            for (j, (name, name_pos, name_len, _, _)) in params.iter().enumerate() {
+                if !used[j] {
+                    self.error_declared_but_never_used(name, *name_pos, *name_len);
                 }
             }
         }
     }
 
-    /// Returns `(name, name_pos, name_length, tag_start)` for each JSDoc
-    /// `@template` parameter in `raw_comment`. `tag_start` identifies which
-    /// `@template` tag the parameter belongs to, so callers can detect when
-    /// *all* parameters in a single tag are unused (TS6205 vs. TS6133).
+    /// Returns `(name, name_pos, name_length, tag_start, exempt)` for each JSDoc
+    /// `@template` parameter in `raw_comment`. `tag_start` preserves the first
+    /// list anchor after TypeScript 7 flattens all tags on the declaration;
+    /// `exempt` records the underscore convention for TS6205/TS6196 selection.
     fn jsdoc_template_param_declarations(
         raw_comment: &str,
         comment_pos: u32,
-    ) -> Vec<(String, u32, u32, u32)> {
+    ) -> Vec<(String, u32, u32, u32, bool)> {
         let mut params = Vec::new();
         let mut cursor = 0usize;
         while let Some(rel) = Self::jsdoc_tag_offset(&raw_comment[cursor..], "template") {
@@ -470,18 +426,16 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let name = &raw_comment[start..idx];
-                    if !name.starts_with('_') {
-                        // Anchor each parameter at its own identifier, not at
-                        // the `@template` tag keyword. tsc emits TS6133 at the
-                        // individual name (e.g. `V` at col 16 in
-                        // `@template T,V,X`), but the grouping key below still
-                        // needs to identify params that share the same tag, so
-                        // track the absolute `@template` position separately.
-                        let name_pos = comment_pos + start as u32;
-                        let name_len = (idx - start) as u32;
-                        let tag_abs = comment_pos + tag_start as u32;
-                        params.push((name.to_string(), name_pos, name_len, tag_abs));
-                    }
+                    let name_pos = comment_pos + start as u32;
+                    let name_len = (idx - start) as u32;
+                    let tag_abs = comment_pos + tag_start as u32;
+                    params.push((
+                        name.to_string(),
+                        name_pos,
+                        name_len,
+                        tag_abs,
+                        name.starts_with('_'),
+                    ));
                     continue;
                 }
                 break;

@@ -261,6 +261,77 @@ fn test_ts7_jsdoc_template_uses_ts6196_but_value_parameter_stays_ts6133() {
 }
 
 #[test]
+fn test_ts7_jsdoc_class_template_tags_flatten_and_bare_members_stay_reads() {
+    let source = r#"/**
+ * @template Left
+ * @template Right,Tail
+ */
+class Envelope {
+    constructor() {
+        /** @type {Left} */
+        this.absent;
+    }
+}"#;
+    let diagnostics = tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            no_unused_parameters: true,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 6205).count(), 1);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 6196).count(), 0);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == 2339
+                && diagnostic.message_text
+                    == "Property 'absent' does not exist on type 'Envelope<Left, Right, Tail>'."
+        }),
+        "expected the ordered generic class receiver display: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7_jsdoc_template_leading_usage_and_underscore_affect_aggregation() {
+    let options = CheckerOptions {
+        no_unused_parameters: true,
+        allow_js: true,
+        check_js: true,
+        ..Default::default()
+    };
+    let used = tsz_checker::test_utils::check_source(
+        "/** @template Used,Spare\n * @param {Used} value\n */ function build(value) {}",
+        "used.js",
+        options.clone(),
+    );
+    assert!(
+        used.iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Spare'"))
+    );
+    assert!(
+        !used
+            .iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Used'"))
+    );
+    assert!(!used.iter().any(|d| d.code == 6205));
+
+    let underscore = tsz_checker::test_utils::check_source(
+        "/** @template _Kept,Spare */ function build() {}",
+        "underscore.js",
+        options,
+    );
+    assert!(
+        underscore
+            .iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Spare'"))
+    );
+    assert!(!underscore.iter().any(|d| d.code == 6205));
+}
+
+#[test]
 fn test_no_unused_params_disabled_no_errors() {
     // Without noUnusedParameters, no TS6133 for type params should be emitted
     let diags = tsz_checker::test_utils::check_source_diagnostics("interface I<T> { x: number; }");

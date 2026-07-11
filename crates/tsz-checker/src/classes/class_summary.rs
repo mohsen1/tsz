@@ -1510,16 +1510,7 @@ impl<'a> CheckerState<'a> {
                 lhs_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
             )
         } else {
-            self.js_statement_declared_type(stmt_idx)?;
-            if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            {
-                return None;
-            }
-            (
-                self.ctx.arena.get_access_expr(expr_node)?,
-                expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION,
-            )
+            return None;
         };
 
         let object_node = self.ctx.arena.get(access.expression)?;

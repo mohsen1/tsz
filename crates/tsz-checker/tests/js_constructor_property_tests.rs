@@ -617,7 +617,7 @@ D.prototype.foo.call(new D());
 }
 
 #[test]
-fn test_js_super_implicit_base_field_reports_ts2855_without_missing_member_noise() {
+fn test_ts7_js_super_distinguishes_assignments_from_bare_jsdoc_members() {
     let source = r#"
 class YaddaBase {
     constructor() {
@@ -652,20 +652,22 @@ class DerivedYadda extends YaddaBase {
         },
     );
 
-    assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2855),
-        "Expected JS super access to implicit base fields to report TS2855, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2855).count(),
+        1
     );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|(code, _)| *code != 2339 && *code != 7053),
-        "Expected JS super implicit-field checks to avoid TS2339/TS7053 fallback noise, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count(),
+        3
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 7053).count(),
+        1
     );
 }
 
 #[test]
-fn test_js_super_implicit_base_field_reports_ts2855_for_constructor_and_accessor_writes() {
+fn test_ts7_js_super_keeps_constructor_and_accessor_assignments_as_fields() {
     let source = r#"
 class YaddaBase {
     constructor() {
@@ -708,23 +710,17 @@ class DerivedYadda extends YaddaBase {
         },
     );
 
-    assert!(
-        diagnostics.iter().filter(|(code, _)| *code == 2855).count() >= 4,
-        "Expected JS super access to constructor and accessor-defined base fields to report TS2855, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2855).count(),
+        2
     );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|(code, _)| *code != 2339 && *code != 7053),
-        "Expected JS super implicit-field checks to avoid TS2339/TS7053 fallback noise, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2339).count(),
+        3
     );
-    assert!(
-        diagnostics.iter().any(|(code, message)| {
-            *code == 2855
-                && message
-                    .contains("Class field ''literalElementAccess'' defined by the parent class")
-        }),
-        "Expected TS2855 to preserve string-literal member display text, got: {diagnostics:?}"
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 7053).count(),
+        1
     );
 }
 

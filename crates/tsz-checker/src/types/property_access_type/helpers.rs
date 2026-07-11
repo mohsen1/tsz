@@ -826,49 +826,6 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|lit| lit.text == "0")
     }
 
-    pub(crate) fn is_jsdoc_annotated_this_member_declaration(&mut self, idx: NodeIndex) -> bool {
-        if !self.is_js_file() {
-            return false;
-        }
-
-        let mut current = idx;
-        for _ in 0..4 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let Some(parent_node) = self.ctx.arena.get(ext.parent) else {
-                return false;
-            };
-            if parent_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-                if self.jsdoc_type_annotation_for_node(ext.parent).is_none() {
-                    return false;
-                }
-                let Some(stmt) = self.ctx.arena.get_expression_statement(parent_node) else {
-                    return false;
-                };
-                let Some(expr_node) = self.ctx.arena.get(stmt.expression) else {
-                    return false;
-                };
-                if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                {
-                    return false;
-                }
-                let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
-                    return false;
-                };
-                let Some(base_node) = self.ctx.arena.get(access.expression) else {
-                    return false;
-                };
-                return base_node.kind == SyntaxKind::ThisKeyword as u16
-                    && self.this_has_contextual_owner(access.expression).is_some();
-            }
-            current = ext.parent;
-        }
-
-        false
-    }
-
     pub(crate) fn finalize_property_access_result(
         &mut self,
         idx: NodeIndex,

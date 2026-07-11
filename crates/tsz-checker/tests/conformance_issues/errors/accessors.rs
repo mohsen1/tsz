@@ -784,7 +784,7 @@ function toString() {
 }
 
 #[test]
-fn test_jsdoc_template_function_unused_type_param_emits_ts6133() {
+fn test_jsdoc_template_function_unused_type_param_emits_ts6196() {
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
         r#"
@@ -802,9 +802,9 @@ function f() {}
 
     assert!(
         diagnostics.iter().any(|(code, msg)| {
-            *code == 6133 && msg.contains("'T' is declared but its value is never read.")
+            *code == 6196 && msg.contains("'T' is declared but never used.")
         }),
-        "Expected TS6133 for unused JSDoc template T. Actual diagnostics: {diagnostics:#?}"
+        "Expected TS6196 for unused JSDoc template T. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

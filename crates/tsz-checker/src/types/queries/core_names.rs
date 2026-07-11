@@ -835,10 +835,55 @@ impl<'a> CheckerState<'a> {
 
         if let Some(mut name) = self.get_bound_class_name_from_decl(class_idx) {
             self.append_type_param_names(&mut name, &class.type_parameters);
+            let template_names = self.jsdoc_class_template_param_names(class_idx);
+            if !template_names.is_empty() {
+                name.push('<');
+                name.push_str(&template_names.join(", "));
+                name.push('>');
+            }
             return name;
         }
 
         "<anonymous>".to_string()
+    }
+
+    /// Ordered effective `@template` names for a JavaScript class whose parser
+    /// node has no syntax-level type-parameter list.
+    pub(crate) fn jsdoc_class_template_param_names(&self, class_idx: NodeIndex) -> Vec<String> {
+        if !self.is_js_file() {
+            return Vec::new();
+        }
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return Vec::new();
+        };
+        let Some(class) = self.ctx.arena.get_class(node) else {
+            return Vec::new();
+        };
+        if class
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return Vec::new();
+        }
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+        let Some(jsdoc) =
+            self.try_jsdoc_with_ancestor_walk(class_idx, &source_file.comments, &source_file.text)
+        else {
+            return Vec::new();
+        };
+        if Self::jsdoc_contains_tag(&jsdoc, "callback")
+            || Self::jsdoc_contains_tag(&jsdoc, "typedef")
+            || Self::jsdoc_contains_tag(&jsdoc, "overload")
+        {
+            return Vec::new();
+        }
+        Self::jsdoc_template_type_params(&jsdoc)
+            .into_iter()
+            .map(|(name, _, _)| name)
+            .collect()
     }
 
     /// Get the name of a class member (property, method, or accessor).
