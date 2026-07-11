@@ -384,6 +384,74 @@ fakeKey;
 }
 
 #[test]
+fn test_reexported_symbol_key_member_indexed_on_generic_interface() {
+    // A `Symbol.for(...)` const (unique-symbol identity) is re-exported through a
+    // barrel of a LOCAL import binding (`import { s } from './origin'; export { s
+    // };`). An interface declares a `[s]()` member keyed by the symbol reached via
+    // the re-export, and a generic indexed-access type `Iface<T>[s]` indexes it
+    // with the same symbol reached DIRECTLY from the origin. tsc accepts this: `s`
+    // is a valid symbol member key of the generic interface. The member's value
+    // type surfaces as its binding-identity key (`__unique_<id>`) through
+    // `literal_property_name`; classifying that as a string key (not a late-bound
+    // symbol) drops it from the object's symbol key space, so the symbol index no
+    // longer matches — a false TS2536. Binder names deliberately differ from the
+    // ts-pattern witness (`brand`/`Wrapper`) so the fix cannot be name-coupled.
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "./src/origin.ts",
+                r#"
+export const brand = Symbol.for("brand");
+export type brand = typeof brand;
+"#,
+            ),
+            (
+                "./src/barrel.ts",
+                r#"
+import { brand } from "./origin";
+export { brand };
+import { Wrapper } from "./iface";
+export type Unwrap<T> = ReturnType<Wrapper<T>[brand]>;
+"#,
+            ),
+            (
+                "./src/iface.ts",
+                r#"
+import { brand } from "./barrel";
+export interface Wrapper<T> {
+  [brand](): T;
+}
+"#,
+            ),
+            (
+                "./src/main.ts",
+                r#"
+import type { Unwrap } from "./barrel";
+
+declare const value: Unwrap<number>;
+const check: number = value;
+check;
+"#,
+            ),
+        ],
+        "./src/main.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            target: ScriptTarget::ES2022,
+            ..CheckerOptions::default()
+        },
+        &[],
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "a re-exported symbol member indexed on a generic interface must stay a \
+         late-bound symbol key (no false TS2536): {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_mapped_literal_unique_prefix_keys_stay_string_keys() {
     let diagnostics = compile_and_get_diagnostic_codes_with_options(
         r#"
