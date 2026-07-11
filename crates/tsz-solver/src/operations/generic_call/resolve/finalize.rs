@@ -1044,8 +1044,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(inferred_ty) = final_subst.get(tp.name) else {
                 continue;
             };
-            // Condition 2: had usable contra candidates during inference.
-            if !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database()) {
+            // Condition 2: the outer call constrained the parameter. Usually
+            // this shows up as a usable contra candidate. In a self-recursive
+            // call the informative contra candidate is the callee's own type
+            // parameter, which `add_contra_candidate` drops as a self-reference;
+            // there the covariant `T[K]` candidate referencing the parameter's
+            // own declaration is the equivalent circular-inference signal.
+            if !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database())
+                && !infer_ctx.has_own_type_param_index_access_covariant_candidate(var)
+            {
                 continue;
             }
             // Condition 3: at least one covariant candidate is an IndexAccess type.

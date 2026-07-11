@@ -6,7 +6,7 @@
 //! Uses a match statement instead of a `HashMap` for zero-cost initialization
 //! (no Lazy, no heap allocation, no `once_cell` synchronization).
 
-pub const LIB_FILE_COUNT: usize = 107;
+pub const LIB_FILE_COUNT: usize = 108;
 
 /// Look up embedded lib content by filename (e.g., "dom.d.ts", "es5.d.ts").
 /// Returns None for unknown filenames.
@@ -135,6 +135,12 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
             "../lib-assets-stripped/es2025.collection.d.ts"
         )),
         "es2025.intl.d.ts" => Some(include_str!("../lib-assets-stripped/es2025.intl.d.ts")),
+        // `esnext.iterator.d.ts` is byte-identical to `es2025.iterator.d.ts` in the
+        // pinned TypeScript, so one stripped asset serves both names (same
+        // pattern as `webworker.iterable.d.ts` above).
+        "es2025.iterator.d.ts" | "esnext.iterator.d.ts" => {
+            Some(include_str!("../lib-assets-stripped/es2025.iterator.d.ts"))
+        }
         "es5.d.ts" => Some(include_str!("../lib-assets-stripped/es5.d.ts")),
         "es5.full.d.ts" => Some(include_str!("../lib-assets-stripped/es5.full.d.ts")),
         "es6.d.ts" => Some(include_str!("../lib-assets-stripped/es6.d.ts")),
@@ -154,7 +160,6 @@ pub fn get_lib_content(filename: &str) -> Option<&'static str> {
         "esnext.float16.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.float16.d.ts")),
         "esnext.full.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.full.d.ts")),
         "esnext.intl.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.intl.d.ts")),
-        "esnext.iterator.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.iterator.d.ts")),
         "esnext.promise.d.ts" => Some(include_str!("../lib-assets-stripped/esnext.promise.d.ts")),
         "esnext.sharedmemory.d.ts" => Some(include_str!(
             "../lib-assets-stripped/esnext.sharedmemory.d.ts"
@@ -288,6 +293,9 @@ pub fn get_lib_content_hash(filename: &str) -> Option<u64> {
         "es2024.string.d.ts" => embedded_hash_arm!("es2024.string.d.ts"),
         "es2025.collection.d.ts" => embedded_hash_arm!("es2025.collection.d.ts"),
         "es2025.intl.d.ts" => embedded_hash_arm!("es2025.intl.d.ts"),
+        "es2025.iterator.d.ts" | "esnext.iterator.d.ts" => {
+            embedded_hash_arm!("es2025.iterator.d.ts")
+        }
         "es5.d.ts" => embedded_hash_arm!("es5.d.ts"),
         "es5.full.d.ts" => embedded_hash_arm!("es5.full.d.ts"),
         "es6.d.ts" => embedded_hash_arm!("es6.d.ts"),
@@ -301,7 +309,6 @@ pub fn get_lib_content_hash(filename: &str) -> Option<u64> {
         "esnext.float16.d.ts" => embedded_hash_arm!("esnext.float16.d.ts"),
         "esnext.full.d.ts" => embedded_hash_arm!("esnext.full.d.ts"),
         "esnext.intl.d.ts" => embedded_hash_arm!("esnext.intl.d.ts"),
-        "esnext.iterator.d.ts" => embedded_hash_arm!("esnext.iterator.d.ts"),
         "esnext.promise.d.ts" => embedded_hash_arm!("esnext.promise.d.ts"),
         "esnext.sharedmemory.d.ts" => embedded_hash_arm!("esnext.sharedmemory.d.ts"),
         "esnext.temporal.d.ts" => embedded_hash_arm!("esnext.temporal.d.ts"),
@@ -491,6 +498,7 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.asynciterable",
         ],
         "es2025.collection.d.ts" => &["es2024.collection"],
+        "es2025.iterator.d.ts" => &["es2015.iterable"],
         "es5.d.ts" => &["decorators", "decorators.legacy"],
         "es5.full.d.ts" => &["es5", "dom", "webworker.importscripts", "scripthost"],
         "es6.d.ts" => &[
@@ -637,6 +645,7 @@ static ALL_LIB_FILENAMES: &[&str] = &[
     "es2024.string.d.ts",
     "es2025.collection.d.ts",
     "es2025.intl.d.ts",
+    "es2025.iterator.d.ts",
     "es5.d.ts",
     "es5.full.d.ts",
     "es6.d.ts",

@@ -270,10 +270,12 @@ c.ro = "error: lhs of assignment can't be readonly";
     );
 
     // We should have the expected errors
-    // 5+ missing abstract members use TS2655 (with "and N more" truncation)
+    // tsc lists all missing abstract members inline via TS2654
+    // ("... missing implementations for the following members of 'B':
+    // 'prop', 'readonlyProp', 'm', 'mismatch'").
     assert!(
-        codes.contains(&2655),
-        "Should have error 2655 for 5+ missing abstract implementations"
+        codes.contains(&2654),
+        "Should have error 2654 for missing abstract implementations"
     );
     assert!(
         codes.contains(&1253),

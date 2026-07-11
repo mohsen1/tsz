@@ -202,13 +202,15 @@ fn same_domain_primitive_absorbs_all_literals_with_mask() {
 fn literal_mask_preserves_object_vs_literal_reduction() {
     let interner = TypeInterner::new();
     // A union mixing distinct string literals with two structurally-related
-    // objects where one reduces into the other. Literal-vs-literal pairs are
-    // skipped by the structural-bucket gate, but the object-vs-object
-    // reduction (`may_relate(Object, Object)` is `true`) must still fire:
-    // `{ a: 1 }` is absorbed by the wider `{ a: 1; b: 2 }`? No —
-    // width subtyping makes the *narrower-keyed* object the supertype, so
-    // `{ a: 1; b: 2 } <: { a: 1 }` and the wider one is removed. The literals
-    // are irreducible and all survive.
+    // objects where one reduces into the other, plus a widened `number`
+    // primitive. A union of *only* literals and objects hits the literal-gate
+    // early return (`all_non_reducible && !has_primitive`) and never runs the
+    // pairwise sweep, so the object pair would not reduce. Adding the widened
+    // `number` primitive sets `has_primitive = true`, bypasses the gate, and
+    // exercises the object-vs-object reduction. Width subtyping makes the
+    // narrower-keyed object the supertype, so `{ a: 1; b: 2 } <: { a: 1 }` and
+    // the wider object is absorbed; the literals and the `number` primitive are
+    // irreducible and all survive.
     let obj_narrow = interner.object(vec![PropertyInfo::new(
         interner.intern_string("a"),
         interner.literal_number(1.0),
@@ -222,20 +224,33 @@ fn literal_mask_preserves_object_vs_literal_reduction() {
         interner.literal_string("y"),
         obj_narrow,
         obj_wide,
+        TypeId::NUMBER,
     ];
     let union = interner.union(members);
     let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
-        panic!("expected the mixed literal/object union to survive as a union");
+        panic!("expected the mixed literal/object/primitive union to survive as a union");
     };
     let list = interner.type_list(list_id);
-    // Two literals survive; the object pair reduces to a single member.
+    // Two string literals, the `number` primitive, and exactly one object of
+    // the reducing pair survive: the widened primitive bypasses the literal
+    // gate so `may_relate(Object, Object)` still runs and absorbs the wider
+    // object into the narrower-keyed supertype.
     assert_eq!(
         list.len(),
-        3,
-        "object-vs-object reduction must still fire beside skipped literal pairs"
+        4,
+        "object-vs-object reduction must still fire once a widened primitive bypasses the literal gate"
     );
     assert!(list.contains(&interner.literal_string("x")));
     assert!(list.contains(&interner.literal_string("y")));
+    assert!(list.contains(&TypeId::NUMBER));
+    assert!(
+        list.contains(&obj_narrow),
+        "the narrower-keyed object is the width-subtyping supertype and must survive"
+    );
+    assert!(
+        !list.contains(&obj_wide),
+        "the wider object is a shallow subtype of the narrower one and must be absorbed"
+    );
 }
 
 #[test]

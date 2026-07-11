@@ -400,10 +400,13 @@ fn array_isarray_narrows_readonly_array_application_falsy() {
 
     let narrowed = ctx.narrow_type(union, &TypeGuard::Array, GuardSense::Negative);
 
+    // `Array.isArray`'s predicate type is the mutable `any[]`; a
+    // `ReadonlyArray<number>` is not assignable to it, so the negative branch
+    // removes nothing and the union is preserved verbatim (tsc narrows `x` to
+    // `number | readonly number[]`; cf #14782/#15070).
     assert_eq!(
-        narrowed,
-        TypeId::NUMBER,
-        "!Array.isArray should exclude ReadonlyArray<number>"
+        narrowed, union,
+        "!Array.isArray keeps ReadonlyArray<number>: readonly arrays are not assignable to the mutable any[] predicate"
     );
 }
 
@@ -421,10 +424,12 @@ fn array_isarray_narrows_readonly_array_application_alone() {
         truthy, readonly_numbers,
         "Array.isArray should keep a bare ReadonlyArray<number>"
     );
+    // A bare readonly array is not assignable to the mutable `any[]` predicate,
+    // so the negative branch removes nothing and keeps it unchanged (tsc
+    // narrows `x` to `readonly number[]`, not `never`; cf #14782/#15070).
     assert_eq!(
-        falsy,
-        TypeId::NEVER,
-        "!Array.isArray should exclude a bare ReadonlyArray<number>"
+        falsy, readonly_numbers,
+        "!Array.isArray keeps a bare ReadonlyArray<number>: it is not assignable to the mutable any[] predicate"
     );
 }
 

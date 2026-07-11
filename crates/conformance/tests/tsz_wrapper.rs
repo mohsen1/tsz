@@ -593,7 +593,17 @@ fn test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files(
     }
 }
 
-fn find_tsz_binary() -> String {
+/// Locate a built `tsz` binary, or `None` when one is not available. Returning
+/// `None` lets the compile-driving tests self-skip instead of hard-panicking on
+/// machines/CI shards that did not build the dist-fast binary.
+fn find_tsz_binary() -> Option<String> {
+    // Honor an explicitly provided binary path first (e.g. CARGO_BIN_EXE_tsz).
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_tsz") {
+        let path = std::path::PathBuf::from(path);
+        if path.exists() {
+            return Some(path.to_string_lossy().to_string());
+        }
+    }
     // Try common build locations relative to workspace root
     let candidates = [
         ".target/dist-fast/tsz",
@@ -605,15 +615,14 @@ fn find_tsz_binary() -> String {
     // Workspace root is two levels up from crates/conformance/
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(|p| p.parent())
-        .expect("Could not find workspace root");
+        .and_then(|p| p.parent())?;
     for candidate in &candidates {
         let path = workspace_root.join(candidate);
         if path.exists() {
-            return path.to_string_lossy().to_string();
+            return Some(path.to_string_lossy().to_string());
         }
     }
-    panic!("tsz binary not found. Build with: cargo build --profile dist-fast -p tsz-cli");
+    None
 }
 
 #[test]
@@ -623,7 +632,12 @@ fn test_compile_simple_error() {
 // @strict: true
 const x: number = "string";
 "#;
-    let tsz = find_tsz_binary();
+    let Some(tsz) = find_tsz_binary() else {
+        eprintln!(
+            "skipping test_compile_simple_error: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+        );
+        return;
+    };
     let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
     // Should have type error (TS2322)
     assert!(!result.error_codes.is_empty());
@@ -635,7 +649,12 @@ fn test_compile_no_errors() {
 // @strict: true
 const x: number = 42;
 "#;
-    let tsz = find_tsz_binary();
+    let Some(tsz) = find_tsz_binary() else {
+        eprintln!(
+            "skipping test_compile_no_errors: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+        );
+        return;
+    };
     let result = compile_test(content, &[], &HashMap::new(), &tsz).unwrap();
     // Should have no errors
     assert!(result.error_codes.is_empty());
@@ -1063,7 +1082,12 @@ export const x = 1;
         ("noEmit".to_string(), "true".to_string()),
     ]);
 
-    let tsz = find_tsz_binary();
+    let Some(tsz) = find_tsz_binary() else {
+        eprintln!(
+            "skipping test_compile_prepared_dir_mts_only_emits_ts18003: tsz binary not found (build with `cargo build --profile dist-fast -p tsz-cli`)"
+        );
+        return;
+    };
     let result = compile_test(content, &filenames, &options, &tsz).unwrap();
 
     // tsc's test harness include patterns (*.ts, *.tsx, *.js, *.jsx, etc.) do NOT

@@ -454,7 +454,10 @@ mod tests {
             skeleton_total_symbol_count: 500,
             skeleton_estimated_size_bytes: 50,
             pre_merge_bind_total_bytes: 1500,
-            total_bound_file_bytes: 1000,
+            // Retained state (total_bound_file_bytes + unique_arena_estimated_bytes)
+            // must exceed the 2000-byte high watermark; pre_merge_bind_total_bytes
+            // is excluded from the residency formula.
+            total_bound_file_bytes: 2500,
             unique_arena_estimated_bytes: 0,
             has_dep_graph: false,
             dep_graph_edge_count: 0,
