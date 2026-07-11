@@ -1766,6 +1766,17 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     object_type_for_check,
                 )
+                // The *unevaluated* object type must also be non-generic. A
+                // generic indexed-access base like `T[K1]` (with type-parameter
+                // key) evaluates to a concrete union that loses the type
+                // parameter, but tsc keeps it deferred and reports the missing
+                // literal key as TS2536 (`'"nope"' cannot be used to index type
+                // 'T[K1]'`), not TS2339. Falling through to the TS2536 emission
+                // below preserves that classification.
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    object_type,
+                )
                 && let Some(key_atom) =
                     crate::query_boundaries::type_computation::access::literal_property_name(
                         self.ctx.types,
