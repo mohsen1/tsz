@@ -1319,7 +1319,7 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
     text.lines()
         .filter(|line| {
             // Skip lines that are diagnostics from .lib/ files.
-            // Diagnostic format: <filepath>(<line>,<col>): error TS<code>: <message>
+            // Diagnostic format: <filepath>(<line>,<col>): <category> TS<code>: <message>
             // The filepath may be absolute (containing project_root) or relative.
             let trimmed = line.trim();
             if trimmed.is_empty() {

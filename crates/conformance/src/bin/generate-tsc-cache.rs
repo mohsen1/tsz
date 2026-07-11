@@ -568,9 +568,11 @@ fn process_test_file(
 
         let output = output.map_err(|error| anyhow::anyhow!("Failed to run tsc: {error}"))?;
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options.clone());
         if !output.status.success()
             && stderr.contains("Cannot find module")
-            && !stderr.contains("error TS")
+            && result.error_codes.is_empty()
+            && result.diagnostic_fingerprints.is_empty()
         {
             return Err(anyhow::anyhow!(
                 "tsc startup failure (MODULE_NOT_FOUND): {}",
@@ -581,7 +583,6 @@ fn process_test_file(
             ));
         }
 
-        let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options.clone());
         if output.status.code().is_none()
             || (!output.status.success()
                 && result.error_codes.is_empty()
