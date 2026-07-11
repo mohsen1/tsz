@@ -1296,7 +1296,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         if is_declaration_or_variable {
             self.error_at_node(
                 label_idx,
-                "'A label is not allowed here.",
+                crate::diagnostics::diagnostic_messages::A_LABEL_IS_NOT_ALLOWED_HERE,
                 crate::diagnostics::diagnostic_codes::A_LABEL_IS_NOT_ALLOWED_HERE,
             );
         }
