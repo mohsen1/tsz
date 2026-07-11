@@ -706,8 +706,8 @@ fn clone_lib_files_for_checker_creates_distinct_parsed_bound_copies() {
         "checker lib clone must have independent arena identity",
     );
     assert!(
-        !std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
-        "checker lib clone must have independent binder identity",
+        std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
+        "checker lib clone shares the bound lib binder read-only (intentionally shared Arc)",
     );
     assert_eq!(cloned_lib.arena.len(), lib.arena.len());
     assert_eq!(cloned_lib.binder.symbols.len(), lib.binder.symbols.len());

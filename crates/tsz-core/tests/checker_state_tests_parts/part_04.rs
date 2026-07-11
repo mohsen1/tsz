@@ -663,9 +663,11 @@ class C1 extends null {}
 }
 
 #[test]
-fn test_exports_global_no_ts2304() {
+fn test_exports_global_ts2304() {
     use crate::checker::diagnostics::diagnostic_codes;
 
+    // tsc reports TS2304 "Cannot find name 'exports'" for a bare `exports`
+    // reference in a script (no CommonJS/global typings in scope).
     let source = r#"
 exports.foo = 1;
 "#;
@@ -694,8 +696,8 @@ exports.foo = 1;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for global exports usage, got: {codes:?}"
+        codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "Expected TS2304 for global exports usage, got: {codes:?}"
     );
 }
 
@@ -1214,7 +1216,7 @@ function id(x: string) {
 
 #[test]
 fn test_arrow_function_return_type_inferred_union() {
-    use tsz_solver::{TypeData, TypeId};
+    use tsz_solver::TypeData;
 
     let source = r#"
 const f = (flag: boolean) => {
@@ -1259,8 +1261,12 @@ const f = (flag: boolean) => {
             match return_key {
                 TypeData::Union(members) => {
                     let members = types.type_list(members);
-                    assert!(members.contains(&TypeId::NUMBER));
-                    assert!(members.contains(&TypeId::STRING));
+                    // tsc infers the literal union `1 | "a"`; arrow-body
+                    // return-type inference does not widen the literals.
+                    let one = types.literal_number(1.0);
+                    let a = types.literal_string("a");
+                    assert!(members.contains(&one));
+                    assert!(members.contains(&a));
                 }
                 _ => panic!("Expected union return type, got {return_key:?}"),
             }

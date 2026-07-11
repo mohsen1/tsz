@@ -601,7 +601,7 @@ fn compile_resolves_package_imports_array_fallback_after_missing_target() {
 }
 
 #[test]
-fn compile_cross_module_nested_interface_method_allows_optional_argument_currently() {
+fn compile_cross_module_nested_interface_method_rejects_optional_argument() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -646,10 +646,24 @@ cfg.workspace.toAbsolutePath(cfg.server);
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(
-        result.diagnostics.is_empty(),
-        "expected no diagnostics for current cross-module nested-interface optional argument behavior, got: {:?}",
+    // tsc emits exactly one TS2345: passing `cfg.server` (IServer | undefined)
+    // where an `IServer` is required is a strict-mode assignability error.
+    let ts2345: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2345)
+        .collect();
+    assert_eq!(
+        ts2345.len(),
+        1,
+        "expected exactly one TS2345 for the optional argument, got diagnostics: {:?}",
         result.diagnostics
+    );
+    assert!(
+        ts2345[0].message_text.contains("'IServer | undefined'")
+            && ts2345[0].message_text.contains("'IServer'"),
+        "expected TS2345 message about IServer | undefined vs IServer, got: {:?}",
+        ts2345[0].message_text
     );
 }
 

@@ -798,10 +798,14 @@ const Frozen = Object.freeze({ A: 1 });
         .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
+    // tsc emits exactly one TS2322: only the direct object-literal @enum
+    // (`const E = { A: "x" }`) is checked. The `Object.freeze({ A: 1 })` form
+    // produces nothing — tsc does not check @enum member values through the
+    // Object.freeze call.
     assert_eq!(
         ts2322.len(),
-        2,
-        "Expected TS2322 for mismatched JSDoc @enum object values, got: {:?}",
+        1,
+        "Expected exactly one TS2322 for the direct JSDoc @enum object literal, got: {:?}",
         result.diagnostics
     );
     assert!(
@@ -809,12 +813,6 @@ const Frozen = Object.freeze({ A: 1 });
             |diag| diag.message_text.contains("string") && diag.message_text.contains("number")
         ),
         "Expected string-to-number enum initializer diagnostic, got: {ts2322:?}"
-    );
-    assert!(
-        ts2322.iter().any(
-            |diag| diag.message_text.contains("number") && diag.message_text.contains("string")
-        ),
-        "Expected number-to-string Object.freeze enum initializer diagnostic, got: {ts2322:?}"
     );
 }
 

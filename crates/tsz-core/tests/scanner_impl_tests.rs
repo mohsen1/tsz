@@ -267,7 +267,7 @@ fn test_identifier_interning() {
 fn test_non_identifier_atom_is_none() {
     use crate::interner::AstAtom;
 
-    let mut scanner = ScannerState::new("42 + 'hello'".to_string(), true);
+    let mut scanner = ScannerState::new(r#"42 + 'hello' + 'a\nb'"#.to_string(), true);
 
     // Numeric literal - atom should be NONE
     assert_eq!(scanner.scan(), SyntaxKind::NumericLiteral);
@@ -277,7 +277,19 @@ fn test_non_identifier_atom_is_none() {
     assert_eq!(scanner.scan(), SyntaxKind::PlusToken);
     assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
 
-    // String literal - atom should be NONE
+    // Simple string literal - the #13231 fast path (no backslash/newline) now
+    // interns the content, so the atom is non-NONE and resolves to the value.
+    assert_eq!(scanner.scan(), SyntaxKind::StringLiteral);
+    let hello_atom = scanner.get_token_atom();
+    assert_ne!(hello_atom, AstAtom::NONE);
+    assert_eq!(scanner.resolve_atom(hello_atom), "hello");
+
+    // Operator - atom should be NONE
+    assert_eq!(scanner.scan(), SyntaxKind::PlusToken);
+    assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
+
+    // String literal containing a backslash escape takes the slow escape path,
+    // which never interns the token, so the atom stays NONE.
     assert_eq!(scanner.scan(), SyntaxKind::StringLiteral);
     assert_eq!(scanner.get_token_atom(), AstAtom::NONE);
 }

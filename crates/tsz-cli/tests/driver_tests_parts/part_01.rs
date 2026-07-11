@@ -1279,9 +1279,9 @@ export default Form
     let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
     assert!(
         dts.contains(
-            "declare const Form: import(\"create-emotion-styled\").StyledOtherComponent<{}, import(\"create-emotion-styled\").StyledOtherComponentList[\"div\"], any>;"
+            "declare const Form: import(\"create-emotion-styled\").StyledOtherComponent<{}, import(\"react\").DetailedHTMLProps<import(\"react\").HTMLAttributes<HTMLDivElement>, HTMLDivElement>, any>;"
         ),
-        "expected public styled import and indexed access argument: {dts}"
+        "expected public styled import with the indexed access resolved to its React member type: {dts}"
     );
 }
 
@@ -1491,7 +1491,7 @@ declare module "server" {
 }
 
 #[test]
-fn compile_project_umd_global_class_surface_stays_unaugmented() {
+fn compile_project_umd_global_class_surface_sees_augmentation() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -1573,12 +1573,11 @@ v.reverse();
     args.project = Some(base.join("tsconfig.global.json"));
     let global_result = compile(&args, base).expect("global compile should succeed");
     assert!(
-        global_result.diagnostics.iter().any(|d| {
-            d.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                && d.message_text
-                    .contains("Property 'reverse' does not exist on type 'Vector'.")
-        }),
-        "Expected bare UMD global access to keep the class declaration surface and report TS2339 on Vector. Actual diagnostics: {:#?}",
+        global_result
+            .diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        "Expected the `declare module` augmentation to be visible through the UMD global too, so `v.reverse()` reports no TS2339. Actual diagnostics: {:#?}",
         global_result.diagnostics
     );
 

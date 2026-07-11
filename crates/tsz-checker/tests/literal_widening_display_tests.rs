@@ -166,10 +166,11 @@ take(fn);
     );
 }
 
-/// TS2559 at a call site also widens literal members of the argument display
-/// (call-site weak-type displays widen regardless of the call suggestion).
+/// TS2559 at a call site preserves literal members of the argument display
+/// (unlike TS2560, the weak-type "no properties in common" display keeps the
+/// literal `a: 1` rather than widening it to `a: number`).
 #[test]
-fn ts2559_call_argument_literal_member_widens() {
+fn ts2559_call_argument_literal_member_keeps_literal_member() {
     let source = r#"
 declare function take(x: { opt?: string }): void;
 declare const fn: (() => { a: number }) & { a: 1 };
@@ -180,7 +181,7 @@ take(fn);
         msgs,
         vec![(
             2559_u32,
-            "Type '(() => { a: number; }) & { a: number; }' has no properties in common with \
+            "Type '(() => { a: number; }) & { a: 1; }' has no properties in common with \
              type '{ opt?: string | undefined; }'."
                 .to_string()
         )],
