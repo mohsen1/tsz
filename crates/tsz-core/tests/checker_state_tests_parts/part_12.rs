@@ -779,7 +779,9 @@ const obj = {
 }
 
 #[test]
-fn test_exports_reference_no_ts2304() {
+fn test_exports_reference_ts2304() {
+    // tsc reports TS2304 "Cannot find name 'exports'" for a bare `exports`
+    // reference in a script (no CommonJS/global typings in scope).
     let source = r#"
 exports.foo = 1;
 "#;
@@ -808,8 +810,8 @@ exports.foo = 1;
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&2304),
-        "Unexpected TS2304 for exports reference, got: {codes:?}"
+        codes.contains(&2304),
+        "Expected TS2304 for exports reference, got: {codes:?}"
     );
 }
 
