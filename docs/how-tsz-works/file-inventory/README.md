@@ -14,7 +14,7 @@ Then verify coverage with:
 node scripts/docs/check-how-tsz-docs-coverage.mjs
 ```
 
-The latest generation saw 5664 repository files before writing the inventory pages.
+The latest generation saw 5666 repository files before writing the inventory pages.
 
 ## Inventory Pages
 
@@ -46,7 +46,7 @@ The latest generation saw 5664 repository files before writing the inventory pag
 - [How Tsz Works Docs](how-tsz-works-docs.md) - mentions 85 files; path: `docs/how-tsz-works/file-inventory/how-tsz-works-docs.md`.
 - [Root And Local Tool Config](root-and-local-tool-config.md) - mentions 49 files; path: `docs/how-tsz-works/file-inventory/root-and-local-tool-config.md`.
 - [Scripts Architecture And Agents](scripts-architecture-and-agents.md) - mentions 34 files; path: `docs/how-tsz-works/file-inventory/scripts-architecture-and-agents.md`.
-- [Scripts Bench Ci And Performance](scripts-bench-ci-and-performance.md) - mentions 161 files; path: `docs/how-tsz-works/file-inventory/scripts-bench-ci-and-performance.md`.
+- [Scripts Bench Ci And Performance](scripts-bench-ci-and-performance.md) - mentions 163 files; path: `docs/how-tsz-works/file-inventory/scripts-bench-ci-and-performance.md`.
 - [Scripts Build Setup Quality And Lsp](scripts-build-setup-quality-and-lsp.md) - mentions 47 files; path: `docs/how-tsz-works/file-inventory/scripts-build-setup-quality-and-lsp.md`.
 - [Scripts Conformance Emit Fourslash](scripts-conformance-emit-fourslash.md) - mentions 73 files; path: `docs/how-tsz-works/file-inventory/scripts-conformance-emit-fourslash.md`.
 - [Scripts Root And Installers](scripts-root-and-installers.md) - mentions 21 files; path: `docs/how-tsz-works/file-inventory/scripts-root-and-installers.md`.
