@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.type_param_constraint_excluded_params.clear();
     }
 
-    /// Check for unused type parameters in a declaration and emit TS6133.
+    /// Check for unused type parameters in a declaration and emit TS6196.
     ///
     /// This scans all identifiers within the declaration body for type parameter
     /// name references. Any type parameter that is not referenced gets a TS6133
@@ -124,8 +124,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect type parameter names and their declaration name NodeIndices
-        let mut params: Vec<(String, NodeIndex, bool)> = Vec::new();
-        for (param_pos, &param_idx) in list.nodes.iter().enumerate() {
+        let mut params: Vec<(String, NodeIndex, NodeIndex)> = Vec::new();
+        for &param_idx in &list.nodes {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
                 .map(|id_data| id_data.escaped_text.clone())
                 .unwrap_or_default();
             if !name.is_empty() && !name.starts_with('_') {
-                params.push((name, data.name, list.nodes.len() == 1 && param_pos == 0));
+                params.push((name, data.name, param_idx));
             }
         }
 
@@ -212,7 +212,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx, _)| *idx).collect();
+        let decl_indices: Vec<NodeIndex> =
+            params.iter().map(|(_, name_idx, _)| *name_idx).collect();
         let mut used = vec![false; params.len()];
         let is_identifier_in_type_context =
             |arena: &tsz_parser::parser::NodeArena, idx: NodeIndex, stop_at: NodeIndex| {
@@ -320,27 +321,42 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Emit TS6133 for unused type parameters.
-        // For class declarations in a cross-file merge, TSC does not emit TS6133
+        // Emit TS6196 for unused type parameters.
+        // For class declarations in a cross-file merge, TSC does not emit TS6196
         // (only interfaces in the merge get flagged).
         if is_class_in_merge {
             return;
         }
 
-        for (j, (name, decl_idx, use_list_anchor)) in params.iter().enumerate() {
+        for (j, (name, _name_idx, param_idx)) in params.iter().enumerate() {
             if used[j] {
                 continue;
             }
-            if let Some(name_node) = self.ctx.arena.get(*decl_idx) {
-                let start = if *use_list_anchor {
-                    // Match tsc: single type-parameter lists anchor at '<'.
-                    name_node.pos.saturating_sub(1)
-                } else {
-                    name_node.pos
-                };
-                let length = name_node.end.saturating_sub(name_node.pos);
-                self.error_declared_but_never_read(name, start, length);
-            }
+            let Some(param_node) = self.ctx.arena.get(*param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                continue;
+            };
+            let start = param
+                .modifiers
+                .as_ref()
+                .and_then(|modifiers| modifiers.nodes.first())
+                .and_then(|modifier| self.ctx.arena.get(*modifier))
+                .map_or_else(
+                    || {
+                        self.ctx
+                            .arena
+                            .get(param.name)
+                            .map_or(param_node.pos, |node| node.pos)
+                    },
+                    |node| node.pos,
+                );
+            let end = [param.default, param.constraint, param.name]
+                .into_iter()
+                .find_map(|idx| self.ctx.arena.get(idx).map(|node| node.end))
+                .unwrap_or(param_node.end);
+            self.error_declared_but_never_used(name, start, end.saturating_sub(start));
         }
     }
 
@@ -461,8 +477,8 @@ impl<'a> CheckerState<'a> {
         // start offset). tsc anchors the diagnostic differently depending on
         // whether the whole tag is "all unused" or only some of its params:
         //   - Multi-param tag, all unused  → TS6205 at the `@template` keyword
-        //   - Single-param tag, unused     → TS6133 at the `@template` keyword
-        //   - Multi-param tag, some unused → TS6133 at each unused name
+        //   - Single-param tag, unused     → TS6196 at the parameter name
+        //   - Multi-param tag, some unused → TS6196 at each unused name
         // Length-wise tsc uses `@template` (9 chars) for the tag anchor.
         use rustc_hash::FxHashMap;
         let mut tag_groups: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
@@ -477,13 +493,13 @@ impl<'a> CheckerState<'a> {
                 self.error_all_type_parameters_unused(*tag_start, TEMPLATE_KEYWORD_LEN);
             } else if all_unused && group_indices.len() == 1 {
                 let j = group_indices[0];
-                let (name, _name_pos, _name_len, _) = &params[j];
-                self.error_declared_but_never_read(name, *tag_start, TEMPLATE_KEYWORD_LEN);
+                let (name, name_pos, name_len, _) = &params[j];
+                self.error_declared_but_never_used(name, *name_pos, *name_len);
             } else {
                 for &j in group_indices {
                     if !used[j] {
                         let (name, name_pos, name_len, _) = &params[j];
-                        self.error_declared_but_never_read(name, *name_pos, *name_len);
+                        self.error_declared_but_never_used(name, *name_pos, *name_len);
                     }
                 }
             }
