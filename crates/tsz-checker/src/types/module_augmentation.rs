@@ -1499,9 +1499,19 @@ impl<'a> CheckerState<'a> {
             let Some(module) = arena.get_module(module_node) else {
                 return false;
             };
-            arena
-                .get(module.name)
-                .is_some_and(|name| name.kind == SyntaxKind::GlobalKeyword as u16)
+            // The `global` in `declare global { ... }` is parsed either as a
+            // dedicated `GlobalKeyword` token or as an `Identifier` whose text
+            // is "global" (soft keyword). Accept both, mirroring the binder's
+            // `declare global` detection (`tsz_binder::state::core`); checking
+            // only `GlobalKeyword` dropped the Identifier form, so the merged
+            // interface body was never folded/published to the symbol's `DefId`
+            // and indexed access `X[K]` read a single block's partial members.
+            arena.get(module.name).is_some_and(|name| {
+                name.kind == SyntaxKind::GlobalKeyword as u16
+                    || arena
+                        .get_identifier(name)
+                        .is_some_and(|ident| ident.escaped_text == "global")
+            })
         }
 
         if base_type == TypeId::ERROR

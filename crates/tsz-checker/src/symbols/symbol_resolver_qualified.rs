@@ -617,8 +617,34 @@ impl<'a> CheckerState<'a> {
         // After alias resolution, left_sym may point to a symbol in a different
         // file's binder. Use get_cross_file_symbol to avoid SymbolId collisions.
         let original_left_sym = unresolved_left_sym;
-        let Some(left_symbol) = self
-            .get_cross_file_symbol(left_sym)
+        // When the left side is itself a qualified name (`Ns.Inner` in
+        // `Ns.Inner.Member`), the middle hop resolved `left_sym` to a nested
+        // namespace that lives in another file. Per-file binders reuse raw
+        // `SymbolId`s, so that id can collide with a local `import * as Ns`
+        // alias of the same number; `get_cross_file_symbol` then short-circuits
+        // to the local alias (`local_import_alias`) and loses the nested
+        // namespace, so `right_name` is looked up against the import alias's
+        // (empty) member surface — a false TS2694 instead of the member's own
+        // arity/diagnostics. Read the resolved nested namespace from the file
+        // the cross-file overlay registered it to, so `right_name` resolves
+        // against the nested namespace's exports. Gated on the left being a
+        // qualified/property-access name so a bare `Ns.Member` (identifier left)
+        // keeps its import-alias re-export path unchanged.
+        let nested_cross_file_left = self
+            .ctx
+            .arena
+            .get(qn.left)
+            .is_some_and(|left_node| {
+                left_node.kind == syntax_kind_ext::QUALIFIED_NAME
+                    || left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            })
+            .then(|| self.ctx.resolve_dynamic_symbol_file_index(left_sym))
+            .flatten()
+            .filter(|&file_idx| file_idx != self.ctx.current_file_idx)
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .and_then(|binder| binder.get_symbol(left_sym));
+        let Some(left_symbol) = nested_cross_file_left
+            .or_else(|| self.get_cross_file_symbol(left_sym))
             .or_else(|| self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders))
         else {
             return TypeSymbolResolution::NotFound;

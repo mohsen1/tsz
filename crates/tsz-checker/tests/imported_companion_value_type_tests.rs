@@ -204,6 +204,36 @@ A.toUpperCase()
     );
 }
 
+/// Anti-hardcoding twin: the "type-only import supplies the type, local const
+/// supplies the value" rule is structural, not name-driven. Rename every binder
+/// (module, exported type, imported name, const) and the type-position meaning
+/// must still win so no false TS2749 fires. Also guards the cross-file
+/// `SymbolId`-collision path (`import type` id colliding with the local const's
+/// id) is keyed on the export surface's type meaning, not the raw id.
+#[test]
+fn renamed_import_type_alias_survives_local_value_with_same_name() {
+    let diagnostics = check(
+        &[
+            ("kinds.ts", r#"export type Kind = "leaf";"#),
+            (
+                "consumer.ts",
+                r#"
+import type { Kind } from "./kinds"
+
+const Kind: Kind = "leaf"
+Kind.toUpperCase()
+"#,
+            ),
+        ],
+        "consumer.ts",
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "renamed type-only import should provide the annotation while the local const provides the value, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn conflicted_reexport_keeps_local_namespace_surface() {
     let diagnostics = check(
