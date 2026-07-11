@@ -772,18 +772,28 @@ impl<'a> CheckerState<'a> {
                 //       no named property for it (matches only via index signature).
                 // When a literal key like `[0]` or `["x"]` resolves to a named
                 // property in the target, tsc uses TS2322 instead.
+                let target_has_named_member_for_key = is_computed_property
+                    && self.target_has_named_property_for_key(effective_param_type, &prop_name);
                 if is_computed_property
-                    && !(is_computed_literal_key
-                        && self.target_has_named_property_for_key(effective_param_type, &prop_name))
+                    && !(is_computed_literal_key && target_has_named_member_for_key)
                 {
-                    // `tsc` widens computed-property values in `TS2418`, even
-                    // when this elaboration path was entered because a sibling
-                    // property also failed. Keep this path aligned with the
-                    // contextual object-literal and union-index reporters.
-                    let computed_source = self
-                        .literal_type_from_initializer(prop_value_idx)
-                        .unwrap_or(source_prop_type);
-                    let computed_source = self.widen_literal_type(computed_source);
+                    // `tsc` widens a computed-property value in `TS2418` only when
+                    // the key resolves through an index signature (the contextual
+                    // object-literal and union-index reporters do the same). When
+                    // the key matches a declared named member — e.g. a
+                    // `unique symbol` property whose declared type is a literal —
+                    // the fresh literal type is preserved instead.
+                    let computed_source = if target_has_named_member_for_key {
+                        self.expression_display_type_preferring_literal(
+                            prop_value_idx,
+                            source_prop_type,
+                        )
+                    } else {
+                        let widened = self
+                            .literal_type_from_initializer(prop_value_idx)
+                            .unwrap_or(source_prop_type);
+                        self.widen_literal_type(widened)
+                    };
                     let src_str = self.format_type_for_assignability_message(computed_source);
                     let tgt_str =
                         self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
