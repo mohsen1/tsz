@@ -15,7 +15,9 @@ use crate::construction::{QueryDatabase, TypeDatabase};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::visitor::{array_element_union_widens_literals, is_literal_type};
+use crate::visitor::{
+    array_element_union_widens_literals, contains_type_parameter_named, is_literal_type,
+};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1632,6 +1634,57 @@ impl<'a> InferenceContext<'a> {
             .candidates
             .iter()
             .any(|c| type_contains_index_access(db, c.type_id))
+    }
+
+    /// Returns `true` when a covariant candidate for `var` is or contains an
+    /// `IndexAccess` that references `var`'s OWN original declared type
+    /// parameter — the circular self-inference signal of a recursive generic
+    /// call, where `deepMap(value[key], fn)` infers `T` from `T[K]` with `T`
+    /// being the very parameter under inference.
+    ///
+    /// The circular-inference guard normally recognizes this shape through a
+    /// contravariant candidate contributed by the recursive call's other
+    /// arguments (e.g. `fn: (v: T) => U`). In a self-recursive call, however,
+    /// that contra candidate is the callee's OWN type parameter, so
+    /// [`add_contra_candidate`](Self::add_contra_candidate) deliberately drops
+    /// it as a non-informative self-reference. This covariant-side check keeps
+    /// the guard able to fire without the suppressed contra candidate, while an
+    /// independent call like `identity(value[key])` does not fire: there the
+    /// index access references a *foreign* parameter (`deepMap`'s `T`), not
+    /// `identity`'s own `U`.
+    pub fn has_own_type_param_index_access_covariant_candidate(
+        &mut self,
+        var: InferenceVar,
+    ) -> bool {
+        let root = self.table.find(var);
+        // Original declared names whose inference var unifies with this root.
+        let entries: Vec<(Atom, InferenceVar)> = self
+            .original_type_param_for_var
+            .iter()
+            .map(|(&name, &mapped)| (name, mapped))
+            .collect();
+        let own_names: Vec<Atom> = entries
+            .into_iter()
+            .filter(|&(_, mapped)| self.table.find(mapped) == root)
+            .map(|(name, _)| name)
+            .collect();
+        if own_names.is_empty() {
+            return false;
+        }
+        let candidate_types: Vec<TypeId> = self
+            .table
+            .probe_value(root)
+            .candidates
+            .iter()
+            .map(|c| c.type_id)
+            .collect();
+        let db = self.interner;
+        candidate_types.into_iter().any(|ty| {
+            type_contains_index_access(db, ty)
+                && own_names
+                    .iter()
+                    .any(|&name| contains_type_parameter_named(db, ty, name))
+        })
     }
 
     /// Check whether a variable's inference came exclusively from contravariant positions.
