@@ -302,6 +302,150 @@ fn test_missing_property_in_index_sig_target_returns_missing_property_directly()
     );
 }
 
+fn symbol_indexed_object(
+    interner: &TypeInterner,
+    symbol_value: TypeId,
+    readonly: bool,
+) -> TypeId {
+    interner.object_with_index(ObjectShape {
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: symbol_value,
+            readonly,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: None,
+        string_index: None,
+    })
+}
+
+#[test]
+fn test_symbol_index_sig_mismatch_carries_symbol_reason() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+    let source = symbol_indexed_object(&interner, TypeId::NUMBER, false);
+    let target = symbol_indexed_object(&interner, TypeId::STRING, false);
+
+    assert!(!checker.is_subtype_of(source, target));
+    let reason = checker.explain_failure(source, target);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind: "symbol",
+                source_value_type: TypeId::NUMBER,
+                target_value_type: TypeId::STRING,
+                ..
+            })
+        ),
+        "symbol index value mismatch should retain the symbol key-space reason, got: {reason:?}"
+    );
+}
+
+#[test]
+fn test_symbol_index_sig_matching_value_ignores_readonly() {
+    let interner = TypeInterner::new();
+    let source = symbol_indexed_object(&interner, TypeId::NUMBER, true);
+    let target = symbol_indexed_object(&interner, TypeId::NUMBER, false);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, target));
+
+    let mut reverse = SubtypeChecker::new(&interner);
+    assert!(reverse.is_subtype_of(target, source));
+}
+
+#[test]
+fn test_mixed_indexes_report_symbol_value_mismatch() {
+    let interner = TypeInterner::new();
+    let shape = |symbol_value| ObjectShape {
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: symbol_value,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: None,
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+    };
+    let source = interner.object_with_index(shape(TypeId::NUMBER));
+    let target = interner.object_with_index(shape(TypeId::STRING));
+    let mut checker = SubtypeChecker::new(&interner);
+
+    assert!(!checker.is_subtype_of(source, target));
+    let reason = checker.explain_failure(source, target);
+    assert!(
+        matches!(
+            reason,
+            Some(SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind: "symbol",
+                ..
+            })
+        ),
+        "matching string indexes must not hide an incompatible symbol index, got: {reason:?}"
+    );
+}
+
+#[test]
+fn test_anonymous_string_property_vacuously_satisfies_symbol_index() {
+    let interner = TypeInterner::new();
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("label"),
+        TypeId::STRING,
+    )]);
+    let target = symbol_indexed_object(&interner, TypeId::NUMBER, false);
+    let mut checker = SubtypeChecker::new(&interner);
+
+    assert!(checker.is_subtype_of(source, target));
+}
+
+#[test]
+fn test_symbol_index_does_not_capture_user_string_resembling_internal_atom() {
+    let interner = TypeInterner::new();
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("__unique_1"),
+        TypeId::NUMBER,
+    )]);
+    let target = interner.object_with_index(ObjectShape {
+        symbol_index: Some(IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        number_index: None,
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+    let mut checker = SubtypeChecker::new(&interner);
+
+    assert!(!checker.is_subtype_of(source, target));
+    assert!(matches!(
+        checker.explain_failure(source, target),
+        Some(SubtypeFailureReason::IndexSignatureMismatch {
+            index_kind: "string",
+            ..
+        })
+    ));
+}
+
 // ----------------------------------------------------------------------
 // #13609: two applications of the SAME opaque/unresolvable base that differ
 // ONLY in a type parameter's optional `default` denote the same type and must

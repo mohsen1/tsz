@@ -1779,7 +1779,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// when the nested failure is `MissingProperty` or `MissingProperties`,
     /// bubble it up directly so the diagnostic reports the missing property
     /// rather than wrapping it in an index-signature incompatibility.
-    fn make_index_sig_reason(
+    pub(in crate::relations::subtype) fn make_index_sig_reason(
         &mut self,
         index_kind: &'static str,
         source_value_type: TypeId,
@@ -1824,8 +1824,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check string index signature
-        if let Some(ref t_string_idx) = target_shape.string_index {
-            match &source_shape.string_index {
+        if let Some(t_string_idx) = target_shape.string_index_signature() {
+            match source_shape.string_index_signature() {
                 Some(s_string_idx) => {
                     if s_string_idx.readonly && !t_string_idx.readonly {
                         return Some(SubtypeFailureReason::TypeMismatch {
@@ -1857,6 +1857,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
 
                     for prop in &source_shape.properties {
+                        if prop.is_symbol_named {
+                            continue;
+                        }
                         // Strip `undefined` from optional property types when checking
                         // against index signatures, matching tsc behavior.
                         let prop_type = if prop.optional {
@@ -1898,7 +1901,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         t_number_idx.value_type,
                     );
                 }
-            } else if let Some(ref s_string_idx) = source_shape.string_index {
+            } else if let Some(s_string_idx) = source_shape.string_index_signature() {
                 if s_string_idx.readonly && !t_number_idx.readonly {
                     return Some(SubtypeFailureReason::TypeMismatch {
                         source_type: source,
@@ -1919,6 +1922,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return Some(SubtypeFailureReason::MissingIndexSignature {
                     index_kind: "number",
                 });
+            }
+        }
+
+        // Check symbol index signature
+        if let Some(t_symbol_idx) = target_shape.symbol_index_signature() {
+            match source_shape.symbol_index_signature() {
+                Some(s_symbol_idx)
+                    if self.index_signature_key_covers(
+                        s_symbol_idx.key_type,
+                        t_symbol_idx.key_type,
+                    ) =>
+                {
+                    if !self
+                        .check_subtype(s_symbol_idx.value_type, t_symbol_idx.value_type)
+                        .is_true()
+                    {
+                        return self.make_index_sig_reason(
+                            "symbol",
+                            s_symbol_idx.value_type,
+                            t_symbol_idx.value_type,
+                        );
+                    }
+                }
+                _ => {
+                    let optional_index_satisfied_by_empty_source = target_shape
+                        .symbol_index_is_optional()
+                        && source_shape.properties.is_empty();
+                    if !optional_index_satisfied_by_empty_source
+                        && self.requires_explicit_declared_index_signature_for(
+                            source_shape,
+                            Some(source),
+                        )
+                    {
+                        return Some(SubtypeFailureReason::MissingIndexSignature {
+                            index_kind: "symbol",
+                        });
+                    }
+                }
             }
         }
 
@@ -1953,74 +1994,5 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(source_shape_id),
             target_props,
         )
-    }
-
-    fn explain_properties_against_index_signatures(
-        &mut self,
-        source: &[PropertyInfo],
-        target: &ObjectShape,
-    ) -> Option<SubtypeFailureReason> {
-        let string_index = target.string_index.as_ref();
-        let number_index = target.number_index.as_ref();
-
-        if string_index.is_none() && number_index.is_none() {
-            return None;
-        }
-
-        for prop in source {
-            // Strip `undefined` from optional property types when checking against
-            // index signatures, matching tsc behavior.
-            let prop_type = if prop.optional {
-                crate::narrowing::utils::remove_undefined(self.interner, prop.type_id)
-            } else {
-                prop.type_id
-            };
-            let allow_bivariant = prop.is_method;
-
-            if let Some(number_idx) = number_index {
-                let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
-                if is_numeric {
-                    if !number_idx.readonly && prop.readonly {
-                        return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                            property_name: prop.name,
-                        });
-                    }
-                    if !self
-                        .check_subtype_with_method_variance(
-                            prop_type,
-                            number_idx.value_type,
-                            allow_bivariant,
-                        )
-                        .is_true()
-                    {
-                        return self.make_index_sig_reason(
-                            "number",
-                            prop_type,
-                            number_idx.value_type,
-                        );
-                    }
-                }
-            }
-
-            if let Some(string_idx) = string_index {
-                if !string_idx.readonly && prop.readonly {
-                    return Some(SubtypeFailureReason::ReadonlyPropertyMismatch {
-                        property_name: prop.name,
-                    });
-                }
-                if !self
-                    .check_subtype_with_method_variance(
-                        prop_type,
-                        string_idx.value_type,
-                        allow_bivariant,
-                    )
-                    .is_true()
-                {
-                    return self.make_index_sig_reason("string", prop_type, string_idx.value_type);
-                }
-            }
-        }
-
-        None
     }
 }

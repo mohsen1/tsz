@@ -241,7 +241,7 @@ pub enum SubtypeFailureReason {
     },
     /// Index signature value type mismatch.
     IndexSignatureMismatch {
-        index_kind: &'static str, // "string" or "number"
+        index_kind: &'static str, // "string", "number", or "symbol"
         source_value_type: TypeId,
         target_value_type: TypeId,
         /// Nested failure explaining why the value types are incompatible.

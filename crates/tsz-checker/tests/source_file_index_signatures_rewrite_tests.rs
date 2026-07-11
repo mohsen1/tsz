@@ -5,12 +5,25 @@ use tsz_checker::test_utils::check_source_code_messages as diagnostics;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
 
-const REWRITE_GATE: &str = r#"
-type Pseudo = string;
-type PseudoDeclaration = { [key in Pseudo]: string };
-declare let combo2: { [x: `${string}xxx${string}` & `${string}yyy${string}`]: string };
-interface AA {}
+const SYMBOL_INDEX_MISMATCH: &str = r#"
+declare const sym: symbol;
+let y: { [key: symbol]: string };
+const z = { [sym]: 1 };
+y = z;
 "#;
+
+const EXPECTED: &str =
+    "Type '{ [sym]: number; }' is not assignable to type '{ [key: symbol]: string; }'.";
+
+const RENAMED_SYMBOL_INDEX_MISMATCH: &str = r#"
+declare const token: symbol;
+let destination: { [slot: symbol]: string };
+const source = { [token]: 1 };
+destination = source;
+"#;
+
+const RENAMED_EXPECTED: &str =
+    "Type '{ [token]: number; }' is not assignable to type '{ [slot: symbol]: string; }'.";
 
 fn diagnostics_without_test_pragmas(source: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -38,81 +51,84 @@ fn diagnostics_without_test_pragmas(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-#[test]
-fn index_signatures_rewrite_does_not_fallback_to_global_anchor_search() {
-    // None of the rewrite line markers (e.g. `y = z;`, `o4[s1];`, ...)
-    // exist in this source. The previous global-anchor fallback could still
-    // inject diagnostics by matching anchor fragments in unrelated code.
-    let source = format!(
-        r#"
-{REWRITE_GATE}
-
-let y = 1;
-const note = "someKey";
-"#
-    );
-
-    let diags = diagnostics(&source);
-    assert!(
-        !diags.iter().any(|(_, message)| message
-            == "Type '{ [sym]: number; }' is not assignable to type '{ [key: symbol]: string; }'."),
-        "rewrite must not inject canonical index-signature diagnostics when marker lines are absent: {diags:#?}"
-    );
-    assert!(
-        !diags.iter().any(|(_, message)| {
-            message
-                == "Object literal may only specify known properties, and '[sym]' does not exist in type '{ [key: number]: string; }'."
-        }),
-        "rewrite must not inject excess-property diagnostics from global anchor fallback: {diags:#?}"
-    );
-}
-
-#[test]
-fn index_signatures_rewrite_still_injects_expected_canonical_diagnostic() {
-    let source = format!(
-        r#"
-{REWRITE_GATE}
-
-declare const sym: symbol;
-let y: {{ [key: symbol]: string }};
-const z = {{ [sym]: 1 }};
-y = z;
-"#
-    );
-
-    let diags = diagnostics(&source);
-    let expected =
-        "Type '{ [sym]: number; }' is not assignable to type '{ [key: symbol]: string; }'.";
-    let matches: Vec<_> = diags
-        .iter()
-        .filter(|(_, message)| message == expected)
-        .collect();
+fn assert_native_symbol_index_mismatch(diags: &[(u32, String)], expected: &str) {
     assert_eq!(
-        matches.len(),
-        1,
-        "expected exactly one canonical rewritten index-signature diagnostic, got: {diags:#?}"
+        diags,
+        &[(2322, expected.to_string())],
+        "expected exactly the native symbol-index incompatibility diagnostic"
     );
 }
 
 #[test]
-fn index_signatures_rewrite_is_disabled_without_test_pragmas() {
-    let source = format!(
-        r#"
-{REWRITE_GATE}
+fn symbol_index_value_mismatch_reports_natively() {
+    assert_native_symbol_index_mismatch(&diagnostics(SYMBOL_INDEX_MISMATCH), EXPECTED);
+}
 
-declare const sym: symbol;
-let y: {{ [key: symbol]: string }};
-const z = {{ [sym]: 1 }};
-y = z;
-"#
+#[test]
+fn symbol_index_value_mismatch_does_not_depend_on_test_pragmas() {
+    assert_native_symbol_index_mismatch(
+        &diagnostics_without_test_pragmas(SYMBOL_INDEX_MISMATCH),
+        EXPECTED,
     );
+}
 
-    let diags = diagnostics_without_test_pragmas(&source);
-    let rewritten =
-        "Type '{ [sym]: number; }' is not assignable to type '{ [key: symbol]: string; }'.";
+#[test]
+fn symbol_index_value_mismatch_preserves_renamed_computed_key() {
+    assert_native_symbol_index_mismatch(
+        &diagnostics(RENAMED_SYMBOL_INDEX_MISMATCH),
+        RENAMED_EXPECTED,
+    );
+}
 
-    assert!(
-        !diags.iter().any(|(_, message)| message == rewritten),
-        "canonical index-signatures1 rewrites must be disabled when source-file test pragmas are off: {diags:#?}"
+#[test]
+fn compatible_symbol_index_value_remains_assignable() {
+    let source = r#"
+declare const token: symbol;
+let destination: { [slot: symbol]: number };
+const value = { [token]: 1 };
+destination = value;
+"#;
+    let diags = diagnostics(source);
+    assert!(diags.is_empty(), "unexpected diagnostics: {diags:#?}");
+}
+
+#[test]
+fn contextual_unique_symbol_value_error_outranks_missing_property() {
+    let source = r#"
+declare const token: unique symbol;
+const value: { [slot: symbol]: string; required: number } = { [token]: 1 };
+"#;
+    assert_eq!(
+        diagnostics(source),
+        vec![(
+            2418,
+            "Type of computed property's value is 'number', which is not assignable to type 'string'."
+                .to_string(),
+        )]
+    );
+}
+
+#[test]
+fn contextual_unique_symbol_value_error_keeps_sibling_property_error() {
+    let source = r#"
+declare const token: unique symbol;
+const value: { [slot: symbol]: string; required: number } = {
+    [token]: 1,
+    required: "bad",
+};
+"#;
+    assert_eq!(
+        diagnostics(source),
+        vec![
+            (
+                2418,
+                "Type of computed property's value is 'number', which is not assignable to type 'string'."
+                    .to_string(),
+            ),
+            (
+                2322,
+                "Type 'string' is not assignable to type 'number'.".to_string(),
+            ),
+        ]
     );
 }
