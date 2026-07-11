@@ -198,6 +198,35 @@ fn js_ordinary_typed_property_remains_ts8010_not_ts8017() {
 }
 
 #[test]
+fn js_property_modifier_policy_accepts_export_and_async_but_rejects_const() {
+    let source = r#"class ModifierMatrix {
+  export exportedField = 1;
+  async deferredField = 2;
+  const blockedField = 3;
+}"#;
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts8009 = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8009)
+        .collect::<Vec<_>>();
+    assert_eq!(ts8009.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
+    assert_eq!(ts8009[0].start, source.find("const").unwrap() as u32);
+    assert_eq!(ts8009[0].length, "const".len() as u32);
+    assert_eq!(
+        ts8009[0].message_text,
+        "The 'const' modifier can only be used in TypeScript files."
+    );
+}
+
+#[test]
 fn js_bodyless_accessor_reports_ts8017_for_full_declaration() {
     let source = "class Ghost { get incorporeal(); }";
     let diagnostics = check_source(

@@ -547,16 +547,6 @@ impl<'a> CheckerState<'a> {
                         SyntaxKind::ConstKeyword,
                         "const",
                     );
-                    self.error_if_ts_only_modifier(
-                        &prop.modifiers,
-                        SyntaxKind::ExportKeyword,
-                        "export",
-                    );
-                    self.error_if_ts_only_modifier(
-                        &prop.modifiers,
-                        SyntaxKind::AsyncKeyword,
-                        "async",
-                    );
                     self.error_if_ts_only_type_annotation(prop.type_annotation);
                     self.check_js_grammar_accessibility_modifier(&prop.modifiers, member_idx);
                 }
