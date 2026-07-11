@@ -303,6 +303,105 @@ fn js_only_syntactic_error_suppresses_semantic_diagnostics_program_wide() {
     }
 }
 
+/// Regression test for `conformance/.../privateIdentifierChain.1.ts`.
+///
+/// A private identifier in an optional chain (`o?.a.#b`) is a parser grammar
+/// error (`TS18030`, emitted by `parseErrorAtRange`). Because tsc surfaces it
+/// in the syntactic phase, `emitFilesAndReportErrors` then skips
+/// `getSemanticDiagnostics` for the whole program. So the receiver's own
+/// possibly-nullish diagnostics (`TS2532`/`TS18048`) — and any unrelated
+/// semantic error in another file — must be suppressed, while `TS18030`
+/// itself survives.
+#[test]
+fn private_identifier_chain_grammar_error_suppresses_semantic_diagnostics_program_wide() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    // `this?.a.#b`: `a?` is optional so the receiver `this?.a` is possibly
+    // undefined; without the syntactic gate the checker would emit TS2532.
+    fs::write(
+        base.join("a.ts"),
+        "class A {\n    a?: A;\n    #b?: A;\n    m() {\n        this?.a.#b;\n    }\n}\n",
+    )
+    .expect("write a.ts");
+    // An unrelated semantic error in a second file proves the gate is
+    // program-wide, not just file-local.
+    fs::write(base.join("b.ts"), "let n: number = \"s\";\n").expect("write b.ts");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "esnext",
+            "useDefineForClassFields": false,
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&18030),
+        "Expected TS18030 for the private identifier in an optional chain, got: {:?}",
+        result.diagnostics,
+    );
+    for &suppressed in &[2532_u32, 18048, 2322] {
+        assert!(
+            !codes.contains(&suppressed),
+            "TS{suppressed} must be suppressed program-wide when a TS18030 grammar error exists; got: {:?}",
+            result.diagnostics,
+        );
+    }
+}
+
+/// Control for the gate above: with a *public* member continuation
+/// (`this?.a.b`) there is no grammar error, so the receiver's possibly-nullish
+/// `TS2532` must still be reported. Guards against over-suppression.
+#[test]
+fn public_optional_chain_continuation_keeps_possibly_nullish_diagnostic() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(
+        base.join("a.ts"),
+        "class A {\n    a?: A;\n    b?: A;\n    m() {\n        this?.a.b;\n    }\n}\n",
+    )
+    .expect("write a.ts");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "esnext",
+            "useDefineForClassFields": false,
+            "noEmit": true
+          },
+          "files": ["a.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&2532),
+        "Expected TS2532 for the possibly-undefined receiver `this?.a`, got: {:?}",
+        result.diagnostics,
+    );
+    assert!(
+        !codes.contains(&18030),
+        "No private identifier here, so TS18030 must not appear, got: {:?}",
+        result.diagnostics,
+    );
+}
+
 /// Regression test for `conformance/salsa/plainJSGrammarErrors.ts`.
 ///
 /// When a JavaScript file emits a TS-only-syntactic diagnostic (e.g. `TS8009`
