@@ -25,14 +25,14 @@ struct ResolvedComputedName {
 }
 
 impl ResolvedComputedName {
-    fn string(name: String) -> Self {
+    const fn string(name: String) -> Self {
         Self {
             name,
             is_symbol: false,
         }
     }
 
-    fn symbol(name: String) -> Self {
+    const fn symbol(name: String) -> Self {
         Self {
             name,
             is_symbol: true,
