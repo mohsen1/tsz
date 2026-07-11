@@ -400,9 +400,24 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             expr_type,
         ) {
-            Some(ResolvedComputedName::string(
-                self.ctx.types.resolve_atom_ref(name).to_string(),
-            ))
+            // A `unique symbol` value type surfaces here as its binding-identity
+            // key (`__unique_<id>`), which `literal_property_name` reports
+            // alongside genuine string/number literal keys. That is a symbol-named
+            // (late-bound) member, not a string-literal key — the distinction a
+            // string const whose *value* spells `"__unique_1"` must NOT share.
+            // Read the value type's unique-symbol identity to classify: a unique
+            // symbol is `is_symbol`, a literal-typed const is not.
+            if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
+                .is_some()
+            {
+                Some(ResolvedComputedName::symbol(
+                    self.ctx.types.resolve_atom_ref(name).to_string(),
+                ))
+            } else {
+                Some(ResolvedComputedName::string(
+                    self.ctx.types.resolve_atom_ref(name).to_string(),
+                ))
+            }
         } else if let Some(name) =
             self.symbol_valued_binding_property_name(computed.expression, expr_type)
         {
