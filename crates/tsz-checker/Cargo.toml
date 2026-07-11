@@ -179,6 +179,9 @@ path = "tests/inference_placeholder_determinism_tests.rs"
 name = "context_sensitive_callback_inference_tests"
 path = "tests/context_sensitive_callback_inference_tests.rs"
 [[test]]
+name = "contextual_alias_union_return_inference_tests"
+path = "tests/contextual_alias_union_return_inference_tests.rs"
+[[test]]
 name = "type_only_import_reexport_tests"
 path = "tests/type_only_import_reexport_tests.rs"
 [[test]]
