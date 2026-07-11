@@ -146,14 +146,24 @@ impl<'a> CheckerContext<'a> {
     /// same numeric `NodeIndex` can also be a valid index into the current
     /// arena where it names an unrelated node, so a plain `arena.get(idx)`
     /// probe misclassifies foreign declarations as local (issue #15687).
-    /// When the binder has no provenance entry the declaration was bound
-    /// locally.
+    ///
+    /// The reliable test is node-storage identity: `self.arena` owns the
+    /// declaration exactly when it shares its `Arc<NodeArenaInner>` with a
+    /// recorded provenance arena. Cheap `NodeArena` clones keep distinct outer
+    /// wrapper addresses (so `std::ptr::eq` under-reports) but share storage,
+    /// while a genuine cross-arena `NodeIndex` collision lands in an arena with
+    /// different storage — making the decision deterministic and independent of
+    /// which same-named node happens to sit at `decl_idx` in another arena.
+    ///
     /// A provenance entry does NOT prove the declaration is foreign-only: a
     /// local declaration merged into a lib symbol (e.g. a `declare global`
     /// `interface Array` augmentation) can share its `NodeIndex` value with a
     /// lib declaration recorded under the same key. The binder's own
     /// `node_symbols` disambiguates — a current-arena node bound to this very
     /// symbol is a genuine local declaration.
+    ///
+    /// When the binder has no provenance entry the declaration was bound
+    /// locally.
     pub(crate) fn declaration_is_local_to_current_arena(
         &self,
         sym_id: SymbolId,
@@ -161,75 +171,32 @@ impl<'a> CheckerContext<'a> {
     ) -> bool {
         match self.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
             Some(arenas) => {
+                // `self.arena` genuinely owns this declaration when it shares
+                // node storage with a recorded provenance arena. A `NodeArena`
+                // is a cheap clone whose outer wrapper address differs per
+                // clone while the parsed pools (`Arc<NodeArenaInner>`) stay
+                // shared, so the merge-time copy in `declaration_arenas` and
+                // the copy walked during type computation are distinct
+                // wrappers over identical storage — `std::ptr::eq` on the
+                // wrapper misses them, but they share storage (issue #15687
+                // follow-up: a lib arena existing as more than one `Arc`
+                // instance). A cross-arena `NodeIndex` collision lands in an
+                // arena with *different* storage, so it stays foreign
+                // deterministically, independent of which same-named node
+                // happens to sit at `decl_idx` elsewhere.
                 arenas
                     .iter()
-                    .any(|arena| std::ptr::eq(arena.as_ref(), self.arena))
-                    || match self.binder.get_node_symbol(decl_idx) {
-                        // The current binder positively binds this index to a
-                        // symbol: local only if that symbol is this one. This
-                        // is the `#15687` collision case — a foreign lib index
-                        // that also names an unrelated *local* declaration is
-                        // bound to that other symbol and must stay foreign.
-                        Some(bound) => bound == sym_id,
-                        // No binder opinion (a lib node seen through the
-                        // program binder). Pointer provenance can miss it when
-                        // a lib arena exists as more than one `Arc` instance,
-                        // so confirm by declaration name that the node in the
-                        // current arena really is this symbol's declaration and
-                        // not a `NodeIndex` collision with an unrelated node.
-                        None => self.current_arena_declaration_names_symbol(sym_id, decl_idx),
-                    }
+                    .any(|arena| arena.as_ref().shares_node_storage_with(self.arena))
+                    // A local declaration merged into a lib symbol (e.g. a
+                    // `declare global interface Array` augmentation) lives in
+                    // the current file's arena, which never shares storage with
+                    // the recorded lib arena; the current binder binds its
+                    // index to this very symbol. A #15687 collision binds the
+                    // index to a *different* symbol (or none) and stays foreign.
+                    || self.binder.get_node_symbol(decl_idx) == Some(sym_id)
             }
             None => true,
         }
-    }
-
-    /// Whether the node at `decl_idx`, read from the current arena, is a
-    /// named declaration whose name equals `sym_id`'s symbol name.
-    ///
-    /// Used only as the no-binder-opinion fallback of
-    /// [`CheckerContext::declaration_is_local_to_current_arena`]: a lib arena
-    /// can exist as more than one `Arc` instance (the copy recorded in
-    /// `declaration_arenas` at merge time versus the one walked during type
-    /// computation), so pointer-identity provenance misses genuine lib
-    /// declarations. A name match confirms the current-arena node really is
-    /// this symbol's declaration rather than a `NodeIndex` collision with an
-    /// unrelated node (issue #15687).
-    fn current_arena_declaration_names_symbol(
-        &self,
-        sym_id: SymbolId,
-        decl_idx: tsz_parser::NodeIndex,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-        let Some(symbol) = self.binder.get_symbol(sym_id) else {
-            return false;
-        };
-        let Some(node) = self.arena.get(decl_idx) else {
-            return false;
-        };
-        let name_idx = match node.kind {
-            syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.arena.get_interface(node).map(|decl| decl.name)
-            }
-            syntax_kind_ext::CLASS_DECLARATION => self.arena.get_class(node).map(|decl| decl.name),
-            syntax_kind_ext::FUNCTION_DECLARATION => {
-                self.arena.get_function(node).map(|decl| decl.name)
-            }
-            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                self.arena.get_type_alias(node).map(|decl| decl.name)
-            }
-            syntax_kind_ext::ENUM_DECLARATION => self.arena.get_enum(node).map(|decl| decl.name),
-            syntax_kind_ext::MODULE_DECLARATION => {
-                self.arena.get_module(node).map(|decl| decl.name)
-            }
-            _ => None,
-        };
-        let Some(name_idx) = name_idx else {
-            return false;
-        };
-        self.arena.get_identifier_at(name_idx).is_some_and(|ident| {
-            self.arena.resolve_identifier_text(ident) == symbol.escaped_name.as_str()
-        })
     }
 
     fn declaration_belongs_only_to_arena(
