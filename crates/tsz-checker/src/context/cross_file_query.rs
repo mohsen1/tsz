@@ -164,10 +164,72 @@ impl<'a> CheckerContext<'a> {
                 arenas
                     .iter()
                     .any(|arena| std::ptr::eq(arena.as_ref(), self.arena))
-                    || self.binder.get_node_symbol(decl_idx) == Some(sym_id)
+                    || match self.binder.get_node_symbol(decl_idx) {
+                        // The current binder positively binds this index to a
+                        // symbol: local only if that symbol is this one. This
+                        // is the `#15687` collision case — a foreign lib index
+                        // that also names an unrelated *local* declaration is
+                        // bound to that other symbol and must stay foreign.
+                        Some(bound) => bound == sym_id,
+                        // No binder opinion (a lib node seen through the
+                        // program binder). Pointer provenance can miss it when
+                        // a lib arena exists as more than one `Arc` instance,
+                        // so confirm by declaration name that the node in the
+                        // current arena really is this symbol's declaration and
+                        // not a `NodeIndex` collision with an unrelated node.
+                        None => self.current_arena_declaration_names_symbol(sym_id, decl_idx),
+                    }
             }
             None => true,
         }
+    }
+
+    /// Whether the node at `decl_idx`, read from the current arena, is a
+    /// named declaration whose name equals `sym_id`'s symbol name.
+    ///
+    /// Used only as the no-binder-opinion fallback of
+    /// [`CheckerContext::declaration_is_local_to_current_arena`]: a lib arena
+    /// can exist as more than one `Arc` instance (the copy recorded in
+    /// `declaration_arenas` at merge time versus the one walked during type
+    /// computation), so pointer-identity provenance misses genuine lib
+    /// declarations. A name match confirms the current-arena node really is
+    /// this symbol's declaration rather than a `NodeIndex` collision with an
+    /// unrelated node (issue #15687).
+    fn current_arena_declaration_names_symbol(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: tsz_parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let Some(symbol) = self.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let Some(node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let name_idx = match node.kind {
+            syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.arena.get_interface(node).map(|decl| decl.name)
+            }
+            syntax_kind_ext::CLASS_DECLARATION => self.arena.get_class(node).map(|decl| decl.name),
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.arena.get_function(node).map(|decl| decl.name)
+            }
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.arena.get_type_alias(node).map(|decl| decl.name)
+            }
+            syntax_kind_ext::ENUM_DECLARATION => self.arena.get_enum(node).map(|decl| decl.name),
+            syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(node).map(|decl| decl.name)
+            }
+            _ => None,
+        };
+        let Some(name_idx) = name_idx else {
+            return false;
+        };
+        self.arena.get_identifier_at(name_idx).is_some_and(|ident| {
+            self.arena.resolve_identifier_text(ident) == symbol.escaped_name.as_str()
+        })
     }
 
     fn declaration_belongs_only_to_arena(
