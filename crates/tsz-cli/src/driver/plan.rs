@@ -727,8 +727,6 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
     args: &CliArgs,
     config: Option<&TsConfig>,
 ) -> Result<Vec<Diagnostic>> {
-    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
-
     let mut diagnostics = Vec::new();
     for key in ["paths", "plugins"] {
         let provided = match key {
@@ -737,16 +735,7 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
             _ => false,
         };
         if provided {
-            diagnostics.push(Diagnostic::error(
-                String::new(),
-                0,
-                0,
-                format_message(
-                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
-                    &[key],
-                ),
-                diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
-            ));
+            diagnostics.push(cli_config_only_option_diagnostic(key));
         }
     }
 
@@ -983,6 +972,133 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
     let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
     diagnostics.extend(parsed.diagnostics);
     Ok(diagnostics)
+}
+
+pub(super) const fn is_direct_cli_parse_diagnostic_code(code: u32) -> bool {
+    matches!(
+        code,
+        diagnostic_codes::UNKNOWN_COMPILER_OPTION
+            | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
+            | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
+            | diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN
+    )
+}
+
+/// Build direct command-line parse diagnostics in final argv order.
+///
+/// `preprocess_args` records option identities in a hidden repeated argument.
+/// Each identity is validated independently through the existing config parser,
+/// preserving its exact diagnostic construction without inspecting messages.
+pub(super) fn ordered_direct_cli_parse_diagnostics(args: &CliArgs) -> Result<Vec<Diagnostic>> {
+    if args.direct_cli_option_order.is_empty() {
+        return Ok(validate_cli_compiler_option_diagnostics(args, None)?
+            .into_iter()
+            .filter(|diagnostic| is_direct_cli_parse_diagnostic_code(diagnostic.code))
+            .collect());
+    }
+
+    let mut diagnostics = Vec::new();
+    for key in &args.direct_cli_option_order {
+        if matches!(key.as_str(), "paths" | "plugins") {
+            let provided = match key.as_str() {
+                "paths" => cli_config_only_option_has_non_null_value(args.paths.as_ref()),
+                "plugins" => cli_config_only_option_has_non_null_value(args.plugins.as_ref()),
+                _ => false,
+            };
+            if provided {
+                diagnostics.push(cli_config_only_option_diagnostic(key));
+            }
+            continue;
+        }
+
+        let Some(value) = direct_cli_parse_option_value(args, key) else {
+            continue;
+        };
+        let mut compiler_options = serde_json::Map::new();
+        compiler_options.insert(key.clone(), value);
+        let mut root = serde_json::Map::new();
+        root.insert(
+            "compilerOptions".to_string(),
+            serde_json::Value::Object(compiler_options),
+        );
+        let source = serde_json::Value::Object(root).to_string();
+        let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
+        diagnostics.extend(
+            parsed
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| is_direct_cli_parse_diagnostic_code(diagnostic.code)),
+        );
+    }
+    Ok(diagnostics)
+}
+
+fn cli_config_only_option_diagnostic(key: &str) -> Diagnostic {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
+
+    Diagnostic::error(
+        String::new(),
+        0,
+        0,
+        format_message(
+            diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+            &[key],
+        ),
+        diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+    )
+}
+
+fn direct_cli_parse_option_value(args: &CliArgs, key: &str) -> Option<serde_json::Value> {
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|candidate| candidate == name)
+    };
+    let dropped_bool = |name: &str, value: bool| {
+        (value || explicitly_disabled(name)).then(|| serde_json::Value::Bool(value))
+    };
+
+    match key {
+        "target" => args
+            .target
+            .map(|target| serde_json::Value::String(cli_target_value(target).to_string())),
+        "module" => args
+            .module
+            .map(|module| serde_json::Value::String(cli_module_value(module).to_string())),
+        "keyofStringsOnly" => dropped_bool("keyofStringsOnly", args.keyof_strings_only),
+        "noImplicitUseStrict" => dropped_bool("noImplicitUseStrict", args.no_implicit_use_strict),
+        "noStrictGenericChecks" => {
+            dropped_bool("noStrictGenericChecks", args.no_strict_generic_checks)
+        }
+        "preserveValueImports" => dropped_bool("preserveValueImports", args.preserve_value_imports),
+        "suppressExcessPropertyErrors" => dropped_bool(
+            "suppressExcessPropertyErrors",
+            args.suppress_excess_property_errors,
+        ),
+        "suppressImplicitAnyIndexErrors" => dropped_bool(
+            "suppressImplicitAnyIndexErrors",
+            args.suppress_implicit_any_index_errors,
+        ),
+        "charset" => args
+            .charset
+            .as_ref()
+            .map(|value| serde_json::Value::String(value.clone())),
+        "importsNotUsedAsValues" => args.imports_not_used_as_values.map(|value| {
+            serde_json::Value::String(
+                match value {
+                    crate::args::ImportsNotUsedAsValues::Remove => "remove",
+                    crate::args::ImportsNotUsedAsValues::Preserve => "preserve",
+                    crate::args::ImportsNotUsedAsValues::Error => "error",
+                }
+                .to_string(),
+            )
+        }),
+        "out" => args
+            .out
+            .as_ref()
+            .map(|value| serde_json::Value::String(value.to_string_lossy().into_owned())),
+        _ => None,
+    }
 }
 
 fn cli_config_only_option_has_non_null_value(values: Option<&Vec<String>>) -> bool {
@@ -1371,6 +1487,38 @@ mod tests {
                 "{options:?} must not emit TS5108, got {diagnostics:?}"
             );
         }
+    }
+
+    #[test]
+    fn ordered_direct_cli_parse_diagnostics_follow_side_channel() {
+        let diagnostics_for = |order: [&str; 2]| {
+            let mut argv = vec![
+                "tsz".to_string(),
+                "--target".to_string(),
+                "es3".to_string(),
+                "--keyofStringsOnly".to_string(),
+            ];
+            argv.extend(
+                order
+                    .into_iter()
+                    .map(|name| format!("--__direct-cli-option-order={name}")),
+            );
+            let args = CliArgs::try_parse_from(argv).unwrap();
+            ordered_direct_cli_parse_diagnostics(&args)
+                .unwrap()
+                .into_iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            diagnostics_for(["target", "keyofStringsOnly"]),
+            [6046, 5023]
+        );
+        assert_eq!(
+            diagnostics_for(["keyofStringsOnly", "target"]),
+            [5023, 6046]
+        );
     }
 
     #[test]

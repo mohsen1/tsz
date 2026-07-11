@@ -608,3 +608,42 @@ fn init_template_unrecognized_option_does_not_crash() {
     assert!(body.starts_with("{\n"));
     assert!(body.trim_end().ends_with('}'));
 }
+
+#[test]
+fn preprocess_records_direct_cli_diagnostic_order() {
+    let markers = |args: &[&str]| {
+        preprocess_strs(args)
+            .into_iter()
+            .filter_map(|arg| {
+                arg.strip_prefix("--__direct-cli-option-order=")
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(
+        markers(&[
+            "tsz",
+            "--target",
+            "ES3",
+            "--keyofStringsOnly",
+            "--paths",
+            "aliases",
+            "input.ts",
+        ]),
+        ["target", "keyofStringsOnly", "paths"]
+    );
+    assert_eq!(
+        markers(&[
+            "tsz",
+            "--paths",
+            "aliases",
+            "--keyofStringsOnly",
+            "false",
+            "--target",
+            "ES3",
+            "input.ts",
+        ]),
+        ["paths", "keyofStringsOnly", "target"]
+    );
+}

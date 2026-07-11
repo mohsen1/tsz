@@ -1457,6 +1457,8 @@ fn cli_parse_diagnostics_outrank_later_option_config_and_source_diagnostics() {
         (&["--keyofStringsOnly", "--baseUrl", "."], &[5023]),
         (&["--target", "ES3", "--module", "AMD"], &[6046]),
         (&["--target", "ES3", "--keyofStringsOnly"], &[5023, 6046]),
+        (&["--keyofStringsOnly", "--paths", "foo"], &[5023, 6064]),
+        (&["--target", "ES3", "--paths", "foo"], &[6046, 6064]),
     ];
 
     for (flag_args, expected_codes) in cases {

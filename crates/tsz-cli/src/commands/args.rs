@@ -764,6 +764,18 @@ pub struct CliArgs {
     )]
     pub explicitly_disabled_bool_flags: Vec<String>,
 
+    // ==================== Internal: direct parse diagnostic order ====================
+    /// Internal side-channel populated by `preprocess_args` with the canonical
+    /// names of command-line options that can produce direct parse diagnostics,
+    /// in their final argv order. Hidden from `--help`.
+    #[arg(
+        long = "__direct-cli-option-order",
+        value_name = "NAME",
+        hide = true,
+        action = clap::ArgAction::Append
+    )]
+    pub direct_cli_option_order: Vec<String>,
+
     // ==================== Input Files ====================
     /// Input files to compile.
     #[arg(value_name = "FILE")]

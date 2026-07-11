@@ -186,18 +186,7 @@ pub(super) fn compile_inner(
     forced_dirty_paths: Option<&FxHashSet<PathBuf>>,
     explicit_config_path: Option<&Path>,
 ) -> Result<CompilationResult> {
-    let direct_cli_parse_diagnostics: Vec<_> =
-        validate_cli_compiler_option_diagnostics(args, None)?
-            .into_iter()
-            .filter(|diagnostic| {
-                matches!(
-                    diagnostic.code,
-                    diagnostic_codes::UNKNOWN_COMPILER_OPTION
-                        | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
-                        | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
-                )
-            })
-            .collect();
+    let direct_cli_parse_diagnostics = ordered_direct_cli_parse_diagnostics(args)?;
     let mut result = match compile_inner_impl(
         args,
         cwd,
@@ -290,18 +279,7 @@ fn compile_inner_impl(
         .iter()
         .any(|d| is_removed_option_diagnostic_code(d.code));
     let cli_option_diagnostics = validate_cli_compiler_option_diagnostics(args, config.as_ref())?;
-    let cli_parse_diagnostics: Vec<_> = cli_option_diagnostics
-        .iter()
-        .filter(|d| {
-            matches!(
-                d.code,
-                diagnostic_codes::UNKNOWN_COMPILER_OPTION
-                    | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
-                    | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
-            )
-        })
-        .cloned()
-        .collect();
+    let cli_parse_diagnostics = ordered_direct_cli_parse_diagnostics(args)?;
     let has_unknown_cli_compiler_option_diagnostic = cli_parse_diagnostics.iter().any(|d| {
         matches!(
             d.code,
