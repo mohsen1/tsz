@@ -261,10 +261,12 @@ impl<'a> CheckerState<'a> {
 
         self.error_if_ts_only_modifier(&func.modifiers, SyntaxKind::DeclareKeyword, "declare");
         self.error_if_ts_only_type_params(&func.type_parameters);
-        self.error_if_ts_only_type_annotation(func.type_annotation);
 
         // TS8017: Function overload (function without body)
         let is_overload = func.body.is_none() && node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+        if !is_overload {
+            self.error_if_ts_only_type_annotation(func.type_annotation);
+        }
         self.error_if_ts_only_signature_without_body(is_overload, func_idx);
 
         // Check parameter types and modifiers
@@ -395,27 +397,6 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         if has_no_body {
-            if let Some(node) = self.ctx.arena.get(node_idx) {
-                // tsc points at the node itself (its start position).
-                // For function declarations, use the name position.
-                // For constructors/methods, use node.pos (the node start).
-                let start = match node.kind {
-                    syntax_kind_ext::FUNCTION_DECLARATION => self
-                        .ctx
-                        .arena
-                        .get_function(node)
-                        .and_then(|func| self.ctx.arena.get(func.name))
-                        .map_or(node.pos, |name| name.pos),
-                    _ => node.pos,
-                };
-                self.error_at_position(
-                    start,
-                    1,
-                    diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
-                return;
-            }
             self.error_at_node(
                 node_idx,
                 diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -536,7 +517,9 @@ impl<'a> CheckerState<'a> {
                         "const",
                     );
                     self.error_if_ts_only_type_params(&method.type_parameters);
-                    self.error_if_ts_only_type_annotation(method.type_annotation);
+                    if method.body.is_some() {
+                        self.error_if_ts_only_type_annotation(method.type_annotation);
+                    }
                     self.error_if_ts_only_signature_without_body(method.body.is_none(), member_idx);
                     self.error_if_ts_only_optional(method.question_token, member_idx);
                     self.check_js_grammar_parameters(&method.parameters.nodes);
@@ -582,7 +565,13 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.ctx.arena.get_accessor(node) {
                     self.check_js_grammar_accessibility_modifier(&accessor.modifiers, member_idx);
-                    self.error_if_ts_only_type_annotation(accessor.type_annotation);
+                    if accessor.body.is_some() {
+                        self.error_if_ts_only_type_annotation(accessor.type_annotation);
+                    }
+                    self.error_if_ts_only_signature_without_body(
+                        accessor.body.is_none(),
+                        member_idx,
+                    );
                     self.check_js_grammar_parameters(&accessor.parameters.nodes);
                 }
             }
@@ -590,13 +579,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::INDEX_SIGNATURE
             | syntax_kind_ext::CALL_SIGNATURE
             | syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                if node.kind == syntax_kind_ext::INDEX_SIGNATURE {
-                    if let Some(index_sig) = self.ctx.arena.get_index_signature(node) {
-                        self.check_js_grammar_parameters(&index_sig.parameters.nodes);
-                    }
-                } else {
-                    self.error_if_ts_only_signature_without_body(true, member_idx);
-                }
+                self.error_if_ts_only_signature_without_body(true, member_idx);
             }
 
             _ => {}

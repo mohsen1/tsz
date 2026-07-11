@@ -99,8 +99,8 @@ fn parameter_property_rest_error_anchors_at_modifier() {
 }
 
 #[test]
-fn js_function_overload_reports_ts8017_at_semicolon() {
-    let source = "function foo();";
+fn js_function_overload_reports_ts8017_at_full_declaration() {
+    let source = "function foo(): string;";
 
     let diagnostics = check_source(
         source,
@@ -120,15 +120,107 @@ fn js_function_overload_reports_ts8017_at_semicolon() {
 
     assert_eq!(ts8017.len(), 1, "unexpected diagnostics: {diagnostics:#?}");
 
-    let name_start = source.find("foo").expect("function name") as u32;
     assert_eq!(
-        ts8017[0].start, name_start,
-        "Expected TS8017 to anchor at the function name. Actual diagnostics: {ts8017:#?}"
+        ts8017[0].start, 0,
+        "Expected TS8017 to anchor at the declaration start. Actual diagnostics: {ts8017:#?}"
     );
     assert_eq!(
-        ts8017[0].length, 1,
+        ts8017[0].length,
+        source.len() as u32,
         "unexpected diagnostic length: {ts8017:#?}"
     );
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 8010),
+        "a bodyless signature must not also report TS8010 for its return type: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_class_index_signatures_report_ts8017_at_bracket_without_ts8010() {
+    let source = r#"class Registry {
+  [label: string]: unknown;
+  [slot: number]: string;
+}"#;
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts8017: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8017)
+        .collect();
+    let bracket_starts: Vec<u32> = source
+        .match_indices('[')
+        .map(|(start, _)| start as u32)
+        .collect();
+    assert_eq!(ts8017.len(), bracket_starts.len(), "{diagnostics:#?}");
+    assert_eq!(
+        ts8017.iter().map(|diag| diag.start).collect::<Vec<_>>(),
+        bracket_starts,
+        "TS8017 must anchor at each opening bracket: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts8017.iter().map(|diag| diag.length).collect::<Vec<_>>(),
+        vec![25, 23],
+        "TS8017 must cover each complete index signature: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 8010),
+        "index signatures must not also report TS8010: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn js_ordinary_typed_property_remains_ts8010_not_ts8017() {
+    let source = "class Plain { item: string; }";
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts8010: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8010)
+        .collect();
+    assert_eq!(ts8010.len(), 1, "{diagnostics:#?}");
+    assert_eq!(ts8010[0].start, source.find("string").unwrap() as u32);
+    assert_eq!(ts8010[0].length, "string".len() as u32);
+    assert!(diagnostics.iter().all(|diag| diag.code != 8017));
+}
+
+#[test]
+fn js_bodyless_accessor_reports_ts8017_for_full_declaration() {
+    let source = "class Ghost { get incorporeal(); }";
+    let diagnostics = check_source(
+        source,
+        "a.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts8017: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 8017)
+        .collect();
+    assert_eq!(ts8017.len(), 1, "{diagnostics:#?}");
+    let declaration = "get incorporeal();";
+    assert_eq!(
+        ts8017[0].start,
+        source.find(declaration).unwrap() as u32,
+        "{diagnostics:#?}"
+    );
+    assert!(diagnostics.iter().all(|diag| diag.code != 8010));
 }
 
 #[test]
