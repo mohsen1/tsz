@@ -1,6 +1,6 @@
 //! Auto-generated diagnostic message data.
 //!
-//! DO NOT EDIT MANUALLY - run `node scripts/gen_diagnostics.mjs` to regenerate.
+//! DO NOT EDIT MANUALLY - run `node scripts/setup/sync-typescript-diagnostics.mjs --write` to regenerate.
 
 crate::diagnostics::table_macro::define_diagnostics! {
     (THE_TYPE_RETURNED_BY_THE_METHOD_OF_AN_ITERATOR_MUST_HAVE_A_VALUE_PROPERTY, 2490, Error, "The type returned by the '{0}()' method of an iterator must have a 'value' property."),
@@ -469,6 +469,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC, 4127, Error, "This member cannot have an 'override' modifier because its name is dynamic."),
     (THIS_MEMBER_CANNOT_HAVE_A_JSDOC_COMMENT_WITH_AN_OVERRIDE_TAG_BECAUSE_ITS_NAME_IS, 4128, Error, "This member cannot have a JSDoc comment with an '@override' tag because its name is dynamic."),
     (THE_CURRENT_HOST_DOES_NOT_SUPPORT_THE_OPTION, 5001, Error, "The current host does not support the '{0}' option."),
+    (OPTION_REQUIRES_VALUE_TO_BE_GREATER_THAN, 5002, Error, "Option '{0}' requires value to be greater than '{1}'."),
     (CANNOT_FIND_THE_COMMON_SUBDIRECTORY_PATH_FOR_THE_INPUT_FILES, 5009, Error, "Cannot find the common subdirectory path for the input files."),
     (FILE_SPECIFICATION_CANNOT_END_IN_A_RECURSIVE_DIRECTORY_WILDCARD, 5010, Error, "File specification cannot end in a recursive directory wildcard ('**'): '{0}'."),
     (THE_COMMON_SOURCE_DIRECTORY_OF_IS_THE_ROOTDIR_SETTING_MUST_BE_EXPLICITLY_SET_TO, 5011, Error, "The common source directory of '{0}' is '{1}'. The 'rootDir' setting must be explicitly set to this or another path to adjust your output's file layout."),
@@ -501,7 +502,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O, 5071, Error, "Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'."),
     (UNKNOWN_BUILD_OPTION, 5072, Error, "Unknown build option '{0}'."),
     (BUILD_OPTION_REQUIRES_A_VALUE_OF_TYPE, 5073, Error, "Build option '{0}' requires a value of type {1}."),
-    (OPTION_INCREMENTAL_CAN_ONLY_BE_SPECIFIED_USING_TSCONFIG_EMITTING_TO_SINGLE_FILE, 5074, Error, "Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified."),
+    (OPTION_INCREMENTAL_IS_ONLY_VALID_WITH_A_KNOWN_CONFIGURATION_FILE_LIKE_TSCONFIG_J, 5074, Error, "Option '--incremental' is only valid with a known configuration file (like 'tsconfig.json') or when '--tsBuildInfoFile' is explicitly provided."),
     (IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE, 5075, Error, "'{0}' is assignable to the constraint of type '{1}', but '{1}' could be instantiated with a different subtype of constraint '{2}'."),
     (AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, 5076, Error, "'{0}' and '{1}' operations cannot be mixed without parentheses."),
     (UNKNOWN_BUILD_OPTION_DID_YOU_MEAN, 5077, Error, "Unknown build option '{0}'. Did you mean '{1}'?"),
@@ -516,7 +517,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (A_LABELED_TUPLE_ELEMENT_IS_DECLARED_AS_REST_WITH_A_BEFORE_THE_NAME_RATHER_THAN_B, 5087, Error, "A labeled tuple element is declared as rest with a '...' before the name, rather than before the type."),
     (THE_INFERRED_TYPE_OF_REFERENCES_A_TYPE_WITH_A_CYCLIC_STRUCTURE_WHICH_CANNOT_BE_T, 5088, Error, "The inferred type of '{0}' references a type with a cyclic structure which cannot be trivially serialized. A type annotation is necessary."),
     (OPTION_CANNOT_BE_SPECIFIED_WHEN_OPTION_JSX_IS, 5089, Error, "Option '{0}' cannot be specified when option 'jsx' is '{1}'."),
-    (NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_WHEN_BASEURL_IS_NOT_SET_DID_YOU_FORGET_A_LEAD, 5090, Error, "Non-relative paths are not allowed when 'baseUrl' is not set. Did you forget a leading './'?"),
+    (NON_RELATIVE_PATHS_ARE_NOT_ALLOWED_DID_YOU_FORGET_A_LEADING, 5090, Error, "Non-relative paths are not allowed. Did you forget a leading './'?"),
     (OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED, 5091, Error, "Option 'preserveConstEnums' cannot be disabled when '{0}' is enabled."),
     (THE_ROOT_VALUE_OF_A_FILE_MUST_BE_AN_OBJECT, 5092, Error, "The root value of a '{0}' file must be an object."),
     (COMPILER_OPTION_MAY_ONLY_BE_USED_WITH_BUILD, 5093, Error, "Compiler option '--{0}' may only be used with '--build'."),
@@ -577,7 +578,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (COMPILER_OPTION_EXPECTS_AN_ARGUMENT, 6044, Error, "Compiler option '{0}' expects an argument."),
     (UNTERMINATED_QUOTED_STRING_IN_RESPONSE_FILE, 6045, Error, "Unterminated quoted string in response file '{0}'."),
     (ARGUMENT_FOR_OPTION_MUST_BE, 6046, Error, "Argument for '{0}' option must be: {1}."),
-    (LOCALE_MUST_BE_OF_THE_FORM_LANGUAGE_OR_LANGUAGE_TERRITORY_FOR_EXAMPLE_OR, 6048, Error, "Locale must be of the form <language> or <language>-<territory>. For example '{0}' or '{1}'."),
+    (LOCALE_MUST_BE_AN_IETF_BCP_47_LANGUAGE_TAG_EXAMPLES, 6048, Error, "Locale must be an IETF BCP 47 language tag. Examples: '{0}', '{1}'."),
     (UNABLE_TO_OPEN_FILE, 6050, Error, "Unable to open file '{0}'."),
     (CORRUPTED_LOCALE_FILE, 6051, Error, "Corrupted locale file {0}."),
     (RAISE_ERROR_ON_EXPRESSIONS_AND_DECLARATIONS_WITH_AN_IMPLIED_ANY_TYPE, 6052, Message, "Raise error on expressions and declarations with an implied 'any' type."),
@@ -652,5 +653,4 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (FILE_NAME_HAS_A_EXTENSION_STRIPPING_IT, 6132, Message, "File name '{0}' has a '{1}' extension - stripping it."),
     (IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ, 6133, Error, "'{0}' is declared but its value is never read."),
     (REPORT_ERRORS_ON_UNUSED_LOCALS, 6134, Message, "Report errors on unused locals."),
-    (REPORT_ERRORS_ON_UNUSED_PARAMETERS, 6135, Message, "Report errors on unused parameters."),
 }

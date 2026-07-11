@@ -337,7 +337,15 @@ class TestRendering(unittest.TestCase):
         cls.index = helper.SnapshotIndex(
             timestamp="2026-01-01T00:00:00Z",
             git_sha="d718764",
-            summary={"total_tests": 12582, "passed": 12582, "failed": 0},
+            summary={
+                "candidates": 10,
+                "runnable": 8,
+                "total_tests": 8,
+                "passed": 8,
+                "failed": 0,
+                "unsupported": 1,
+                "skipped": 1,
+            },
             failures=set(),
             accepted={
                 "TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx"
@@ -363,7 +371,8 @@ class TestRendering(unittest.TestCase):
         md = helper.render_markdown(results, self.index)
         self.assertIn("2026-01-01T00:00:00Z", md)
         self.assertIn("d718764", md)
-        self.assertIn("12582 / 12582 passing", md)
+        self.assertIn("8 / 8 passing", md)
+        self.assertIn("10 candidates (1 unsupported, 1 skipped)", md)
 
     def test_markdown_table_row_per_resolved_test(self) -> None:
         results = helper.resolve_inputs(["tsxGenericAttributesType6"], self.index)

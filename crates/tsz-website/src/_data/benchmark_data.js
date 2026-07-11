@@ -827,7 +827,7 @@ const TYPESCRIPT_VERSIONS_PATH = path.join(ROOT, "scripts/conformance/typescript
 
 function currentTypeScriptRef() {
   const versions = readJsonIfExists(TYPESCRIPT_VERSIONS_PATH);
-  return versions?.current || "050880ce59e30b356b686bd3144efe24f875ebc8";
+  return versions?.current || "4d4f005c8541e0255a9d8791205fdce326e462bc";
 }
 
 const TYPESCRIPT_FIXTURE_DIRS = [

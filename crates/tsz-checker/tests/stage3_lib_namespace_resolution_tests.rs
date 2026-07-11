@@ -115,7 +115,7 @@ cached_lib_group!(
         "es2015.iterable.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
     ]
 );
 
@@ -273,7 +273,7 @@ value;
     assert_no_qualifier_lookup_errors(&diagnostics, "Atomics.waitAsync destructure");
 }
 
-/// `esnext.iterator.d.ts` adds helper methods (`map`, `filter`, `take`,
+/// `es2025.iterator.d.ts` adds helper methods (`map`, `filter`, `take`,
 /// `toArray`, …) onto `IteratorObject` via `declare global { interface
 /// IteratorObject<...> { ... } }`. The adjacent case #8710 calls out — once
 /// the lib is loaded those methods must be visible on the merged interface.

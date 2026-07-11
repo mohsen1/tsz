@@ -16,16 +16,6 @@ pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
 pub struct ParsedTsConfig {
     pub config: TsConfig,
     pub diagnostics: Vec<Diagnostic>,
-    /// Captured from removed option `suppressExcessPropertyErrors` before stripping.
-    /// tsc still honors its effect even after removal (TS5102).
-    pub suppress_excess_property_errors: bool,
-    /// Captured from removed option `suppressImplicitAnyIndexErrors` before stripping.
-    /// tsc still honors its effect even after removal (TS5102).
-    pub suppress_implicit_any_index_errors: bool,
-    /// Captured from removed option `noImplicitUseStrict` before stripping.
-    /// tsc still honors its effect even after removal (TS5102): when true,
-    /// `alwaysStrict` does not enforce strict-mode checking rules.
-    pub no_implicit_use_strict: bool,
 }
 
 /// Parse tsconfig.json source and collect diagnostics for unknown compiler options.
@@ -33,7 +23,7 @@ pub struct ParsedTsConfig {
 /// Unlike `parse_tsconfig`, this function:
 /// 1. Detects unknown/miscased compiler option keys in the JSON
 /// 2. Normalizes them to canonical casing so serde can deserialize them
-/// 3. Returns TS5025 diagnostics for any miscased or unknown options
+/// 3. Returns TS5025 when a spelling suggestion exists, otherwise TS5023
 pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<ParsedTsConfig> {
     let stripped = strip_jsonc(source);
     let normalized = remove_trailing_commas(&stripped);
@@ -41,10 +31,6 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         serde_json::from_str(&normalized).context("failed to parse tsconfig JSON")?;
 
     let mut diagnostics = Vec::new();
-    let mut suppress_excess = false;
-    let mut suppress_any_index = false;
-    let mut no_implicit_use_strict = false;
-
     // Track options that had TS5024 type errors — defaults should not be applied for these.
     let mut ts5024_keys_outer: Vec<String> = Vec::new();
 
@@ -77,8 +63,20 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 }
                 // else: exact match, no diagnostic needed
             } else {
+                if compiler_opts
+                    .get(key)
+                    .is_some_and(serde_json::Value::is_null)
+                {
+                    unknown_keys.push(key.clone());
+                    continue;
+                }
                 // Truly unknown option — emit TS5023
-                if let Some(suggestion) = unknown_compiler_option_suggestion(&key_lower) {
+                let suggestion = if TS7_DROPPED_COMPILER_OPTIONS.contains(&key_lower.as_str()) {
+                    None
+                } else {
+                    unknown_compiler_option_suggestion(&key_lower)
+                };
+                if let Some(suggestion) = suggestion {
                     let msg = format_message(
                         diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
                         &[key, suggestion],
@@ -144,66 +142,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             compiler_opts.remove(key);
         }
 
-        // Check for removed compiler options (TS5102)
-        // These options were deprecated in TS 5.0 and removed in TS 5.5.
-        // In tsc 6.0, `mustBeRemoved` is always true (removedIn 5.5 <= tsc 6.0),
-        // so TS5102 fires unconditionally — ignoreDeprecations cannot suppress it.
-        // ignoreDeprecations only suppresses TS5101 (deprecated but not yet removed).
-        let mut removed_keys: Vec<String> = Vec::new();
-        for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
-            if removed_compiler_option(&key).is_some() {
-                let value = compiler_opts.get(&key);
-                // Only emit TS5102 if the option is actually set (non-null, non-default)
-                let is_set = match value {
-                    Some(serde_json::Value::Bool(b)) => *b,
-                    Some(serde_json::Value::String(s)) => !s.is_empty(),
-                    Some(serde_json::Value::Null) | None => false,
-                    Some(_) => true,
-                };
-                if is_set {
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                        &[&key],
-                    );
-                    push_key_diagnostic(
-                        &mut diagnostics,
-                        file_path,
-                        &stripped,
-                        &key,
-                        msg,
-                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                    );
-                }
-                removed_keys.push(key);
-            }
-        }
-        // Capture removed-but-still-honored suppress flags before stripping.
-        // tsc still honors these even after removal (TS5102 is emitted but suppression stays).
-        suppress_excess = matches!(
-            compiler_opts.get("suppressExcessPropertyErrors"),
-            Some(serde_json::Value::Bool(true))
-        );
-        suppress_any_index = matches!(
-            compiler_opts.get("suppressImplicitAnyIndexErrors"),
-            Some(serde_json::Value::Bool(true))
-        );
-        // noImplicitUseStrict: when true, alwaysStrict does not enforce strict-mode
-        // checking rules (e.g. TS1100). tsc still honors this even though the option
-        // was removed in TS 5.5 (TS5102 is emitted but the semantic effect is kept).
-        no_implicit_use_strict = matches!(
-            compiler_opts.get("noImplicitUseStrict"),
-            Some(serde_json::Value::Bool(true))
-        );
-
-        // Strip removed options so they don't reach serde or subsequent validation
-        for key in &removed_keys {
-            compiler_opts.remove(key);
-        }
-
         // Check compiler option value types (TS5024)
         // Collect keys that have type mismatches so we can remove them after iteration.
-        // Also track all keys that emitted TS5024 to suppress TS5101 for the same key
-        // (tsc does not emit a deprecation warning for an option that also has a type error).
+        // Track TS5024 keys so invalid values stay unavailable to later
+        // option-combination and removal validation.
         let keys_after_rename: Vec<String> = compiler_opts.keys().cloned().collect();
         let mut bad_keys: Vec<String> = Vec::new();
         let mut ts5024_keys: Vec<String> = Vec::new();
@@ -215,15 +157,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             let Some(value) = compiler_opts.get(key) else {
                 continue;
             };
-            let type_ok = match expected_type {
-                "boolean" => value.is_boolean(),
-                "string" => value.is_string(),
-                "number" => value.is_number(),
-                "Array" => value.is_array(),
-                "string or Array" => value.is_string() || value.is_array(),
-                "object" => value.is_object(),
-                _ => true,
-            };
+            let type_ok = value.is_null()
+                || match expected_type {
+                    "boolean" => value.is_boolean(),
+                    "string" => value.is_string(),
+                    "number" => value.is_number(),
+                    "Array" => value.is_array(),
+                    "string or Array" => value.is_string() || value.is_array(),
+                    "object" => value.is_object(),
+                    _ => true,
+                };
             if !type_ok {
                 let start = find_value_offset_in_source(&stripped, key);
                 let value_len = estimate_json_value_len(value);
@@ -238,7 +181,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     msg,
                     diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
                 ));
-                // Track all TS5024 keys so we can suppress TS5101 for the same key.
+                // Track invalidated keys for the later validation phases.
                 ts5024_keys.push(key.clone());
                 // tsc emits TS5024 and does NOT apply the value (convertJsonOption
                 // returns undefined for type mismatches), so remove invalidly-typed
@@ -252,10 +195,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // tsc 6.0 accepts both "5.0" and "6.0" as valid ignoreDeprecations values.
-        // See TypeScript/src/compiler/program.ts getIgnoreDeprecationsVersion():
-        //   "5.0" silences 5.0-wave deprecation warnings (now removals → TS5102).
-        //   "6.0" silences 6.0-wave deprecation warnings (TS5107).
+        // TypeScript 7 still accepts the historical "5.0" and "6.0"
+        // literals, but neither suppresses TS7 removal diagnostics.
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
             && id_value != "6.0"
@@ -271,168 +212,28 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ));
         }
 
-        // Check 6.0-wave deprecated compiler options (TS5107 / TS5101)
-        // These options were deprecated in TS 6.0 and will be removed in TS 7.0.
-        // Suppressed when ignoreDeprecations >= "6.0".
-        let ignore_deprecations_silences_6_0 = matches!(
-            compiler_opts.get("ignoreDeprecations"),
-            Some(serde_json::Value::String(v)) if v == "6.0"
-        );
-        if !ignore_deprecations_silences_6_0 {
-            // Value-based deprecations (TS5107): "Option '{0}={1}' is deprecated..."
-            type DeprecationCheck = (
-                &'static str,
-                &'static dyn Fn(&serde_json::Value) -> Option<&'static str>,
-            );
-            let value_deprecations: &[DeprecationCheck] = &[
-                ("alwaysStrict", &|v| {
-                    if v == &serde_json::Value::Bool(false) {
-                        Some("false")
-                    } else {
-                        None
-                    }
-                }),
-                ("target", &|v| match v {
-                    serde_json::Value::String(s) => {
-                        let n = normalize_option(s);
-                        if n == "es5" { Some("ES5") } else { None }
-                    }
-                    _ => None,
-                }),
-                ("moduleResolution", &|v| match v {
-                    serde_json::Value::String(s) => {
-                        let n = normalize_option(s);
-                        if n == "node10" || n == "node" {
-                            Some("node10")
-                        } else if n == "classic" {
-                            Some("classic")
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }),
-                ("esModuleInterop", &|v| {
-                    if v == &serde_json::Value::Bool(false) {
-                        Some("false")
-                    } else {
-                        None
-                    }
-                }),
-                ("allowSyntheticDefaultImports", &|v| {
-                    if v == &serde_json::Value::Bool(false) {
-                        Some("false")
-                    } else {
-                        None
-                    }
-                }),
-                ("module", &|v| match v {
-                    serde_json::Value::String(s) => {
-                        let n = normalize_option(s);
-                        match n.as_str() {
-                            "none" => Some("None"),
-                            "amd" => Some("AMD"),
-                            "umd" => Some("UMD"),
-                            "system" => Some("System"),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                }),
-            ];
-            for (key, check_fn) in value_deprecations {
-                if let Some(value) = compiler_opts.get(*key)
-                    && let Some(display_value) = check_fn(value)
-                {
-                    let start = find_value_offset_in_source(&stripped, key);
-                    let value_len = estimate_json_value_len(value);
-                    let msg = deprecation_helpers::maybe_with_migration_url(
-                        format_message(
-                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
-                            &[key, display_value, "7.0", "6.0"],
-                        ),
-                        key,
-                        Some(display_value),
-                    );
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        value_len,
-                        msg,
-                        diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2,
-                    ));
-                }
-            }
-
-            let key_deprecations = ["baseUrl", "outFile", "downlevelIteration"];
-            for key in &key_deprecations {
-                // Suppress TS5101 when TS5024 already fired; tsc skips invalid options.
-                if ts5024_keys.iter().any(|k| k == key) {
-                    continue;
-                }
-                if compiler_opts.contains_key(*key) {
-                    let search = format!("\"{key}\"");
-                    let compiler_opts_pos = stripped.find("compilerOptions").unwrap_or(0);
-                    let start = stripped[compiler_opts_pos..]
-                        .find(&search)
-                        .map(|p| (compiler_opts_pos + p) as u32)
-                        .unwrap_or(0);
-                    let key_len = key.len() as u32 + 2; // include quotes
-                    let msg = deprecation_helpers::maybe_with_migration_url(
-                        format_message(
-                            diagnostic_messages::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
-                            &[key, "7.0", "6.0"],
-                        ),
-                        key,
-                        None,
-                    );
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        key_len,
-                        msg,
-                        diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT,
-                    ));
-                }
-            }
-        }
-
-        // Check for removed compiler option values (TS5108)
-        // These are specific values for otherwise-valid options that tsc 6.0 removed entirely.
-        // Unlike TS5107 deprecations, TS5108 cannot be suppressed by ignoreDeprecations.
-        {
-            type RemovedValueCheck = (
-                &'static str,
-                &'static dyn Fn(&serde_json::Value) -> Option<&'static str>,
-            );
-            let removed_value_checks: &[RemovedValueCheck] = &[("target", &|v| match v {
-                serde_json::Value::String(s) => {
-                    let n = normalize_option(s);
-                    if n == "es3" { Some("ES3") } else { None }
-                }
-                _ => None,
-            })];
-            for (key, check_fn) in removed_value_checks {
-                let matched = compiler_opts
-                    .get(*key)
-                    .and_then(|v| check_fn(v).map(|dv| (dv, estimate_json_value_len(v))));
-                if let Some((display_value, value_len)) = matched {
-                    let start = find_value_offset_in_source(&stripped, key);
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2,
-                        &[key, display_value],
-                    );
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        value_len,
-                        msg,
-                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2,
-                    ));
-                    // Null out so validate_option_value and resolve_compiler_options skip it.
-                    compiler_opts.insert(key.to_string(), serde_json::Value::Null);
-                }
-            }
+        // TypeScript 7 turns the complete 6.0 deprecation wave into
+        // unsuppressible removals. Keep the policy in deprecation_helpers so
+        // config and direct CLI validation share aliases and display values.
+        for notice in deprecation_helpers::removed_option_notices_from_json(compiler_opts) {
+            let key = notice.key();
+            let start = if notice.is_value() {
+                find_value_offset_in_source(&stripped, key)
+            } else {
+                find_key_offset_in_source(&stripped, key)
+            };
+            let length = if notice.is_value() {
+                compiler_opts.get(key).map_or(0, estimate_json_value_len)
+            } else {
+                key.len() as u32 + 2
+            };
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                length,
+                notice.message(),
+                notice.code(),
+            ));
         }
 
         // Check command-line-only options in tsconfig (TS6266)
@@ -457,6 +258,20 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 compiler_opts.remove(*key);
             }
         }
+
+        // Validate `module` before compatibility checks. TypeScript 7 rejects
+        // removed values such as `none` with TS6046 and does not derive
+        // follow-on diagnostics from that invalid value.
+        validate_option_value(
+            compiler_opts,
+            "module",
+            &stripped,
+            file_path,
+            VALID_MODULE_VALUES,
+            "--module",
+            VALID_MODULE_DISPLAY,
+            &mut diagnostics,
+        );
 
         // Check moduleResolution/module compatibility (TS5095)
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
@@ -489,8 +304,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     )
                 } else {
                     // module not set — default depends on target.
-                    // ES2015+ targets default to es2015 (compatible), lower targets
-                    // default to commonjs which is also compatible with bundler in tsc 6.0.
+                    // ES2015+ targets default to es2015 (compatible); lower targets
+                    // default to commonjs, which is also compatible with bundler.
                     true
                 };
                 if !module_ok {
@@ -1120,9 +935,9 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // pre-resolve TS5098 gate doesn't disagree with the post-resolve
         // option state. tsz's defaults are:
         //   target unset → `default_module_kind_for_target` folds it to
-        //                  `LatestStandard` per tsc 6.0
+        //                  `LatestStandard`
         //   module unset → `default_module_kind_for_target(target, explicit)`
-        //                  (tsc 6.0: `ES2022` when target is unset)
+        //                  (`ES2022` when target is unset)
         //   moduleResolution unset → `default_module_resolution_for_module(module)`
         // and `Bundler` / `Node16` / `NodeNext` all count as "modern". The
         // unset-target module (`ES2022`) still resolves to `Bundler`, so this
@@ -1191,16 +1006,6 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             VALID_TARGET_VALUES,
             "--target",
             VALID_TARGET_DISPLAY,
-            &mut diagnostics,
-        );
-        validate_option_value(
-            compiler_opts,
-            "module",
-            &stripped,
-            file_path,
-            VALID_MODULE_VALUES,
-            "--module",
-            VALID_MODULE_DISPLAY,
             &mut diagnostics,
         );
         validate_option_value(
@@ -1493,8 +1298,5 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     Ok(ParsedTsConfig {
         config,
         diagnostics,
-        suppress_excess_property_errors: suppress_excess,
-        suppress_implicit_any_index_errors: suppress_any_index,
-        no_implicit_use_strict,
     })
 }

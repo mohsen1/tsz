@@ -1,5 +1,8 @@
 /// <reference lib="es2015" />
 /// <reference lib="es2018.asynciterable" />
+interface AacEncoderConfig {
+    format?: AacBitstreamFormat;
+}
 interface AddEventListenerOptions extends EventListenerOptions {
     once?: boolean;
     passive?: boolean;
@@ -118,6 +121,7 @@ interface AudioDecoderSupport {
     supported?: boolean;
 }
 interface AudioEncoderConfig {
+    aac?: AacEncoderConfig;
     bitrate?: number;
     bitrateMode?: BitrateMode;
     codec: string;
@@ -177,6 +181,12 @@ interface AuthenticationExtensionsClientOutputs {
     largeBlob?: AuthenticationExtensionsLargeBlobOutputs;
     prf?: AuthenticationExtensionsPRFOutputs;
 }
+interface AuthenticationExtensionsClientOutputsJSON {
+    appid?: boolean;
+    credProps?: CredentialPropertiesOutput;
+    largeBlob?: AuthenticationExtensionsLargeBlobOutputsJSON;
+    prf?: AuthenticationExtensionsPRFOutputsJSON;
+}
 interface AuthenticationExtensionsLargeBlobInputs {
     read?: boolean;
     support?: string;
@@ -192,6 +202,11 @@ interface AuthenticationExtensionsLargeBlobOutputs {
     supported?: boolean;
     written?: boolean;
 }
+interface AuthenticationExtensionsLargeBlobOutputsJSON {
+    blob?: Base64URLString;
+    supported?: boolean;
+    written?: boolean;
+}
 interface AuthenticationExtensionsPRFInputs {
     eval?: AuthenticationExtensionsPRFValues;
     evalByCredential?: Record<string, AuthenticationExtensionsPRFValues>;
@@ -204,6 +219,10 @@ interface AuthenticationExtensionsPRFOutputs {
     enabled?: boolean;
     results?: AuthenticationExtensionsPRFValues;
 }
+interface AuthenticationExtensionsPRFOutputsJSON {
+    enabled?: boolean;
+    results?: AuthenticationExtensionsPRFValuesJSON;
+}
 interface AuthenticationExtensionsPRFValues {
     first: BufferSource;
     second?: BufferSource;
@@ -211,6 +230,28 @@ interface AuthenticationExtensionsPRFValues {
 interface AuthenticationExtensionsPRFValuesJSON {
     first: Base64URLString;
     second?: Base64URLString;
+}
+interface AuthenticationResponseJSON {
+    authenticatorAttachment?: string;
+    clientExtensionResults: AuthenticationExtensionsClientOutputsJSON;
+    id: string;
+    rawId: Base64URLString;
+    response: AuthenticatorAssertionResponseJSON;
+    type: string;
+}
+interface AuthenticatorAssertionResponseJSON {
+    authenticatorData: Base64URLString;
+    clientDataJSON: Base64URLString;
+    signature: Base64URLString;
+    userHandle?: Base64URLString;
+}
+interface AuthenticatorAttestationResponseJSON {
+    attestationObject: Base64URLString;
+    authenticatorData: Base64URLString;
+    clientDataJSON: Base64URLString;
+    publicKey?: Base64URLString;
+    publicKeyAlgorithm: COSEAlgorithmIdentifier;
+    transports: string[];
 }
 interface AuthenticatorSelectionCriteria {
     authenticatorAttachment?: AuthenticatorAttachment;
@@ -519,7 +560,7 @@ interface EffectTiming {
     playbackRate?: number;
 }
 interface ElementCreationOptions {
-    customElementRegistry?: CustomElementRegistry;
+    customElementRegistry?: CustomElementRegistry | null;
     is?: string;
 }
 interface ElementDefinitionOptions {
@@ -543,6 +584,7 @@ interface EncodedVideoChunkInit {
 }
 interface EncodedVideoChunkMetadata {
     decoderConfig?: VideoDecoderConfig;
+    svc?: SvcOutputMetadata;
 }
 interface ErrorEventInit extends EventInit {
     colno?: number;
@@ -601,6 +643,7 @@ interface FocusEventInit extends UIEventInit {
     relatedTarget?: EventTarget | null;
 }
 interface FocusOptions {
+    focusVisible?: boolean;
     preventScroll?: boolean;
 }
 interface FontFaceDescriptors {
@@ -612,6 +655,7 @@ interface FontFaceDescriptors {
     stretch?: string;
     style?: string;
     unicodeRange?: string;
+    variationSettings?: string;
     weight?: string;
 }
 interface FontFaceSetLoadEventInit extends EventInit {
@@ -623,8 +667,307 @@ interface FormDataEventInit extends EventInit {
 interface FullscreenOptions {
     navigationUI?: FullscreenNavigationUI;
 }
+interface GPUBindGroupDescriptor extends GPUObjectDescriptorBase {
+    entries: GPUBindGroupEntry[];
+    layout: GPUBindGroupLayout;
+}
+interface GPUBindGroupEntry {
+    binding: GPUIndex32;
+    resource: GPUBindingResource;
+}
+interface GPUBindGroupLayoutDescriptor extends GPUObjectDescriptorBase {
+    entries: GPUBindGroupLayoutEntry[];
+}
+interface GPUBindGroupLayoutEntry {
+    binding: GPUIndex32;
+    buffer?: GPUBufferBindingLayout;
+    externalTexture?: GPUExternalTextureBindingLayout;
+    sampler?: GPUSamplerBindingLayout;
+    storageTexture?: GPUStorageTextureBindingLayout;
+    texture?: GPUTextureBindingLayout;
+    visibility: GPUShaderStageFlags;
+}
+interface GPUBlendComponent {
+    dstFactor?: GPUBlendFactor;
+    operation?: GPUBlendOperation;
+    srcFactor?: GPUBlendFactor;
+}
+interface GPUBlendState {
+    alpha: GPUBlendComponent;
+    color: GPUBlendComponent;
+}
+interface GPUBufferBinding {
+    buffer: GPUBuffer;
+    offset?: GPUSize64;
+    size?: GPUSize64;
+}
+interface GPUBufferBindingLayout {
+    hasDynamicOffset?: boolean;
+    minBindingSize?: GPUSize64;
+    type?: GPUBufferBindingType;
+}
+interface GPUBufferDescriptor extends GPUObjectDescriptorBase {
+    mappedAtCreation?: boolean;
+    size: GPUSize64;
+    usage: GPUBufferUsageFlags;
+}
+interface GPUCanvasConfiguration {
+    alphaMode?: GPUCanvasAlphaMode;
+    colorSpace?: PredefinedColorSpace;
+    device: GPUDevice;
+    format: GPUTextureFormat;
+    toneMapping?: GPUCanvasToneMapping;
+    usage?: GPUTextureUsageFlags;
+    viewFormats?: GPUTextureFormat[];
+}
+interface GPUCanvasToneMapping {
+    mode?: GPUCanvasToneMappingMode;
+}
+interface GPUColorDict {
+    a: number;
+    b: number;
+    g: number;
+    r: number;
+}
+interface GPUColorTargetState {
+    blend?: GPUBlendState;
+    format: GPUTextureFormat;
+    writeMask?: GPUColorWriteFlags;
+}
+interface GPUCommandBufferDescriptor extends GPUObjectDescriptorBase {
+}
+interface GPUCommandEncoderDescriptor extends GPUObjectDescriptorBase {
+}
+interface GPUComputePassDescriptor extends GPUObjectDescriptorBase {
+    timestampWrites?: GPUComputePassTimestampWrites;
+}
+interface GPUComputePassTimestampWrites {
+    beginningOfPassWriteIndex?: GPUSize32;
+    endOfPassWriteIndex?: GPUSize32;
+    querySet: GPUQuerySet;
+}
+interface GPUComputePipelineDescriptor extends GPUPipelineDescriptorBase {
+    compute: GPUProgrammableStage;
+}
+interface GPUCopyExternalImageDestInfo extends GPUTexelCopyTextureInfo {
+    colorSpace?: PredefinedColorSpace;
+    premultipliedAlpha?: boolean;
+}
+interface GPUCopyExternalImageSourceInfo {
+    flipY?: boolean;
+    origin?: GPUOrigin2D;
+    source: GPUCopyExternalImageSource;
+}
+interface GPUDepthStencilState {
+    depthBias?: GPUDepthBias;
+    depthBiasClamp?: number;
+    depthBiasSlopeScale?: number;
+    depthCompare?: GPUCompareFunction;
+    depthWriteEnabled?: boolean;
+    format: GPUTextureFormat;
+    stencilBack?: GPUStencilFaceState;
+    stencilFront?: GPUStencilFaceState;
+    stencilReadMask?: GPUStencilValue;
+    stencilWriteMask?: GPUStencilValue;
+}
+interface GPUDeviceDescriptor extends GPUObjectDescriptorBase {
+    defaultQueue?: GPUQueueDescriptor;
+    requiredFeatures?: GPUFeatureName[];
+    requiredLimits?: Record<string, GPUSize64 | undefined>;
+}
+interface GPUExtent3DDict {
+    depthOrArrayLayers?: GPUIntegerCoordinate;
+    height?: GPUIntegerCoordinate;
+    width: GPUIntegerCoordinate;
+}
+interface GPUExternalTextureBindingLayout {
+}
+interface GPUExternalTextureDescriptor extends GPUObjectDescriptorBase {
+    colorSpace?: PredefinedColorSpace;
+    source: HTMLVideoElement | VideoFrame;
+}
+interface GPUFragmentState extends GPUProgrammableStage {
+    targets: (GPUColorTargetState | null)[];
+}
+interface GPUMultisampleState {
+    alphaToCoverageEnabled?: boolean;
+    count?: GPUSize32;
+    mask?: GPUSampleMask;
+}
+interface GPUObjectDescriptorBase {
+    label?: string;
+}
+interface GPUOrigin2DDict {
+    x?: GPUIntegerCoordinate;
+    y?: GPUIntegerCoordinate;
+}
+interface GPUOrigin3DDict {
+    x?: GPUIntegerCoordinate;
+    y?: GPUIntegerCoordinate;
+    z?: GPUIntegerCoordinate;
+}
+interface GPUPipelineDescriptorBase extends GPUObjectDescriptorBase {
+    layout: GPUPipelineLayout | GPUAutoLayoutMode;
+}
 interface GPUPipelineErrorInit {
     reason: GPUPipelineErrorReason;
+}
+interface GPUPipelineLayoutDescriptor extends GPUObjectDescriptorBase {
+    bindGroupLayouts: (GPUBindGroupLayout | null)[];
+}
+interface GPUPrimitiveState {
+    cullMode?: GPUCullMode;
+    frontFace?: GPUFrontFace;
+    stripIndexFormat?: GPUIndexFormat;
+    topology?: GPUPrimitiveTopology;
+    unclippedDepth?: boolean;
+}
+interface GPUProgrammableStage {
+    constants?: Record<string, GPUPipelineConstantValue>;
+    entryPoint?: string;
+    module: GPUShaderModule;
+}
+interface GPUQuerySetDescriptor extends GPUObjectDescriptorBase {
+    count: GPUSize32;
+    type: GPUQueryType;
+}
+interface GPUQueueDescriptor extends GPUObjectDescriptorBase {
+}
+interface GPURenderBundleDescriptor extends GPUObjectDescriptorBase {
+}
+interface GPURenderBundleEncoderDescriptor extends GPURenderPassLayout {
+    depthReadOnly?: boolean;
+    stencilReadOnly?: boolean;
+}
+interface GPURenderPassColorAttachment {
+    clearValue?: GPUColor;
+    depthSlice?: GPUIntegerCoordinate;
+    loadOp: GPULoadOp;
+    resolveTarget?: GPUTexture | GPUTextureView;
+    storeOp: GPUStoreOp;
+    view: GPUTexture | GPUTextureView;
+}
+interface GPURenderPassDepthStencilAttachment {
+    depthClearValue?: number;
+    depthLoadOp?: GPULoadOp;
+    depthReadOnly?: boolean;
+    depthStoreOp?: GPUStoreOp;
+    stencilClearValue?: GPUStencilValue;
+    stencilLoadOp?: GPULoadOp;
+    stencilReadOnly?: boolean;
+    stencilStoreOp?: GPUStoreOp;
+    view: GPUTexture | GPUTextureView;
+}
+interface GPURenderPassDescriptor extends GPUObjectDescriptorBase {
+    colorAttachments: (GPURenderPassColorAttachment | null)[];
+    depthStencilAttachment?: GPURenderPassDepthStencilAttachment;
+    maxDrawCount?: GPUSize64;
+    occlusionQuerySet?: GPUQuerySet;
+    timestampWrites?: GPURenderPassTimestampWrites;
+}
+interface GPURenderPassLayout extends GPUObjectDescriptorBase {
+    colorFormats: (GPUTextureFormat | null)[];
+    depthStencilFormat?: GPUTextureFormat;
+    sampleCount?: GPUSize32;
+}
+interface GPURenderPassTimestampWrites {
+    beginningOfPassWriteIndex?: GPUSize32;
+    endOfPassWriteIndex?: GPUSize32;
+    querySet: GPUQuerySet;
+}
+interface GPURenderPipelineDescriptor extends GPUPipelineDescriptorBase {
+    depthStencil?: GPUDepthStencilState;
+    fragment?: GPUFragmentState;
+    multisample?: GPUMultisampleState;
+    primitive?: GPUPrimitiveState;
+    vertex: GPUVertexState;
+}
+interface GPURequestAdapterOptions {
+    forceFallbackAdapter?: boolean;
+    powerPreference?: GPUPowerPreference;
+}
+interface GPUSamplerBindingLayout {
+    type?: GPUSamplerBindingType;
+}
+interface GPUSamplerDescriptor extends GPUObjectDescriptorBase {
+    addressModeU?: GPUAddressMode;
+    addressModeV?: GPUAddressMode;
+    addressModeW?: GPUAddressMode;
+    compare?: GPUCompareFunction;
+    lodMaxClamp?: number;
+    lodMinClamp?: number;
+    magFilter?: GPUFilterMode;
+    maxAnisotropy?: number;
+    minFilter?: GPUFilterMode;
+    mipmapFilter?: GPUMipmapFilterMode;
+}
+interface GPUShaderModuleDescriptor extends GPUObjectDescriptorBase {
+    code: string;
+}
+interface GPUStencilFaceState {
+    compare?: GPUCompareFunction;
+    depthFailOp?: GPUStencilOperation;
+    failOp?: GPUStencilOperation;
+    passOp?: GPUStencilOperation;
+}
+interface GPUStorageTextureBindingLayout {
+    access?: GPUStorageTextureAccess;
+    format: GPUTextureFormat;
+    viewDimension?: GPUTextureViewDimension;
+}
+interface GPUTexelCopyBufferInfo extends GPUTexelCopyBufferLayout {
+    buffer: GPUBuffer;
+}
+interface GPUTexelCopyBufferLayout {
+    bytesPerRow?: GPUSize32;
+    offset?: GPUSize64;
+    rowsPerImage?: GPUSize32;
+}
+interface GPUTexelCopyTextureInfo {
+    aspect?: GPUTextureAspect;
+    mipLevel?: GPUIntegerCoordinate;
+    origin?: GPUOrigin3D;
+    texture: GPUTexture;
+}
+interface GPUTextureBindingLayout {
+    multisampled?: boolean;
+    sampleType?: GPUTextureSampleType;
+    viewDimension?: GPUTextureViewDimension;
+}
+interface GPUTextureDescriptor extends GPUObjectDescriptorBase {
+    dimension?: GPUTextureDimension;
+    format: GPUTextureFormat;
+    mipLevelCount?: GPUIntegerCoordinate;
+    sampleCount?: GPUSize32;
+    size: GPUExtent3D;
+    usage: GPUTextureUsageFlags;
+    viewFormats?: GPUTextureFormat[];
+}
+interface GPUTextureViewDescriptor extends GPUObjectDescriptorBase {
+    arrayLayerCount?: GPUIntegerCoordinate;
+    aspect?: GPUTextureAspect;
+    baseArrayLayer?: GPUIntegerCoordinate;
+    baseMipLevel?: GPUIntegerCoordinate;
+    dimension?: GPUTextureViewDimension;
+    format?: GPUTextureFormat;
+    mipLevelCount?: GPUIntegerCoordinate;
+    usage?: GPUTextureUsageFlags;
+}
+interface GPUUncapturedErrorEventInit extends EventInit {
+    error: GPUError;
+}
+interface GPUVertexAttribute {
+    format: GPUVertexFormat;
+    offset: GPUSize64;
+    shaderLocation: GPUIndex32;
+}
+interface GPUVertexBufferLayout {
+    arrayStride: GPUSize64;
+    attributes: GPUVertexAttribute[];
+    stepMode?: GPUVertexStepMode;
+}
+interface GPUVertexState extends GPUProgrammableStage {
+    buffers?: (GPUVertexBufferLayout | null)[];
 }
 interface GainOptions extends AudioNodeOptions {
     gain?: number;
@@ -638,7 +981,7 @@ interface GamepadEffectParameters {
     weakMagnitude?: number;
 }
 interface GamepadEventInit extends EventInit {
-    gamepad: Gamepad;
+    gamepad?: Gamepad | null;
 }
 interface GetAnimationsOptions {
     subtree?: boolean;
@@ -716,6 +1059,7 @@ interface ImageBitmapRenderingContextSettings {
 }
 interface ImageDataSettings {
     colorSpace?: PredefinedColorSpace;
+    pixelFormat?: ImageDataPixelFormat;
 }
 interface ImageDecodeOptions {
     completeFramesOnly?: boolean;
@@ -798,6 +1142,8 @@ interface Keyframe {
 }
 interface KeyframeAnimationOptions extends KeyframeEffectOptions {
     id?: string;
+    rangeEnd?: TimelineRangeOffset | CSSNumericValue | CSSKeywordValue | string;
+    rangeStart?: TimelineRangeOffset | CSSNumericValue | CSSKeywordValue | string;
     timeline?: AnimationTimeline | null;
 }
 interface KeyframeEffectOptions extends EffectTiming {
@@ -1041,9 +1387,49 @@ interface MutationObserverInit {
     childList?: boolean;
     subtree?: boolean;
 }
+interface NavigateEventInit extends EventInit {
+    canIntercept?: boolean;
+    destination: NavigationDestination;
+    downloadRequest?: string | null;
+    formData?: FormData | null;
+    hasUAVisualTransition?: boolean;
+    hashChange?: boolean;
+    info?: any;
+    navigationType?: NavigationType;
+    signal: AbortSignal;
+    sourceElement?: Element | null;
+    userInitiated?: boolean;
+}
+interface NavigationCurrentEntryChangeEventInit extends EventInit {
+    from: NavigationHistoryEntry;
+    navigationType?: NavigationType | null;
+}
+interface NavigationInterceptOptions {
+    focusReset?: NavigationFocusReset;
+    handler?: NavigationInterceptHandler;
+    precommitHandler?: NavigationPrecommitHandler;
+    scroll?: NavigationScrollBehavior;
+}
+interface NavigationNavigateOptions extends NavigationOptions {
+    history?: NavigationHistoryBehavior;
+    state?: any;
+}
+interface NavigationOptions {
+    info?: any;
+}
 interface NavigationPreloadState {
     enabled?: boolean;
     headerValue?: string;
+}
+interface NavigationReloadOptions extends NavigationOptions {
+    state?: any;
+}
+interface NavigationResult {
+    committed?: Promise<NavigationHistoryEntry>;
+    finished?: Promise<NavigationHistoryEntry>;
+}
+interface NavigationUpdateCurrentEntryOptions {
+    state: any;
 }
 interface NotificationOptions {
     badge?: string;
@@ -1247,6 +1633,7 @@ interface PointerLockOptions {
     unadjustedMovement?: boolean;
 }
 interface PopStateEventInit extends EventInit {
+    hasUAVisualTransition?: boolean;
     state?: any;
 }
 interface PositionOptions {
@@ -1674,6 +2061,9 @@ interface RTCTransportStats extends RTCStats {
     srtpCipher?: string;
     tlsVersion?: string;
 }
+interface ReadableStreamBYOBReaderReadOptions {
+    min?: number;
+}
 interface ReadableStreamGetReaderOptions {
     mode?: ReadableStreamReaderMode;
 }
@@ -1696,6 +2086,14 @@ interface RegistrationOptions {
     scope?: string;
     type?: WorkerType;
     updateViaCache?: ServiceWorkerUpdateViaCache;
+}
+interface RegistrationResponseJSON {
+    authenticatorAttachment?: string;
+    clientExtensionResults: AuthenticationExtensionsClientOutputsJSON;
+    id: string;
+    rawId: Base64URLString;
+    response: AuthenticatorAttestationResponseJSON;
+    type: string;
 }
 interface Report {
     body?: ReportBody | null;
@@ -1766,6 +2164,27 @@ interface SVGBoundingBoxOptions {
     markers?: boolean;
     stroke?: boolean;
 }
+interface SanitizerAttributeNamespace {
+    name: string;
+    namespace?: string | null;
+}
+interface SanitizerConfig {
+    attributes?: SanitizerAttribute[];
+    comments?: boolean;
+    dataAttributes?: boolean;
+    elements?: SanitizerElementWithAttributes[];
+    removeAttributes?: SanitizerAttribute[];
+    removeElements?: SanitizerElement[];
+    replaceWithChildrenElements?: SanitizerElement[];
+}
+interface SanitizerElementNamespace {
+    name: string;
+    namespace?: string | null;
+}
+interface SanitizerElementNamespaceWithAttributes extends SanitizerElementNamespace {
+    attributes?: SanitizerAttribute[];
+    removeAttributes?: SanitizerAttribute[];
+}
 interface SchedulerPostTaskOptions {
     delay?: number;
     priority?: TaskPriority;
@@ -1813,6 +2232,9 @@ interface ShareData {
     text?: string;
     title?: string;
     url?: string;
+}
+interface ShowPopoverOptions {
+    source?: HTMLElement;
 }
 interface SpeechRecognitionErrorEventInit extends EventInit {
     error: SpeechRecognitionErrorCode;
@@ -1868,6 +2290,9 @@ interface StructuredSerializeOptions {
 interface SubmitEventInit extends EventInit {
     submitter?: HTMLElement | null;
 }
+interface SvcOutputMetadata {
+    temporalLayerId?: number;
+}
 interface TaskControllerInit {
     priority?: TaskPriority;
 }
@@ -1888,9 +2313,17 @@ interface TextEncoderEncodeIntoResult {
     read: number;
     written: number;
 }
+interface TimelineRangeOffset {
+    offset?: CSSNumericValue;
+    rangeName?: string | null;
+}
 interface ToggleEventInit extends EventInit {
     newState?: string;
     oldState?: string;
+    source?: Element | null;
+}
+interface TogglePopoverOptions extends ShowPopoverOptions {
+    force?: boolean;
 }
 interface TouchEventInit extends EventModifierInit {
     changedTouches?: Touch[];
@@ -2135,6 +2568,7 @@ interface WebGLContextAttributes {
     premultipliedAlpha?: boolean;
     preserveDrawingBuffer?: boolean;
     stencil?: boolean;
+    xrCompatible?: boolean;
 }
 interface WebGLContextEventInit extends EventInit {
     statusMessage?: string;
@@ -2148,12 +2582,13 @@ interface WebTransportErrorOptions {
     streamErrorCode?: number | null;
 }
 interface WebTransportHash {
-    algorithm?: string;
-    value?: BufferSource;
+    algorithm: string;
+    value: BufferSource;
 }
 interface WebTransportOptions {
     allowPooling?: boolean;
     congestionControl?: WebTransportCongestionControl;
+    protocols?: string[];
     requireUnreliable?: boolean;
     serverCertificateHashes?: WebTransportHash[];
 }
@@ -3209,6 +3644,7 @@ interface CSSRule {
     readonly MEDIA_RULE: 4;
     readonly FONT_FACE_RULE: 5;
     readonly PAGE_RULE: 6;
+    readonly MARGIN_RULE: 9;
     readonly NAMESPACE_RULE: 10;
     readonly KEYFRAMES_RULE: 7;
     readonly KEYFRAME_RULE: 8;
@@ -3225,6 +3661,7 @@ declare var CSSRule: {
     readonly MEDIA_RULE: 4;
     readonly FONT_FACE_RULE: 5;
     readonly PAGE_RULE: 6;
+    readonly MARGIN_RULE: 9;
     readonly NAMESPACE_RULE: 10;
     readonly KEYFRAMES_RULE: 7;
     readonly KEYFRAME_RULE: 8;
@@ -3457,6 +3894,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
     dominantBaseline: string;
     dynamicRangeLimit: string;
     emptyCells: string;
+    fieldSizing: string;
     fill: string;
     fillOpacity: string;
     fillRule: string;
@@ -3475,6 +3913,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
     fontFamily: string;
     fontFeatureSettings: string;
     fontKerning: string;
+    fontLanguageOverride: string;
     fontOpticalSizing: string;
     fontPalette: string;
     fontSize: string;
@@ -3568,6 +4007,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
     maskSize: string;
     maskType: string;
     mathDepth: string;
+    mathShift: string;
     mathStyle: string;
     maxBlockSize: string;
     maxHeight: string;
@@ -3635,6 +4075,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
     positionTry: string;
     positionTryFallbacks: string;
     positionTryOrder: string;
+    positionVisibility: string;
     printColorAdjust: string;
     quotes: string;
     r: string;
@@ -3714,6 +4155,7 @@ interface CSSStyleProperties extends CSSStyleDeclarationBase {
     textEmphasisPosition: string;
     textEmphasisStyle: string;
     textIndent: string;
+    textJustify: string;
     textOrientation: string;
     textOverflow: string;
     textRendering: string;
@@ -4327,7 +4769,7 @@ declare var CredentialsContainer: {
 };
 interface Crypto {
     readonly subtle: SubtleCrypto;
-    getRandomValues<T extends ArrayBufferView>(array: T): T;
+    getRandomValues<T extends Exclude<BufferSource, ArrayBuffer>>(array: T): T;
     randomUUID(): `${string}-${string}-${string}-${string}-${string}`;
 }
 declare var Crypto: {
@@ -4348,6 +4790,7 @@ interface CustomElementRegistry {
     define(name: string, constructor: CustomElementConstructor, options?: ElementDefinitionOptions): void;
     get(name: string): CustomElementConstructor | undefined;
     getName(constructor: CustomElementConstructor): string | null;
+    initialize(root: Node): void;
     upgrade(root: Node): void;
     whenDefined(name: string): Promise<CustomElementConstructor>;
 }
@@ -4761,6 +5204,7 @@ interface DocumentEventMap extends GlobalEventHandlersEventMap {
 }
 interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEventHandlers, NonElementParentNode, ParentNode, XPathEvaluatorBase {
     readonly URL: string;
+    readonly activeViewTransition: ViewTransition | null;
     alinkColor: string;
     readonly all: HTMLAllCollection;
     readonly anchors: HTMLCollectionOf<HTMLAnchorElement>;
@@ -4856,6 +5300,7 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
     createEvent(eventInterface: "FocusEvent"): FocusEvent;
     createEvent(eventInterface: "FontFaceSetLoadEvent"): FontFaceSetLoadEvent;
     createEvent(eventInterface: "FormDataEvent"): FormDataEvent;
+    createEvent(eventInterface: "GPUUncapturedErrorEvent"): GPUUncapturedErrorEvent;
     createEvent(eventInterface: "GamepadEvent"): GamepadEvent;
     createEvent(eventInterface: "HashChangeEvent"): HashChangeEvent;
     createEvent(eventInterface: "IDBVersionChangeEvent"): IDBVersionChangeEvent;
@@ -4870,6 +5315,8 @@ interface Document extends Node, DocumentOrShadowRoot, FontFaceSource, GlobalEve
     createEvent(eventInterface: "MessageEvent"): MessageEvent;
     createEvent(eventInterface: "MouseEvent"): MouseEvent;
     createEvent(eventInterface: "MouseEvents"): MouseEvent;
+    createEvent(eventInterface: "NavigateEvent"): NavigateEvent;
+    createEvent(eventInterface: "NavigationCurrentEntryChangeEvent"): NavigationCurrentEntryChangeEvent;
     createEvent(eventInterface: "OfflineAudioCompletionEvent"): OfflineAudioCompletionEvent;
     createEvent(eventInterface: "PageRevealEvent"): PageRevealEvent;
     createEvent(eventInterface: "PageSwapEvent"): PageSwapEvent;
@@ -4966,6 +5413,7 @@ declare var DocumentFragment: {
 interface DocumentOrShadowRoot {
     readonly activeElement: Element | null;
     adoptedStyleSheets: CSSStyleSheet[];
+    readonly customElementRegistry: CustomElementRegistry | null;
     readonly fullscreenElement: Element | null;
     readonly pictureInPictureElement: Element | null;
     readonly pointerLockElement: Element | null;
@@ -5074,6 +5522,7 @@ interface Element extends Node, ARIAMixin, Animatable, ChildNode, NonDocumentTyp
     readonly clientTop: number;
     readonly clientWidth: number;
     readonly currentCSSZoom: number;
+    readonly customElementRegistry: CustomElementRegistry | null;
     id: string;
     innerHTML: string;
     readonly localName: string;
@@ -5347,7 +5796,7 @@ interface FileReader extends EventTarget {
     onloadend: ((this: FileReader, ev: ProgressEvent<FileReader>) => any) | null;
     onloadstart: ((this: FileReader, ev: ProgressEvent<FileReader>) => any) | null;
     onprogress: ((this: FileReader, ev: ProgressEvent<FileReader>) => any) | null;
-    readonly readyState: typeof FileReader.EMPTY | typeof FileReader.LOADING | typeof FileReader.DONE;
+    readonly readyState: 0 | 1 | 2;
     readonly result: string | ArrayBuffer | null;
     abort(): void;
     readAsArrayBuffer(blob: Blob): void;
@@ -5540,6 +5989,185 @@ declare var FragmentDirective: {
     prototype: FragmentDirective;
     new(): FragmentDirective;
 };
+interface GPU {
+    readonly wgslLanguageFeatures: WGSLLanguageFeatures;
+    getPreferredCanvasFormat(): GPUTextureFormat;
+    requestAdapter(options?: GPURequestAdapterOptions): Promise<GPUAdapter | null>;
+}
+declare var GPU: {
+    prototype: GPU;
+    new(): GPU;
+};
+interface GPUAdapter {
+    readonly features: GPUSupportedFeatures;
+    readonly info: GPUAdapterInfo;
+    readonly limits: GPUSupportedLimits;
+    requestDevice(descriptor?: GPUDeviceDescriptor): Promise<GPUDevice>;
+}
+declare var GPUAdapter: {
+    prototype: GPUAdapter;
+    new(): GPUAdapter;
+};
+interface GPUAdapterInfo {
+    readonly architecture: string;
+    readonly description: string;
+    readonly device: string;
+    readonly isFallbackAdapter: boolean;
+    readonly subgroupMaxSize: number;
+    readonly subgroupMinSize: number;
+    readonly vendor: string;
+}
+declare var GPUAdapterInfo: {
+    prototype: GPUAdapterInfo;
+    new(): GPUAdapterInfo;
+};
+interface GPUBindGroup extends GPUObjectBase {
+}
+declare var GPUBindGroup: {
+    prototype: GPUBindGroup;
+    new(): GPUBindGroup;
+};
+interface GPUBindGroupLayout extends GPUObjectBase {
+}
+declare var GPUBindGroupLayout: {
+    prototype: GPUBindGroupLayout;
+    new(): GPUBindGroupLayout;
+};
+interface GPUBindingCommandsMixin {
+    setBindGroup(index: GPUIndex32, bindGroup: GPUBindGroup | null, dynamicOffsets?: GPUBufferDynamicOffset[]): void;
+    setBindGroup(index: GPUIndex32, bindGroup: GPUBindGroup | null, dynamicOffsetsData: Uint32Array<ArrayBufferLike>, dynamicOffsetsDataStart: GPUSize64, dynamicOffsetsDataLength: GPUSize32): void;
+}
+interface GPUBuffer extends GPUObjectBase {
+    readonly mapState: GPUBufferMapState;
+    readonly size: GPUSize64Out;
+    readonly usage: GPUFlagsConstant;
+    destroy(): void;
+    getMappedRange(offset?: GPUSize64, size?: GPUSize64): ArrayBuffer;
+    mapAsync(mode: GPUMapModeFlags, offset?: GPUSize64, size?: GPUSize64): Promise<void>;
+    unmap(): void;
+}
+declare var GPUBuffer: {
+    prototype: GPUBuffer;
+    new(): GPUBuffer;
+};
+interface GPUCanvasContext {
+    readonly canvas: HTMLCanvasElement | OffscreenCanvas;
+    configure(configuration: GPUCanvasConfiguration): void;
+    getConfiguration(): GPUCanvasConfiguration | null;
+    getCurrentTexture(): GPUTexture;
+    unconfigure(): void;
+}
+declare var GPUCanvasContext: {
+    prototype: GPUCanvasContext;
+    new(): GPUCanvasContext;
+};
+interface GPUCommandBuffer extends GPUObjectBase {
+}
+declare var GPUCommandBuffer: {
+    prototype: GPUCommandBuffer;
+    new(): GPUCommandBuffer;
+};
+interface GPUCommandEncoder extends GPUDebugCommandsMixin, GPUObjectBase {
+    beginComputePass(descriptor?: GPUComputePassDescriptor): GPUComputePassEncoder;
+    beginRenderPass(descriptor: GPURenderPassDescriptor): GPURenderPassEncoder;
+    clearBuffer(buffer: GPUBuffer, offset?: GPUSize64, size?: GPUSize64): void;
+    copyBufferToBuffer(source: GPUBuffer, destination: GPUBuffer, size?: GPUSize64): void;
+    copyBufferToBuffer(source: GPUBuffer, sourceOffset: GPUSize64, destination: GPUBuffer, destinationOffset: GPUSize64, size?: GPUSize64): void;
+    copyBufferToTexture(source: GPUTexelCopyBufferInfo, destination: GPUTexelCopyTextureInfo, copySize: GPUExtent3D): void;
+    copyTextureToBuffer(source: GPUTexelCopyTextureInfo, destination: GPUTexelCopyBufferInfo, copySize: GPUExtent3D): void;
+    copyTextureToTexture(source: GPUTexelCopyTextureInfo, destination: GPUTexelCopyTextureInfo, copySize: GPUExtent3D): void;
+    finish(descriptor?: GPUCommandBufferDescriptor): GPUCommandBuffer;
+    resolveQuerySet(querySet: GPUQuerySet, firstQuery: GPUSize32, queryCount: GPUSize32, destination: GPUBuffer, destinationOffset: GPUSize64): void;
+}
+declare var GPUCommandEncoder: {
+    prototype: GPUCommandEncoder;
+    new(): GPUCommandEncoder;
+};
+interface GPUCompilationInfo {
+    readonly messages: ReadonlyArray<GPUCompilationMessage>;
+}
+declare var GPUCompilationInfo: {
+    prototype: GPUCompilationInfo;
+    new(): GPUCompilationInfo;
+};
+interface GPUCompilationMessage {
+    readonly length: number;
+    readonly lineNum: number;
+    readonly linePos: number;
+    readonly message: string;
+    readonly offset: number;
+    readonly type: GPUCompilationMessageType;
+}
+declare var GPUCompilationMessage: {
+    prototype: GPUCompilationMessage;
+    new(): GPUCompilationMessage;
+};
+interface GPUComputePassEncoder extends GPUBindingCommandsMixin, GPUDebugCommandsMixin, GPUObjectBase {
+    dispatchWorkgroups(workgroupCountX: GPUSize32, workgroupCountY?: GPUSize32, workgroupCountZ?: GPUSize32): void;
+    dispatchWorkgroupsIndirect(indirectBuffer: GPUBuffer, indirectOffset: GPUSize64): void;
+    end(): void;
+    setPipeline(pipeline: GPUComputePipeline): void;
+}
+declare var GPUComputePassEncoder: {
+    prototype: GPUComputePassEncoder;
+    new(): GPUComputePassEncoder;
+};
+interface GPUComputePipeline extends GPUObjectBase, GPUPipelineBase {
+}
+declare var GPUComputePipeline: {
+    prototype: GPUComputePipeline;
+    new(): GPUComputePipeline;
+};
+interface GPUDebugCommandsMixin {
+    insertDebugMarker(markerLabel: string): void;
+    popDebugGroup(): void;
+    pushDebugGroup(groupLabel: string): void;
+}
+interface GPUDeviceEventMap {
+    "uncapturederror": GPUUncapturedErrorEvent;
+}
+interface GPUDevice extends EventTarget, GPUObjectBase {
+    readonly adapterInfo: GPUAdapterInfo;
+    readonly features: GPUSupportedFeatures;
+    readonly limits: GPUSupportedLimits;
+    readonly lost: Promise<GPUDeviceLostInfo>;
+    onuncapturederror: ((this: GPUDevice, ev: GPUUncapturedErrorEvent) => any) | null;
+    readonly queue: GPUQueue;
+    createBindGroup(descriptor: GPUBindGroupDescriptor): GPUBindGroup;
+    createBindGroupLayout(descriptor: GPUBindGroupLayoutDescriptor): GPUBindGroupLayout;
+    createBuffer(descriptor: GPUBufferDescriptor): GPUBuffer;
+    createCommandEncoder(descriptor?: GPUCommandEncoderDescriptor): GPUCommandEncoder;
+    createComputePipeline(descriptor: GPUComputePipelineDescriptor): GPUComputePipeline;
+    createComputePipelineAsync(descriptor: GPUComputePipelineDescriptor): Promise<GPUComputePipeline>;
+    createPipelineLayout(descriptor: GPUPipelineLayoutDescriptor): GPUPipelineLayout;
+    createQuerySet(descriptor: GPUQuerySetDescriptor): GPUQuerySet;
+    createRenderBundleEncoder(descriptor: GPURenderBundleEncoderDescriptor): GPURenderBundleEncoder;
+    createRenderPipeline(descriptor: GPURenderPipelineDescriptor): GPURenderPipeline;
+    createRenderPipelineAsync(descriptor: GPURenderPipelineDescriptor): Promise<GPURenderPipeline>;
+    createSampler(descriptor?: GPUSamplerDescriptor): GPUSampler;
+    createShaderModule(descriptor: GPUShaderModuleDescriptor): GPUShaderModule;
+    createTexture(descriptor: GPUTextureDescriptor): GPUTexture;
+    destroy(): void;
+    importExternalTexture(descriptor: GPUExternalTextureDescriptor): GPUExternalTexture;
+    popErrorScope(): Promise<GPUError | null>;
+    pushErrorScope(filter: GPUErrorFilter): void;
+    addEventListener<K extends keyof GPUDeviceEventMap>(type: K, listener: (this: GPUDevice, ev: GPUDeviceEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+    removeEventListener<K extends keyof GPUDeviceEventMap>(type: K, listener: (this: GPUDevice, ev: GPUDeviceEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+declare var GPUDevice: {
+    prototype: GPUDevice;
+    new(): GPUDevice;
+};
+interface GPUDeviceLostInfo {
+    readonly message: string;
+    readonly reason: GPUDeviceLostReason;
+}
+declare var GPUDeviceLostInfo: {
+    prototype: GPUDeviceLostInfo;
+    new(): GPUDeviceLostInfo;
+};
 interface GPUError {
     readonly message: string;
 }
@@ -5547,12 +6175,196 @@ declare var GPUError: {
     prototype: GPUError;
     new(): GPUError;
 };
+interface GPUExternalTexture extends GPUObjectBase {
+}
+declare var GPUExternalTexture: {
+    prototype: GPUExternalTexture;
+    new(): GPUExternalTexture;
+};
+interface GPUInternalError extends GPUError {
+}
+declare var GPUInternalError: {
+    prototype: GPUInternalError;
+    new(message: string): GPUInternalError;
+};
+interface GPUObjectBase {
+    label: string;
+}
+interface GPUOutOfMemoryError extends GPUError {
+}
+declare var GPUOutOfMemoryError: {
+    prototype: GPUOutOfMemoryError;
+    new(message: string): GPUOutOfMemoryError;
+};
+interface GPUPipelineBase {
+    getBindGroupLayout(index: number): GPUBindGroupLayout;
+}
 interface GPUPipelineError extends DOMException {
     readonly reason: GPUPipelineErrorReason;
 }
 declare var GPUPipelineError: {
     prototype: GPUPipelineError;
     new(message: string, options: GPUPipelineErrorInit): GPUPipelineError;
+};
+interface GPUPipelineLayout extends GPUObjectBase {
+}
+declare var GPUPipelineLayout: {
+    prototype: GPUPipelineLayout;
+    new(): GPUPipelineLayout;
+};
+interface GPUQuerySet extends GPUObjectBase {
+    readonly count: GPUSize32Out;
+    readonly type: GPUQueryType;
+    destroy(): void;
+}
+declare var GPUQuerySet: {
+    prototype: GPUQuerySet;
+    new(): GPUQuerySet;
+};
+interface GPUQueue extends GPUObjectBase {
+    copyExternalImageToTexture(source: GPUCopyExternalImageSourceInfo, destination: GPUCopyExternalImageDestInfo, copySize: GPUExtent3D): void;
+    onSubmittedWorkDone(): Promise<void>;
+    submit(commandBuffers: GPUCommandBuffer[]): void;
+    writeBuffer(buffer: GPUBuffer, bufferOffset: GPUSize64, data: AllowSharedBufferSource, dataOffset?: GPUSize64, size?: GPUSize64): void;
+    writeTexture(destination: GPUTexelCopyTextureInfo, data: AllowSharedBufferSource, dataLayout: GPUTexelCopyBufferLayout, size: GPUExtent3D): void;
+}
+declare var GPUQueue: {
+    prototype: GPUQueue;
+    new(): GPUQueue;
+};
+interface GPURenderBundle extends GPUObjectBase {
+}
+declare var GPURenderBundle: {
+    prototype: GPURenderBundle;
+    new(): GPURenderBundle;
+};
+interface GPURenderBundleEncoder extends GPUBindingCommandsMixin, GPUDebugCommandsMixin, GPUObjectBase, GPURenderCommandsMixin {
+    finish(descriptor?: GPURenderBundleDescriptor): GPURenderBundle;
+}
+declare var GPURenderBundleEncoder: {
+    prototype: GPURenderBundleEncoder;
+    new(): GPURenderBundleEncoder;
+};
+interface GPURenderCommandsMixin {
+    draw(vertexCount: GPUSize32, instanceCount?: GPUSize32, firstVertex?: GPUSize32, firstInstance?: GPUSize32): void;
+    drawIndexed(indexCount: GPUSize32, instanceCount?: GPUSize32, firstIndex?: GPUSize32, baseVertex?: GPUSignedOffset32, firstInstance?: GPUSize32): void;
+    drawIndexedIndirect(indirectBuffer: GPUBuffer, indirectOffset: GPUSize64): void;
+    drawIndirect(indirectBuffer: GPUBuffer, indirectOffset: GPUSize64): void;
+    setIndexBuffer(buffer: GPUBuffer, indexFormat: GPUIndexFormat, offset?: GPUSize64, size?: GPUSize64): void;
+    setPipeline(pipeline: GPURenderPipeline): void;
+    setVertexBuffer(slot: GPUIndex32, buffer: GPUBuffer | null, offset?: GPUSize64, size?: GPUSize64): void;
+}
+interface GPURenderPassEncoder extends GPUBindingCommandsMixin, GPUDebugCommandsMixin, GPUObjectBase, GPURenderCommandsMixin {
+    beginOcclusionQuery(queryIndex: GPUSize32): void;
+    end(): void;
+    endOcclusionQuery(): void;
+    executeBundles(bundles: GPURenderBundle[]): void;
+    setBlendConstant(color: GPUColor): void;
+    setScissorRect(x: GPUIntegerCoordinate, y: GPUIntegerCoordinate, width: GPUIntegerCoordinate, height: GPUIntegerCoordinate): void;
+    setStencilReference(reference: GPUStencilValue): void;
+    setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void;
+}
+declare var GPURenderPassEncoder: {
+    prototype: GPURenderPassEncoder;
+    new(): GPURenderPassEncoder;
+};
+interface GPURenderPipeline extends GPUObjectBase, GPUPipelineBase {
+}
+declare var GPURenderPipeline: {
+    prototype: GPURenderPipeline;
+    new(): GPURenderPipeline;
+};
+interface GPUSampler extends GPUObjectBase {
+}
+declare var GPUSampler: {
+    prototype: GPUSampler;
+    new(): GPUSampler;
+};
+interface GPUShaderModule extends GPUObjectBase {
+    getCompilationInfo(): Promise<GPUCompilationInfo>;
+}
+declare var GPUShaderModule: {
+    prototype: GPUShaderModule;
+    new(): GPUShaderModule;
+};
+interface GPUSupportedFeatures {
+    forEach(callbackfn: (value: string, key: string, parent: GPUSupportedFeatures) => void, thisArg?: any): void;
+}
+declare var GPUSupportedFeatures: {
+    prototype: GPUSupportedFeatures;
+    new(): GPUSupportedFeatures;
+};
+interface GPUSupportedLimits {
+    readonly maxBindGroups: number;
+    readonly maxBindGroupsPlusVertexBuffers: number;
+    readonly maxBindingsPerBindGroup: number;
+    readonly maxBufferSize: number;
+    readonly maxColorAttachmentBytesPerSample: number;
+    readonly maxColorAttachments: number;
+    readonly maxComputeInvocationsPerWorkgroup: number;
+    readonly maxComputeWorkgroupSizeX: number;
+    readonly maxComputeWorkgroupSizeY: number;
+    readonly maxComputeWorkgroupSizeZ: number;
+    readonly maxComputeWorkgroupStorageSize: number;
+    readonly maxComputeWorkgroupsPerDimension: number;
+    readonly maxDynamicStorageBuffersPerPipelineLayout: number;
+    readonly maxDynamicUniformBuffersPerPipelineLayout: number;
+    readonly maxInterStageShaderVariables: number;
+    readonly maxSampledTexturesPerShaderStage: number;
+    readonly maxSamplersPerShaderStage: number;
+    readonly maxStorageBufferBindingSize: number;
+    readonly maxStorageBuffersPerShaderStage: number;
+    readonly maxStorageTexturesPerShaderStage: number;
+    readonly maxTextureArrayLayers: number;
+    readonly maxTextureDimension1D: number;
+    readonly maxTextureDimension2D: number;
+    readonly maxTextureDimension3D: number;
+    readonly maxUniformBufferBindingSize: number;
+    readonly maxUniformBuffersPerShaderStage: number;
+    readonly maxVertexAttributes: number;
+    readonly maxVertexBufferArrayStride: number;
+    readonly maxVertexBuffers: number;
+    readonly minStorageBufferOffsetAlignment: number;
+    readonly minUniformBufferOffsetAlignment: number;
+}
+declare var GPUSupportedLimits: {
+    prototype: GPUSupportedLimits;
+    new(): GPUSupportedLimits;
+};
+interface GPUTexture extends GPUObjectBase {
+    readonly depthOrArrayLayers: GPUIntegerCoordinateOut;
+    readonly dimension: GPUTextureDimension;
+    readonly format: GPUTextureFormat;
+    readonly height: GPUIntegerCoordinateOut;
+    readonly mipLevelCount: GPUIntegerCoordinateOut;
+    readonly sampleCount: GPUSize32Out;
+    readonly usage: GPUFlagsConstant;
+    readonly width: GPUIntegerCoordinateOut;
+    createView(descriptor?: GPUTextureViewDescriptor): GPUTextureView;
+    destroy(): void;
+}
+declare var GPUTexture: {
+    prototype: GPUTexture;
+    new(): GPUTexture;
+};
+interface GPUTextureView extends GPUObjectBase {
+}
+declare var GPUTextureView: {
+    prototype: GPUTextureView;
+    new(): GPUTextureView;
+};
+interface GPUUncapturedErrorEvent extends Event {
+    readonly error: GPUError;
+}
+declare var GPUUncapturedErrorEvent: {
+    prototype: GPUUncapturedErrorEvent;
+    new(type: string, gpuUncapturedErrorEventInitDict: GPUUncapturedErrorEventInit): GPUUncapturedErrorEvent;
+};
+interface GPUValidationError extends GPUError {
+}
+declare var GPUValidationError: {
+    prototype: GPUValidationError;
+    new(message: string): GPUValidationError;
 };
 interface GainNode extends AudioNode {
     readonly gain: AudioParam;
@@ -5589,7 +6401,7 @@ interface GamepadEvent extends Event {
 }
 declare var GamepadEvent: {
     prototype: GamepadEvent;
-    new(type: string, eventInitDict: GamepadEventInit): GamepadEvent;
+    new(type: string, eventInitDict?: GamepadEventInit): GamepadEvent;
 };
 interface GamepadHapticActuator {
     playEffect(type: GamepadHapticEffectType, params?: GamepadEffectParameters): Promise<GamepadHapticsResult>;
@@ -5666,6 +6478,7 @@ interface GlobalEventHandlersEventMap {
     "change": Event;
     "click": PointerEvent;
     "close": Event;
+    "command": Event;
     "compositionend": CompositionEvent;
     "compositionstart": CompositionEvent;
     "compositionupdate": CompositionEvent;
@@ -5773,6 +6586,7 @@ interface GlobalEventHandlers {
     onchange: ((this: GlobalEventHandlers, ev: Event) => any) | null;
     onclick: ((this: GlobalEventHandlers, ev: PointerEvent) => any) | null;
     onclose: ((this: GlobalEventHandlers, ev: Event) => any) | null;
+    oncommand: ((this: GlobalEventHandlers, ev: Event) => any) | null;
     oncontextlost: ((this: GlobalEventHandlers, ev: Event) => any) | null;
     oncontextmenu: ((this: GlobalEventHandlers, ev: PointerEvent) => any) | null;
     oncontextrestored: ((this: GlobalEventHandlers, ev: Event) => any) | null;
@@ -6139,7 +6953,7 @@ interface HTMLElement extends Element, ElementCSSInlineStyle, ElementContentEdit
     autocorrect: boolean;
     dir: string;
     draggable: boolean;
-    hidden: boolean;
+    hidden: boolean | "until-found";
     inert: boolean;
     innerText: string;
     lang: string;
@@ -6157,8 +6971,8 @@ interface HTMLElement extends Element, ElementCSSInlineStyle, ElementContentEdit
     attachInternals(): ElementInternals;
     click(): void;
     hidePopover(): void;
-    showPopover(): void;
-    togglePopover(options?: boolean): boolean;
+    showPopover(options?: ShowPopoverOptions): void;
+    togglePopover(options?: TogglePopoverOptions | boolean): boolean;
     addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -6451,7 +7265,7 @@ interface HTMLInputElement extends HTMLElement, PopoverTargetAttributes {
     placeholder: string;
     readOnly: boolean;
     required: boolean;
-    selectionDirection: "forward" | "backward" | "none" | null;
+    selectionDirection: SelectionDirection | null;
     selectionEnd: number | null;
     selectionStart: number | null;
     size: number;
@@ -6474,7 +7288,7 @@ interface HTMLInputElement extends HTMLElement, PopoverTargetAttributes {
     setCustomValidity(error: string): void;
     setRangeText(replacement: string): void;
     setRangeText(replacement: string, start: number, end: number, selectionMode?: SelectionMode): void;
-    setSelectionRange(start: number | null, end: number | null, direction?: "forward" | "backward" | "none"): void;
+    setSelectionRange(start: number | null, end: number | null, direction?: SelectionDirection): void;
     showPicker(): void;
     stepDown(n?: number): void;
     stepUp(n?: number): void;
@@ -7167,6 +7981,7 @@ declare var HTMLTableSectionElement: {
 interface HTMLTemplateElement extends HTMLElement {
     readonly content: DocumentFragment;
     shadowRootClonable: boolean;
+    shadowRootCustomElementRegistry: string;
     shadowRootDelegatesFocus: boolean;
     shadowRootMode: string;
     shadowRootSerializable: boolean;
@@ -7194,7 +8009,7 @@ interface HTMLTextAreaElement extends HTMLElement {
     readOnly: boolean;
     required: boolean;
     rows: number;
-    selectionDirection: "forward" | "backward" | "none";
+    selectionDirection: SelectionDirection;
     selectionEnd: number;
     selectionStart: number;
     readonly textLength: number;
@@ -7210,7 +8025,7 @@ interface HTMLTextAreaElement extends HTMLElement {
     setCustomValidity(error: string): void;
     setRangeText(replacement: string): void;
     setRangeText(replacement: string, start: number, end: number, selectionMode?: SelectionMode): void;
-    setSelectionRange(start: number | null, end: number | null, direction?: "forward" | "backward" | "none"): void;
+    setSelectionRange(start: number | null, end: number | null, direction?: SelectionDirection): void;
     addEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLTextAreaElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof HTMLElementEventMap>(type: K, listener: (this: HTMLTextAreaElement, ev: HTMLElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -7737,7 +8552,7 @@ declare var KeyframeEffect: {
     new(target: Element | null, keyframes: Keyframe[] | PropertyIndexedKeyframes | null, options?: number | KeyframeEffectOptions): KeyframeEffect;
     new(source: KeyframeEffect): KeyframeEffect;
 };
-interface LargestContentfulPaint extends PerformanceEntry {
+interface LargestContentfulPaint extends PerformanceEntry, PaintTimingMixin {
     readonly element: Element | null;
     readonly id: string;
     readonly loadTime: DOMHighResTimeStamp;
@@ -8372,6 +9187,57 @@ declare var NamedNodeMap: {
     prototype: NamedNodeMap;
     new(): NamedNodeMap;
 };
+interface NavigateEvent extends Event {
+    readonly canIntercept: boolean;
+    readonly destination: NavigationDestination;
+    readonly downloadRequest: string | null;
+    readonly formData: FormData | null;
+    readonly hasUAVisualTransition: boolean;
+    readonly hashChange: boolean;
+    readonly info: any;
+    readonly navigationType: NavigationType;
+    readonly signal: AbortSignal;
+    readonly sourceElement: Element | null;
+    readonly userInitiated: boolean;
+    intercept(options?: NavigationInterceptOptions): void;
+    scroll(): void;
+}
+declare var NavigateEvent: {
+    prototype: NavigateEvent;
+    new(type: string, eventInitDict: NavigateEventInit): NavigateEvent;
+};
+interface NavigationEventMap {
+    "currententrychange": NavigationCurrentEntryChangeEvent;
+    "navigate": NavigateEvent;
+    "navigateerror": ErrorEvent;
+    "navigatesuccess": Event;
+}
+interface Navigation extends EventTarget {
+    readonly activation: NavigationActivation | null;
+    readonly canGoBack: boolean;
+    readonly canGoForward: boolean;
+    readonly currentEntry: NavigationHistoryEntry | null;
+    oncurrententrychange: ((this: Navigation, ev: NavigationCurrentEntryChangeEvent) => any) | null;
+    onnavigate: ((this: Navigation, ev: NavigateEvent) => any) | null;
+    onnavigateerror: ((this: Navigation, ev: ErrorEvent) => any) | null;
+    onnavigatesuccess: ((this: Navigation, ev: Event) => any) | null;
+    readonly transition: NavigationTransition | null;
+    back(options?: NavigationOptions): NavigationResult;
+    entries(): NavigationHistoryEntry[];
+    forward(options?: NavigationOptions): NavigationResult;
+    navigate(url: string | URL, options?: NavigationNavigateOptions): NavigationResult;
+    reload(options?: NavigationReloadOptions): NavigationResult;
+    traverseTo(key: string, options?: NavigationOptions): NavigationResult;
+    updateCurrentEntry(options: NavigationUpdateCurrentEntryOptions): void;
+    addEventListener<K extends keyof NavigationEventMap>(type: K, listener: (this: Navigation, ev: NavigationEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
+    addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
+    removeEventListener<K extends keyof NavigationEventMap>(type: K, listener: (this: Navigation, ev: NavigationEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
+    removeEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions): void;
+}
+declare var Navigation: {
+    prototype: Navigation;
+    new(): Navigation;
+};
 interface NavigationActivation {
     readonly entry: NavigationHistoryEntry;
     readonly from: NavigationHistoryEntry | null;
@@ -8380,6 +9246,26 @@ interface NavigationActivation {
 declare var NavigationActivation: {
     prototype: NavigationActivation;
     new(): NavigationActivation;
+};
+interface NavigationCurrentEntryChangeEvent extends Event {
+    readonly from: NavigationHistoryEntry;
+    readonly navigationType: NavigationType | null;
+}
+declare var NavigationCurrentEntryChangeEvent: {
+    prototype: NavigationCurrentEntryChangeEvent;
+    new(type: string, eventInitDict: NavigationCurrentEntryChangeEventInit): NavigationCurrentEntryChangeEvent;
+};
+interface NavigationDestination {
+    readonly id: string;
+    readonly index: number;
+    readonly key: string;
+    readonly sameDocument: boolean;
+    readonly url: string;
+    getState(): any;
+}
+declare var NavigationDestination: {
+    prototype: NavigationDestination;
+    new(): NavigationDestination;
 };
 interface NavigationHistoryEntryEventMap {
     "dispose": Event;
@@ -8401,6 +9287,14 @@ declare var NavigationHistoryEntry: {
     prototype: NavigationHistoryEntry;
     new(): NavigationHistoryEntry;
 };
+interface NavigationPrecommitController {
+    addHandler(handler: NavigationInterceptHandler): void;
+    redirect(url: string | URL, options?: NavigationNavigateOptions): void;
+}
+declare var NavigationPrecommitController: {
+    prototype: NavigationPrecommitController;
+    new(): NavigationPrecommitController;
+};
 interface NavigationPreloadManager {
     disable(): Promise<void>;
     enable(): Promise<void>;
@@ -8411,7 +9305,17 @@ declare var NavigationPreloadManager: {
     prototype: NavigationPreloadManager;
     new(): NavigationPreloadManager;
 };
-interface Navigator extends NavigatorAutomationInformation, NavigatorBadge, NavigatorConcurrentHardware, NavigatorContentUtils, NavigatorCookies, NavigatorID, NavigatorLanguage, NavigatorLocks, NavigatorOnLine, NavigatorPlugins, NavigatorStorage {
+interface NavigationTransition {
+    readonly committed: Promise<void>;
+    readonly finished: Promise<void>;
+    readonly from: NavigationHistoryEntry;
+    readonly navigationType: NavigationType;
+}
+declare var NavigationTransition: {
+    prototype: NavigationTransition;
+    new(): NavigationTransition;
+};
+interface Navigator extends NavigatorAutomationInformation, NavigatorBadge, NavigatorConcurrentHardware, NavigatorContentUtils, NavigatorCookies, NavigatorGPU, NavigatorID, NavigatorLanguage, NavigatorLocks, NavigatorOnLine, NavigatorPlugins, NavigatorStorage {
     readonly clipboard: Clipboard;
     readonly credentials: CredentialsContainer;
     readonly doNotTrack: string | null;
@@ -8452,6 +9356,9 @@ interface NavigatorContentUtils {
 }
 interface NavigatorCookies {
     readonly cookieEnabled: boolean;
+}
+interface NavigatorGPU {
+    readonly gpu: GPU;
 }
 interface NavigatorID {
     readonly appCodeName: string;
@@ -8769,6 +9676,10 @@ declare var PageTransitionEvent: {
     prototype: PageTransitionEvent;
     new(type: string, eventInitDict?: PageTransitionEventInit): PageTransitionEvent;
 };
+interface PaintTimingMixin {
+    readonly paintTime: DOMHighResTimeStamp;
+    readonly presentationTime: DOMHighResTimeStamp | null;
+}
 interface PannerNode extends AudioNode {
     coneInnerAngle: number;
     coneOuterAngle: number;
@@ -8905,6 +9816,7 @@ interface PerformanceEventMap {
 }
 interface Performance extends EventTarget {
     readonly eventCounts: EventCounts;
+    readonly interactionCount: number;
     readonly navigation: PerformanceNavigation;
     onresourcetimingbufferfull: ((this: Performance, ev: Event) => any) | null;
     readonly timeOrigin: DOMHighResTimeStamp;
@@ -9019,7 +9931,7 @@ declare var PerformanceObserverEntryList: {
     prototype: PerformanceObserverEntryList;
     new(): PerformanceObserverEntryList;
 };
-interface PerformancePaintTiming extends PerformanceEntry {
+interface PerformancePaintTiming extends PerformanceEntry, PaintTimingMixin {
     toJSON(): any;
 }
 declare var PerformancePaintTiming: {
@@ -9200,7 +10112,6 @@ interface PopoverTargetAttributes {
     popoverTargetElement: Element | null;
 }
 interface ProcessingInstruction extends CharacterData, LinkStyle {
-    readonly ownerDocument: Document;
     readonly target: string;
 }
 declare var ProcessingInstruction: {
@@ -9230,7 +10141,7 @@ interface PublicKeyCredential extends Credential {
     readonly rawId: ArrayBuffer;
     readonly response: AuthenticatorResponse;
     getClientExtensionResults(): AuthenticationExtensionsClientOutputs;
-    toJSON(): PublicKeyCredentialJSON;
+    toJSON(): RegistrationResponseJSON | AuthenticationResponseJSON;
 }
 declare var PublicKeyCredential: {
     prototype: PublicKeyCredential;
@@ -9254,6 +10165,9 @@ declare var PushManager: {
     new(): PushManager;
     readonly supportedContentEncodings: ReadonlyArray<string>;
 };
+interface PushManagerAttribute {
+    readonly pushManager: PushManager;
+}
 interface PushSubscription {
     readonly endpoint: string;
     readonly expirationTime: EpochTimeStamp | null;
@@ -9384,7 +10298,7 @@ declare var RTCEncodedAudioFrame: {
 interface RTCEncodedVideoFrame {
     data: ArrayBuffer;
     readonly timestamp: number;
-    readonly type: RTCEncodedVideoFrameType;
+    readonly type: EncodedVideoChunkType;
     getMetadata(): RTCEncodedVideoFrameMetadata;
 }
 declare var RTCEncodedVideoFrame: {
@@ -9541,7 +10455,7 @@ declare var RTCPeerConnectionIceEvent: {
 interface RTCRtpReceiver {
     jitterBufferTarget: DOMHighResTimeStamp | null;
     readonly track: MediaStreamTrack;
-    transform: RTCRtpTransform | null;
+    transform: RTCRtpReceiverTransform | null;
     readonly transport: RTCDtlsTransport | null;
     getContributingSources(): RTCRtpContributingSource[];
     getParameters(): RTCRtpReceiveParameters;
@@ -9562,7 +10476,7 @@ declare var RTCRtpScriptTransform: {
 interface RTCRtpSender {
     readonly dtmf: RTCDTMFSender | null;
     readonly track: MediaStreamTrack | null;
-    transform: RTCRtpTransform | null;
+    transform: RTCRtpSenderTransform | null;
     readonly transport: RTCDtlsTransport | null;
     getParameters(): RTCRtpSendParameters;
     getStats(): Promise<RTCStatsReport>;
@@ -9706,7 +10620,7 @@ declare var ReadableStream: {
     new<R = any>(underlyingSource?: UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
 };
 interface ReadableStreamBYOBReader extends ReadableStreamGenericReader {
-    read<T extends ArrayBufferView>(view: T): Promise<ReadableStreamReadResult<T>>;
+    read<T extends Exclude<BufferSource, ArrayBuffer>>(view: T, options?: ReadableStreamBYOBReaderReadOptions): Promise<ReadableStreamReadResult<T>>;
     releaseLock(): void;
 }
 declare var ReadableStreamBYOBReader: {
@@ -9725,7 +10639,7 @@ declare var ReadableStreamBYOBRequest: {
 interface ReadableStreamDefaultController<R = any> {
     readonly desiredSize: number | null;
     close(): void;
-    enqueue(chunk?: R): void;
+    enqueue(chunk: R): void;
     error(e?: any): void;
 }
 declare var ReadableStreamDefaultController: {
@@ -9841,10 +10755,15 @@ declare var Response: {
     redirect(url: string | URL, status?: number): Response;
 };
 interface SVGAElement extends SVGGraphicsElement, SVGURIReference {
+    download: string;
+    hreflang: string;
+    ping: string;
+    referrerPolicy: string;
     rel: string;
     get relList(): DOMTokenList;
     set relList(value: string);
     readonly target: SVGAnimatedString;
+    type: string;
     addEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGAElement, ev: SVGElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGAElement, ev: SVGElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -10773,6 +11692,7 @@ interface SVGMarkerElement extends SVGElement, SVGFitToViewBox {
     readonly SVG_MARKER_ORIENT_UNKNOWN: 0;
     readonly SVG_MARKER_ORIENT_AUTO: 1;
     readonly SVG_MARKER_ORIENT_ANGLE: 2;
+    readonly SVG_MARKER_ORIENT_AUTO_START_REVERSE: 3;
     addEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGMarkerElement, ev: SVGElementEventMap[K]) => any, options?: boolean | AddEventListenerOptions): void;
     addEventListener(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions): void;
     removeEventListener<K extends keyof SVGElementEventMap>(type: K, listener: (this: SVGMarkerElement, ev: SVGElementEventMap[K]) => any, options?: boolean | EventListenerOptions): void;
@@ -10787,6 +11707,7 @@ declare var SVGMarkerElement: {
     readonly SVG_MARKER_ORIENT_UNKNOWN: 0;
     readonly SVG_MARKER_ORIENT_AUTO: 1;
     readonly SVG_MARKER_ORIENT_ANGLE: 2;
+    readonly SVG_MARKER_ORIENT_AUTO_START_REVERSE: 3;
 };
 interface SVGMaskElement extends SVGElement {
     readonly height: SVGAnimatedLength;
@@ -10994,7 +11915,7 @@ interface SVGSVGElement extends SVGGraphicsElement, SVGFitToViewBox, WindowEvent
     deselectAll(): void;
     forceRedraw(): void;
     getCurrentTime(): number;
-    getElementById(elementId: string): Element;
+    getElementById(elementId: string): Element | null;
     getEnclosureList(rect: DOMRectReadOnly, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
     getIntersectionList(rect: DOMRectReadOnly, referenceElement: SVGElement | null): NodeListOf<SVGCircleElement | SVGEllipseElement | SVGImageElement | SVGLineElement | SVGPathElement | SVGPolygonElement | SVGPolylineElement | SVGRectElement | SVGTextElement | SVGUseElement>;
     pauseAnimations(): void;
@@ -11281,6 +12202,21 @@ declare var SVGViewElement: {
     prototype: SVGViewElement;
     new(): SVGViewElement;
 };
+interface Sanitizer {
+    allowAttribute(attribute: SanitizerAttribute): boolean;
+    allowElement(element: SanitizerElementWithAttributes): boolean;
+    get(): SanitizerConfig;
+    removeAttribute(attribute: SanitizerAttribute): boolean;
+    removeElement(element: SanitizerElement): boolean;
+    removeUnsafe(): boolean;
+    replaceElementWithChildren(element: SanitizerElement): boolean;
+    setComments(allow: boolean): boolean;
+    setDataAttributes(allow: boolean): boolean;
+}
+declare var Sanitizer: {
+    prototype: Sanitizer;
+    new(configuration?: SanitizerConfig | SanitizerPresets): Sanitizer;
+};
 interface Scheduler {
     postTask(callback: SchedulerPostTaskCallback, options?: SchedulerPostTaskOptions): Promise<any>;
     yield(): Promise<void>;
@@ -11437,13 +12373,12 @@ declare var ServiceWorkerContainer: {
 interface ServiceWorkerRegistrationEventMap {
     "updatefound": Event;
 }
-interface ServiceWorkerRegistration extends EventTarget {
+interface ServiceWorkerRegistration extends EventTarget, PushManagerAttribute {
     readonly active: ServiceWorker | null;
     readonly cookies: CookieStoreManager;
     readonly installing: ServiceWorker | null;
     readonly navigationPreload: NavigationPreloadManager;
     onupdatefound: ((this: ServiceWorkerRegistration, ev: Event) => any) | null;
-    readonly pushManager: PushManager;
     readonly scope: string;
     readonly updateViaCache: ServiceWorkerUpdateViaCache;
     readonly waiting: ServiceWorker | null;
@@ -11721,10 +12656,6 @@ declare var StorageManager: {
     prototype: StorageManager;
     new(): StorageManager;
 };
-interface StyleMedia {
-    type: string;
-    matchMedium(mediaquery: string): boolean;
-}
 interface StylePropertyMap extends StylePropertyMapReadOnly {
     append(property: string, ...values: (CSSStyleValue | string)[]): void;
     clear(): void;
@@ -11786,6 +12717,7 @@ interface SubtleCrypto {
     exportKey(format: Exclude<KeyFormat, "jwk">, key: CryptoKey): Promise<ArrayBuffer>;
     exportKey(format: KeyFormat, key: CryptoKey): Promise<ArrayBuffer | JsonWebKey>;
     generateKey(algorithm: "Ed25519" | { name: "Ed25519" }, extractable: boolean, keyUsages: ReadonlyArray<"sign" | "verify">): Promise<CryptoKeyPair>;
+    generateKey(algorithm: "X25519" | { name: "X25519" }, extractable: boolean, keyUsages: ReadonlyArray<"deriveBits" | "deriveKey">): Promise<CryptoKeyPair>;
     generateKey(algorithm: RsaHashedKeyGenParams | EcKeyGenParams, extractable: boolean, keyUsages: ReadonlyArray<KeyUsage>): Promise<CryptoKeyPair>;
     generateKey(algorithm: AesKeyGenParams | HmacKeyGenParams | Pbkdf2Params, extractable: boolean, keyUsages: ReadonlyArray<KeyUsage>): Promise<CryptoKey>;
     generateKey(algorithm: AlgorithmIdentifier, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKeyPair | CryptoKey>;
@@ -11990,6 +12922,7 @@ declare var TimeRanges: {
 interface ToggleEvent extends Event {
     readonly newState: string;
     readonly oldState: string;
+    readonly source: Element | null;
 }
 declare var ToggleEvent: {
     prototype: ToggleEvent;
@@ -12314,7 +13247,7 @@ declare var ViewTimeline: {
 interface ViewTransition {
     readonly finished: Promise<void>;
     readonly ready: Promise<void>;
-    types: ViewTransitionTypeSet;
+    readonly types: ViewTransitionTypeSet;
     readonly updateCallbackDone: Promise<void>;
     skipTransition(): void;
 }
@@ -12478,6 +13411,13 @@ interface WEBGL_multi_draw {
     multiDrawElementsInstancedWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | GLsizei[], offsetsOffset: number, instanceCountsList: Int32Array<ArrayBufferLike> | GLsizei[], instanceCountsOffset: number, drawcount: GLsizei): void;
     multiDrawElementsWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | GLsizei[], offsetsOffset: number, drawcount: GLsizei): void;
 }
+interface WGSLLanguageFeatures {
+    forEach(callbackfn: (value: string, key: string, parent: WGSLLanguageFeatures) => void, thisArg?: any): void;
+}
+declare var WGSLLanguageFeatures: {
+    prototype: WGSLLanguageFeatures;
+    new(): WGSLLanguageFeatures;
+};
 interface WakeLock {
     request(type?: WakeLockType): Promise<WakeLockSentinel>;
 }
@@ -13881,6 +14821,7 @@ interface WebGLRenderingContextBase {
     getBufferParameter(target: GLenum, pname: GLenum): any;
     getContextAttributes(): WebGLContextAttributes | null;
     getError(): GLenum;
+    getExtension(name: string): any;
     getExtension(extensionName: "ANGLE_instanced_arrays"): ANGLE_instanced_arrays | null;
     getExtension(extensionName: "EXT_blend_minmax"): EXT_blend_minmax | null;
     getExtension(extensionName: "EXT_color_buffer_float"): EXT_color_buffer_float | null;
@@ -13915,7 +14856,6 @@ interface WebGLRenderingContextBase {
     getExtension(extensionName: "WEBGL_draw_buffers"): WEBGL_draw_buffers | null;
     getExtension(extensionName: "WEBGL_lose_context"): WEBGL_lose_context | null;
     getExtension(extensionName: "WEBGL_multi_draw"): WEBGL_multi_draw | null;
-    getExtension(name: string): any;
     getFramebufferAttachmentParameter(target: GLenum, attachment: GLenum, pname: GLenum): any;
     getParameter(pname: GLenum): any;
     getProgramInfoLog(program: WebGLProgram): string | null;
@@ -14368,7 +15308,7 @@ interface WebSocket extends EventTarget {
     readonly readyState: 0 | 1 | 2 | 3;
     readonly url: string;
     close(code?: number, reason?: string): void;
-    send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void;
+    send(data: BufferSource | Blob | string): void;
     readonly CONNECTING: 0;
     readonly OPEN: 1;
     readonly CLOSING: 2;
@@ -14474,6 +15414,7 @@ interface Window extends EventTarget, AnimationFrameProvider, GlobalEventHandler
     readonly locationbar: BarProp;
     readonly menubar: BarProp;
     name: string;
+    readonly navigation: Navigation;
     readonly navigator: Navigator;
     ondevicemotion: ((this: Window, ev: DeviceMotionEvent) => any) | null;
     ondeviceorientation: ((this: Window, ev: DeviceOrientationEvent) => any) | null;
@@ -14911,6 +15852,15 @@ declare namespace WebAssembly {
         new(message?: string): CompileError;
         (message?: string): CompileError;
     };
+    interface Exception {
+        readonly stack: string | undefined;
+        getArg(exceptionTag: Tag, index: number): any;
+        is(exceptionTag: Tag): boolean;
+    }
+    var Exception: {
+        prototype: Exception;
+        new(exceptionTag: Tag, payload: any[], options?: ExceptionOptions): Exception;
+    };
     interface Global<T extends ValueType = ValueType> {
         value: ValueTypeMap[T];
         valueOf(): ValueTypeMap[T];
@@ -14935,7 +15885,9 @@ declare namespace WebAssembly {
     };
     interface Memory {
         readonly buffer: ArrayBuffer;
-        grow(delta: number): number;
+        grow(delta: AddressValue): AddressValue;
+        toFixedLengthBuffer(): ArrayBuffer;
+        toResizableBuffer(): ArrayBuffer;
     }
     var Memory: {
         prototype: Memory;
@@ -14945,7 +15897,7 @@ declare namespace WebAssembly {
     }
     var Module: {
         prototype: Module;
-        new(bytes: BufferSource): Module;
+        new(bytes: BufferSource, options?: WebAssemblyCompileOptions): Module;
         customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
         exports(moduleObject: Module): ModuleExportDescriptor[];
         imports(moduleObject: Module): ModuleImportDescriptor[];
@@ -14958,22 +15910,32 @@ declare namespace WebAssembly {
         (message?: string): RuntimeError;
     };
     interface Table {
-        readonly length: number;
-        get(index: number): any;
-        grow(delta: number, value?: any): number;
-        set(index: number, value?: any): void;
+        readonly length: AddressValue;
+        get(index: AddressValue): any;
+        grow(delta: AddressValue, value?: any): AddressValue;
+        set(index: AddressValue, value?: any): void;
     }
     var Table: {
         prototype: Table;
         new(descriptor: TableDescriptor, value?: any): Table;
     };
+    interface Tag {
+    }
+    var Tag: {
+        prototype: Tag;
+        new(type: TagType): Tag;
+    };
+    interface ExceptionOptions {
+        traceStack?: boolean;
+    }
     interface GlobalDescriptor<T extends ValueType = ValueType> {
         mutable?: boolean;
         value: T;
     }
     interface MemoryDescriptor {
-        initial: number;
-        maximum?: number;
+        address?: AddressType;
+        initial: AddressValue;
+        maximum?: AddressValue;
         shared?: boolean;
     }
     interface ModuleExportDescriptor {
@@ -14986,9 +15948,13 @@ declare namespace WebAssembly {
         name: string;
     }
     interface TableDescriptor {
+        address?: AddressType;
         element: TableKind;
-        initial: number;
-        maximum?: number;
+        initial: AddressValue;
+        maximum?: AddressValue;
+    }
+    interface TagType {
+        parameters: ValueType[];
     }
     interface ValueTypeMap {
         anyfunc: Function;
@@ -14999,24 +15965,31 @@ declare namespace WebAssembly {
         i64: bigint;
         v128: never;
     }
+    interface WebAssemblyCompileOptions {
+        builtins?: string[];
+        importedStringConstants?: string | null;
+    }
     interface WebAssemblyInstantiatedSource {
         instance: Instance;
         module: Module;
     }
-    type ImportExportKind = "function" | "global" | "memory" | "table";
+    type AddressType = "i32" | "i64";
+    type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
+    type AddressValue = number;
     type ExportValue = Function | Global | Memory | Table;
     type Exports = Record<string, ExportValue>;
     type ImportValue = ExportValue | number;
     type Imports = Record<string, ModuleImports>;
     type ModuleImports = Record<string, ImportValue>;
     type ValueType = keyof ValueTypeMap;
-    function compile(bytes: BufferSource): Promise<Module>;
-    function compileStreaming(source: Response | PromiseLike<Response>): Promise<Module>;
-    function instantiate(bytes: BufferSource, importObject?: Imports): Promise<WebAssemblyInstantiatedSource>;
+    var JSTag: Tag;
+    function compile(bytes: BufferSource, options?: WebAssemblyCompileOptions): Promise<Module>;
+    function compileStreaming(source: Response | PromiseLike<Response>, options?: WebAssemblyCompileOptions): Promise<Module>;
+    function instantiate(bytes: BufferSource, importObject?: Imports, options?: WebAssemblyCompileOptions): Promise<WebAssemblyInstantiatedSource>;
     function instantiate(moduleObject: Module, importObject?: Imports): Promise<Instance>;
-    function instantiateStreaming(source: Response | PromiseLike<Response>, importObject?: Imports): Promise<WebAssemblyInstantiatedSource>;
-    function validate(bytes: BufferSource): boolean;
+    function instantiateStreaming(source: Response | PromiseLike<Response>, importObject?: Imports, options?: WebAssemblyCompileOptions): Promise<WebAssemblyInstantiatedSource>;
+    function validate(bytes: BufferSource, options?: WebAssemblyCompileOptions): boolean;
 }
 interface Console {
     assert(condition?: boolean, ...data: any[]): void;
@@ -15094,6 +16067,12 @@ interface MediaSessionActionHandler {
 }
 interface MutationCallback {
     (mutations: MutationRecord[], observer: MutationObserver): void;
+}
+interface NavigationInterceptHandler {
+    (): void | PromiseLike<void>;
+}
+interface NavigationPrecommitHandler {
+    (controller: NavigationPrecommitController): void | PromiseLike<void>;
 }
 interface NotificationPermissionCallback {
     (permission: NotificationPermission): void;
@@ -15390,6 +16369,7 @@ interface SVGElementTagNameMap {
     "view": SVGViewElement;
 }
 interface MathMLElementTagNameMap {
+    "a": MathMLElement;
     "annotation": MathMLElement;
     "annotation-xml": MathMLElement;
     "maction": MathMLElement;
@@ -15449,6 +16429,7 @@ declare var location: Location;
 declare var locationbar: BarProp;
 declare var menubar: BarProp;
 declare const name: void;
+declare var navigation: Navigation;
 declare var navigator: Navigator;
 declare var ondevicemotion: ((this: Window, ev: DeviceMotionEvent) => any) | null;
 declare var ondeviceorientation: ((this: Window, ev: DeviceOrientationEvent) => any) | null;
@@ -15527,6 +16508,7 @@ declare var oncanplaythrough: ((this: Window, ev: Event) => any) | null;
 declare var onchange: ((this: Window, ev: Event) => any) | null;
 declare var onclick: ((this: Window, ev: PointerEvent) => any) | null;
 declare var onclose: ((this: Window, ev: Event) => any) | null;
+declare var oncommand: ((this: Window, ev: Event) => any) | null;
 declare var oncontextlost: ((this: Window, ev: Event) => any) | null;
 declare var oncontextmenu: ((this: Window, ev: PointerEvent) => any) | null;
 declare var oncontextrestored: ((this: Window, ev: Event) => any) | null;
@@ -15699,6 +16681,31 @@ type GLsizei = number;
 type GLsizeiptr = number;
 type GLuint = number;
 type GLuint64 = number;
+type GPUBindingResource = GPUSampler | GPUTexture | GPUTextureView | GPUBuffer | GPUBufferBinding | GPUExternalTexture;
+type GPUBufferDynamicOffset = number;
+type GPUBufferUsageFlags = number;
+type GPUColor = number[] | GPUColorDict;
+type GPUColorWriteFlags = number;
+type GPUCopyExternalImageSource = ImageBitmap | ImageData | HTMLImageElement | HTMLVideoElement | VideoFrame | HTMLCanvasElement | OffscreenCanvas;
+type GPUDepthBias = number;
+type GPUExtent3D = GPUIntegerCoordinate[] | GPUExtent3DDict;
+type GPUFlagsConstant = number;
+type GPUIndex32 = number;
+type GPUIntegerCoordinate = number;
+type GPUIntegerCoordinateOut = number;
+type GPUMapModeFlags = number;
+type GPUOrigin2D = GPUIntegerCoordinate[] | GPUOrigin2DDict;
+type GPUOrigin3D = GPUIntegerCoordinate[] | GPUOrigin3DDict;
+type GPUPipelineConstantValue = number;
+type GPUSampleMask = number;
+type GPUShaderStageFlags = number;
+type GPUSignedOffset32 = number;
+type GPUSize32 = number;
+type GPUSize32Out = number;
+type GPUSize64 = number;
+type GPUSize64Out = number;
+type GPUStencilValue = number;
+type GPUTextureUsageFlags = number;
 type HTMLOrSVGImageElement = HTMLImageElement | SVGImageElement;
 type HTMLOrSVGScriptElement = HTMLScriptElement | SVGScriptElement;
 type HashAlgorithmIdentifier = AlgorithmIdentifier;
@@ -15713,21 +16720,25 @@ type MediaProvider = MediaStream | MediaSource | Blob;
 type MessageEventSource = WindowProxy | MessagePort | ServiceWorker;
 type MutationRecordType = "attributes" | "characterData" | "childList";
 type NamedCurve = string;
-type OffscreenRenderingContext = OffscreenCanvasRenderingContext2D | ImageBitmapRenderingContext | WebGLRenderingContext | WebGL2RenderingContext;
+type OffscreenRenderingContext = OffscreenCanvasRenderingContext2D | ImageBitmapRenderingContext | WebGLRenderingContext | WebGL2RenderingContext | GPUCanvasContext;
 type OnBeforeUnloadEventHandler = OnBeforeUnloadEventHandlerNonNull | null;
 type OnErrorEventHandler = OnErrorEventHandlerNonNull | null;
 type OptionalPostfixToken<T extends string> = ` ${T}` | "";
 type OptionalPrefixToken<T extends string> = `${T} ` | "";
 type PerformanceEntryList = PerformanceEntry[];
 type PublicKeyCredentialClientCapabilities = Record<string, boolean>;
-type PublicKeyCredentialJSON = any;
-type RTCRtpTransform = RTCRtpScriptTransform;
+type RTCRtpReceiverTransform = RTCRtpScriptTransform;
+type RTCRtpSenderTransform = RTCRtpScriptTransform;
 type ReadableStreamController<T> = ReadableStreamDefaultController<T> | ReadableByteStreamController;
 type ReadableStreamReadResult<T> = ReadableStreamReadValueResult<T> | ReadableStreamReadDoneResult<T>;
 type ReadableStreamReader<T> = ReadableStreamDefaultReader<T> | ReadableStreamBYOBReader;
-type RenderingContext = CanvasRenderingContext2D | ImageBitmapRenderingContext | WebGLRenderingContext | WebGL2RenderingContext;
+type RenderingContext = CanvasRenderingContext2D | ImageBitmapRenderingContext | WebGLRenderingContext | WebGL2RenderingContext | GPUCanvasContext;
 type ReportList = Report[];
 type RequestInfo = Request | string;
+type SanitizerAttribute = string | SanitizerAttributeNamespace;
+type SanitizerElement = string | SanitizerElementNamespace;
+type SanitizerElementWithAttributes = string | SanitizerElementNamespaceWithAttributes;
+type SelectionDirection = "forward" | "backward" | "none";
 type TexImageSource = ImageBitmap | ImageData | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement | OffscreenCanvas | VideoFrame;
 type TimerHandler = string | Function;
 type Transferable = OffscreenCanvas | ImageBitmap | MessagePort | MediaSourceHandle | ReadableStream | WritableStream | TransformStream | AudioData | VideoFrame | RTCDataChannel | ArrayBuffer;
@@ -15736,6 +16747,7 @@ type Uint32List = Uint32Array<ArrayBufferLike> | GLuint[];
 type VibratePattern = number | number[];
 type WindowProxy = Window;
 type XMLHttpRequestBodyInit = Blob | BufferSource | FormData | URLSearchParams | string;
+type AacBitstreamFormat = "aac" | "adts";
 type AlignSetting = "center" | "end" | "left" | "right" | "start";
 type AlphaOption = "discard" | "keep";
 type AnimationPlayState = "finished" | "idle" | "paused" | "running";
@@ -15800,7 +16812,40 @@ type FontDisplay = "auto" | "block" | "fallback" | "optional" | "swap";
 type FontFaceLoadStatus = "error" | "loaded" | "loading" | "unloaded";
 type FontFaceSetLoadStatus = "loaded" | "loading";
 type FullscreenNavigationUI = "auto" | "hide" | "show";
+type GPUAddressMode = "clamp-to-edge" | "mirror-repeat" | "repeat";
+type GPUAutoLayoutMode = "auto";
+type GPUBlendFactor = "constant" | "dst" | "dst-alpha" | "one" | "one-minus-constant" | "one-minus-dst" | "one-minus-dst-alpha" | "one-minus-src" | "one-minus-src-alpha" | "src" | "src-alpha" | "src-alpha-saturated" | "zero";
+type GPUBlendOperation = "add" | "max" | "min" | "reverse-subtract" | "subtract";
+type GPUBufferBindingType = "read-only-storage" | "storage" | "uniform";
+type GPUBufferMapState = "mapped" | "pending" | "unmapped";
+type GPUCanvasAlphaMode = "opaque" | "premultiplied";
+type GPUCanvasToneMappingMode = "extended" | "standard";
+type GPUCompareFunction = "always" | "equal" | "greater" | "greater-equal" | "less" | "less-equal" | "never" | "not-equal";
+type GPUCompilationMessageType = "error" | "info" | "warning";
+type GPUCullMode = "back" | "front" | "none";
+type GPUDeviceLostReason = "destroyed" | "unknown";
+type GPUErrorFilter = "internal" | "out-of-memory" | "validation";
+type GPUFeatureName = "bgra8unorm-storage" | "clip-distances" | "core-features-and-limits" | "depth-clip-control" | "depth32float-stencil8" | "dual-source-blending" | "float32-blendable" | "float32-filterable" | "indirect-first-instance" | "primitive-index" | "rg11b10ufloat-renderable" | "shader-f16" | "subgroups" | "texture-compression-astc" | "texture-compression-astc-sliced-3d" | "texture-compression-bc" | "texture-compression-bc-sliced-3d" | "texture-compression-etc2" | "texture-formats-tier1" | "timestamp-query";
+type GPUFilterMode = "linear" | "nearest";
+type GPUFrontFace = "ccw" | "cw";
+type GPUIndexFormat = "uint16" | "uint32";
+type GPULoadOp = "clear" | "load";
+type GPUMipmapFilterMode = "linear" | "nearest";
 type GPUPipelineErrorReason = "internal" | "validation";
+type GPUPowerPreference = "high-performance" | "low-power";
+type GPUPrimitiveTopology = "line-list" | "line-strip" | "point-list" | "triangle-list" | "triangle-strip";
+type GPUQueryType = "occlusion" | "timestamp";
+type GPUSamplerBindingType = "comparison" | "filtering" | "non-filtering";
+type GPUStencilOperation = "decrement-clamp" | "decrement-wrap" | "increment-clamp" | "increment-wrap" | "invert" | "keep" | "replace" | "zero";
+type GPUStorageTextureAccess = "read-only" | "read-write" | "write-only";
+type GPUStoreOp = "discard" | "store";
+type GPUTextureAspect = "all" | "depth-only" | "stencil-only";
+type GPUTextureDimension = "1d" | "2d" | "3d";
+type GPUTextureFormat = "astc-10x10-unorm" | "astc-10x10-unorm-srgb" | "astc-10x5-unorm" | "astc-10x5-unorm-srgb" | "astc-10x6-unorm" | "astc-10x6-unorm-srgb" | "astc-10x8-unorm" | "astc-10x8-unorm-srgb" | "astc-12x10-unorm" | "astc-12x10-unorm-srgb" | "astc-12x12-unorm" | "astc-12x12-unorm-srgb" | "astc-4x4-unorm" | "astc-4x4-unorm-srgb" | "astc-5x4-unorm" | "astc-5x4-unorm-srgb" | "astc-5x5-unorm" | "astc-5x5-unorm-srgb" | "astc-6x5-unorm" | "astc-6x5-unorm-srgb" | "astc-6x6-unorm" | "astc-6x6-unorm-srgb" | "astc-8x5-unorm" | "astc-8x5-unorm-srgb" | "astc-8x6-unorm" | "astc-8x6-unorm-srgb" | "astc-8x8-unorm" | "astc-8x8-unorm-srgb" | "bc1-rgba-unorm" | "bc1-rgba-unorm-srgb" | "bc2-rgba-unorm" | "bc2-rgba-unorm-srgb" | "bc3-rgba-unorm" | "bc3-rgba-unorm-srgb" | "bc4-r-snorm" | "bc4-r-unorm" | "bc5-rg-snorm" | "bc5-rg-unorm" | "bc6h-rgb-float" | "bc6h-rgb-ufloat" | "bc7-rgba-unorm" | "bc7-rgba-unorm-srgb" | "bgra8unorm" | "bgra8unorm-srgb" | "depth16unorm" | "depth24plus" | "depth24plus-stencil8" | "depth32float" | "depth32float-stencil8" | "eac-r11snorm" | "eac-r11unorm" | "eac-rg11snorm" | "eac-rg11unorm" | "etc2-rgb8a1unorm" | "etc2-rgb8a1unorm-srgb" | "etc2-rgb8unorm" | "etc2-rgb8unorm-srgb" | "etc2-rgba8unorm" | "etc2-rgba8unorm-srgb" | "r16float" | "r16sint" | "r16snorm" | "r16uint" | "r16unorm" | "r32float" | "r32sint" | "r32uint" | "r8sint" | "r8snorm" | "r8uint" | "r8unorm" | "rg11b10ufloat" | "rg16float" | "rg16sint" | "rg16snorm" | "rg16uint" | "rg16unorm" | "rg32float" | "rg32sint" | "rg32uint" | "rg8sint" | "rg8snorm" | "rg8uint" | "rg8unorm" | "rgb10a2uint" | "rgb10a2unorm" | "rgb9e5ufloat" | "rgba16float" | "rgba16sint" | "rgba16snorm" | "rgba16uint" | "rgba16unorm" | "rgba32float" | "rgba32sint" | "rgba32uint" | "rgba8sint" | "rgba8snorm" | "rgba8uint" | "rgba8unorm" | "rgba8unorm-srgb" | "stencil8";
+type GPUTextureSampleType = "depth" | "float" | "sint" | "uint" | "unfilterable-float";
+type GPUTextureViewDimension = "1d" | "2d" | "2d-array" | "3d" | "cube" | "cube-array";
+type GPUVertexFormat = "float16" | "float16x2" | "float16x4" | "float32" | "float32x2" | "float32x3" | "float32x4" | "sint16" | "sint16x2" | "sint16x4" | "sint32" | "sint32x2" | "sint32x3" | "sint32x4" | "sint8" | "sint8x2" | "sint8x4" | "snorm16" | "snorm16x2" | "snorm16x4" | "snorm8" | "snorm8x2" | "snorm8x4" | "uint16" | "uint16x2" | "uint16x4" | "uint32" | "uint32x2" | "uint32x3" | "uint32x4" | "uint8" | "uint8x2" | "uint8x4" | "unorm10-10-10-2" | "unorm16" | "unorm16x2" | "unorm16x4" | "unorm8" | "unorm8x2" | "unorm8x4" | "unorm8x4-bgra";
+type GPUVertexStepMode = "instance" | "vertex";
 type GamepadHapticEffectType = "dual-rumble" | "trigger-rumble";
 type GamepadHapticsResult = "complete" | "preempted";
 type GamepadMappingType = "" | "standard" | "xr-standard";
@@ -15812,6 +16857,7 @@ type IDBCursorDirection = "next" | "nextunique" | "prev" | "prevunique";
 type IDBRequestReadyState = "done" | "pending";
 type IDBTransactionDurability = "default" | "relaxed" | "strict";
 type IDBTransactionMode = "readonly" | "readwrite" | "versionchange";
+type ImageDataPixelFormat = "rgba-float16" | "rgba-unorm8";
 type ImageOrientation = "flipY" | "from-image" | "none";
 type ImageSmoothingQuality = "high" | "low" | "medium";
 type InsertPosition = "afterbegin" | "afterend" | "beforebegin" | "beforeend";
@@ -15837,7 +16883,10 @@ type MediaKeysRequirement = "not-allowed" | "optional" | "required";
 type MediaSessionAction = "nexttrack" | "pause" | "play" | "previoustrack" | "seekbackward" | "seekforward" | "seekto" | "skipad" | "stop";
 type MediaSessionPlaybackState = "none" | "paused" | "playing";
 type MediaStreamTrackState = "ended" | "live";
-type NavigationTimingType = "back_forward" | "navigate" | "prerender" | "reload";
+type NavigationFocusReset = "after-transition" | "manual";
+type NavigationHistoryBehavior = "auto" | "push" | "replace";
+type NavigationScrollBehavior = "after-transition" | "manual";
+type NavigationTimingType = "back_forward" | "navigate" | "reload";
 type NavigationType = "push" | "reload" | "replace" | "traverse";
 type NotificationDirection = "auto" | "ltr" | "rtl";
 type NotificationPermission = "default" | "denied" | "granted";
@@ -15864,7 +16913,6 @@ type RTCDataChannelState = "closed" | "closing" | "connecting" | "open";
 type RTCDegradationPreference = "balanced" | "maintain-framerate" | "maintain-resolution";
 type RTCDtlsRole = "client" | "server" | "unknown";
 type RTCDtlsTransportState = "closed" | "connected" | "connecting" | "failed" | "new";
-type RTCEncodedVideoFrameType = "delta" | "empty" | "key";
 type RTCErrorDetailType = "data-channel-failure" | "dtls-failure" | "fingerprint-failure" | "hardware-encoder-error" | "hardware-encoder-not-available" | "sctp-failure" | "sdp-syntax-error";
 type RTCIceCandidateType = "host" | "prflx" | "relay" | "srflx";
 type RTCIceComponent = "rtcp" | "rtp";
@@ -15903,6 +16951,7 @@ type ResidentKeyRequirement = "discouraged" | "preferred" | "required";
 type ResizeObserverBoxOptions = "border-box" | "content-box" | "device-pixel-content-box";
 type ResizeQuality = "high" | "low" | "medium" | "pixelated";
 type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
+type SanitizerPresets = "default";
 type ScrollAxis = "block" | "inline" | "x" | "y";
 type ScrollBehavior = "auto" | "instant" | "smooth";
 type ScrollLogicalPosition = "center" | "end" | "nearest" | "start";
@@ -15936,13 +16985,13 @@ type WorkerType = "classic" | "module";
 type WriteCommandType = "seek" | "truncate" | "write";
 type XMLHttpRequestResponseType = "" | "arraybuffer" | "blob" | "document" | "json" | "text";
 interface AudioParam {
-    setValueCurveAtTime(values: number[] | Float32Array, startTime: number, duration: number): AudioParam;
+    setValueCurveAtTime(values: Iterable<number>, startTime: number, duration: number): AudioParam;
 }
 interface AudioParamMap extends ReadonlyMap<string, AudioParam> {
 }
 interface BaseAudioContext {
-    createIIRFilter(feedforward: number[], feedback: number[]): IIRFilterNode;
-    createPeriodicWave(real: number[] | Float32Array, imag: number[] | Float32Array, constraints?: PeriodicWaveConstraints): PeriodicWave;
+    createIIRFilter(feedforward: Iterable<number>, feedback: Iterable<number>): IIRFilterNode;
+    createPeriodicWave(real: Iterable<number>, imag: Iterable<number>, constraints?: PeriodicWaveConstraints): PeriodicWave;
 }
 interface CSSKeyframesRule {
     [Symbol.iterator](): ArrayIterator<CSSKeyframeRule>;
@@ -15972,17 +17021,17 @@ interface CSSUnparsedValue {
     values(): ArrayIterator<CSSUnparsedSegment>;
 }
 interface Cache {
-    addAll(requests: RequestInfo[]): Promise<void>;
+    addAll(requests: Iterable<RequestInfo>): Promise<void>;
 }
 interface CanvasPath {
-    roundRect(x: number, y: number, w: number, h: number, radii?: number | DOMPointInit | (number | DOMPointInit)[]): void;
+    roundRect(x: number, y: number, w: number, h: number, radii?: number | DOMPointInit | Iterable<number | DOMPointInit>): void;
 }
 interface CanvasPathDrawingStyles {
-    setLineDash(segments: number[]): void;
+    setLineDash(segments: Iterable<number>): void;
 }
 interface CookieStoreManager {
-    subscribe(subscriptions: CookieStoreGetOptions[]): Promise<void>;
-    unsubscribe(subscriptions: CookieStoreGetOptions[]): Promise<void>;
+    subscribe(subscriptions: Iterable<CookieStoreGetOptions>): Promise<void>;
+    unsubscribe(subscriptions: Iterable<CookieStoreGetOptions>): Promise<void>;
 }
 interface CustomStateSet extends Set<string> {
 }
@@ -16017,6 +17066,25 @@ interface FormData {
     keys(): FormDataIterator<string>;
     values(): FormDataIterator<FormDataEntryValue>;
 }
+interface GPUBindingCommandsMixin {
+    setBindGroup(index: GPUIndex32, bindGroup: GPUBindGroup | null, dynamicOffsets?: Iterable<GPUBufferDynamicOffset>): void;
+}
+interface GPUCommandEncoder {
+    copyBufferToTexture(source: GPUTexelCopyBufferInfo, destination: GPUTexelCopyTextureInfo, copySize: Iterable<GPUIntegerCoordinate>): void;
+    copyTextureToBuffer(source: GPUTexelCopyTextureInfo, destination: GPUTexelCopyBufferInfo, copySize: Iterable<GPUIntegerCoordinate>): void;
+    copyTextureToTexture(source: GPUTexelCopyTextureInfo, destination: GPUTexelCopyTextureInfo, copySize: Iterable<GPUIntegerCoordinate>): void;
+}
+interface GPUQueue {
+    copyExternalImageToTexture(source: GPUCopyExternalImageSourceInfo, destination: GPUCopyExternalImageDestInfo, copySize: Iterable<GPUIntegerCoordinate>): void;
+    submit(commandBuffers: Iterable<GPUCommandBuffer>): void;
+    writeTexture(destination: GPUTexelCopyTextureInfo, data: AllowSharedBufferSource, dataLayout: GPUTexelCopyBufferLayout, size: Iterable<GPUIntegerCoordinate>): void;
+}
+interface GPURenderPassEncoder {
+    executeBundles(bundles: Iterable<GPURenderBundle>): void;
+    setBlendConstant(color: Iterable<number>): void;
+}
+interface GPUSupportedFeatures extends ReadonlySet<string> {
+}
 interface HTMLAllCollection {
     [Symbol.iterator](): ArrayIterator<Element>;
 }
@@ -16046,10 +17114,10 @@ interface Highlight extends Set<AbstractRange> {
 interface HighlightRegistry extends Map<string, Highlight> {
 }
 interface IDBDatabase {
-    transaction(storeNames: string | string[], mode?: IDBTransactionMode, options?: IDBTransactionOptions): IDBTransaction;
+    transaction(storeNames: string | Iterable<string>, mode?: IDBTransactionMode, options?: IDBTransactionOptions): IDBTransaction;
 }
 interface IDBObjectStore {
-    createIndex(name: string, keyPath: string | string[], options?: IDBIndexParameters): IDBIndex;
+    createIndex(name: string, keyPath: string | Iterable<string>, options?: IDBIndexParameters): IDBIndex;
 }
 interface ImageTrackList {
     [Symbol.iterator](): ArrayIterator<ImageTrack>;
@@ -16057,7 +17125,7 @@ interface ImageTrackList {
 interface MIDIInputMap extends ReadonlyMap<string, MIDIInput> {
 }
 interface MIDIOutput {
-    send(data: number[], timestamp?: DOMHighResTimeStamp): void;
+    send(data: Iterable<number>, timestamp?: DOMHighResTimeStamp): void;
 }
 interface MIDIOutputMap extends ReadonlyMap<string, MIDIOutput> {
 }
@@ -16074,7 +17142,7 @@ interface MediaList {
     [Symbol.iterator](): ArrayIterator<string>;
 }
 interface MessageEvent<T = any> {
-    initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string, source?: MessageEventSource | null, ports?: MessagePort[]): void;
+    initMessageEvent(type: string, bubbles?: boolean, cancelable?: boolean, data?: any, origin?: string, lastEventId?: string, source?: MessageEventSource | null, ports?: Iterable<MessagePort>): void;
 }
 interface MimeTypeArray {
     [Symbol.iterator](): ArrayIterator<MimeType>;
@@ -16083,8 +17151,8 @@ interface NamedNodeMap {
     [Symbol.iterator](): ArrayIterator<Attr>;
 }
 interface Navigator {
-    requestMediaKeySystemAccess(keySystem: string, supportedConfigurations: MediaKeySystemConfiguration[]): Promise<MediaKeySystemAccess>;
-    vibrate(pattern: number[]): boolean;
+    requestMediaKeySystemAccess(keySystem: string, supportedConfigurations: Iterable<MediaKeySystemConfiguration>): Promise<MediaKeySystemAccess>;
+    vibrate(pattern: Iterable<number>): boolean;
 }
 interface NodeList {
     [Symbol.iterator](): ArrayIterator<Node>;
@@ -16105,7 +17173,7 @@ interface PluginArray {
     [Symbol.iterator](): ArrayIterator<Plugin>;
 }
 interface RTCRtpTransceiver {
-    setCodecPreferences(codecs: RTCRtpCodec[]): void;
+    setCodecPreferences(codecs: Iterable<RTCRtpCodec>): void;
 }
 interface RTCStatsReport extends ReadonlyMap<string, any> {
 }
@@ -16137,23 +17205,24 @@ interface StylePropertyMapReadOnlyIterator<T> extends IteratorObject<T, BuiltinI
     [Symbol.iterator](): StylePropertyMapReadOnlyIterator<T>;
 }
 interface StylePropertyMapReadOnly {
-    [Symbol.iterator](): StylePropertyMapReadOnlyIterator<[string, CSSStyleValue[]]>;
-    entries(): StylePropertyMapReadOnlyIterator<[string, CSSStyleValue[]]>;
+    [Symbol.iterator](): StylePropertyMapReadOnlyIterator<[string, Iterable<CSSStyleValue>]>;
+    entries(): StylePropertyMapReadOnlyIterator<[string, Iterable<CSSStyleValue>]>;
     keys(): StylePropertyMapReadOnlyIterator<string>;
-    values(): StylePropertyMapReadOnlyIterator<CSSStyleValue[]>;
+    values(): StylePropertyMapReadOnlyIterator<Iterable<CSSStyleValue>>;
 }
 interface StyleSheetList {
     [Symbol.iterator](): ArrayIterator<CSSStyleSheet>;
 }
 interface SubtleCrypto {
-    deriveKey(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | AesDerivedKeyParams | HmacImportParams | HkdfParams | Pbkdf2Params, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey>;
+    deriveKey(algorithm: AlgorithmIdentifier | EcdhKeyDeriveParams | HkdfParams | Pbkdf2Params, baseKey: CryptoKey, derivedKeyType: AlgorithmIdentifier | AesDerivedKeyParams | HmacImportParams | HkdfParams | Pbkdf2Params, extractable: boolean, keyUsages: Iterable<KeyUsage>): Promise<CryptoKey>;
     generateKey(algorithm: "Ed25519" | { name: "Ed25519" }, extractable: boolean, keyUsages: ReadonlyArray<"sign" | "verify">): Promise<CryptoKeyPair>;
+    generateKey(algorithm: "X25519" | { name: "X25519" }, extractable: boolean, keyUsages: ReadonlyArray<"deriveBits" | "deriveKey">): Promise<CryptoKeyPair>;
     generateKey(algorithm: RsaHashedKeyGenParams | EcKeyGenParams, extractable: boolean, keyUsages: ReadonlyArray<KeyUsage>): Promise<CryptoKeyPair>;
     generateKey(algorithm: AesKeyGenParams | HmacKeyGenParams | Pbkdf2Params, extractable: boolean, keyUsages: ReadonlyArray<KeyUsage>): Promise<CryptoKey>;
-    generateKey(algorithm: AlgorithmIdentifier, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKeyPair | CryptoKey>;
+    generateKey(algorithm: AlgorithmIdentifier, extractable: boolean, keyUsages: Iterable<KeyUsage>): Promise<CryptoKeyPair | CryptoKey>;
     importKey(format: "jwk", keyData: JsonWebKey, algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm, extractable: boolean, keyUsages: ReadonlyArray<KeyUsage>): Promise<CryptoKey>;
-    importKey(format: Exclude<KeyFormat, "jwk">, keyData: BufferSource, algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey>;
-    unwrapKey(format: KeyFormat, wrappedKey: BufferSource, unwrappingKey: CryptoKey, unwrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams, unwrappedKeyAlgorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm, extractable: boolean, keyUsages: KeyUsage[]): Promise<CryptoKey>;
+    importKey(format: Exclude<KeyFormat, "jwk">, keyData: BufferSource, algorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm, extractable: boolean, keyUsages: Iterable<KeyUsage>): Promise<CryptoKey>;
+    unwrapKey(format: KeyFormat, wrappedKey: BufferSource, unwrappingKey: CryptoKey, unwrapAlgorithm: AlgorithmIdentifier | RsaOaepParams | AesCtrParams | AesCbcParams | AesGcmParams, unwrappedKeyAlgorithm: AlgorithmIdentifier | RsaHashedImportParams | EcKeyImportParams | HmacImportParams | AesKeyAlgorithm, extractable: boolean, keyUsages: Iterable<KeyUsage>): Promise<CryptoKey>;
 }
 interface TextTrackCueList {
     [Symbol.iterator](): ArrayIterator<TextTrackCue>;
@@ -16176,68 +17245,70 @@ interface URLSearchParams {
 interface ViewTransitionTypeSet extends Set<string> {
 }
 interface WEBGL_draw_buffers {
-    drawBuffersWEBGL(buffers: GLenum[]): void;
+    drawBuffersWEBGL(buffers: Iterable<GLenum>): void;
 }
 interface WEBGL_multi_draw {
-    multiDrawArraysInstancedWEBGL(mode: GLenum, firstsList: Int32Array<ArrayBufferLike> | GLint[], firstsOffset: number, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, instanceCountsList: Int32Array<ArrayBufferLike> | GLsizei[], instanceCountsOffset: number, drawcount: GLsizei): void;
-    multiDrawArraysWEBGL(mode: GLenum, firstsList: Int32Array<ArrayBufferLike> | GLint[], firstsOffset: number, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, drawcount: GLsizei): void;
-    multiDrawElementsInstancedWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | GLsizei[], offsetsOffset: number, instanceCountsList: Int32Array<ArrayBufferLike> | GLsizei[], instanceCountsOffset: number, drawcount: GLsizei): void;
-    multiDrawElementsWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | GLsizei[], countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | GLsizei[], offsetsOffset: number, drawcount: GLsizei): void;
+    multiDrawArraysInstancedWEBGL(mode: GLenum, firstsList: Int32Array<ArrayBufferLike> | Iterable<GLint>, firstsOffset: number, countsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, countsOffset: number, instanceCountsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, instanceCountsOffset: number, drawcount: GLsizei): void;
+    multiDrawArraysWEBGL(mode: GLenum, firstsList: Int32Array<ArrayBufferLike> | Iterable<GLint>, firstsOffset: number, countsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, countsOffset: number, drawcount: GLsizei): void;
+    multiDrawElementsInstancedWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, offsetsOffset: number, instanceCountsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, instanceCountsOffset: number, drawcount: GLsizei): void;
+    multiDrawElementsWEBGL(mode: GLenum, countsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, countsOffset: number, type: GLenum, offsetsList: Int32Array<ArrayBufferLike> | Iterable<GLsizei>, offsetsOffset: number, drawcount: GLsizei): void;
+}
+interface WGSLLanguageFeatures extends ReadonlySet<string> {
 }
 interface WebGL2RenderingContextBase {
-    clearBufferfv(buffer: GLenum, drawbuffer: GLint, values: GLfloat[], srcOffset?: number): void;
-    clearBufferiv(buffer: GLenum, drawbuffer: GLint, values: GLint[], srcOffset?: number): void;
-    clearBufferuiv(buffer: GLenum, drawbuffer: GLint, values: GLuint[], srcOffset?: number): void;
-    drawBuffers(buffers: GLenum[]): void;
-    getActiveUniforms(program: WebGLProgram, uniformIndices: GLuint[], pname: GLenum): any;
-    getUniformIndices(program: WebGLProgram, uniformNames: string[]): GLuint[] | null;
-    invalidateFramebuffer(target: GLenum, attachments: GLenum[]): void;
-    invalidateSubFramebuffer(target: GLenum, attachments: GLenum[], x: GLint, y: GLint, width: GLsizei, height: GLsizei): void;
-    transformFeedbackVaryings(program: WebGLProgram, varyings: string[], bufferMode: GLenum): void;
-    uniform1uiv(location: WebGLUniformLocation | null, data: GLuint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform2uiv(location: WebGLUniformLocation | null, data: GLuint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform3uiv(location: WebGLUniformLocation | null, data: GLuint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform4uiv(location: WebGLUniformLocation | null, data: GLuint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix2x3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix2x4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix3x2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix3x4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix4x2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix4x3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    vertexAttribI4iv(index: GLuint, values: GLint[]): void;
-    vertexAttribI4uiv(index: GLuint, values: GLuint[]): void;
+    clearBufferfv(buffer: GLenum, drawbuffer: GLint, values: Iterable<GLfloat>, srcOffset?: number): void;
+    clearBufferiv(buffer: GLenum, drawbuffer: GLint, values: Iterable<GLint>, srcOffset?: number): void;
+    clearBufferuiv(buffer: GLenum, drawbuffer: GLint, values: Iterable<GLuint>, srcOffset?: number): void;
+    drawBuffers(buffers: Iterable<GLenum>): void;
+    getActiveUniforms(program: WebGLProgram, uniformIndices: Iterable<GLuint>, pname: GLenum): any;
+    getUniformIndices(program: WebGLProgram, uniformNames: Iterable<string>): GLuint[] | null;
+    invalidateFramebuffer(target: GLenum, attachments: Iterable<GLenum>): void;
+    invalidateSubFramebuffer(target: GLenum, attachments: Iterable<GLenum>, x: GLint, y: GLint, width: GLsizei, height: GLsizei): void;
+    transformFeedbackVaryings(program: WebGLProgram, varyings: Iterable<string>, bufferMode: GLenum): void;
+    uniform1uiv(location: WebGLUniformLocation | null, data: Iterable<GLuint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform2uiv(location: WebGLUniformLocation | null, data: Iterable<GLuint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform3uiv(location: WebGLUniformLocation | null, data: Iterable<GLuint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform4uiv(location: WebGLUniformLocation | null, data: Iterable<GLuint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix2x3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix2x4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix3x2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix3x4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix4x2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix4x3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    vertexAttribI4iv(index: GLuint, values: Iterable<GLint>): void;
+    vertexAttribI4uiv(index: GLuint, values: Iterable<GLuint>): void;
 }
 interface WebGL2RenderingContextOverloads {
-    uniform1fv(location: WebGLUniformLocation | null, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform1iv(location: WebGLUniformLocation | null, data: GLint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform2fv(location: WebGLUniformLocation | null, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform2iv(location: WebGLUniformLocation | null, data: GLint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform3fv(location: WebGLUniformLocation | null, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform3iv(location: WebGLUniformLocation | null, data: GLint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform4fv(location: WebGLUniformLocation | null, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniform4iv(location: WebGLUniformLocation | null, data: GLint[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
-    uniformMatrix4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: GLfloat[], srcOffset?: number, srcLength?: GLuint): void;
+    uniform1fv(location: WebGLUniformLocation | null, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform1iv(location: WebGLUniformLocation | null, data: Iterable<GLint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform2fv(location: WebGLUniformLocation | null, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform2iv(location: WebGLUniformLocation | null, data: Iterable<GLint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform3fv(location: WebGLUniformLocation | null, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform3iv(location: WebGLUniformLocation | null, data: Iterable<GLint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform4fv(location: WebGLUniformLocation | null, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniform4iv(location: WebGLUniformLocation | null, data: Iterable<GLint>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix2fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix3fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
+    uniformMatrix4fv(location: WebGLUniformLocation | null, transpose: GLboolean, data: Iterable<GLfloat>, srcOffset?: number, srcLength?: GLuint): void;
 }
 interface WebGLRenderingContextBase {
-    vertexAttrib1fv(index: GLuint, values: GLfloat[]): void;
-    vertexAttrib2fv(index: GLuint, values: GLfloat[]): void;
-    vertexAttrib3fv(index: GLuint, values: GLfloat[]): void;
-    vertexAttrib4fv(index: GLuint, values: GLfloat[]): void;
+    vertexAttrib1fv(index: GLuint, values: Iterable<GLfloat>): void;
+    vertexAttrib2fv(index: GLuint, values: Iterable<GLfloat>): void;
+    vertexAttrib3fv(index: GLuint, values: Iterable<GLfloat>): void;
+    vertexAttrib4fv(index: GLuint, values: Iterable<GLfloat>): void;
 }
 interface WebGLRenderingContextOverloads {
-    uniform1fv(location: WebGLUniformLocation | null, v: GLfloat[]): void;
-    uniform1iv(location: WebGLUniformLocation | null, v: GLint[]): void;
-    uniform2fv(location: WebGLUniformLocation | null, v: GLfloat[]): void;
-    uniform2iv(location: WebGLUniformLocation | null, v: GLint[]): void;
-    uniform3fv(location: WebGLUniformLocation | null, v: GLfloat[]): void;
-    uniform3iv(location: WebGLUniformLocation | null, v: GLint[]): void;
-    uniform4fv(location: WebGLUniformLocation | null, v: GLfloat[]): void;
-    uniform4iv(location: WebGLUniformLocation | null, v: GLint[]): void;
-    uniformMatrix2fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: GLfloat[]): void;
-    uniformMatrix3fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: GLfloat[]): void;
-    uniformMatrix4fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: GLfloat[]): void;
+    uniform1fv(location: WebGLUniformLocation | null, v: Iterable<GLfloat>): void;
+    uniform1iv(location: WebGLUniformLocation | null, v: Iterable<GLint>): void;
+    uniform2fv(location: WebGLUniformLocation | null, v: Iterable<GLfloat>): void;
+    uniform2iv(location: WebGLUniformLocation | null, v: Iterable<GLint>): void;
+    uniform3fv(location: WebGLUniformLocation | null, v: Iterable<GLfloat>): void;
+    uniform3iv(location: WebGLUniformLocation | null, v: Iterable<GLint>): void;
+    uniform4fv(location: WebGLUniformLocation | null, v: Iterable<GLfloat>): void;
+    uniform4iv(location: WebGLUniformLocation | null, v: Iterable<GLint>): void;
+    uniformMatrix2fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: Iterable<GLfloat>): void;
+    uniformMatrix3fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: Iterable<GLfloat>): void;
+    uniformMatrix4fv(location: WebGLUniformLocation | null, transpose: GLboolean, value: Iterable<GLfloat>): void;
 }
 interface FileSystemDirectoryHandleAsyncIterator<T> extends AsyncIteratorObject<T, BuiltinIteratorReturn, unknown> {
     [Symbol.asyncIterator](): FileSystemDirectoryHandleAsyncIterator<T>;

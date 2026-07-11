@@ -150,18 +150,15 @@ fn vendored_fixtures_match_pinned_typescript_checkout() {
     assert_no_drift(&pairs, "vendor/TypeScript/tests");
 }
 
-/// Compiled lib files under `crates/tsz-website/src/lib` are the primary
-/// root probed by `load_compiled_lib_files`; each one that also ships in the
-/// pinned checkout's `lib/` must be byte-identical to it. (Files the pinned
-/// checkout does not ship are website-only extras and are not compared.)
+/// Compiled lib files under `crates/tsz-website/src/lib` are the primary root
+/// probed by `load_compiled_lib_files`. TypeScript 7 no longer checks a built
+/// `lib/` directory into the legacy corpus repository, so the generated core
+/// asset tree is the always-present byte-for-byte source for this guard.
 #[test]
-fn website_compiled_libs_match_pinned_typescript_checkout() {
+fn website_compiled_libs_match_generated_core_assets() {
     let root = repo_root();
-    let Some(checkout) = pinned_checkout(&root) else {
-        return;
-    };
-
     let website_lib = root.join("crates/tsz-website/src/lib");
+    let core_lib = root.join("crates/tsz-core/src/lib-assets");
     let pairs: Vec<_> = files_under(&website_lib)
         .into_iter()
         .filter(|rel| {
@@ -169,15 +166,23 @@ fn website_compiled_libs_match_pinned_typescript_checkout() {
             name.starts_with("lib.") && name.ends_with(".d.ts")
         })
         .map(|rel| {
+            let website_name = rel.to_string_lossy();
+            let core_name = if website_name == "lib.es5.full.d.ts" {
+                "es5.full.d.ts".to_string()
+            } else {
+                website_name
+                    .strip_prefix("lib.")
+                    .expect("website lib names have lib prefix")
+                    .to_string()
+            };
             (
                 rel.clone(),
                 website_lib.join(&rel),
-                checkout.join("lib").join(&rel),
+                core_lib.join(core_name),
             )
         })
-        .filter(|(_, _, theirs)| theirs.exists())
         .collect();
-    assert_no_drift(&pairs, "crates/tsz-website/src/lib");
+    assert_no_drift(&pairs, "generated website TypeScript libs");
 }
 
 /// Every `TypeScript/...` fixture path a test passes to

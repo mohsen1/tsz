@@ -10,12 +10,17 @@ import { REQUIRED_COMPATIBILITY_FIELDS } from "../bench/project-rows.mjs";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const GUARD_SCRIPT = path.join(ROOT, "scripts", "ci", "project-compile-guard.sh");
+const GUARD_SOURCE = fs.readFileSync(GUARD_SCRIPT, "utf8");
 const PROJECT_COMPATIBILITY_SCRIPT = path.join(
   ROOT,
   "scripts",
   "ci",
   "project-compatibility.mjs",
 );
+
+assert.doesNotMatch(GUARD_SOURCE, /node_modules\/\.bin\/tsc/);
+assert.match(GUARD_SOURCE, /tsz_project_oracle_tsc_command/);
+assert.match(GUARD_SOURCE, /done < <\(type_challenges_tsc_command\)/);
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(

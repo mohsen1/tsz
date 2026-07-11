@@ -2,17 +2,12 @@ declare namespace Intl {
     interface DateTimeFormatPartTypesRegistry {
         fractionalSecond: any;
     }
-    type DateTimeFormatPartTypes = keyof DateTimeFormatPartTypesRegistry;
     interface DateTimeFormatOptions {
         formatMatcher?: "basic" | "best fit" | "best fit" | undefined;
         dateStyle?: "full" | "long" | "medium" | "short" | undefined;
         timeStyle?: "full" | "long" | "medium" | "short" | undefined;
         dayPeriod?: "narrow" | "short" | "long" | undefined;
         fractionalSecondDigits?: 1 | 2 | 3 | undefined;
-    }
-    interface DateTimeFormatPart {
-        type: DateTimeFormatPartTypes;
-        value: string;
     }
     interface DateTimeRangeFormatPart extends DateTimeFormatPart {
         source: "startRange" | "endRange" | "shared";

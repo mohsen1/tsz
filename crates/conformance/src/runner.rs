@@ -7,12 +7,11 @@ use crate::cache::{self, load_cache};
 use crate::cli::{Args, RunMode};
 use crate::server_pool::{ServerOutcome, ServerPool};
 use crate::test_parser::{
-    expand_option_variants, filter_incompatible_module_resolution_variants, parse_test_file,
-    should_skip_test,
+    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path, TestDirectives,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use crate::tsc_results::{
-    DiagnosticFingerprint, ErrorFrequency, TestResult, TestResultFail, TestStats,
+    DiagnosticFingerprint, ErrorFrequency, TestResult, TestResultFail, TestStats, UnsupportedReason,
 };
 use crate::tsz_wrapper;
 use anyhow::Context;
@@ -37,6 +36,17 @@ struct ProblemTests {
     crashed: std::sync::Mutex<Vec<String>>,
     timed_out: std::sync::Mutex<Vec<String>>,
     fingerprint_only: std::sync::Mutex<Vec<String>>,
+}
+
+fn directive_non_runnable_result(path: &Path, directives: &TestDirectives) -> Option<TestResult> {
+    let reason = should_skip_test_at_path(path, directives)?;
+    if reason == "unsupported by TypeScript 7" {
+        Some(TestResult::Unsupported(
+            UnsupportedReason::TypeScript7Configuration,
+        ))
+    } else {
+        Some(TestResult::Skipped(reason))
+    }
 }
 
 /// Test runner
@@ -405,6 +415,18 @@ impl Runner {
                                         writeln!(buf, "SKIP {} ({})", rel_path, reason).ok();
                                     }
                                 }
+                                TestResult::Unsupported(reason) => {
+                                    stats.unsupported.fetch_add(1, Ordering::SeqCst);
+                                    if print_test || verbose {
+                                        writeln!(
+                                            buf,
+                                            "UNSUPPORTED {} ({})",
+                                            rel_path,
+                                            reason.code()
+                                        )
+                                        .ok();
+                                    }
+                                }
                                 TestResult::Crashed => {
                                     stats.crashed.fetch_add(1, Ordering::SeqCst);
                                     problems.crashed.lock().unwrap().push(rel_path.clone());
@@ -484,6 +506,12 @@ impl Runner {
             evaluated,
             stats.pass_rate()
         );
+        println!("  Candidates: {}", stats.total.load(Ordering::SeqCst));
+        println!("  Runnable: {}", stats.runnable());
+        println!(
+            "  Unsupported: {}",
+            stats.unsupported.load(Ordering::SeqCst)
+        );
         println!("  Skipped: {}", stats.skipped.load(Ordering::SeqCst));
         println!(
             "  Known failures: {}",
@@ -560,6 +588,7 @@ impl Runner {
             passed: AtomicUsize::new(stats.passed.load(Ordering::SeqCst)),
             failed: AtomicUsize::new(stats.failed.load(Ordering::SeqCst)),
             skipped: AtomicUsize::new(stats.skipped.load(Ordering::SeqCst)),
+            unsupported: AtomicUsize::new(stats.unsupported.load(Ordering::SeqCst)),
             crashed: AtomicUsize::new(stats.crashed.load(Ordering::SeqCst)),
             timeout: AtomicUsize::new(stats.timeout.load(Ordering::SeqCst)),
             known_failures: AtomicUsize::new(stats.known_failures.load(Ordering::SeqCst)),
@@ -606,21 +635,22 @@ impl Runner {
                 let parsed = parse_test_file(&content)?;
 
                 // Check if should skip
-                if let Some(reason) = should_skip_test(&parsed.directives) {
-                    return Ok((TestResult::Skipped(reason), file_preview.take()));
+                if let Some(result) = directive_non_runnable_result(path, &parsed.directives) {
+                    return Ok((result, file_preview.take()));
                 }
 
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
                     debug!("Cache hit for {}", path.display());
 
-                    // Cache hit - prepare test directory (fast sync I/O)
-                    let options = parsed.directives.options.clone();
-                    let expanded = expand_option_variants(&options);
-                    let mut option_variants =
-                        filter_incompatible_module_resolution_variants(expanded);
-                    if option_variants.is_empty() {
-                        option_variants = vec![options.clone()];
-                    }
+                    // Cache generation and execution share one TS7-supported
+                    // configuration for each source test. `should_skip_test`
+                    // above already rejected tests with no supported variant.
+                    let option_variants = select_ts7_oracle_configurations(&parsed.directives)
+                        .expect("TS7 selector succeeded during skip check");
+                    let options = option_variants
+                        .first()
+                        .expect("TS7 selector returned at least one configuration")
+                        .clone();
 
                     let mut all_codes = std::collections::HashSet::new();
                     let mut all_fingerprints = std::collections::HashSet::new();
@@ -631,6 +661,7 @@ impl Runner {
 
                     // Determine if we should use server mode for this test
                     let use_server = server_pool.is_some()
+                        && option_variants.len() == 1
                         && !crate::options_convert::has_unsupported_server_options(&options);
 
                     if use_server {
@@ -677,21 +708,9 @@ impl Runner {
                             }
                         }
                     } else {
-                        // CLI MODE: existing variant loop with temp dirs.
-                        // Run each option variant (e.g. module=commonjs, module=system).
-                        // Only the FIRST variant's diagnostics are used for comparison
-                        // because the tsc cache was generated with first-value-only
-                        // semantics for multi-value options. Non-first variants still
-                        // run for crash/timeout detection but are skipped when time is
-                        // tight (>5s for the first variant) to avoid cumulative timeouts.
-                        let mut first_variant_slow = false;
-                        for (variant_idx, variant) in option_variants.into_iter().enumerate() {
-                            // Skip non-first variants when the first variant was slow —
-                            // the cumulative time of N slow variants would exceed the
-                            // timeout even though each individual variant is within bounds.
-                            if variant_idx > 0 && first_variant_slow {
-                                continue;
-                            }
+                        // Run every TS7 harness configuration and compare the
+                        // union with the cache generator's matching union.
+                        for variant in &option_variants {
                             let content_clone = content.clone();
                             let filenames = parsed.directives.filenames.clone();
                             let variant_clone = variant.clone();
@@ -713,7 +732,6 @@ impl Runner {
                             })
                             .await??;
 
-                            let variant_start = Instant::now();
                             let compile_result = if let Some(ref pool) = pool {
                                 // Use batch pool — send project dir, read output
                                 let timeout_dur = if timeout_secs > 0 {
@@ -725,7 +743,7 @@ impl Runner {
                                     BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
                                         &output,
                                         prepared.temp_dir.path(),
-                                        variant,
+                                        variant.clone(),
                                     ),
                                     BatchOutcome::Crashed => {
                                         return Ok((TestResult::Crashed, file_preview.take()));
@@ -735,7 +753,7 @@ impl Runner {
                                             &tsz_binary,
                                             &prepared.project_dir,
                                             prepared.temp_dir.path(),
-                                            variant,
+                                            variant.clone(),
                                             timeout_secs.saturating_mul(2).max(60),
                                         )
                                         .await?
@@ -785,27 +803,15 @@ impl Runner {
                                 tsz_wrapper::parse_tsz_output(
                                     &output,
                                     prepared.temp_dir.path(),
-                                    variant,
+                                    variant.clone(),
                                 )
                             };
                             if compile_result.crashed {
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
 
-                            // Only accumulate diagnostics from the first variant.
-                            // The tsc cache uses first-value-only for multi-value
-                            // options (module, jsx, etc.), so comparing the union
-                            // of all variants against the cache produces false
-                            // "extra" diagnostics from non-first variants.
-                            if variant_idx == 0 {
-                                all_codes.extend(compile_result.error_codes);
-                                all_fingerprints.extend(compile_result.diagnostic_fingerprints);
-                                // Mark first variant as slow if it took >3s — skip
-                                // remaining variants to avoid cumulative timeout.
-                                if variant_start.elapsed() > Duration::from_secs(3) {
-                                    first_variant_slow = true;
-                                }
-                            }
+                            all_codes.extend(compile_result.error_codes);
+                            all_fingerprints.extend(compile_result.diagnostic_fingerprints);
                         }
                     }
 
@@ -947,16 +953,6 @@ impl Runner {
                         &mut compile_result,
                     );
 
-                    // A degenerate pinned cache cannot be a faithful baseline
-                    // (tsc halted at config validation, or the cache is a
-                    // documented partial). tsz still ran above so crashes are
-                    // already caught; only the comparison is unscored. See
-                    // `degenerate_cache_reason` and #14991.
-                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
-                        debug!("degenerate-cache pass for {}: {reason}", path.display());
-                        return Ok((TestResult::Pass, file_preview.take()));
-                    }
-
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
                         &compile_result,
@@ -967,10 +963,7 @@ impl Runner {
                     Ok((outcome, file_preview.take()))
                 } else {
                     debug!("Cache miss for {}", path.display());
-
-                    // Cache miss - run tsz anyway (but we can't compare without TSC results)
-                    // Return Skipped with reason "no TSC cache"
-                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                    anyhow::bail!("missing TSC cache entry for {key}")
                 }
             }
             DecodedSourceText::TextWithOriginalBytes(decoded_text, original_bytes) => {
@@ -982,13 +975,19 @@ impl Runner {
                     ));
                 }
 
+                let parsed_directives = parse_test_file(&decoded_text)?;
+                if let Some(result) =
+                    directive_non_runnable_result(path, &parsed_directives.directives)
+                {
+                    return Ok((result, file_preview.take()));
+                }
+
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
                     // Parse directives from the decoded text so we get the correct
                     // compiler options (target, strict, etc.) for the tsconfig.
                     // Previously this was `HashMap::new()` which meant UTF-16 tests
                     // ran with default (empty) options, missing deprecated-option
                     // diagnostics like TS5107 for `target: es5`.
-                    let parsed_directives = parse_test_file(&decoded_text)?;
                     let options = parsed_directives.directives.options;
                     let original_ext = path
                         .extension()
@@ -1086,41 +1085,11 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
                     let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
                         compile_result,
                         &tsc_fps,
                     );
-
-                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
-                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
-                    // config-level deprecation warnings. These should not be compared as they are
-                    // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
-                    let tsc_fps: Vec<_> = tsc_fps
-                        .into_iter()
-                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
-                        .collect();
-                    let compile_result = crate::tsz_wrapper::CompilationResult {
-                        error_codes: compile_result
-                            .error_codes
-                            .into_iter()
-                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
-                            .collect(),
-                        diagnostic_fingerprints: compile_result
-                            .diagnostic_fingerprints
-                            .into_iter()
-                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
-                            .collect(),
-                        ..compile_result
-                    };
-
-                    // A degenerate pinned cache cannot be a faithful baseline;
-                    // see the variant path and `degenerate_cache_reason` (#14991).
-                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
-                        debug!("degenerate-cache pass for {}: {reason}", path.display());
-                        return Ok((TestResult::Pass, file_preview.take()));
-                    }
 
                     // UTF-16 path historically drops the resolved options from the
                     // failure record — preserve that behavior by passing an empty map.
@@ -1132,7 +1101,8 @@ impl Runner {
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
-                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                    debug!("Cache miss for {}", path.display());
+                    anyhow::bail!("missing TSC cache entry for {key}")
                 }
             }
             DecodedSourceText::Binary(binary) => {
@@ -1224,41 +1194,11 @@ impl Runner {
 
                     // Filter .lib/ diagnostics (see variant path for explanation)
                     let compile_result = filter_lib_diagnostics_tsz(compile_result);
-                    let (mut tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
+                    let (tsc_error_codes, tsc_fps) = filter_lib_diagnostics_tsc(tsc_result);
                     let compile_result = filter_extra_typescript_builtin_lib_diagnostics_tsz(
                         compile_result,
                         &tsc_fps,
                     );
-
-                    // Filter config-level diagnostics (TS5101, TS5102, TS5107, etc.) from both expected and actual.
-                    // The TSC cache only stores file-level diagnostics, but our compiler also emits
-                    // config-level deprecation warnings. These should not be compared as they are
-                    // compiler configuration diagnostics, not file-level type checking diagnostics.
-                    tsc_error_codes.retain(|c| !is_compiler_option_config_diagnostic_code(*c));
-                    let tsc_fps: Vec<_> = tsc_fps
-                        .into_iter()
-                        .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
-                        .collect();
-                    let compile_result = crate::tsz_wrapper::CompilationResult {
-                        error_codes: compile_result
-                            .error_codes
-                            .into_iter()
-                            .filter(|c| !is_compiler_option_config_diagnostic_code(*c))
-                            .collect(),
-                        diagnostic_fingerprints: compile_result
-                            .diagnostic_fingerprints
-                            .into_iter()
-                            .filter(|fp| !is_compiler_option_config_diagnostic_code(fp.code))
-                            .collect(),
-                        ..compile_result
-                    };
-
-                    // A degenerate pinned cache cannot be a faithful baseline;
-                    // see the variant path and `degenerate_cache_reason` (#14991).
-                    if let Some(reason) = degenerate_cache_reason(&key, tsc_result) {
-                        debug!("degenerate-cache pass for {}: {reason}", path.display());
-                        return Ok((TestResult::Pass, file_preview.take()));
-                    }
 
                     let options_for_fail = compile_result.options.clone();
                     let outcome = compare_diagnostics(
@@ -1270,7 +1210,7 @@ impl Runner {
                     Ok((outcome, file_preview.take()))
                 } else {
                     debug!("Cache miss for {}", path.display());
-                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
+                    anyhow::bail!("missing TSC cache entry for {key}")
                 }
             }
         }
@@ -1326,6 +1266,51 @@ mod tests {
             column: 1,
             message_key: msg.to_string(),
         }
+    }
+
+    async fn run_test_with_empty_cache(source: &[u8]) -> anyhow::Result<TestResult> {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let test_dir = temp.path().join("cases");
+        let path = test_dir.join("compiler/case.ts");
+        std::fs::create_dir_all(path.parent().expect("test parent")).expect("create test dir");
+        std::fs::write(&path, source).expect("write test source");
+
+        let (result, _preview) = Runner::run_test(
+            &path,
+            &test_dir,
+            Arc::new(HashMap::new()),
+            "unused-tsz-binary".to_string(),
+            None,
+            None,
+            false,
+            0,
+        )
+        .await?;
+        Ok(result)
+    }
+
+    #[tokio::test]
+    async fn run_test_classifies_ts7_unsupported_before_cache_lookup() {
+        let result = run_test_with_empty_cache(b"// @target: es5\nlet value = 1;\n")
+            .await
+            .expect("unsupported test should not require cache");
+        assert_eq!(
+            result,
+            TestResult::Unsupported(UnsupportedReason::TypeScript7Configuration)
+        );
+    }
+
+    #[tokio::test]
+    async fn run_test_fails_when_runnable_cache_entry_is_missing() {
+        let error = run_test_with_empty_cache(b"let value = 1;\n")
+            .await
+            .expect_err("runnable cache miss must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("missing TSC cache entry for compiler/case.ts"),
+            "unexpected error: {error:#}"
+        );
     }
 
     fn cwd_lock() -> &'static Mutex<()> {
@@ -1430,93 +1415,9 @@ mod tests {
     }
 
     #[test]
-    fn config_diagnostic_filters_include_removed_compiler_options() {
+    fn project_config_diagnostics_include_removed_compiler_options() {
         assert!(is_project_config_diagnostic_code(5102));
-        assert!(is_compiler_option_config_diagnostic_code(5102));
-        assert!(is_compiler_option_config_diagnostic_code(5101));
-        assert!(is_compiler_option_config_diagnostic_code(5107));
-        assert!(!is_compiler_option_config_diagnostic_code(2322));
-    }
-
-    fn tsc_result(codes: Vec<u32>, fps: Vec<DiagnosticFingerprint>) -> TscResult {
-        TscResult {
-            metadata: FileMetadata {
-                mtime_ms: 0,
-                size: 0,
-                typescript_version: Some("6.0.3".to_string()),
-            },
-            error_codes: codes,
-            diagnostic_fingerprints: fps,
-        }
-    }
-
-    #[test]
-    fn degenerate_cache_reason_detects_config_validation_halt() {
-        // tsc halts on a deprecated/removed option (e.g. target=ES5,
-        // alwaysStrict=false): the pinned cache holds only the TS5107 config
-        // diagnostic and never type-checks the file. tsz keeps parsing and may
-        // emit correct downstream diagnostics (TS1005 for a body-less accessor),
-        // which must not be scored against the empty filtered baseline.
-        let result = tsc_result(
-            vec![5107],
-            vec![fp(
-                5107,
-                "tsconfig.json",
-                "Option 'target=ES5' is deprecated",
-            )],
-        );
-        assert!(degenerate_cache_reason("compiler/giant.ts", &result).is_some());
-        // The cache key is irrelevant for the cache-shape rule: the same halt
-        // shape is degenerate under any binder/test name.
-        assert!(degenerate_cache_reason("compiler/renamed.ts", &result).is_some());
-    }
-
-    #[test]
-    fn degenerate_cache_reason_ignores_empty_cache() {
-        // An empty cache means tsc checked the file and found nothing — NOT a
-        // halt. tsz's extra diagnostics there are genuine regressions (false
-        // positives on a clean file) and must still be scored.
-        let result = tsc_result(vec![], vec![]);
-        assert!(degenerate_cache_reason("compiler/clean.ts", &result).is_none());
-    }
-
-    #[test]
-    fn degenerate_cache_reason_ignores_mixed_config_and_file_diagnostics() {
-        // A config diagnostic alongside a file-level diagnostic means tsc
-        // warned but did NOT halt — the file was type-checked, so the
-        // comparison is real and must not be skipped.
-        let result = tsc_result(
-            vec![5101, 2322],
-            vec![fp(2322, "a.ts", "Type 'x' is not assignable to type 'y'.")],
-        );
-        assert!(degenerate_cache_reason("compiler/x.ts", &result).is_none());
-    }
-
-    #[test]
-    fn degenerate_cache_reason_detects_documented_partial_cache() {
-        // Salsa partial cache: file-level grammar codes only (not a config
-        // halt), but documented as degenerate against the upstream baseline.
-        let result = tsc_result(
-            vec![8009, 8012],
-            vec![fp(
-                8009,
-                "plainJSGrammarErrors.js",
-                "The 'const' modifier can only be used in TypeScript files.",
-            )],
-        );
-        assert!(
-            degenerate_cache_reason("conformance/salsa/plainJSGrammarErrors.ts", &result).is_some()
-        );
-        // The same diagnostic shape for a different, unlisted test is NOT
-        // degenerate — only the documented entry is exempt.
-        assert!(degenerate_cache_reason("conformance/salsa/otherJsTest.ts", &result).is_none());
-        // The registry entry also matches when the cache key is an absolute or
-        // prefixed path ending in the relative key.
-        assert!(degenerate_cache_reason(
-            "TypeScript/tests/cases/conformance/salsa/plainJSGrammarErrors.ts",
-            &result
-        )
-        .is_some());
+        assert!(!is_project_config_diagnostic_code(2322));
     }
 
     #[test]
@@ -1546,6 +1447,25 @@ mod tests {
             "test.ts",
             "Type 'A' is not assignable to type 'B'."
         )));
+    }
+
+    #[test]
+    fn typescript_builtin_lib_path_recognizes_native_platform_packages() {
+        assert!(is_typescript_builtin_lib_path(
+            "scripts/node_modules/@typescript/typescript-darwin-arm64/lib/lib.dom.d.ts"
+        ));
+        assert!(is_typescript_builtin_lib_path(
+            r"C:\repo\scripts\node_modules\@typescript\typescript-win32-x64\lib\lib.es5.d.ts"
+        ));
+        assert!(is_typescript_builtin_lib_path(
+            "typescript-go/built/npm/typescript-linux-x64/lib/lib.es2025.d.ts"
+        ));
+        assert!(!is_typescript_builtin_lib_path(
+            "node_modules/@typescript/typescript6/lib/typescript.d.ts"
+        ));
+        assert!(!is_typescript_builtin_lib_path(
+            "node_modules/example/lib/lib.es5.d.ts"
+        ));
     }
 
     #[test]

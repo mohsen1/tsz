@@ -987,7 +987,7 @@ fn ts2303_not_emitted_for_import_equals_in_js_file() {
 }
 
 #[test]
-fn cli_deprecated_target_value_emits_ts5107() {
+fn cli_removed_target_value_emits_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1009,14 +1009,14 @@ fn cli_deprecated_target_value_emits_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&5107),
-        "Expected TS5107 for direct --target es5, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 for direct --target es5, got: {:#?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn cli_deprecated_always_strict_false_emits_ts5107() {
+fn cli_removed_always_strict_false_emits_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1038,14 +1038,14 @@ fn cli_deprecated_always_strict_false_emits_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&5107),
-        "Expected TS5107 for direct --alwaysStrict false, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 for direct --alwaysStrict false, got: {:#?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn cli_deprecated_allow_synthetic_default_imports_false_emits_ts5107() {
+fn cli_removed_allow_synthetic_default_imports_false_emits_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1065,8 +1065,8 @@ fn cli_deprecated_allow_synthetic_default_imports_false_emits_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&5107),
-        "Expected TS5107 for direct --allowSyntheticDefaultImports false, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 for direct --allowSyntheticDefaultImports false, got: {:#?}",
         result.diagnostics
     );
 }
@@ -1141,7 +1141,7 @@ UmdLib.run();
 }
 
 #[test]
-fn cli_ignore_deprecations_suppresses_direct_ts5107() {
+fn cli_ignore_deprecations_does_not_suppress_direct_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1165,14 +1165,14 @@ fn cli_ignore_deprecations_suppresses_direct_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        !codes.contains(&5107),
-        "Did not expect TS5107 with direct --ignoreDeprecations 6.0, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 with direct --ignoreDeprecations 6.0, got: {:#?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn config_ignore_deprecations_suppresses_direct_cli_ts5107() {
+fn config_ignore_deprecations_does_not_suppress_direct_cli_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1193,14 +1193,14 @@ fn config_ignore_deprecations_suppresses_direct_cli_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        !codes.contains(&5107),
-        "Did not expect TS5107 with config ignoreDeprecations 6.0, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 with config ignoreDeprecations 6.0, got: {:#?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn cli_ignore_deprecations_suppresses_config_ts5107() {
+fn cli_ignore_deprecations_does_not_suppress_config_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1221,14 +1221,14 @@ fn cli_ignore_deprecations_suppresses_config_ts5107() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        !codes.contains(&5107),
-        "Did not expect TS5107 with CLI --ignoreDeprecations 6.0, got: {:#?}",
+        codes.contains(&5108),
+        "Expected TS5108 with CLI --ignoreDeprecations 6.0, got: {:#?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn config_removed_target_es3_emits_ts5108() {
+fn config_target_es3_emits_ts6046() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1252,21 +1252,21 @@ fn config_removed_target_es3_emits_ts5108() {
 
     assert_eq!(
         codes,
-        vec![diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2],
-        "Expected only TS5108 for removed target=ES3, got: {:#?}",
+        vec![diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE],
+        "Expected only TS6046 for target=ES3, got: {:#?}",
         result.diagnostics
     );
     assert!(
         result.diagnostics[0]
             .message_text
-            .contains("Option 'target=ES3' has been removed"),
-        "Unexpected TS5108 message: {}",
+            .contains("Argument for '--target' option must be"),
+        "Unexpected TS6046 message: {}",
         result.diagnostics[0].message_text
     );
 }
 
 #[test]
-fn cli_removed_target_es3_emits_ts5108() {
+fn cli_target_es3_emits_ts6046() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "let x: string = 1;\n");
@@ -1283,29 +1283,27 @@ fn cli_removed_target_es3_emits_ts5108() {
         "./empty-types",
         "main.ts",
     ])
-    .expect("--target ES3 should parse so config validation can report TS5108");
+    .expect("--target ES3 should parse so config validation can report TS6046");
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert_eq!(
         codes,
-        vec![diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2],
-        "Expected only TS5108 for direct --target ES3, got: {:#?}",
+        vec![diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE],
+        "Expected only TS6046 for direct --target ES3, got: {:#?}",
         result.diagnostics
     );
     assert!(
         result.diagnostics[0]
             .message_text
-            .contains("Option 'target=ES3' has been removed"),
-        "Unexpected TS5108 message: {}",
+            .contains("Argument for '--target' option must be"),
+        "Unexpected TS6046 message: {}",
         result.diagnostics[0].message_text
     );
 }
 
 #[test]
-fn cli_removed_compiler_option_flags_emit_ts5102() {
-    // Issue #3558: removed compiler-option flags accepted by clap must
-    // surface TS5102 the same way they would from a tsconfig key.
+fn cli_ts7_dropped_compiler_option_flags_emit_ts5023() {
     let cases: &[(&[&str], &str)] = &[
         (&["--noImplicitUseStrict"], "noImplicitUseStrict"),
         (&["--keyofStringsOnly"], "keyofStringsOnly"),
@@ -1345,30 +1343,27 @@ fn cli_removed_compiler_option_flags_emit_ts5102() {
         let args = CliArgs::try_parse_from(argv)
             .unwrap_or_else(|err| panic!("CLI args should parse for {flag_args:?}: {err}"));
         let result = compile(&args, base).expect("compile should succeed");
-        let removed_diags: Vec<_> = result
+        let unknown_diags: Vec<_> = result
             .diagnostics
             .iter()
-            .filter(|d| {
-                d.code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
-                    || d.code == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
-            })
+            .filter(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION)
             .collect();
         assert!(
-            !removed_diags.is_empty(),
-            "expected TS5102 for removed flag {flag_args:?}, got: {:#?}",
+            !unknown_diags.is_empty(),
+            "expected TS5023 for dropped flag {flag_args:?}, got: {:#?}",
             result.diagnostics
         );
         assert!(
-            removed_diags
+            unknown_diags
                 .iter()
                 .any(|d| d.message_text.contains(option_name)),
-            "TS5102 message must mention {option_name:?}, got: {removed_diags:#?}"
+            "TS5023 message must mention {option_name:?}, got: {unknown_diags:#?}"
         );
     }
 }
 
 #[test]
-fn cli_removed_compiler_option_flags_do_not_block_emit() {
+fn cli_ts7_dropped_compiler_option_flags_do_not_block_emit() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "export const ok: number = 1;\n");
@@ -1389,22 +1384,17 @@ fn cli_removed_compiler_option_flags_do_not_block_emit() {
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|d| d.code
-            == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION),
-        "expected TS5102 for removed CLI flags, got: {:#?}",
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::UNKNOWN_COMPILER_OPTION),
+        "expected TS5023 for dropped CLI flags, got: {:#?}",
         result.diagnostics
     );
     assert!(
-        base.join("main.js").exists(),
-        "direct CLI TS5102 should not stop JS emit"
-    );
-    assert!(
+        base.join("main.js").exists() && !result.emitted_files.is_empty(),
+        "TS5023 should not stop emit without noEmitOnError: {:#?}",
         result
-            .emitted_files
-            .iter()
-            .any(|path| path.file_name().and_then(|name| name.to_str()) == Some("main.js")),
-        "main.js should be reported as emitted: {:#?}",
-        result.emitted_files
     );
 }
 
@@ -1438,7 +1428,7 @@ fn cli_invalid_ignore_deprecations_emits_ts5103() {
 }
 
 #[test]
-fn ts5107_not_suppressed_by_jsdoc_param_name_validation() {
+fn ts5108_not_suppressed_by_jsdoc_param_name_validation() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1472,8 +1462,8 @@ function bad1(x, {a, b}) {}
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.iter().any(|d| d.code == 5107),
-        "Expected TS5107 for alwaysStrict=false, got diagnostics: {:?}",
+        result.diagnostics.iter().any(|d| d.code == 5108),
+        "Expected TS5108 for alwaysStrict=false, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -1481,7 +1471,7 @@ function bad1(x, {a, b}) {}
             d.code
                 != diagnostic_codes::JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME
         }),
-        "Did not expect TS8024 alongside TS5107, got diagnostics: {:?}",
+        "Did not expect TS8024 alongside TS5108, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
@@ -1489,13 +1479,13 @@ function bad1(x, {a, b}) {}
             .diagnostics
             .iter()
             .all(|d| d.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
-        "Did not expect follow-on TS2339 alongside TS5107, got diagnostics: {:?}",
+        "Did not expect follow-on TS2339 alongside TS5108, got diagnostics: {:?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn ts5107_es5_target_suppresses_accessor_call_follow_on_error() {
+fn ts5108_es5_target_suppresses_accessor_call_follow_on_error() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1525,17 +1515,17 @@ function test24554(x: Test24554) {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&5107),
-        "Expected TS5107 for deprecated ES5 target, got: {codes:?}"
+        codes.contains(&5108),
+        "Expected TS5108 for removed ES5 target, got: {codes:?}"
     );
     assert!(
         !codes.contains(&6234),
-        "Did not expect TS6234 alongside deprecated ES5 target, got: {codes:?}"
+        "Did not expect TS6234 alongside removed ES5 target, got: {codes:?}"
     );
 }
 
 #[test]
-fn ts5107_suppresses_arrow_line_terminator_follow_on_errors() {
+fn ts5108_suppresses_arrow_line_terminator_follow_on_errors() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1564,8 +1554,8 @@ fn ts5107_suppresses_arrow_line_terminator_follow_on_errors() {
 
     assert_eq!(
         codes,
-        vec![5107],
-        "Expected only TS5107 for deprecated strict expansion, got: {:#?}",
+        vec![5108],
+        "Expected only TS5108 for removed strict expansion, got: {:#?}",
         result.diagnostics
     );
 }
@@ -1771,13 +1761,7 @@ q["asd"].b;
     );
 }
 
-
-// A removed-but-parsed option passed on the CLI (e.g. `--keyofStringsOnly`)
-// emits the removed-option notice TS5102. tsc treats that notice as fatal for
-// semantic diagnostics — `getOptionsDiagnostics` short-circuits the reporter
-// before `getSemanticDiagnostics` surfaces — so a real type error in the source
-// must NOT leak alongside the removal notice. Mirrors tsc 6.0.3:
-//   tsz --noEmit --keyofStringsOnly main.ts  =>  only TS5102
+// A TS7-dropped option is unknown and stops before semantic diagnostics.
 #[test]
 fn cli_removed_option_suppresses_semantic_diagnostics() {
     let temp = TempDir::new().expect("temp dir");
@@ -1798,21 +1782,18 @@ fn cli_removed_option_suppresses_semantic_diagnostics() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&5102),
-        "expected the removed-option notice TS5102, got: {:#?}",
+        codes.contains(&5023),
+        "expected unknown-option TS5023, got: {:#?}",
         result.diagnostics
     );
     assert!(
         !codes.contains(&2322),
-        "removed-option notice TS5102 must suppress the semantic TS2322, got: {:#?}",
+        "unknown-option TS5023 must suppress semantic TS2322, got: {:#?}",
         result.diagnostics
     );
 }
 
-// A grammar error outranks the removed-option notice: tsc reports only the
-// syntactic error and drops TS5102 (its `getSyntacticDiagnostics` precede the
-// options diagnostics). Mirrors tsc 6.0.3:
-//   tsz --noEmit --keyofStringsOnly bad.ts  =>  only the grammar error, no TS5102
+// TS7 rejects the dropped option before parsing source grammar.
 #[test]
 fn cli_removed_option_grammar_error_takes_precedence() {
     let temp = TempDir::new().expect("temp dir");
@@ -1832,13 +1813,13 @@ fn cli_removed_option_grammar_error_takes_precedence() {
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&1109),
-        "expected the grammar error TS1109, got: {:#?}",
+        codes.contains(&5023),
+        "expected unknown-option TS5023, got: {:#?}",
         result.diagnostics
     );
     assert!(
-        !codes.contains(&5102),
-        "grammar error must outrank and drop the removed-option notice TS5102, got: {:#?}",
+        !codes.contains(&1109),
+        "TS5023 must stop before the grammar error, got: {:#?}",
         result.diagnostics
     );
 }

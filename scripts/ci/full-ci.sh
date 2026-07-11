@@ -374,6 +374,8 @@ run_lint() {
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-measure-protocol.mjs || return $?
   node scripts/bench/test-measure-tsz.mjs || return $?
+  node scripts/bench/test-typescript-tool-resolution.mjs || return $?
+  node scripts/setup/test-resolve-typescript-lib-dir.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
   node scripts/bench/test-check-latest-freshness.mjs || return $?
   node scripts/bench/test-bench-readiness-banner.mjs || return $?
@@ -389,6 +391,7 @@ run_lint() {
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-project-compile-guard-fingerprint.mjs || return $?
   node scripts/ci/test-project-compile-guard-rss-sentinel.mjs || return $?
+  node scripts/ci/test-project-tsc-oracle.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-gate-path-classifier.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
@@ -413,16 +416,26 @@ run_lint() {
   python3 scripts/lib/test_check_sh_portability.py || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/ci/test_full_ci_summary.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
   # Known-failures baseline contract + gate-wiring tests (#15646). The
   # command list lives in one script shared with the ci.yml cheap-guards
   # step so the two tiers cannot drift.
   scripts/ci/check-unit-gate-contracts.sh || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
+  python3 scripts/conformance/validate-cache-domain.py || return $?
+  python3 scripts/conformance/test_validate_cache_domain.py || return $?
+  python3 scripts/conformance/test_corpus_coverage.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
+  python3 scripts/conformance/test_build_snapshot_detail.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
+  python3 scripts/conformance/test_check_snapshot_regression.py || return $?
+  python3 scripts/conformance/test_conformance_cache_version_gate.py || return $?
   python3 scripts/conformance/test_corpus_lib_dir.py || return $?
+  python3 scripts/conformance/test_link_regression_issues.py || return $?
+  python3 scripts/conformance/test_snapshot_accounting.py || return $?
   python3 scripts/conformance/lib/test_accepted_regressions.py || return $?
+  python3 scripts/conformance/lib/test_results.py || return $?
   python3 scripts/emit/test_query_emit_families.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
@@ -659,13 +672,10 @@ build_wasm_all() {
 
 prep_node_artifacts() {
   ci_section "Prep Node harnesses"
+  ./scripts/setup/ensure-pinned-typescript.sh scripts
   (
     cd scripts
-    if [[ ! -x node_modules/.bin/tsc ]]; then
-      npm install --silent --include=dev
-    else
-      echo "Using cached scripts/node_modules"
-    fi
+    echo "Using pinned scripts/node_modules"
     cd emit
     npx tsc -p tsconfig.json
   )

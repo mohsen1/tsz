@@ -338,17 +338,7 @@ const x: Result = 42;
 
 /// Load lib files including ES2015 sub-libs (proxy, reflect, collection, etc.)
 fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Search paths for the lib directory
-    let lib_dirs = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib"),
-    ];
-
-    let lib_names = [
+    load_compiled_lib_files(&[
         "lib.es5.d.ts",
         "lib.es2015.core.d.ts",
         "lib.es2015.collection.d.ts",
@@ -360,25 +350,7 @@ fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
         "lib.es2015.symbol.d.ts",
         "lib.es2015.symbol.wellknown.d.ts",
         "lib.es2025.iterator.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for lib_name in &lib_names {
-        for lib_dir in &lib_dirs {
-            let lib_path = lib_dir.join(lib_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if seen_files.insert((*lib_name).to_string()) {
-                    let lib_file = LibFile::from_source((*lib_name).to_string(), content);
-                    lib_files.push(Arc::new(lib_file));
-                }
-                break;
-            }
-        }
-    }
-    lib_files
+    ])
 }
 
 fn compile_with_es2015_sublibs(source: &str) -> Vec<(u32, String)> {
@@ -440,7 +412,7 @@ fn compile_with_esnext_iterator_libs(source: &str) -> Vec<(u32, String)> {
         "es2015.generator.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
     ]);
     if lib_files.is_empty() {
         return Vec::new();
@@ -473,7 +445,7 @@ fn compile_multi_file_with_esnext_iterator_libs(
         "es2015.generator.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
     ]);
     if lib_files.is_empty() {
         return Vec::new();

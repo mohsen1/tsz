@@ -1,7 +1,6 @@
 /// <reference lib="es2015.symbol.wellknown" />
 /// <reference lib="es2020.intl" />
 /// <reference lib="es2025.intl" />
-
 declare namespace Temporal {
     type CalendarLike = PlainDate | PlainDateTime | PlainMonthDay | PlainYearMonth | ZonedDateTime | string;
     type DurationLike = Duration | DurationLikeObject | string;
@@ -13,11 +12,9 @@ declare namespace Temporal {
     type PlainYearMonthLike = PlainYearMonth | YearMonthLikeObject | string;
     type TimeZoneLike = ZonedDateTime | string;
     type ZonedDateTimeLike = ZonedDateTime | ZonedDateTimeLikeObject | string;
-
     type PartialTemporalLike<T extends object> = {
         [P in Exclude<keyof T, "calendar" | "timeZone">]?: T[P] | undefined;
     };
-
     interface DateLikeObject {
         year?: number | undefined;
         era?: string | undefined;
@@ -27,9 +24,7 @@ declare namespace Temporal {
         day: number;
         calendar?: string | undefined;
     }
-
     interface DateTimeLikeObject extends DateLikeObject, TimeLikeObject {}
-
     interface DurationLikeObject {
         years?: number | undefined;
         months?: number | undefined;
@@ -42,7 +37,6 @@ declare namespace Temporal {
         microseconds?: number | undefined;
         nanoseconds?: number | undefined;
     }
-
     interface TimeLikeObject {
         hour?: number | undefined;
         minute?: number | undefined;
@@ -51,14 +45,11 @@ declare namespace Temporal {
         microsecond?: number | undefined;
         nanosecond?: number | undefined;
     }
-
     interface YearMonthLikeObject extends Omit<DateLikeObject, "day"> {}
-
     interface ZonedDateTimeLikeObject extends DateTimeLikeObject {
         timeZone: TimeZoneLike;
         offset?: string | undefined;
     }
-
     type DateUnit = "year" | "month" | "week" | "day";
     type TimeUnit = "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond";
     type PluralizeUnit<T extends DateUnit | TimeUnit> =
@@ -75,35 +66,27 @@ declare namespace Temporal {
             microsecond: "microseconds";
             nanosecond: "nanoseconds";
         }[T];
-
     interface DisambiguationOptions {
         disambiguation?: "compatible" | "earlier" | "later" | "reject" | undefined;
     }
-
     interface OverflowOptions {
         overflow?: "constrain" | "reject" | undefined;
     }
-
     interface TransitionOptions {
         direction: "next" | "previous";
     }
-
     interface RoundingOptions<Units extends DateUnit | TimeUnit> {
         smallestUnit?: PluralizeUnit<Units> | undefined;
         roundingIncrement?: number | undefined;
         roundingMode?: "ceil" | "floor" | "expand" | "trunc" | "halfCeil" | "halfFloor" | "halfExpand" | "halfTrunc" | "halfEven" | undefined;
     }
-
     interface RoundingOptionsWithLargestUnit<Units extends DateUnit | TimeUnit> extends RoundingOptions<Units> {
         largestUnit?: "auto" | PluralizeUnit<Units> | undefined;
     }
-
     interface ToStringRoundingOptions<Units extends DateUnit | TimeUnit> extends Pick<RoundingOptions<Units>, "smallestUnit" | "roundingMode"> {}
-
     interface ToStringRoundingOptionsWithFractionalSeconds<Units extends DateUnit | TimeUnit> extends ToStringRoundingOptions<Units> {
         fractionalSecondDigits?: "auto" | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | undefined;
     }
-
     namespace Now {
         function timeZoneId(): string;
         function instant(): Instant;
@@ -112,16 +95,13 @@ declare namespace Temporal {
         function plainDateISO(timeZone?: TimeZoneLike): PlainDate;
         function plainTimeISO(timeZone?: TimeZoneLike): PlainTime;
     }
-
     interface PlainDateToStringOptions {
         calendarName?: "auto" | "always" | "never" | "critical" | undefined;
     }
-
     interface PlainDateToZonedDateTimeOptions {
         plainTime?: PlainTimeLike | undefined;
         timeZone: TimeZoneLike;
     }
-
     interface PlainDate {
         readonly calendarId: string;
         readonly era: string | undefined;
@@ -157,7 +137,6 @@ declare namespace Temporal {
         valueOf(): never;
         readonly [Symbol.toStringTag]: "Temporal.PlainDate";
     }
-
     interface PlainDateConstructor {
         new (isoYear: number, isoMonth: number, isoDay: number, calendar?: string): PlainDate;
         readonly prototype: PlainDate;
@@ -165,9 +144,7 @@ declare namespace Temporal {
         compare(one: PlainDateLike, two: PlainDateLike): number;
     }
     var PlainDate: PlainDateConstructor;
-
     interface PlainTimeToStringOptions extends ToStringRoundingOptionsWithFractionalSeconds<Exclude<TimeUnit, "hour">> {}
-
     interface PlainTime {
         readonly hour: number;
         readonly minute: number;
@@ -189,7 +166,6 @@ declare namespace Temporal {
         valueOf(): never;
         readonly [Symbol.toStringTag]: "Temporal.PlainTime";
     }
-
     interface PlainTimeConstructor {
         new (hour?: number, minute?: number, second?: number, millisecond?: number, microsecond?: number, nanosecond?: number): PlainTime;
         readonly prototype: PlainTime;
@@ -197,9 +173,7 @@ declare namespace Temporal {
         compare(one: PlainTimeLike, two: PlainTimeLike): number;
     }
     var PlainTime: PlainTimeConstructor;
-
     interface PlainDateTimeToStringOptions extends PlainDateToStringOptions, PlainTimeToStringOptions {}
-
     interface PlainDateTime {
         readonly calendarId: string;
         readonly era: string | undefined;
@@ -242,7 +216,6 @@ declare namespace Temporal {
         toPlainTime(): PlainTime;
         readonly [Symbol.toStringTag]: "Temporal.PlainDateTime";
     }
-
     interface PlainDateTimeConstructor {
         new (isoYear: number, isoMonth: number, isoDay: number, hour?: number, minute?: number, second?: number, millisecond?: number, microsecond?: number, nanosecond?: number, calendar?: string): PlainDateTime;
         readonly prototype: PlainDateTime;
@@ -250,16 +223,13 @@ declare namespace Temporal {
         compare(one: PlainDateTimeLike, two: PlainDateTimeLike): number;
     }
     var PlainDateTime: PlainDateTimeConstructor;
-
     interface ZonedDateTimeToStringOptions extends PlainDateTimeToStringOptions {
         offset?: "auto" | "never" | undefined;
         timeZoneName?: "auto" | "never" | "critical" | undefined;
     }
-
     interface ZonedDateTimeFromOptions extends OverflowOptions, DisambiguationOptions {
         offset?: "use" | "ignore" | "prefer" | "reject" | undefined;
     }
-
     interface ZonedDateTime {
         readonly calendarId: string;
         readonly timeZoneId: string;
@@ -313,7 +283,6 @@ declare namespace Temporal {
         toPlainDateTime(): PlainDateTime;
         readonly [Symbol.toStringTag]: "Temporal.ZonedDateTime";
     }
-
     interface ZonedDateTimeConstructor {
         new (epochNanoseconds: bigint, timeZone: string, calendar?: string): ZonedDateTime;
         readonly prototype: ZonedDateTime;
@@ -321,19 +290,14 @@ declare namespace Temporal {
         compare(one: ZonedDateTimeLike, two: ZonedDateTimeLike): number;
     }
     var ZonedDateTime: ZonedDateTimeConstructor;
-
     interface DurationRelativeToOptions {
         relativeTo?: ZonedDateTimeLike | PlainDateLike | undefined;
     }
-
     interface DurationRoundingOptions extends DurationRelativeToOptions, RoundingOptionsWithLargestUnit<DateUnit | TimeUnit> {}
-
     interface DurationToStringOptions extends ToStringRoundingOptionsWithFractionalSeconds<Exclude<TimeUnit, "hour" | "minute">> {}
-
     interface DurationTotalOptions extends DurationRelativeToOptions {
         unit: PluralizeUnit<DateUnit | TimeUnit>;
     }
-
     interface Duration {
         readonly years: number;
         readonly months: number;
@@ -362,7 +326,6 @@ declare namespace Temporal {
         valueOf(): never;
         readonly [Symbol.toStringTag]: "Temporal.Duration";
     }
-
     interface DurationConstructor {
         new (years?: number, months?: number, weeks?: number, days?: number, hours?: number, minutes?: number, seconds?: number, milliseconds?: number, microseconds?: number, nanoseconds?: number): Duration;
         readonly prototype: Duration;
@@ -370,11 +333,9 @@ declare namespace Temporal {
         compare(one: DurationLike, two: DurationLike, options?: DurationRelativeToOptions): number;
     }
     var Duration: DurationConstructor;
-
     interface InstantToStringOptions extends PlainTimeToStringOptions {
         timeZone?: TimeZoneLike | undefined;
     }
-
     interface Instant {
         readonly epochMilliseconds: number;
         readonly epochNanoseconds: bigint;
@@ -392,7 +353,6 @@ declare namespace Temporal {
         toZonedDateTimeISO(timeZone: TimeZoneLike): ZonedDateTime;
         readonly [Symbol.toStringTag]: "Temporal.Instant";
     }
-
     interface InstantConstructor {
         new (epochNanoseconds: bigint): Instant;
         readonly prototype: Instant;
@@ -402,11 +362,9 @@ declare namespace Temporal {
         compare(one: InstantLike, two: InstantLike): number;
     }
     var Instant: InstantConstructor;
-
     interface PlainYearMonthToPlainDateOptions {
         day: number;
     }
-
     interface PlainYearMonth {
         readonly calendarId: string;
         readonly era: string | undefined;
@@ -431,7 +389,6 @@ declare namespace Temporal {
         toPlainDate(item: PlainYearMonthToPlainDateOptions): PlainDate;
         readonly [Symbol.toStringTag]: "Temporal.PlainYearMonth";
     }
-
     interface PlainYearMonthConstructor {
         new (isoYear: number, isoMonth: number, calendar?: string, referenceISODay?: number): PlainYearMonth;
         readonly prototype: PlainYearMonth;
@@ -439,13 +396,11 @@ declare namespace Temporal {
         compare(one: PlainYearMonthLike, two: PlainYearMonthLike): number;
     }
     var PlainYearMonth: PlainYearMonthConstructor;
-
     interface PlainMonthDayToPlainDateOptions {
         era?: string | undefined;
         eraYear?: number | undefined;
         year?: number | undefined;
     }
-
     interface PlainMonthDay {
         readonly calendarId: string;
         readonly monthCode: string;
@@ -459,7 +414,6 @@ declare namespace Temporal {
         toPlainDate(item: PlainMonthDayToPlainDateOptions): PlainDate;
         readonly [Symbol.toStringTag]: "Temporal.PlainMonthDay";
     }
-
     interface PlainMonthDayConstructor {
         new (isoMonth: number, isoDay: number, calendar?: string, referenceISOYear?: number): PlainMonthDay;
         readonly prototype: PlainMonthDay;

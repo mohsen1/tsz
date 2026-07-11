@@ -65,6 +65,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 from accepted_regressions import normalized_entries  # noqa: E402  (path injected above)
 
 DEFAULT_TSC_CACHE_PATH = Path(__file__).with_name("tsc-cache-full.json")
+DEFAULT_CONFORMANCE_DOMAIN_PATH = Path(__file__).with_name("conformance-domain.json")
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
@@ -382,17 +383,46 @@ def load_tsc_cache_test_total(path=DEFAULT_TSC_CACHE_PATH):
     return len(cache)
 
 
-def show_snapshot_freshness(data, tsc_cache_path=DEFAULT_TSC_CACHE_PATH):
-    snapshot_total = int(data["summary"].get("total", 0))
-    current_total = load_tsc_cache_test_total(tsc_cache_path)
+def load_conformance_domain_candidate_total(path=DEFAULT_CONFORMANCE_DOMAIN_PATH):
+    domain_path = Path(path)
+    if not domain_path.exists():
+        return None
+    try:
+        with domain_path.open(encoding="utf-8") as f:
+            domain = json.load(f)
+        candidate_count = int(domain["candidate_count"])
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+    return candidate_count if candidate_count >= 0 else None
+
+
+def show_snapshot_freshness(
+    data,
+    tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+    domain_path=DEFAULT_CONFORMANCE_DOMAIN_PATH,
+):
+    summary = data["summary"]
+    domain_candidates = load_conformance_domain_candidate_total(domain_path)
+    if domain_candidates is not None:
+        snapshot_total = int(summary.get("candidates", summary.get("total", 0)))
+        current_total = domain_candidates
+        current_description = "checked conformance domain"
+        unit = "candidates"
+    else:
+        # Legacy fallback: the cache contains runnable rows only, so compare it
+        # to the runnable snapshot denominator rather than all candidates.
+        snapshot_total = int(summary.get("runnable", summary.get("total", 0)))
+        current_total = load_tsc_cache_test_total(tsc_cache_path)
+        current_description = "pinned TypeScript cache"
+        unit = "runnable tests"
     if current_total is None or current_total == snapshot_total:
         return
 
     delta = current_total - snapshot_total
     print(
         "  Snapshot freshness: STALE checked detail "
-        f"covers {snapshot_total} tests, but the pinned TypeScript cache has "
-        f"{current_total} tests (delta {delta:+d})."
+        f"covers {snapshot_total} {unit}, but the {current_description} has "
+        f"{current_total} {unit} (delta {delta:+d})."
     )
     print("  Refresh conformance-detail.json before citing this dashboard as current public truth.")
 
@@ -401,6 +431,7 @@ def show_dashboard(
     data,
     accepted_regressions_path=DEFAULT_ACCEPTED_REGRESSIONS_PATH,
     tsc_cache_path=DEFAULT_TSC_CACHE_PATH,
+    domain_path=DEFAULT_CONFORMANCE_DOMAIN_PATH,
 ):
     """Show the KPI dashboard that replaces overall conformance % as the daily signal."""
     s = data["summary"]
@@ -411,11 +442,23 @@ def show_dashboard(
     print("  TSZ CONFORMANCE KPI DASHBOARD")
     print("=" * 70)
     print()
-    print(f"  Overall: {s['passed']}/{s['total']} ({s['passed']/s['total']*100:.1f}%)")
+    runnable = int(s.get("runnable", s["total"]))
+    pass_rate = s["passed"] / runnable * 100 if runnable else 0.0
+    print(f"  Overall: {s['passed']}/{runnable} ({pass_rate:.1f}%)")
+    if "candidates" in s:
+        print(
+            f"  Candidates: {s['candidates']} "
+            f"({runnable} runnable, {s.get('unsupported', 0)} unsupported, "
+            f"{s.get('skipped', 0)} skipped)"
+        )
     accepted_count = len(accepted["entries"])
     accepted_state = "missing" if not accepted["exists"] else f"{accepted_count} listed tests"
     print(f"  Accepted-regression gate: {accepted_state}")
-    show_snapshot_freshness(data, tsc_cache_path=tsc_cache_path)
+    show_snapshot_freshness(
+        data,
+        tsc_cache_path=tsc_cache_path,
+        domain_path=domain_path,
+    )
     print()
 
     # KPI 1: Wrong-code count for big3
@@ -573,7 +616,14 @@ def show_dashboard(
 def show_overview(data):
     s = data["summary"]
     a = data["aggregates"]
-    print(f"Conformance: {s['passed']}/{s['total']} ({s['passed']/s['total']*100:.1f}%)")
+    runnable = int(s.get("runnable", s["total"]))
+    pass_rate = s["passed"] / runnable * 100 if runnable else 0.0
+    print(f"Conformance: {s['passed']}/{runnable} ({pass_rate:.1f}%)")
+    if "candidates" in s:
+        print(
+            f"Candidates: {s['candidates']} "
+            f"({s.get('unsupported', 0)} unsupported, {s.get('skipped', 0)} skipped)"
+        )
     print()
 
     print("Recommended campaigns (root-cause first):")

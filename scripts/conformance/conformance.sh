@@ -10,6 +10,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # Default values (relative to repo root)
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
 CACHE_FILE="$REPO_ROOT/scripts/conformance/tsc-cache-full.json"
+DOMAIN_FILE="$REPO_ROOT/scripts/conformance/conformance-domain.json"
 
 # Build profile (dist-fast = fast build + good runtime perf)
 BUILD_PROFILE="dist-fast"
@@ -106,7 +107,8 @@ Examples:
 
 Note: Fingerprint comparison (code + location + message) is always enabled.
       Binaries are automatically built if not found.
-      Cache: scripts/conformance/tsc-cache-full.json
+      Cache/domain: scripts/conformance/tsc-cache-full.json and
+                    scripts/conformance/conformance-domain.json
       Offline analysis reads scripts/conformance/conformance-detail.json from the last snapshot.
 EOF
 }
@@ -268,11 +270,11 @@ ensure_binaries() {
     # Re-enable only after the server protocol carries fingerprints (or
     # gate it behind an opt-in env var that's off in CI).
 
-# Ensure scripts/node_modules is installed (provides TypeScript lib files for type checking)
+# Ensure the exact pinned compiler and its platform standard libraries exist.
 ensure_scripts_deps() {
-    if [ ! -d "$REPO_ROOT/scripts/node_modules/typescript" ]; then
-        echo -e "${YELLOW}Installing scripts dependencies (TypeScript libs)...${NC}"
-        (cd "$REPO_ROOT/scripts" && npm install --silent 2>/dev/null || npm install)
+    if ! "$REPO_ROOT/scripts/setup/ensure-pinned-typescript.sh" "$REPO_ROOT/scripts"; then
+        echo -e "${YELLOW}Pinned TypeScript compiler or standard libraries are unavailable.${NC}" >&2
+        exit 1
     fi
 }
 
@@ -282,9 +284,11 @@ generate_cache() {
     # Ensure scripts dependencies (TypeScript + emit runner deps) are installed
     ensure_scripts_deps
 
-    if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ]; then
-        echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
-        echo "Skipping cache generation."
+    if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ] && [ -f "$DOMAIN_FILE" ]; then
+        echo -e "${YELLOW}Cache and domain already exist:${NC}"
+        echo "  $CACHE_FILE"
+        echo "  $DOMAIN_FILE"
+        echo "Skipping cache/domain generation."
         echo ""
         return
     fi
@@ -306,10 +310,17 @@ generate_cache() {
     $CACHE_GEN_BIN \
         --test-dir "$TEST_DIR" \
         --output "$CACHE_FILE" \
+        --domain-output "$DOMAIN_FILE" \
         --workers "$WORKERS"
+
+    python3 "$REPO_ROOT/scripts/conformance/validate-cache-domain.py" \
+        --cache "$CACHE_FILE" \
+        --domain "$DOMAIN_FILE" \
+        --versions "$REPO_ROOT/scripts/conformance/typescript-versions.json"
 
     echo ""
     echo -e "${GREEN}Cache generated: $CACHE_FILE${NC}"
+    echo -e "${GREEN}Domain generated: $DOMAIN_FILE${NC}"
 }
 
 # Ensure cache exists - generate if not checked in
@@ -323,14 +334,12 @@ ensure_cache() {
 
     local pinned_version=""
     if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/conformance/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"; then
-        echo -e "${YELLOW}Failed to read pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}"
-        echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
-        return
+        echo -e "${YELLOW}ERROR: Failed to read pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}" >&2
+        return 1
     fi
     if [ -z "$pinned_version" ]; then
-        echo -e "${YELLOW}Could not resolve pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}"
-        echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
-        return
+        echo -e "${YELLOW}ERROR: Could not resolve pinned TypeScript version from scripts/conformance/typescript-versions.json${NC}" >&2
+        return 1
     fi
 
     local cache_report=""
@@ -386,12 +395,19 @@ EOF
     fi
 
     if [ "$cache_report" != "ok" ]; then
-        echo -e "${YELLOW}TypeScript cache was generated with a different TypeScript version than pinned:${NC}"
-        echo "  Pinned version: $pinned_version"
-        echo "  Cache check: ${cache_report:-unknown}"
-        echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update cache file to match pinned version.${NC}"
-        echo -e "${YELLOW}Proceeding with stale cache (results may differ from pinned tsc)${NC}"
-        return 0
+        echo -e "${YELLOW}ERROR: TypeScript cache does not match the pinned TypeScript version:${NC}" >&2
+        echo "  Pinned version: $pinned_version" >&2
+        echo "  Cache check: ${cache_report:-unknown}" >&2
+        echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update the cache file to match pinned tsc.${NC}" >&2
+        return 1
+    fi
+
+    if ! python3 "$REPO_ROOT/scripts/conformance/validate-cache-domain.py" \
+        --cache "$CACHE_FILE" \
+        --domain "$DOMAIN_FILE" \
+        --versions "$REPO_ROOT/scripts/conformance/typescript-versions.json"; then
+        echo -e "${YELLOW}ERROR: TypeScript cache/domain validation failed.${NC}" >&2
+        return 1
     fi
 
     echo -e "${GREEN}TypeScript cache version matches pinned version: $pinned_version${NC}"
@@ -619,62 +635,50 @@ else:
 }
 
 clean_cache() {
-    echo "Removing cache file: $CACHE_FILE"
-    rm -f "$CACHE_FILE"
-    echo -e "${GREEN}Cache cleaned${NC}"
+    echo "Removing cache/domain files:"
+    echo "  $CACHE_FILE"
+    echo "  $DOMAIN_FILE"
+    rm -f "$CACHE_FILE" "$DOMAIN_FILE"
+    echo -e "${GREEN}Cache and domain cleaned${NC}"
 }
 
-# Ensure the TypeScript submodule is pristine before running tests.
-# tsc can emit .d.ts/.js files next to test files, polluting the submodule
+# Ensure the standalone TypeScript corpus is pinned and pristine before tests.
+# tsc can emit ignored .d.ts/.js files next to test cases, polluting the corpus
 # and causing cache misses (extra .js files get picked up as test inputs).
-# Always run git clean -xf to guarantee a clean state.
+# Keep cleanup scoped to tests/cases so dependency and harness caches survive.
 check_submodule_clean() {
     local ts_dir="$REPO_ROOT/TypeScript"
-    if [ ! -d "$ts_dir/.git" ] && [ ! -f "$ts_dir/.git" ]; then
-        return 0  # Not a git repo/submodule, skip check
+    local reset_helper="$REPO_ROOT/scripts/setup/reset-ts-submodule.sh"
+    if ! "$reset_helper" --sparse; then
+        echo -e "${YELLOW}ERROR: Could not materialize the pinned TypeScript corpus.${NC}" >&2
+        return 1
     fi
 
-    # Verify the submodule SHA matches what's committed in the parent repo.
-    # This catches accidental `cd TypeScript && git checkout <other>` or detached HEAD drift.
     local expected_sha
-    expected_sha=$(cd "$REPO_ROOT" && git ls-tree HEAD TypeScript 2>/dev/null | awk '{print $3}')
-
-    # Prefer repository pinned TypeScript SHA so local workflow can proceed with
-    # the intended submodule version tracked in scripts/conformance/typescript-versions.json
-    # even before the superproject commit is updated.
-    local pinned_sha
-    pinned_sha=$(node -e "const fs = require('fs'); const p = 'scripts/conformance/typescript-versions.json'; try { const v = JSON.parse(fs.readFileSync(p, 'utf8')); process.stdout.write(v.current || ''); } catch {}" | tr -d '\n')
-    if [ -n "$pinned_sha" ]; then
-        expected_sha="$pinned_sha"
-    fi
+    expected_sha=$(tr -d '[:space:]' < "$REPO_ROOT/scripts/ci/typescript-submodule-ref")
     local actual_sha
     actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null || true)
-
-    # Fresh worktrees can leave the submodule on an unborn/invalid HEAD
-    # (for example "ref: refs/heads/.invalid"), which breaks rev-parse and
-    # later checkout/clean steps. Recover to the pinned SHA before running.
-    if [ -z "$actual_sha" ] || [ "$actual_sha" = "HEAD" ]; then
-        echo -e "${YELLOW}⚠ TypeScript submodule HEAD is not checked out; resetting to pinned SHA...${NC}"
-        if ! (cd "$REPO_ROOT" && bash scripts/setup/reset-ts-submodule.sh 2>/dev/null); then
-            echo -e "${YELLOW}⚠ Automatic submodule reset failed; continuing with current state.${NC}"
-        fi
-        actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null || true)
+    if [ "$expected_sha" != "$actual_sha" ]; then
+        echo -e "${YELLOW}ERROR: TypeScript corpus SHA mismatch after reset.${NC}" >&2
+        echo "  Expected: $expected_sha" >&2
+        echo "  Actual: ${actual_sha:-<no HEAD>}" >&2
+        return 1
     fi
 
-    if [ -n "$expected_sha" ] && [ -n "$actual_sha" ] && [ "$expected_sha" != "$actual_sha" ]; then
-        echo -e "${YELLOW}⚠ TypeScript submodule SHA mismatch!${NC}"
-        echo "  Expected (committed): $expected_sha"
-        echo "  Actual (checked out): $actual_sha"
-        echo -e "${YELLOW}Resetting to committed SHA...${NC}"
-        (cd "$REPO_ROOT" && git submodule update --init TypeScript 2>/dev/null)
+    # A worktree symlink points at a shared corpus. The helper verified its SHA
+    # and cleanliness; never mutate it from this checkout.
+    if [ -L "$ts_dir" ]; then
+        echo -e "${GREEN}✓ Shared TypeScript corpus verified${NC}"
+        echo ""
+        return 0
     fi
 
-    echo -e "${YELLOW}Cleaning TypeScript submodule (git checkout + clean -xfd)...${NC}"
-    if ! (cd "$ts_dir" && git checkout -- . >/dev/null 2>&1 && git clean -xfd >/dev/null 2>&1); then
-        echo -e "${YELLOW}⚠ Could not fully clean TypeScript submodule; continuing.${NC}"
-    else
-        echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
+    echo -e "${YELLOW}Cleaning ignored outputs under TypeScript/tests/cases...${NC}"
+    if ! (cd "$ts_dir" && git clean -xfd -- tests/cases >/dev/null 2>&1); then
+        echo -e "${YELLOW}ERROR: Could not clean generated TypeScript test-case outputs.${NC}" >&2
+        return 1
     fi
+    echo -e "${GREEN}✓ TypeScript corpus clean${NC}"
     echo ""
 }
 
@@ -747,46 +751,37 @@ except Exception:
             return 1
         fi
 
-        # 2) Extract summary values and recorded result count via Python -> JSON (no eval)
-        #    Runner output format: "FINAL RESULTS: N/M passed (X.X%)"
+        # 2) Extract the runnable pass denominator and the complete candidate
+        #    partition via the canonical runner-output parser.
         python3 -c "
-import re, sys, json
-text = open(sys.argv[1]).read()
-m = re.search(r'FINAL RESULTS:\s+(\d+)/(\d+)\s+passed\s+\(([0-9.]+)%\)', text)
-passed, total, rate = (int(m.group(1)), int(m.group(2)), float(m.group(3))) if m else (0, 0, 0.0)
-has_final_results = bool(m)
-recorded = sum(
-    1
-    for line in text.splitlines()
-    if line.startswith(('PASS ', 'FAIL ', 'XFAIL ', 'CRASH ', 'TIMEOUT '))
-)
-json.dump(
-    {
-        'total': total,
-        'passed': passed,
-        'failed': total - passed,
-        'rate': rate,
-        'recorded': recorded,
-        'has_final_results': has_final_results,
-        'runner_status': int(sys.argv[2]),
-    },
-    sys.stdout,
-)
-" "$tmpfile" "$runner_status" > "$summary_json"
+import json, os, sys
+sys.path.insert(0, os.path.join(sys.argv[3], 'scripts', 'conformance'))
+from lib.results import summarize_runner_output
+summary = summarize_runner_output(sys.argv[1])
+summary['runner_status'] = int(sys.argv[2])
+json.dump(summary, sys.stdout)
+" "$tmpfile" "$runner_status" "$REPO_ROOT" > "$summary_json"
     }
 
-    local total_tests passed failed pass_rate recorded_results has_final_results runner_status
+    local candidate_tests total_tests unsupported_tests skipped_tests
+    local passed failed pass_rate recorded_results recorded_runnable
+    local has_final_results partition_valid runner_status
     local attempt max_attempts=3
     for attempt in $(seq 1 "$max_attempts"); do
         run_snapshot_once || return 1
 
         # Read values from JSON (no eval)
         total_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['total'])" "$summary_json")
+        candidate_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['candidates'])" "$summary_json")
+        unsupported_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['unsupported'])" "$summary_json")
+        skipped_tests=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['skipped'])" "$summary_json")
         passed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['passed'])" "$summary_json")
         failed=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['failed'])" "$summary_json")
         pass_rate=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['rate'])" "$summary_json")
-        recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded', 0))" "$summary_json")
+        recorded_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_candidates', 0))" "$summary_json")
+        recorded_runnable=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('recorded_runnable', 0))" "$summary_json")
         has_final_results=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('has_final_results') else 'false')" "$summary_json")
+        partition_valid=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('true' if d.get('partition_valid') else 'false')" "$summary_json")
         runner_status=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('runner_status', 0))" "$summary_json")
 
         if [ "$has_final_results" != "true" ]; then
@@ -794,16 +789,19 @@ json.dump(
             return 1
         fi
 
-        if [ "$total_tests" -gt 0 ] && [ "$recorded_results" -lt "$total_tests" ]; then
+        if [ "$partition_valid" != "true" ]; then
+            echo -e "${YELLOW}ERROR: Snapshot candidate partition is inconsistent: ${candidate_tests} != ${total_tests} runnable + ${unsupported_tests} unsupported + ${skipped_tests} skipped.${NC}"
+            return 1
+        fi
+
+        if [ "$recorded_results" -ne "$candidate_tests" ] || [ "$recorded_runnable" -ne "$total_tests" ]; then
             if [ "$attempt" -lt "$max_attempts" ]; then
-                echo -e "${YELLOW}Snapshot run incomplete: recorded $recorded_results/$total_tests results. Retrying (${attempt}/${max_attempts})...${NC}"
+                echo -e "${YELLOW}Snapshot run incomplete: recorded ${recorded_results}/${candidate_tests} candidates and ${recorded_runnable}/${total_tests} runnable rows. Retrying (${attempt}/${max_attempts})...${NC}"
                 continue
             fi
-            if [ "$FORCE_SNAPSHOT" != "true" ]; then
-                echo -e "${YELLOW}ERROR: Snapshot run remained incomplete after $max_attempts attempts (${recorded_results}/$total_tests results).${NC}"
-                echo -e "${YELLOW}Use --force to save the snapshot anyway.${NC}"
-                return 1
-            fi
+            echo -e "${YELLOW}ERROR: Snapshot run remained incomplete after $max_attempts attempts (${recorded_results}/${candidate_tests} candidates, ${recorded_runnable}/${total_tests} runnable).${NC}"
+            echo -e "${YELLOW}Incomplete candidate coverage cannot be saved, including with --force.${NC}"
+            return 1
         fi
 
         if [ "$FORCE_SNAPSHOT" != "true" ] && [ "$prev_pass" -gt 0 ] && [ "$passed" -lt "$prev_pass" ]; then
@@ -847,7 +845,8 @@ print(f'{prev - curr:.1f}')
     # 3) Build per-test detail snapshot (compact JSON with all failure data)
     local detail_file="$REPO_ROOT/scripts/conformance/conformance-detail.json"
     python3 "$REPO_ROOT/scripts/conformance/build-snapshot-detail.py" "$tmpfile" \
-        --output "$detail_file" || true
+        --output "$detail_file" \
+        || { echo "ERROR: failed to build conformance detail snapshot"; return 1; }
 
     # 4) Run analyze with JSON output
     local analyze_json
@@ -869,9 +868,11 @@ print(f'{prev - curr:.1f}')
 import json, sys
 
 timestamp, git_sha = sys.argv[1], sys.argv[2]
-total, passed, failed = int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
-rate = float(sys.argv[6])
-analyze_path, areas_path, detail_path, out_path = sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10]
+candidates, runnable = int(sys.argv[3]), int(sys.argv[4])
+passed, failed = int(sys.argv[5]), int(sys.argv[6])
+unsupported, skipped = int(sys.argv[7]), int(sys.argv[8])
+rate = float(sys.argv[9])
+analyze_path, areas_path, detail_path, out_path = sys.argv[10], sys.argv[11], sys.argv[12], sys.argv[13]
 
 analyze, areas, detail = {}, {}, {}
 try:
@@ -886,12 +887,43 @@ except: pass
 
 # Pull richer aggregates from the detail file when available
 aggregates = detail.get('aggregates', {})
+detail_summary = detail.get('summary', {})
+expected_detail = {
+    'candidates': candidates,
+    'runnable': runnable,
+    'passed': passed,
+    'failed': failed,
+    'unsupported': unsupported,
+    'skipped': skipped,
+}
+actual_detail = {
+    'candidates': int(detail_summary.get('candidates', -1)),
+    'runnable': int(detail_summary.get('runnable', detail_summary.get('total', -1))),
+    'passed': int(detail_summary.get('passed', -1)),
+    'failed': int(detail_summary.get('failed', -1)),
+    'unsupported': int(detail_summary.get('unsupported', -1)),
+    'skipped': int(detail_summary.get('skipped', -1)),
+}
+if actual_detail != expected_detail:
+    raise SystemExit(
+        f'detail/runner accounting mismatch: detail={actual_detail}, runner={expected_detail}'
+    )
+if candidates != runnable + unsupported + skipped:
+    raise SystemExit(
+        f'invalid candidate partition: {candidates} != {runnable} + {unsupported} + {skipped}'
+    )
 
 snapshot = {
     'timestamp': timestamp,
     'git_sha': git_sha,
     'summary': {
-        'total_tests': total, 'passed': passed, 'failed': failed,
+        'candidates': candidates,
+        'total_tests': runnable,
+        'runnable': runnable,
+        'passed': passed,
+        'failed': failed,
+        'unsupported': unsupported,
+        'skipped': skipped,
         'pass_rate': rate,
     },
     'areas_by_pass_rate': areas.get('areas', []),
@@ -909,11 +941,15 @@ snapshot = {
 with open(out_path, 'w') as f:
     json.dump(snapshot, f, indent=2)
 
-print(f'Snapshot saved: {total} tests, {passed} passed ({rate}%)')
+print(
+    f'Snapshot saved: {candidates} candidates, {runnable} runnable, '
+    f'{passed} passed, {unsupported} unsupported, {skipped} skipped ({rate}%)'
+)
 print(f'Git SHA: {git_sha}')
 print(f'Areas ranked: {len(snapshot[\"areas_by_pass_rate\"])}')
-" "$timestamp" "$git_sha" "$total_tests" "$passed" "$failed" \
-  "$pass_rate" "$analyze_json" "$areas_json" "$detail_file" "$snapshot_file" \
+" "$timestamp" "$git_sha" "$candidate_tests" "$total_tests" "$passed" "$failed" \
+  "$unsupported_tests" "$skipped_tests" "$pass_rate" "$analyze_json" "$areas_json" \
+  "$detail_file" "$snapshot_file" \
   || { echo "ERROR: failed to assemble snapshot JSON"; return 1; }
 
     rm -f "$summary_json" "$analyze_json" "$areas_json"

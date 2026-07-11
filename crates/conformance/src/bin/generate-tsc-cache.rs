@@ -11,13 +11,14 @@ use anyhow::Result;
 use clap::Parser;
 use rayon::prelude::*;
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
-use tsz_conformance::tsc_results::DiagnosticFingerprint;
+use std::time::{Duration, Instant};
+use tsz_conformance::tsc_results::{DiagnosticFingerprint, UnsupportedReason};
 use tsz_conformance::tsz_wrapper;
 use walkdir::WalkDir;
 
@@ -32,6 +33,11 @@ struct Args {
     /// Output cache file path
     #[arg(long, default_value = "./scripts/conformance/tsc-cache-full.json")]
     output: String,
+
+    /// Output path for the exact candidate/runnable/unsupported domain manifest.
+    /// Defaults to `<output>.domain.json`.
+    #[arg(long)]
+    domain_output: Option<String>,
 
     /// Maximum number of tests to process (0 = unlimited)
     #[arg(long, default_value_t = 0)]
@@ -73,6 +79,22 @@ struct FileMetadata {
     size: u64,
     #[serde(default)]
     typescript_version: Option<String>,
+}
+
+enum ProcessOutcome {
+    Cached(String, TscCacheEntry),
+    Skipped(String, &'static str),
+}
+
+#[derive(Serialize)]
+struct ConformanceDomain<'a> {
+    typescript_version: &'a str,
+    candidate_count: usize,
+    runnable_count: usize,
+    unsupported_count: usize,
+    skipped_count: usize,
+    unsupported: &'a BTreeMap<String, String>,
+    skipped: &'a BTreeMap<String, String>,
 }
 
 /// Simple counting semaphore (std::sync::Semaphore was removed from std).
@@ -120,7 +142,7 @@ fn resolve_tsc_path() -> Result<String> {
     if let Ok(output) = Command::new("node")
         .args([
             "-e",
-            "console.log(require.resolve('typescript/lib/tsc.js'))",
+            "const path=require('path'); const p=require.resolve('typescript/package.json'); console.log(path.join(path.dirname(p),'lib','tsc.js'))",
         ])
         .output()
     {
@@ -140,6 +162,79 @@ fn resolve_tsc_path() -> Result<String> {
         }
     }
     Ok("npx:tsc".to_string())
+}
+
+fn tsc_command(tsc_path: &str) -> Command {
+    if tsc_path.starts_with("npx:") {
+        let mut command = Command::new("npx");
+        command.arg("tsc");
+        command
+    } else if tsc_path.ends_with(".js") {
+        let mut command = Command::new("node");
+        command.arg(tsc_path);
+        command
+    } else {
+        Command::new(tsc_path)
+    }
+}
+
+fn run_command_with_timeout(mut command: Command, timeout: Duration) -> Result<Output> {
+    if timeout.is_zero() {
+        return command.output().map_err(Into::into);
+    }
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture tsc stdout"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| anyhow::anyhow!("failed to capture tsc stderr"))?;
+    let stdout_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            anyhow::bail!("tsc timed out after {} seconds", timeout.as_secs());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("tsc stdout reader panicked"))??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("tsc stderr reader panicked"))??;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn is_typescript_7_or_newer(version: &str) -> bool {
+    version
+        .split('.')
+        .next()
+        .and_then(|major| major.parse::<u32>().ok())
+        .is_some_and(|major| major >= 7)
 }
 
 fn main() -> Result<()> {
@@ -182,6 +277,8 @@ fn main() -> Result<()> {
     let start = Instant::now();
 
     let cache: Mutex<HashMap<String, TscCacheEntry>> = Mutex::new(HashMap::new());
+    let unsupported: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+    let explicitly_skipped: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
     let processed = AtomicUsize::new(0);
     let errors = AtomicUsize::new(0);
     let skipped = AtomicUsize::new(0);
@@ -199,12 +296,27 @@ fn main() -> Result<()> {
             &test_dir_path,
             tsc_path_ref,
             tsc_version.as_str(),
+            args.timeout,
             &node_semaphore,
         ) {
-            Ok(Some((key, entry))) => {
+            Ok(ProcessOutcome::Cached(key, entry)) => {
                 cache.lock().unwrap().insert(key, entry);
             }
-            Ok(None) => {
+            Ok(ProcessOutcome::Skipped(key, reason)) => {
+                let target = if reason == "unsupported by TypeScript 7" {
+                    &unsupported
+                } else {
+                    &explicitly_skipped
+                };
+                let stable_reason = if reason == "unsupported by TypeScript 7" {
+                    UnsupportedReason::TypeScript7Configuration.code()
+                } else {
+                    reason
+                };
+                target
+                    .lock()
+                    .unwrap()
+                    .insert(key, stable_reason.to_string());
                 skipped.fetch_add(1, Ordering::SeqCst);
             }
             Err(e) => {
@@ -230,6 +342,9 @@ fn main() -> Result<()> {
     });
 
     let cache = cache.into_inner().unwrap();
+    let unsupported = unsupported.into_inner().unwrap();
+    let explicitly_skipped = explicitly_skipped.into_inner().unwrap();
+    let error_count = errors.load(Ordering::SeqCst);
 
     println!(
         "\r✓ Completed in {:.1}s ({:.0} tests/sec)                              ",
@@ -240,11 +355,32 @@ fn main() -> Result<()> {
     println!("  Processed: {}", processed.load(Ordering::SeqCst));
     println!("  Cached: {}", cache.len());
     println!("  Skipped: {}", skipped.load(Ordering::SeqCst));
-    println!("  Errors: {}", errors.load(Ordering::SeqCst));
+    println!("  Errors: {error_count}");
+
+    if error_count != 0 {
+        anyhow::bail!("refusing to write a partial tsc cache after {error_count} errors");
+    }
 
     println!("\n💾 Writing cache to: {}", args.output);
     write_cache(&args.output, &cache)?;
     println!("✓ Cache written with {} entries", cache.len());
+
+    let domain_output = args
+        .domain_output
+        .unwrap_or_else(|| format!("{}.domain.json", args.output));
+    write_domain(
+        &domain_output,
+        &ConformanceDomain {
+            typescript_version: &tsc_version,
+            candidate_count: total,
+            runnable_count: cache.len(),
+            unsupported_count: unsupported.len(),
+            skipped_count: explicitly_skipped.len(),
+            unsupported: &unsupported,
+            skipped: &explicitly_skipped,
+        },
+    )?;
+    println!("✓ Domain manifest written to {domain_output}");
 
     Ok(())
 }
@@ -294,40 +430,66 @@ fn process_test_file(
     test_dir: &Path,
     tsc_path: &str,
     tsc_version: &str,
+    timeout_secs: u64,
     node_sem: &CountingSemaphore,
-) -> Result<Option<(String, TscCacheEntry)>> {
+) -> Result<ProcessOutcome> {
     use std::fs;
     use tsz_conformance::text_decode::{decode_source_text, DecodedSourceText};
 
     let bytes = fs::read(path)?;
     let decoded = decode_source_text(&bytes);
+    let key = tsz_conformance::cache::cache_key(path, test_dir).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Path {} is not under test dir {}",
+            path.display(),
+            test_dir.display()
+        )
+    })?;
 
-    let (content, filenames, options, binary_bytes) = match decoded {
+    let (content, filenames, option_variants, option_order, binary_bytes) = match decoded {
         DecodedSourceText::Text(content) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-            if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
-                return Ok(None);
+            if let Some(reason) =
+                tsz_conformance::test_parser::should_skip_test_at_path(path, &parsed.directives)
+            {
+                return Ok(ProcessOutcome::Skipped(key, reason));
             }
+            let option_variants =
+                tsz_conformance::test_parser::select_ts7_oracle_configurations(&parsed.directives)
+                    .expect("TS7 selector succeeded during skip check");
             (
                 Some(content),
                 parsed.directives.filenames,
-                parsed.directives.options,
+                option_variants,
+                parsed.directives.option_order,
                 None,
             )
         }
         DecodedSourceText::TextWithOriginalBytes(content, original) => {
             let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
-            if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
-                return Ok(None);
+            if let Some(reason) =
+                tsz_conformance::test_parser::should_skip_test_at_path(path, &parsed.directives)
+            {
+                return Ok(ProcessOutcome::Skipped(key, reason));
             }
+            let option_variants =
+                tsz_conformance::test_parser::select_ts7_oracle_configurations(&parsed.directives)
+                    .expect("TS7 selector succeeded during skip check");
             (
                 Some(content),
                 parsed.directives.filenames,
-                parsed.directives.options,
+                option_variants,
+                parsed.directives.option_order,
                 Some(original),
             )
         }
-        DecodedSourceText::Binary(bytes) => (None, Vec::new(), HashMap::new(), Some(bytes)),
+        DecodedSourceText::Binary(bytes) => (
+            None,
+            Vec::new(),
+            vec![HashMap::new()],
+            Vec::new(),
+            Some(bytes),
+        ),
     };
 
     let metadata = fs::metadata(path)?;
@@ -337,103 +499,95 @@ fn process_test_file(
         .as_millis() as u64;
     let size = metadata.len();
 
-    let key = tsz_conformance::cache::cache_key(path, test_dir).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Path {} is not under test dir {}",
-            path.display(),
-            test_dir.display()
-        )
-    })?;
-
     let original_extension = path.extension().and_then(|e| e.to_str());
 
-    // Prepare test dir (Rust-side work — no semaphore needed)
-    let prepared = if let Some(content) = &content {
-        let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
-        tsz_wrapper::prepare_test_dir_with_lib_dir(
-            content,
-            &filenames,
-            &options,
-            original_extension,
-            &[],
-            None,
-            Some(&ts_tests_lib_dir),
-        )?
-    } else if let Some(bytes) = &binary_bytes {
-        tsz_wrapper::prepare_binary_test_dir(bytes, original_extension.unwrap_or("ts"), &options)?
-    } else {
-        return Err(anyhow::anyhow!("No content or binary bytes for test file"));
-    };
+    let mut error_codes = std::collections::HashSet::new();
+    let mut diagnostic_fingerprints = std::collections::HashSet::new();
+    for options in &option_variants {
+        // Prepare and compile every configuration selected by the TS7 harness.
+        let prepared = if let Some(content) = &content {
+            let ts_tests_lib_dir = tsz_wrapper::tests_lib_dir_for_cases_dir(test_dir);
+            tsz_wrapper::prepare_test_dir_with_lib_dir(
+                content,
+                &filenames,
+                options,
+                original_extension,
+                &option_order,
+                None,
+                Some(&ts_tests_lib_dir),
+            )?
+        } else if let Some(bytes) = &binary_bytes {
+            tsz_wrapper::prepare_binary_test_dir(
+                bytes,
+                original_extension.unwrap_or("ts"),
+                options,
+            )?
+        } else {
+            return Err(anyhow::anyhow!("No content or binary bytes for test file"));
+        };
+        let work_dir = prepared.project_dir.as_path();
 
-    let work_dir = prepared.project_dir.as_path();
-
-    // Acquire semaphore before spawning node subprocess to cap memory usage
-    node_sem.acquire();
-
-    let output = if tsc_path.starts_with("npx:") {
-        Command::new("npx")
-            .arg("tsc")
+        node_sem.acquire();
+        let mut command = tsc_command(tsc_path);
+        command
             .arg("--project")
             .arg(work_dir)
             .arg("--noEmit")
             .arg("--pretty")
-            .arg("false")
-            .current_dir(work_dir)
-            .output()
-    } else if tsc_path.ends_with(".js") {
-        Command::new("node")
-            .arg(tsc_path)
-            .arg("--project")
-            .arg(work_dir)
-            .arg("--noEmit")
-            .arg("--pretty")
-            .arg("false")
-            .current_dir(work_dir)
-            .output()
-    } else {
-        Command::new(tsc_path)
-            .arg("--project")
-            .arg(work_dir)
-            .arg("--noEmit")
-            .arg("--pretty")
-            .arg("false")
-            .current_dir(work_dir)
-            .output()
-    };
-
-    // Release permit immediately after subprocess completes
-    node_sem.release();
-
-    let output = match output {
-        Ok(o) => o,
-        Err(e) => {
-            return Err(anyhow::anyhow!("Failed to run tsc: {}", e));
+            .arg("false");
+        if is_typescript_7_or_newer(tsc_version) {
+            command.arg("--singleThreaded");
+            command.arg("--stableTypeOrdering").arg("true");
         }
-    };
+        command.current_dir(work_dir);
+        let output = run_command_with_timeout(command, Duration::from_secs(timeout_secs));
+        node_sem.release();
 
-    // Detect node/tsc startup failures (e.g. MODULE_NOT_FOUND) that produce
-    // no TS diagnostics.  Without this check the test silently caches as [].
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !output.status.success()
-        && stderr.contains("Cannot find module")
-        && !stderr.contains("error TS")
-    {
-        return Err(anyhow::anyhow!(
-            "tsc startup failure (MODULE_NOT_FOUND): {}",
-            stderr
-                .lines()
-                .find(|l| l.contains("Cannot find module"))
-                .unwrap_or("unknown")
-        ));
+        let output = output.map_err(|error| anyhow::anyhow!("Failed to run tsc: {error}"))?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.status.success()
+            && stderr.contains("Cannot find module")
+            && !stderr.contains("error TS")
+        {
+            return Err(anyhow::anyhow!(
+                "tsc startup failure (MODULE_NOT_FOUND): {}",
+                stderr
+                    .lines()
+                    .find(|line| line.contains("Cannot find module"))
+                    .unwrap_or("unknown")
+            ));
+        }
+
+        let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options.clone());
+        if output.status.code().is_none()
+            || (!output.status.success()
+                && result.error_codes.is_empty()
+                && result.diagnostic_fingerprints.is_empty())
+        {
+            return Err(anyhow::anyhow!(
+                "tsc exited unsuccessfully without compiler diagnostics (status {}): stdout={:?} stderr={:?}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        error_codes.extend(result.error_codes);
+        diagnostic_fingerprints.extend(result.diagnostic_fingerprints);
     }
 
-    let result = tsz_wrapper::parse_tsz_output(&output, work_dir, options);
+    let mut error_codes: Vec<_> = error_codes.into_iter().collect();
+    error_codes.sort_unstable();
+    let mut diagnostic_fingerprints: Vec<_> = diagnostic_fingerprints.into_iter().collect();
+    diagnostic_fingerprints.sort_by(|left, right| {
+        left.code
+            .cmp(&right.code)
+            .then_with(|| left.file.cmp(&right.file))
+            .then_with(|| left.line.cmp(&right.line))
+            .then_with(|| left.column.cmp(&right.column))
+            .then_with(|| left.message_key.cmp(&right.message_key))
+    });
 
-    let mut error_codes = result.error_codes;
-    error_codes.sort();
-    error_codes.dedup();
-
-    Ok(Some((
+    Ok(ProcessOutcome::Cached(
         key,
         TscCacheEntry {
             metadata: FileMetadata {
@@ -442,9 +596,9 @@ fn process_test_file(
                 typescript_version: Some(tsc_version.to_string()),
             },
             error_codes,
-            diagnostic_fingerprints: result.diagnostic_fingerprints,
+            diagnostic_fingerprints,
         },
-    )))
+    ))
 }
 
 fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()> {
@@ -453,7 +607,17 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, cache)?;
+    let ordered: BTreeMap<_, _> = cache.iter().collect();
+    serde_json::to_writer_pretty(writer, &ordered)?;
+    Ok(())
+}
+
+fn write_domain(path: &str, domain: &ConformanceDomain<'_>) -> Result<()> {
+    use std::fs::File;
+    use std::io::BufWriter;
+
+    let file = File::create(path)?;
+    serde_json::to_writer_pretty(BufWriter::new(file), domain)?;
     Ok(())
 }
 

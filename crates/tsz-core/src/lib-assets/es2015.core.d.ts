@@ -110,7 +110,7 @@ interface Math {
     imul(x: number, y: number): number;
 
     /**
-     * Returns the sign of the x, indicating whether x is positive, negative or zero.
+     * Returns the sign of x, indicating whether x is positive, negative, or zero.
      * @param x The numeric expression to test
      */
     sign(x: number): number;
@@ -189,7 +189,7 @@ interface Math {
     hypot(...values: number[]): number;
 
     /**
-     * Returns the integral part of the a numeric expression, x, removing any fractional digits.
+     * Returns the integral part of the numeric expression x, removing any fractional digits.
      * If x is already an integer, the result is x.
      * @param x A numeric expression.
      */

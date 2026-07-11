@@ -40,96 +40,6 @@ pub(super) fn is_project_config_diagnostic_code(code: u32) -> bool {
     matches!(code, 18003 | 5023 | 5057 | 5058 | 5081 | 5101 | 5102 | 5107)
 }
 
-pub(super) fn is_compiler_option_config_diagnostic_code(code: u32) -> bool {
-    matches!(code, 5101 | 5102 | 5107)
-}
-
-/// Reason a pinned tsc cache entry cannot serve as a faithful diagnostic
-/// baseline for a test.
-///
-/// When a comparison is degenerate the runner classifies the row as a pass
-/// instead of scoring tsz against the unfaithful cache (see #14991): tsz may
-/// legitimately emit diagnostics the degenerate cache never recorded, and
-/// counting those as regressions would penalize correct behavior. A pass is
-/// also the only classification that keeps the curated baseline whole — the
-/// accepted-regression ledger is frozen and the snapshot may not drop a row.
-///
-/// Two independent degeneracy sources are recognized:
-///
-/// 1. *Config-validation halt* (cache-shape, no per-test list): tsc 6.0.x
-///    treats a deprecated or removed compiler option as a hard error
-///    (`TS5101`/`TS5102`/`TS5107`) and halts BEFORE type-checking, so the cache
-///    records only the compiler-option config diagnostic and the file is never
-///    checked. There is no file-level ground truth to compare; tsz, which does
-///    not implement the hard-halt, keeps parsing and emits the file's real
-///    diagnostics (for example `TS1005` for a body-less accessor).
-///
-/// 2. *Documented partial cache* (registry): a small set of tests whose pinned
-///    cache provably fails to record tsc's real diagnostics for a reason no
-///    cache-shape rule can detect (e.g. a JS-checking-options mismatch at cache
-///    generation). Each entry carries its evidence and is removed once the
-///    cache is regenerated faithfully.
-pub(super) fn degenerate_cache_reason(
-    test_key: &str,
-    tsc_result: &crate::tsc_results::TscResult,
-) -> Option<&'static str> {
-    if cache_records_config_validation_halt(tsc_result) {
-        return Some(
-            "tsc halted at config validation on a deprecated/removed compiler \
-             option (TS5101/TS5102/TS5107); the pinned cache holds no file-level \
-             baseline, so tsz's downstream diagnostics are not comparable",
-        );
-    }
-    degenerate_cache_registry(test_key)
-}
-
-/// True when every diagnostic the pinned tsc recorded is a compiler-option
-/// config diagnostic.
-///
-/// An empty cache is deliberately NOT treated as a halt: it means tsc checked
-/// the file and found nothing, so tsz's extra diagnostics there are genuine
-/// regressions (false positives on a clean file) and must still be scored. The
-/// halt signal requires at least one recorded diagnostic AND that all recorded
-/// diagnostics — in both `error_codes` and `diagnostic_fingerprints` — are
-/// compiler-option config codes. A cache that mixes a config diagnostic with
-/// file-level diagnostics means tsc warned but did not halt, so the comparison
-/// stays real.
-fn cache_records_config_validation_halt(tsc_result: &crate::tsc_results::TscResult) -> bool {
-    let recorded = tsc_result.error_codes.len() + tsc_result.diagnostic_fingerprints.len();
-    if recorded == 0 {
-        return false;
-    }
-    tsc_result
-        .error_codes
-        .iter()
-        .all(|code| is_compiler_option_config_diagnostic_code(*code))
-        && tsc_result
-            .diagnostic_fingerprints
-            .iter()
-            .all(|fingerprint| is_compiler_option_config_diagnostic_code(fingerprint.code))
-}
-
-/// Pinned-cache entries known to be partial/degenerate that no cache-shape rule
-/// can detect, keyed by the test's cache key (path relative to the test dir).
-///
-/// Keep this list tiny and evidence-backed. Each entry documents why the cache
-/// is unfaithful; remove it once the cache is regenerated to record tsc's real
-/// diagnostics for the test.
-fn degenerate_cache_registry(test_key: &str) -> Option<&'static str> {
-    const ENTRIES: &[(&str, &str)] = &[(
-        "conformance/salsa/plainJSGrammarErrors.ts",
-        "pinned tsc 6.0.3 cache recorded only 8 of the 102 diagnostics in the \
-         upstream .errors.txt baseline (a JS-checking-options mismatch at cache \
-         generation); tsz's TS1005 brace-expected diagnostic at the body-less \
-         accessor is correct per the baseline but absent from the degenerate \
-         cache (#14991)",
-    )];
-    let normalized = test_key.replace('\\', "/");
-    ENTRIES.iter().find_map(|(key, reason)| {
-        (normalized == *key || normalized.ends_with(&format!("/{key}"))).then_some(*reason)
-    })
-}
-
 pub(super) fn sanitize_artifact_name(path: &str) -> String {
     path.chars()
         .map(|ch| match ch {
@@ -157,10 +67,18 @@ pub(super) fn is_typescript_builtin_lib_path(path: &str) -> bool {
     if !normalized.ends_with(".d.ts") {
         return false;
     }
+    let installed_platform_lib = (normalized.starts_with("node_modules/@typescript/typescript-")
+        || normalized.contains("/node_modules/@typescript/typescript-"))
+        && normalized.contains("/lib/lib.");
+    let source_build_platform_lib = (normalized.starts_with("built/npm/typescript-")
+        || normalized.contains("/built/npm/typescript-"))
+        && normalized.contains("/lib/lib.");
     normalized.starts_with("node_modules/typescript/lib/lib.")
         || normalized.contains("/node_modules/typescript/lib/lib.")
         || normalized.starts_with("typescript/lib/lib.")
         || normalized.contains("/typescript/lib/lib.")
+        || installed_platform_lib
+        || source_build_platform_lib
         || normalized.starts_with("lib.")
 }
 

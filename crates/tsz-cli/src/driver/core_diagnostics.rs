@@ -54,9 +54,10 @@ pub(super) const fn is_grammar_error_for_deprecation_priority(code: u32) -> bool
         || matches!(code, 2458 | 2754)
 }
 
-/// Drops the fatal config notices a grammar error outranks: deprecation
-/// (TS5101/TS5107) and removed-option (TS5102). tsc reports only the grammar
-/// error in that case, so neither notice survives.
+/// Drops fatal config notices that a grammar error outranks.
+///
+/// The deprecation branch is retained for legacy TS5101/TS5107 producers;
+/// TypeScript 7 option parsing reaches this path through removal notices.
 pub(super) fn remove_deprecation_diagnostics(diagnostics: &mut Vec<Diagnostic>) {
     diagnostics.retain(|d| {
         !is_deprecation_diagnostic_code(d.code) && !is_removed_option_diagnostic_code(d.code)
@@ -66,19 +67,19 @@ pub(super) fn remove_deprecation_diagnostics(diagnostics: &mut Vec<Diagnostic>) 
 /// Applies tsc's precedence between a fatal config-level notice and the
 /// file-level diagnostics.
 ///
-/// tsc surfaces a config deprecation (TS5101/TS5107) or a removed-option notice
-/// (TS5102) only when the program is otherwise free of grammar errors. When a
-/// grammar error is present it takes precedence and the config notice is
-/// dropped; tsc's `getOptionsDiagnostics`/`getGlobalDiagnostics` never reach the
-/// reporter once `getSyntacticDiagnostics` produces an error. Absent a grammar
-/// error the notice is fatal and file-level semantic diagnostics are suppressed,
-/// with only the global TS2318 ("Cannot find global type") and TS2792 ("Did you
-/// mean to set moduleResolution?") diagnostics preserved.
+/// A fatal legacy deprecation or TypeScript 7 removal notice only survives when
+/// the program is otherwise free of grammar errors. When a grammar error is
+/// present it takes precedence and the config notice is dropped; tsc's
+/// `getOptionsDiagnostics`/`getGlobalDiagnostics` never reach the reporter once
+/// `getSyntacticDiagnostics` produces an error. Absent a grammar error the notice
+/// is fatal and file-level semantic diagnostics are suppressed, with only the
+/// global TS2318 ("Cannot find global type") and TS2792 ("Did you mean to set
+/// moduleResolution?") diagnostics preserved.
 ///
-/// This unifies the deprecation (TS5101/TS5107) and removed-option (TS5102)
-/// handling: a removed-but-parsed option passed on the CLI follows the same
-/// "config notice is fatal for semantic diagnostics" rule that tsc applies, so a
-/// real type error in the source must not leak alongside the removal notice.
+/// This preserves the legacy deprecation precedence while sharing it with
+/// removed-option handling: a removed-but-parsed option passed on the CLI follows
+/// the same "config notice is fatal for semantic diagnostics" rule that tsc
+/// applies, so a real type error must not leak alongside the removal notice.
 pub(super) fn apply_fatal_config_notice_priority(
     diagnostics: &mut Vec<Diagnostic>,
     config_diagnostics: &mut Vec<Diagnostic>,
@@ -256,14 +257,14 @@ pub(super) fn compile_inner(
         .iter()
         .any(|d| is_removed_option_value_diagnostic_code(d.code));
 
-    // TS5103 (invalid ignoreDeprecations value) and TS5102 (removed option) are fatal
-    // in tsc when they come from configuration: they stop compilation and report
-    // only config-level errors. TS5108 (removed option value) is fatal from either
-    // config or direct CLI validation. Direct CLI TS5102 is still reported, but we
-    // let emit continue so baseline emit invocations for removed-but-parsed flags
-    // can compare generated JS/DTS instead of failing before output exists.
+    // TS6046 (invalid enum value) and TS5108 (removed option value) are fatal
+    // from either config or direct CLI validation. TS5103 (invalid
+    // ignoreDeprecations) and TS5102 (removed option) are fatal when they come
+    // from configuration. Direct CLI TS5102 remains reportable without forcing
+    // no-emit so emit baselines can still compare output for parsed legacy flags.
     let has_fatal_config_diagnostic = config_diagnostics.iter().any(|d| {
         d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
+            || d.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
             || d.code
                 == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || (config_has_removed_option_diagnostic && is_removed_option_diagnostic_code(d.code))
@@ -287,7 +288,7 @@ pub(super) fn compile_inner(
         });
     }
 
-    // Track whether TS5107/TS5101 deprecation diagnostics exist for handling below.
+    // Retain precedence handling for diagnostics from legacy deprecation producers.
     let has_deprecation_diagnostics = config_diagnostics
         .iter()
         .any(|d| is_deprecation_diagnostic_code(d.code));
@@ -309,7 +310,7 @@ pub(super) fn compile_inner(
         Err(e) => {
             // If config has errors (e.g., TS5103 for invalid ignoreDeprecations),
             // return them even if compiler options resolution fails.
-            // This ensures config diagnostics like TS5107 are reported to the user.
+            // This ensures any existing config diagnostics are reported to the user.
             if !config_diagnostics.is_empty() {
                 return Ok(CompilationResult {
                     diagnostics: config_diagnostics,
@@ -340,16 +341,6 @@ pub(super) fn compile_inner(
     )?;
     let positional_no_config_no_emit =
         tsconfig_path.is_none() && !args.files.is_empty() && resolved.no_emit;
-    // Wire removed-but-honored suppress flags from config
-    if loaded.suppress_excess_property_errors {
-        resolved.checker.suppress_excess_property_errors = true;
-    }
-    if loaded.suppress_implicit_any_index_errors {
-        resolved.checker.suppress_implicit_any_index_errors = true;
-    }
-    if loaded.no_implicit_use_strict {
-        resolved.checker.no_implicit_use_strict = true;
-    }
     if resolved.allow_importing_ts_extensions {
         resolved.checker.allow_importing_ts_extensions = true;
     }
@@ -643,10 +634,10 @@ pub(super) fn compile_inner(
     {
         // TS5011: an output location (`outDir`, `declarationDir`, or `outFile`)
         // is configured without an explicit `rootDir`, and the inferred common
-        // source directory differs from the tsconfig directory. tsc 6.0 emits
-        // this for every emit — JavaScript, declaration, and `outFile` bundle —
-        // because the output would otherwise land in a layout that changes in
-        // TypeScript 7.0, so it asks the user to pin `rootDir` explicitly. It is
+        // source directory differs from the tsconfig directory. This migration
+        // diagnostic covers every emit — JavaScript, declaration, and `outFile`
+        // bundle — because the output would otherwise land in a layout that
+        // changes in TypeScript 7, so it asks the user to pin `rootDir`. It is
         // suppressed under `noEmit` (nothing is written) and when `rootDir` is
         // set (handled by the branch above), matching tsc.
         if let Some(common) = implicit_common_source_directory(&root_file_paths, &base_dir, &cwd) {
@@ -1039,9 +1030,9 @@ pub(super) fn compile_inner(
         diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
     }
 
-    // A fatal config notice (deprecation TS5101/TS5107 or removed-option TS5102)
-    // takes priority over file-level semantic diagnostics, unless a grammar error
-    // outranks it. See `apply_fatal_config_notice_priority`.
+    // A fatal legacy deprecation or TypeScript 7 removal notice takes priority
+    // over file-level semantic diagnostics unless a grammar error outranks it.
+    // See `apply_fatal_config_notice_priority`.
     if has_fatal_config_notice {
         apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
     }
@@ -1133,8 +1124,8 @@ pub(super) fn compile_inner(
     }
 
     // Output layout follows tsc's `getCommonSourceDirectory()`. When `rootDir`
-    // is set, that is the root. In project (tsconfig) mode tsc 6.0 anchors the
-    // layout at the config directory (the `base_dir` fallback used inside the
+    // is set, that is the root. In project (tsconfig) mode the layout is anchored
+    // at the config directory (the `base_dir` fallback used inside the
     // emitter, see TS5011), so nothing extra is needed there. But when
     // compilation is driven by an explicit file list with no tsconfig, tsc lays
     // output out relative to the longest common directory of the emittable

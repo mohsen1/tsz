@@ -60,6 +60,7 @@ if [ -z "$PINNED_VERSION" ]; then
 fi
 
 PACKAGE_JSON="$PROJECT_DIR/node_modules/typescript/package.json"
+LIB_RESOLVER="$ROOT_DIR/scripts/setup/resolve-typescript-lib-dir.mjs"
 INSTALL_TS=false
 
 if [ ! -d "$PROJECT_DIR/node_modules" ]; then
@@ -99,5 +100,57 @@ if [ "$INSTALL_TS" = true ]; then
     fi
 fi
 
+PLATFORM_PACKAGE="$(node -e "process.stdout.write('@typescript/typescript-' + process.platform + '-' + process.arch)")"
+EXPECTED_PLATFORM_VERSION="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write((pkg.optionalDependencies && pkg.optionalDependencies[process.argv[2]]) || '');" "$PACKAGE_JSON" "$PLATFORM_PACKAGE")"
+
+if [ -n "$EXPECTED_PLATFORM_VERSION" ]; then
+    if [ "$EXPECTED_PLATFORM_VERSION" != "$PINNED_VERSION" ]; then
+        echo "ERROR: $PLATFORM_PACKAGE is pinned to $EXPECTED_PLATFORM_VERSION by the TypeScript wrapper, expected $PINNED_VERSION" >&2
+        exit 1
+    fi
+
+    PLATFORM_PACKAGE_JSON="$PROJECT_DIR/node_modules/$PLATFORM_PACKAGE/package.json"
+    CURRENT_PLATFORM_VERSION=""
+    if [ -f "$PLATFORM_PACKAGE_JSON" ]; then
+        CURRENT_PLATFORM_VERSION="$(node -e "const fs = require('fs'); const file = process.argv[1]; try { const pkg = JSON.parse(fs.readFileSync(file, 'utf8')); process.stdout.write(pkg.version || ''); } catch { process.stdout.write(''); }" "$PLATFORM_PACKAGE_JSON")"
+    fi
+
+    if [ "$CURRENT_PLATFORM_VERSION" != "$EXPECTED_PLATFORM_VERSION" ]; then
+        echo "Installing pinned TypeScript platform package $PLATFORM_PACKAGE@$EXPECTED_PLATFORM_VERSION into $PROJECT_DIR ..."
+        (cd "$PROJECT_DIR" && npm install --silent --no-save --no-audit --no-fund --no-package-lock --ignore-scripts --legacy-peer-deps --include=optional "${PLATFORM_PACKAGE}@${EXPECTED_PLATFORM_VERSION}")
+
+        CURRENT_PLATFORM_VERSION=""
+        if [ -f "$PLATFORM_PACKAGE_JSON" ]; then
+            CURRENT_PLATFORM_VERSION="$(node -e "const fs = require('fs'); const file = process.argv[1]; try { const pkg = JSON.parse(fs.readFileSync(file, 'utf8')); process.stdout.write(pkg.version || ''); } catch { process.stdout.write(''); }" "$PLATFORM_PACKAGE_JSON")"
+        fi
+        if [ "$CURRENT_PLATFORM_VERSION" != "$EXPECTED_PLATFORM_VERSION" ]; then
+            echo "ERROR: Failed to install $PLATFORM_PACKAGE@$EXPECTED_PLATFORM_VERSION in $PROJECT_DIR" >&2
+            echo "Installed platform version: ${CURRENT_PLATFORM_VERSION:-<none>}" >&2
+            exit 1
+        fi
+    fi
+elif [[ "$PINNED_VERSION" == 7.* ]]; then
+    echo "ERROR: TypeScript $PINNED_VERSION does not declare the required optional package $PLATFORM_PACKAGE" >&2
+    exit 1
+fi
+
+TSC_JS="$PROJECT_DIR/node_modules/typescript/lib/tsc.js"
+if [ ! -f "$TSC_JS" ]; then
+    echo "ERROR: Pinned TypeScript CLI launcher not found: $TSC_JS" >&2
+    exit 1
+fi
+
+TSC_VERSION="$(node "$TSC_JS" --version 2>/dev/null | sed -n 's/^Version //p' | head -1)"
+if [ "$TSC_VERSION" != "$PINNED_VERSION" ]; then
+    echo "ERROR: Pinned TypeScript CLI reports ${TSC_VERSION:-<none>}, expected $PINNED_VERSION" >&2
+    exit 1
+fi
+
+if ! LIB_DIR="$(node "$LIB_RESOLVER" "$PACKAGE_JSON")"; then
+    echo "ERROR: Pinned TypeScript standard libraries are unavailable" >&2
+    exit 1
+fi
+
 echo "$PROJECT_DIR TypeScript version: $PINNED_VERSION"
+echo "$PROJECT_DIR TypeScript lib dir: $LIB_DIR"
 exit 0

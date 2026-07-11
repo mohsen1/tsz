@@ -10,8 +10,6 @@
 //! - Cross-lib interface heritage (e.g., Array extends ReadonlyArray) works.
 //! - `resolve_scope_chain` and `resolve_name_to_lib_symbol` stable helpers.
 
-use rustc_hash::FxHashSet;
-use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
@@ -22,7 +20,8 @@ use tsz_checker::state::CheckerState;
 use tsz_checker::test_utils::{
     diagnostic_count, diagnostics_with_any_code, diagnostics_with_code,
     diagnostics_with_code_any_message, diagnostics_with_code_message, diagnostics_without_codes,
-    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message, load_lib_files,
+    has_any_diagnostic_code, has_diagnostic_code, has_diagnostic_code_message,
+    load_compiled_lib_files, load_lib_files,
 };
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
@@ -34,39 +33,7 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 }
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_paths = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for lib_path in &lib_paths {
-        if lib_path.exists()
-            && let Ok(content) = std::fs::read_to_string(lib_path)
-        {
-            let file_name = lib_path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("lib.d.ts")
-                .to_string();
-            if !seen_files.insert(file_name.clone()) {
-                continue;
-            }
-            let lib_file = LibFile::from_source(file_name, content);
-            lib_files.push(Arc::new(lib_file));
-        }
-    }
-    lib_files
+    load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.d.ts"])
 }
 
 fn lib_files_available() -> bool {

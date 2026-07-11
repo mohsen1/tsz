@@ -12,6 +12,7 @@
 //! between the cache generator and the runner.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 pub use tsz_common::test_directives::TestDirectives;
 
@@ -49,80 +50,288 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
         return Some("@skip");
     }
 
+    if select_ts7_oracle_configurations(directives).is_err() {
+        return Some("unsupported by TypeScript 7");
+    }
+
     None
 }
 
-/// Expand directives with comma-separated values into multiple option variants.
-///
-/// Currently returns a single variant using the first comma-separated value
-/// for each non-list option.  This matches the cache generator behavior
-/// (generate-tsc-cache.rs), which also takes only the first value via
-/// `convert_options_to_tsconfig`.
-///
-/// Previously, "module", "moduleresolution", and "jsx" were expanded into
-/// separate variants, but the cache generator was never updated to do the
-/// same.  This caused false-positive diagnostics (e.g. TS5107 for
-/// module=System, TS5095 for moduleResolution=bundler) because the runner
-/// produced diagnostics from non-first variants that had no cache counterpart.
-pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
-    // The shared tsconfig converter takes only the first comma-separated value
-    // for all non-list options. The runner must do the same to produce matching
-    // diagnostic sets.
-    //
-    // Boolean options like "alwaysstrict" and "nolib" are also NOT expanded:
-    // the cache generator passes the raw multi-value string (e.g. "true, false")
-    // to convert_options_to_tsconfig, which takes the first comma-separated
-    // value as a JSON string (not bool).  tsc then emits TS5024 for the
-    // non-boolean value.  Expanding them here would convert each value to a
-    // JSON bool, suppressing the TS5024 that the cache expects.
-    vec![options.clone()]
+/// Apply the native TypeScript 7 runner's path-based skip registry before the
+/// structural directive/configuration policy.
+pub fn should_skip_test_at_path(path: &Path, directives: &TestDirectives) -> Option<&'static str> {
+    let basename = path.file_name().and_then(|name| name.to_str());
+    if basename.is_some_and(|name| TYPESCRIPT_7_SKIPPED_TESTS.contains(&name)) {
+        return Some("skipped by TypeScript 7 harness");
+    }
+    should_skip_test(directives)
 }
 
-/// Filter out option variants that are incompatible with moduleResolution rules.
-///
-/// Specifically, node16/nodenext moduleResolution requires module to match.
-pub fn filter_incompatible_module_resolution_variants(
-    variants: Vec<HashMap<String, String>>,
-) -> Vec<HashMap<String, String>> {
-    fn normalize_value(value: &str) -> String {
-        value.trim().to_lowercase()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsupportedTypeScript7Configuration;
+
+const LIST_OPTIONS: &[&str] = &[
+    "lib",
+    "types",
+    "typeroots",
+    "rootdirs",
+    "modulesuffixes",
+    "customconditions",
+];
+
+const HARNESS_ONLY_OPTIONS: &[&str] = &[
+    "allownontsextensions",
+    "baselinefile",
+    "capturessuggestions",
+    "currentdirectory",
+    "filename",
+    "fullemitpaths",
+    "noimplicitreferences",
+    "noerrortruncation",
+    "notypesandsymbols",
+    "suppressoutputpathcheck",
+    "symlink",
+    "link",
+    "traceresolution",
+    "usecasesensitivefilenames",
+    "reportdiagnostics",
+    "typescriptversion",
+    "skip",
+];
+
+const TYPESCRIPT_7_SKIPPED_TESTS: &[&str] = &[
+    "APILibCheck.ts",
+    "APISample_Watch.ts",
+    "APISample_WatchWithDefaults.ts",
+    "APISample_WatchWithOwnWatchHost.ts",
+    "APISample_compile.ts",
+    "APISample_jsdoc.ts",
+    "APISample_linter.ts",
+    "APISample_parseConfig.ts",
+    "APISample_transform.ts",
+    "APISample_watcher.ts",
+    "preserveUnusedImports.ts",
+    "noCrashWithVerbatimModuleSyntaxAndImportsNotUsedAsValues.ts",
+    "verbatimModuleSyntaxCompat.ts",
+    "verbatimModuleSyntaxCompat2.ts",
+    "verbatimModuleSyntaxCompat3.ts",
+    "verbatimModuleSyntaxCompat4.ts",
+    "preserveValueImports.ts",
+    "preserveValueImports_importsNotUsedAsValues.ts",
+    "preserveValueImports_errors.ts",
+    "preserveValueImports_mixedImports.ts",
+    "preserveValueImports_module.ts",
+    "importsNotUsedAsValues_error.ts",
+    "alwaysStrictNoImplicitUseStrict.ts",
+    "nonPrimitiveIndexingWithForInSupressError.ts",
+    "parameterInitializerBeforeDestructuringEmit.ts",
+    "mappedTypeUnionConstraintInferences.ts",
+    "lateBoundConstraintTypeChecksCorrectly.ts",
+    "keyofDoesntContainSymbols.ts",
+    "isolatedModulesOut.ts",
+    "noStrictGenericChecks.ts",
+    "noImplicitUseStrict_umd.ts",
+    "noImplicitUseStrict_system.ts",
+    "noImplicitUseStrict_es6.ts",
+    "noImplicitUseStrict_commonjs.ts",
+    "noImplicitUseStrict_amd.ts",
+    "noImplicitAnyIndexingSuppressed.ts",
+    "excessPropertyErrorsSuppressed.ts",
+    "moduleNoneDynamicImport.ts",
+    "moduleNoneErrors.ts",
+    "moduleNoneOutFile.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile1.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile2.ts",
+    "noErrorUsingImportExportModuleAugmentationInDeclarationFile3.ts",
+    "requireOfJsonFileWithModuleEmitNone.ts",
+    "requireOfJsonFileWithModuleNodeResolutionEmitNone.ts",
+];
+
+const TARGET_VALUES: &[&str] = &[
+    "es5", "es6", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021", "es2022", "es2023",
+    "es2024", "es2025", "esnext",
+];
+const MODULE_VALUES: &[&str] = &[
+    "commonjs", "amd", "system", "umd", "es6", "es2020", "es2022", "esnext", "node16", "node18",
+    "node20", "nodenext", "preserve",
+];
+const MODULE_RESOLUTION_VALUES: &[&str] = &["node16", "nodenext", "bundler", "classic", "node"];
+const JSX_VALUES: &[&str] = &[
+    "preserve",
+    "react",
+    "react-native",
+    "react-jsx",
+    "react-jsxdev",
+];
+const MODULE_DETECTION_VALUES: &[&str] = &["legacy", "auto", "force"];
+const NEWLINE_VALUES: &[&str] = &["crlf", "lf"];
+
+fn is_list_or_harness_option(key: &str) -> bool {
+    LIST_OPTIONS.contains(&key) || HARNESS_ONLY_OPTIONS.contains(&key)
+}
+
+fn normalized_option_value(key: &str, value: &str) -> String {
+    let value = value.trim().to_ascii_lowercase();
+    match (key, value.as_str()) {
+        ("target" | "module", "es2015") => "es6".to_string(),
+        ("moduleresolution", "node10") => "node".to_string(),
+        _ => value,
+    }
+}
+
+fn wildcard_values(key: &str) -> &'static [&'static str] {
+    match key {
+        "target" => TARGET_VALUES,
+        "module" => MODULE_VALUES,
+        "moduleresolution" => MODULE_RESOLUTION_VALUES,
+        "jsx" => JSX_VALUES,
+        "moduledetection" => MODULE_DETECTION_VALUES,
+        "newline" => NEWLINE_VALUES,
+        _ => &["true", "false"],
+    }
+}
+
+fn is_enum_option(key: &str) -> bool {
+    matches!(
+        key,
+        "target" | "module" | "moduleresolution" | "jsx" | "moduledetection" | "newline"
+    )
+}
+
+fn is_varying_option(key: &str, raw: &str) -> bool {
+    if is_enum_option(key) {
+        return true;
+    }
+    raw.split(',').map(str::trim).all(|value| {
+        value.is_empty()
+            || value == "*"
+            || value.eq_ignore_ascii_case("true")
+            || value.eq_ignore_ascii_case("false")
+            || value
+                .strip_prefix('-')
+                .or_else(|| value.strip_prefix('!'))
+                .is_some_and(|value| {
+                    matches!(value.to_ascii_lowercase().as_str(), "true" | "false")
+                })
+    })
+}
+
+fn split_option_values(key: &str, raw: &str) -> Vec<String> {
+    let tokens: Vec<_> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return vec![String::new()];
     }
 
-    variants
-        .into_iter()
-        .filter(|options| {
-            let module_resolution = options.get("moduleresolution").map(|v| normalize_value(v));
-            let module = options.get("module").map(|v| normalize_value(v));
+    let exclusions: std::collections::HashSet<String> = tokens
+        .iter()
+        .filter_map(|token| token.strip_prefix('-').or_else(|| token.strip_prefix('!')))
+        .map(|token| normalized_option_value(key, token))
+        .collect();
+    let has_wildcard = tokens.iter().any(|token| *token == "*");
+    let mut values: Vec<String> = tokens
+        .iter()
+        .filter(|token| **token != "*" && !token.starts_with('-') && !token.starts_with('!'))
+        .map(|token| (*token).to_string())
+        .collect();
+    if has_wildcard {
+        values.extend(
+            wildcard_values(key)
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+    }
 
-            match module_resolution.as_deref() {
-                Some("node16") => module
-                    .as_deref()
-                    .is_none_or(|m| matches!(m, "node16" | "node18" | "node20")),
-                Some("nodenext") => module.as_deref().is_none_or(|m| m == "nodenext"),
-                // `bundler` requires `preserve`, `commonjs`, or ES2015+ — filter out
-                // incompatible module values that would produce TS5095 errors the
-                // cache never saw (the cache generator only tests the first
-                // comma-separated value).
-                Some("bundler") => module.as_deref().is_none_or(|m| {
-                    matches!(
-                        m,
-                        "preserve"
-                            | "commonjs"
-                            | "es2015"
-                            | "es6"
-                            | "es2020"
-                            | "es2022"
-                            | "esnext"
-                            | "node16"
-                            | "node18"
-                            | "node20"
-                            | "nodenext"
-                    )
-                }),
-                _ => true,
+    let mut seen = std::collections::HashSet::new();
+    values.retain(|value| {
+        let normalized = normalized_option_value(key, value);
+        let known = if is_enum_option(key) {
+            wildcard_values(key)
+                .iter()
+                .any(|known| normalized_option_value(key, known) == normalized)
+        } else {
+            matches!(normalized.as_str(), "true" | "false")
+        };
+        known && !exclusions.contains(&normalized) && seen.insert(normalized)
+    });
+    values
+}
+
+fn option_value_supported(key: &str, value: &str) -> bool {
+    let value = normalized_option_value(key, value);
+    match key {
+        "target" => value != "es3" && value != "es5",
+        "module" => !matches!(value.as_str(), "amd" | "umd" | "system" | "none"),
+        "moduleresolution" => !matches!(value.as_str(), "classic" | "node"),
+        "esmoduleinterop" | "allowsyntheticdefaultimports" | "alwaysstrict" => value != "false",
+        "baseurl" | "outfile" => value.is_empty(),
+        _ => true,
+    }
+}
+
+fn ordered_option_keys(directives: &TestDirectives) -> Vec<String> {
+    let mut keys = directives.option_order.clone();
+    let mut remaining: Vec<_> = directives
+        .options
+        .keys()
+        .filter(|key| !keys.contains(key))
+        .cloned()
+        .collect();
+    remaining.sort();
+    keys.extend(remaining);
+    keys
+}
+
+/// Expand the compiler configurations that TypeScript 7's native harness
+/// would run, then drop configurations rejected by its unsupported-option
+/// policy. Cache generation and execution must consume this same set.
+pub fn select_ts7_oracle_configurations(
+    directives: &TestDirectives,
+) -> Result<Vec<HashMap<String, String>>, UnsupportedTypeScript7Configuration> {
+    let keys = ordered_option_keys(directives);
+    let mut configurations = vec![HashMap::new()];
+    for key in keys {
+        let Some(raw) = directives.options.get(&key) else {
+            continue;
+        };
+        let values = if is_list_or_harness_option(&key) || !is_varying_option(&key, raw) {
+            vec![raw.clone()]
+        } else {
+            split_option_values(&key, raw)
+        };
+        if values.is_empty() {
+            if raw.trim().is_empty() {
+                continue;
             }
+            return Err(UnsupportedTypeScript7Configuration);
+        }
+        let mut next = Vec::new();
+        for configuration in &configurations {
+            for value in &values {
+                let mut candidate = configuration.clone();
+                candidate.insert(key.clone(), value.clone());
+                next.push(candidate);
+            }
+        }
+        if next.len() > 25 {
+            return Err(UnsupportedTypeScript7Configuration);
+        }
+        configurations = next;
+    }
+
+    configurations.retain(|options| {
+        options.iter().all(|(key, value)| {
+            is_list_or_harness_option(key) || option_value_supported(key, value)
         })
-        .collect()
+    });
+    if configurations.is_empty() {
+        Err(UnsupportedTypeScript7Configuration)
+    } else {
+        Ok(configurations)
+    }
 }
 
 #[cfg(test)]
@@ -164,17 +373,113 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_option_variants_does_not_split_nolib() {
-        let mut options = HashMap::new();
-        options.insert("nolib".to_string(), "true,false".to_string());
-        options.insert("module".to_string(), "esnext,commonjs".to_string());
+    fn selector_skips_removed_target_and_normalizes_boolean_variants() {
+        let directives = TestDirectives {
+            options: HashMap::from([
+                ("target".to_string(), "es5, es2015".to_string()),
+                ("esmoduleinterop".to_string(), "false, true".to_string()),
+            ]),
+            option_order: vec!["target".to_string(), "esmoduleinterop".to_string()],
+            filenames: Vec::new(),
+        };
 
-        let variants = expand_option_variants(&options);
+        let selected = select_ts7_oracle_configurations(&directives).expect("valid variants");
+        assert_eq!(selected.len(), 1);
+        let selected = &selected[0];
+        assert_eq!(selected.get("target").map(String::as_str), Some("es2015"));
+        assert_eq!(
+            selected.get("esmoduleinterop").map(String::as_str),
+            Some("true")
+        );
+    }
 
-        assert_eq!(variants.len(), 1);
-        assert!(variants
-            .iter()
-            .all(|v| v.get("nolib") == Some(&"true,false".to_string())));
+    #[test]
+    fn selector_expands_wildcard_exclusions_in_source_order() {
+        let directives = TestDirectives {
+            options: HashMap::from([("target".to_string(), "*, -es3".to_string())]),
+            option_order: vec!["target".to_string()],
+            filenames: Vec::new(),
+        };
+        let selected = select_ts7_oracle_configurations(&directives).expect("valid variants");
+        let selected = &selected[0];
+        assert_eq!(selected.get("target").map(String::as_str), Some("es6"));
+    }
+
+    #[test]
+    fn selector_keeps_every_supported_resolution_variant() {
+        let directives = TestDirectives {
+            options: HashMap::from([(
+                "moduleresolution".to_string(),
+                "classic, node16, nodenext, bundler".to_string(),
+            )]),
+            option_order: vec!["moduleresolution".to_string()],
+            filenames: Vec::new(),
+        };
+        let selected = select_ts7_oracle_configurations(&directives).expect("valid variants");
+        assert_eq!(
+            selected
+                .iter()
+                .filter_map(|options| options.get("moduleresolution").map(String::as_str))
+                .collect::<Vec<_>>(),
+            vec!["node16", "nodenext", "bundler"]
+        );
+    }
+
+    #[test]
+    fn selector_rejects_removed_only_configuration() {
+        let directives = TestDirectives {
+            options: HashMap::from([("target".to_string(), "es5".to_string())]),
+            option_order: vec!["target".to_string()],
+            filenames: Vec::new(),
+        };
+        assert_eq!(
+            select_ts7_oracle_configurations(&directives),
+            Err(UnsupportedTypeScript7Configuration)
+        );
+        assert_eq!(
+            should_skip_test(&directives),
+            Some("unsupported by TypeScript 7")
+        );
+    }
+
+    #[test]
+    fn selector_leaves_virtual_config_diagnostics_to_the_compiler() {
+        let directives = TestDirectives {
+            options: HashMap::new(),
+            option_order: Vec::new(),
+            filenames: vec![(
+                "tsconfig.base.json".to_string(),
+                r#"{"compilerOptions":{"baseUrl":"."}}"#.to_string(),
+            )],
+        };
+        assert_eq!(
+            select_ts7_oracle_configurations(&directives)
+                .expect("embedded config is an oracle input")
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn selector_keeps_incompatible_pairs_as_diagnostic_witnesses() {
+        let directives = TestDirectives {
+            options: HashMap::from([
+                ("module".to_string(), "node16, esnext".to_string()),
+                ("moduleresolution".to_string(), "bundler".to_string()),
+            ]),
+            option_order: vec!["module".to_string(), "moduleresolution".to_string()],
+            filenames: Vec::new(),
+        };
+        let selected = select_ts7_oracle_configurations(&directives).expect("valid variants");
+        assert_eq!(selected.len(), 2);
+        assert_eq!(
+            selected[0].get("module").map(String::as_str),
+            Some("node16")
+        );
+        assert_eq!(
+            selected[1].get("module").map(String::as_str),
+            Some("esnext")
+        );
     }
 
     #[test]
@@ -207,7 +512,7 @@ function foo() {}
     }
 
     #[test]
-    fn test_should_skip_test_only_honors_skip() {
+    fn test_should_skip_test_honors_explicit_and_ts7_unsupported_skips() {
         let mut directives = TestDirectives::default();
         directives
             .options
@@ -221,19 +526,16 @@ function foo() {}
     }
 
     #[test]
-    fn test_filter_incompatible_module_resolution_variants_rejects_bundler_mismatch() {
-        let mut accepted = HashMap::new();
-        accepted.insert("moduleresolution".to_string(), " bundler ".to_string());
-        accepted.insert("module".to_string(), " es2022 ".to_string());
-
-        let mut rejected = HashMap::new();
-        rejected.insert("moduleresolution".to_string(), "bundler".to_string());
-        rejected.insert("module".to_string(), "node10".to_string());
-
-        let filtered =
-            filter_incompatible_module_resolution_variants(vec![accepted.clone(), rejected]);
-
-        assert_eq!(filtered, vec![accepted]);
+    fn path_skip_matches_the_native_ts7_runner_registry() {
+        let directives = TestDirectives::default();
+        assert_eq!(
+            should_skip_test_at_path(Path::new("compiler/preserveValueImports.ts"), &directives),
+            Some("skipped by TypeScript 7 harness")
+        );
+        assert_eq!(
+            should_skip_test_at_path(Path::new("compiler/ordinary.ts"), &directives),
+            None
+        );
     }
 
     #[test]

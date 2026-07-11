@@ -343,7 +343,7 @@ fn deprecated_target_es5_accepted() {
 }
 
 #[test]
-fn removed_target_es3_reports_ts5108() {
+fn target_es3_reports_ts6046() {
     let temp = TempDir::new("removed_es3").expect("temp dir");
     write_file(&temp.path.join("test.ts"), "let x: string = 1;\n");
     let (_code, output) = run_tsz_with_exit_code(
@@ -354,16 +354,16 @@ fn removed_target_es3_reports_ts5108() {
     )
     .expect("tsz binary not found");
     assert!(
-        output.contains("TS5108"),
-        "Removed --target ES3 should produce TS5108: {output}"
+        output.contains("TS6046"),
+        "--target ES3 should produce TS6046: {output}"
     );
     assert!(
-        output.contains("Option 'target=ES3' has been removed"),
-        "Removed --target ES3 should use the removed-value diagnostic: {output}"
+        output.contains("Argument for '--target' option must be"),
+        "--target ES3 should use the invalid-value diagnostic: {output}"
     );
     assert!(
-        !output.contains("TS6046"),
-        "Removed --target ES3 should not be rejected as an invalid enum value: {output}"
+        !output.contains("TS5108"),
+        "--target ES3 must not use the removed-value diagnostic: {output}"
     );
 }
 
@@ -391,11 +391,9 @@ fn ts6046_module_resolution_hint_omits_deprecated_modes() {
     // whether a PATH `tsc` is present.
     let temp = TempDir::new("ts6046_modres_hint").expect("temp dir");
     write_file(&temp.path.join("test.ts"), "export {};\n");
-    let (code, output) = run_tsz_with_exit_code(
-        &temp.path,
-        &["--moduleResolution", "badValue", "test.ts"],
-    )
-    .expect("tsz binary not found");
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["--moduleResolution", "badValue", "test.ts"])
+            .expect("tsz binary not found");
     assert_ne!(
         code, 0,
         "invalid --moduleResolution should be a non-zero exit: {output}"
@@ -882,7 +880,10 @@ export type PropertiesReduce<T extends TProperties> = PropertiesReducer<T, {
 #[test]
 fn imported_conditional_select_object_map_satisfies_string_constraint() {
     let temp = TempDir::new("imported_conditional_select_object_map").expect("temp dir");
-    write_file(&temp.path.join("Any/Key.ts"), "export type Key = string | number | symbol\n");
+    write_file(
+        &temp.path.join("Any/Key.ts"),
+        "export type Key = string | number | symbol\n",
+    );
     write_file(
         &temp.path.join("Any/_Internal.ts"),
         "export type Match = 'default' | 'contains->' | 'extends->' | '<-contains' | '<-extends' | 'equals'\n",
@@ -1043,7 +1044,10 @@ export type AutoPath<O extends any, P extends string, D extends string = '.'> =
         ],
     )
     .expect("tsc should run");
-    assert_eq!(tsc_code, 0, "tsc accepted the imported Select shape: {tsc_output}");
+    assert_eq!(
+        tsc_code, 0,
+        "tsc accepted the imported Select shape: {tsc_output}"
+    );
 
     let (tsz_code, tsz_output) = run_tsz_with_exit_code(
         &temp.path,
@@ -1211,7 +1215,10 @@ export type Greater<N1 extends number, N2 extends number> =
         ],
     )
     .expect("tsc should run");
-    assert_eq!(tsc_code, 0, "tsc accepted the imported iteration map: {tsc_output}");
+    assert_eq!(
+        tsc_code, 0,
+        "tsc accepted the imported iteration map: {tsc_output}"
+    );
 
     let (tsz_code, tsz_output) = run_tsz_with_exit_code(
         &temp.path,

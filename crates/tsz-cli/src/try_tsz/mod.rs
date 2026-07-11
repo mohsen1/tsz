@@ -353,7 +353,7 @@ fn run_tsc(cwd: &Path, config: &Path) -> Result<CompilerRun> {
         .arg(config)
         .current_dir(cwd)
         .output()
-        .context("failed to run node for the TypeScript 6 oracle")?;
+        .context("failed to run node for the TypeScript 7 oracle")?;
     let elapsed_ms = start.elapsed().as_millis();
 
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -631,25 +631,25 @@ fn should_visit_entry(entry: &DirEntry) -> bool {
 
 fn ensure_typescript_oracle(cwd: &Path, config: &Path) -> Result<()> {
     if std::env::var_os("TRY_TSZ_TYPESCRIPT_PACKAGE_JSON").is_some()
-        || find_local_tsc(cwd, config).is_some()
+        || find_local_typescript_package_json(cwd, config).is_some()
     {
         Ok(())
     } else {
         bail!(
-            "try-tsz needs TypeScript 6.0.3 or newer for the tsc oracle; the npm package provides it, or install TypeScript locally. Searched from {} and {} for {}",
+            "try-tsz needs TypeScript 7.0.2 or newer for the tsc oracle; the npm package provides it, or install TypeScript locally. Searched from {} and {} for {}",
             cwd.display(),
             config.parent().unwrap_or(cwd).display(),
-            local_tsc_relative_path().display()
+            local_typescript_package_json_path().display()
         )
     }
 }
 
-fn find_local_tsc(cwd: &Path, config: &Path) -> Option<PathBuf> {
+fn find_local_typescript_package_json(cwd: &Path, config: &Path) -> Option<PathBuf> {
     let config_root = config.parent().unwrap_or(cwd);
     for root in [config_root, cwd] {
         let mut dir = Some(root);
         while let Some(current) = dir {
-            let candidate = current.join(local_tsc_relative_path());
+            let candidate = current.join(local_typescript_package_json_path());
             if candidate.exists() {
                 return Some(candidate);
             }
@@ -659,12 +659,8 @@ fn find_local_tsc(cwd: &Path, config: &Path) -> Option<PathBuf> {
     None
 }
 
-fn local_tsc_relative_path() -> &'static Path {
-    if cfg!(windows) {
-        Path::new("node_modules/.bin/tsc.cmd")
-    } else {
-        Path::new("node_modules/.bin/tsc")
-    }
+fn local_typescript_package_json_path() -> &'static Path {
+    Path::new("node_modules/typescript/package.json")
 }
 
 fn project_metadata(
@@ -1596,7 +1592,7 @@ mod tests {
             metadata: ProjectMetadata {
                 try_tsz_version: "test".to_string(),
                 tsz_version: "test".to_string(),
-                typescript_version: Some("6.0.3".to_string()),
+                typescript_version: Some("7.0.2".to_string()),
                 node_version: None,
                 os: "test".to_string(),
                 arch: "test".to_string(),
@@ -1649,12 +1645,12 @@ mod tests {
     }
 
     #[test]
-    fn typescript_oracle_preflight_accepts_hoisted_workspace_tsc() {
+    fn typescript_oracle_preflight_accepts_hoisted_workspace_package() {
         let temp = TempDir::new();
         let package_dir = temp.path.join("packages/foo");
         let config = package_dir.join("tsconfig.json");
         write_file(&config, "{}");
-        write_file(&temp.path.join(local_tsc_relative_path()), "");
+        write_file(&temp.path.join(local_typescript_package_json_path()), "{}");
 
         ensure_typescript_oracle(&package_dir, &config)
             .expect("hoisted workspace TypeScript should satisfy preflight");
@@ -1671,8 +1667,8 @@ mod tests {
             .expect_err("missing local TypeScript should be rejected")
             .to_string();
 
-        assert!(error.contains("TypeScript 6.0.3 or newer"));
-        assert!(error.contains("node_modules/.bin/tsc"));
+        assert!(error.contains("TypeScript 7.0.2 or newer"));
+        assert!(error.contains("node_modules/typescript/package.json"));
     }
 
     #[test]

@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      refresh_tsc_cache:
+        description: 'Run only the full TypeScript 7 conformance cache refresh lane'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,7 +26,7 @@ concurrency:
 jobs:
   clippy:
     name: clippy
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -46,7 +52,7 @@ jobs:
 
   unit:
     name: unit
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -58,7 +64,7 @@ jobs:
 
   conformance:
     name: conformance-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -92,7 +98,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: conformance
-    if: ${{ always() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled' }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -114,7 +120,7 @@ jobs:
 
   emit:
     name: emit-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -147,7 +153,7 @@ jobs:
   emit-aggregate:
     name: emit-aggregate
     needs: emit
-    if: ${{ always() && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled' }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.emit.result != 'skipped' && needs.emit.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -168,7 +174,7 @@ jobs:
 
   fourslash:
     name: fourslash-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -206,7 +212,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: fourslash
-    if: ${{ always() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled' }}
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -227,7 +233,7 @@ jobs:
 
   arch-size:
     name: arch-size
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -246,6 +252,156 @@ jobs:
           cd scripts/arch
           python3 -m unittest discover -p "test_arch_guard*.py" -v 2>&1 | tail -20
 
+  refresh-tsc-cache:
+    name: refresh-tsc-cache
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.refresh_tsc_cache == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      CARGO_BUILD_JOBS: "1"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+
+      - name: Verify exact corpus and install pinned TypeScript 7
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_corpus="$(node -e "const v=require('./scripts/conformance/typescript-versions.json'); process.stdout.write(v.current)")"
+          expected_ref="$(tr -d '[:space:]' < scripts/ci/typescript-submodule-ref)"
+          test "$expected_corpus" = "$expected_ref"
+
+          git clone --filter=blob:none --no-checkout --depth 1 \
+            https://github.com/microsoft/TypeScript.git TypeScript
+          git -C TypeScript fetch --depth 1 origin "$expected_corpus"
+          git -C TypeScript checkout --detach FETCH_HEAD
+          actual_ref="$(git -C TypeScript rev-parse HEAD)"
+          test "$expected_corpus" = "$actual_ref"
+          test -d TypeScript/tests/cases
+          test -d TypeScript/tests/lib
+
+          npm install --prefix scripts --include=optional --ignore-scripts --no-audit --no-fund
+          ./scripts/setup/ensure-pinned-typescript.sh scripts
+
+          expected_tsc="$(node -e "const v=require('./scripts/conformance/typescript-versions.json'); process.stdout.write(v.mappings[v.current].npm)")"
+          installed_tsc="$(node -p "require('./scripts/node_modules/typescript/package.json').version")"
+          reported_tsc="$(node scripts/node_modules/typescript/lib/tsc.js --version)"
+          test "$installed_tsc" = "$expected_tsc"
+          test "$reported_tsc" = "Version $expected_tsc"
+
+          platform_package="$(node -p "'@typescript/typescript-' + process.platform + '-' + process.arch")"
+          platform_version="$(node -e "const fs=require('fs'); const p='scripts/node_modules/' + process.argv[1] + '/package.json'; process.stdout.write(JSON.parse(fs.readFileSync(p, 'utf8')).version)" "$platform_package")"
+          test "$platform_version" = "$expected_tsc"
+
+          lib_dir="$(scripts/conformance/corpus-lib-dir.sh)"
+          echo "Corpus commit: $actual_ref"
+          echo "TypeScript compiler: $reported_tsc"
+          echo "TypeScript platform package: $platform_package@$platform_version"
+          echo "TypeScript lib directory: $lib_dir"
+          {
+            echo "corpus_sha=$actual_ref"
+            echo "typescript_version=$expected_tsc"
+            echo "platform_package=$platform_package"
+            echo "platform_version=$platform_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build only generate-tsc-cache (memory guarded)
+        shell: bash
+        run: |
+          scripts/safe-run.sh --limit 75% --interval 5 -- \
+            cargo build --profile ci-unit --jobs 1 \
+              -p tsz-conformance --bin generate-tsc-cache
+
+      - name: Generate full TypeScript 7 cache (low concurrency)
+        id: generate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cache-refresh "$RUNNER_TEMP/tsz-cache-refresh"
+          export TMPDIR="$RUNNER_TEMP/tsz-cache-refresh"
+          : > cache-refresh/generate-tsc-cache.log
+          scripts/safe-run.sh --limit 75% --interval 5 -- \
+            .target/ci-unit/generate-tsc-cache \
+              --test-dir TypeScript/tests/cases \
+              --output cache-refresh/tsc-cache-full.json \
+              --domain-output cache-refresh/conformance-domain.json \
+              --workers 2 \
+              --max-node-procs 2 \
+              --timeout 120 \
+            2>&1 | tee cache-refresh/generate-tsc-cache.log
+
+      - name: Write refresh metadata
+        if: always()
+        shell: bash
+        env:
+          GENERATE_OUTCOME: ${{ steps.generate.outcome }}
+          PINNED_CORPUS_SHA: ${{ steps.pins.outputs.corpus_sha }}
+          PINNED_TYPESCRIPT_VERSION: ${{ steps.pins.outputs.typescript_version }}
+          TYPESCRIPT_PLATFORM_PACKAGE: ${{ steps.pins.outputs.platform_package }}
+          TYPESCRIPT_PLATFORM_VERSION: ${{ steps.pins.outputs.platform_version }}
+        run: |
+          mkdir -p cache-refresh
+          touch cache-refresh/generate-tsc-cache.log
+          {
+            echo "schema_version=1"
+            echo "repository=$GITHUB_REPOSITORY"
+            echo "run_id=$GITHUB_RUN_ID"
+            echo "run_attempt=$GITHUB_RUN_ATTEMPT"
+            echo "ref=$GITHUB_REF"
+            echo "sha=$GITHUB_SHA"
+            echo "generator_outcome=${GENERATE_OUTCOME:-not-run}"
+            echo "corpus_sha=${PINNED_CORPUS_SHA:-unknown}"
+            echo "typescript_version=${PINNED_TYPESCRIPT_VERSION:-unknown}"
+            echo "typescript_platform_package=${TYPESCRIPT_PLATFORM_PACKAGE:-unknown}"
+            echo "typescript_platform_version=${TYPESCRIPT_PLATFORM_VERSION:-unknown}"
+            echo "workers=2"
+            echo "max_node_procs=2"
+            echo "timeout_seconds=120"
+            echo "node_version=$(node --version 2>/dev/null || echo unavailable)"
+            echo "rustc_version=$(rustc --version 2>/dev/null || echo unavailable)"
+            if [[ -f cache-refresh/tsc-cache-full.json ]]; then
+              echo "cache_bytes=$(stat -c %s cache-refresh/tsc-cache-full.json)"
+              echo "cache_sha256=$(sha256sum cache-refresh/tsc-cache-full.json | awk '{print $1}')"
+            fi
+            if [[ -f cache-refresh/conformance-domain.json ]]; then
+              echo "domain_bytes=$(stat -c %s cache-refresh/conformance-domain.json)"
+              echo "domain_sha256=$(sha256sum cache-refresh/conformance-domain.json | awk '{print $1}')"
+            fi
+            sha256sum Cargo.lock scripts/conformance/typescript-versions.json \
+              scripts/ci/typescript-submodule-ref 2>/dev/null || true
+          } > cache-refresh/metadata.txt
+
+      - name: Upload TypeScript 7 cache and domain
+        if: ${{ steps.generate.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ts7-conformance-cache
+          path: |
+            cache-refresh/tsc-cache-full.json
+            cache-refresh/conformance-domain.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload cache-refresh metadata and log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ts7-conformance-cache-metadata
+          path: |
+            cache-refresh/metadata.txt
+            cache-refresh/generate-tsc-cache.log
+          if-no-files-found: error
+          retention-days: 30
+
   ci-summary:
     name: CI Summary
     needs:
@@ -258,7 +414,7 @@ jobs:
       - fourslash
       - fourslash-aggregate
       - arch-size
-    if: always()
+    if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

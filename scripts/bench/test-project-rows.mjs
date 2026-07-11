@@ -402,13 +402,13 @@ assert.deepEqual(
 );
 assert.equal(
   shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.baseUrl,
-  ".",
-  "drizzle-orm guard config must resolve path mappings from the generated config root",
+  undefined,
+  "drizzle-orm guard config must not use TS7's removed baseUrl option",
 );
 assert.equal(
   shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.ignoreDeprecations,
-  "6.0",
-  "drizzle-orm guard config must silence current baseUrl deprecation diagnostics",
+  undefined,
+  "drizzle-orm guard config must not carry a TS6-only deprecation workaround",
 );
 assert.deepEqual(
   shellProjectConfigFiles("tsz_write_drizzle_orm_config"),

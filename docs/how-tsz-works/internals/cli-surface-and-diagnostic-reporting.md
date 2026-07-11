@@ -602,14 +602,36 @@ A handful of commands never reach `run_compile`:
 ## `try-tsz`: the parity-audit binary
 
 `try_tsz/mod.rs` is a separate binary (`TryTszArgs`, entered via
-`bin/try_tsz.rs`) that runs both compilers on a real project and diffs them. It
-shells out to the project's local `tsc` (via a bundled
-`tsc_diagnostics_helper.js` Node script, gated behind a TypeScript ≥ 6.0.3
-preflight in `ensure_typescript_oracle`) and to tsz **as an isolated
-subprocess** (`--try-tsz-worker`) so a tsz crash/timeout/OOM is captured as a
-`ResultState` rather than killing the harness. The worker (`run_tsz_worker`)
-runs `driver::compile` under `catch_unwind`, returning panics as exit 102 and
-errors as exit 101. `diff_diagnostics` produces a multiset diff
+`bin/try_tsz.rs`) that runs both compilers on a real project and diffs them.
+`run_tsc` launches the bundled `tsc_diagnostics_helper.js` under Node. The npm
+launcher points it at the package's pinned TypeScript `7.0.2`; a local build may
+instead resolve a project installation at `7.0.2` or newer. The root
+`typescript` export supplies the version, while the helper dynamically imports
+`typescript/unstable/sync` because TypeScript 7 no longer exports the stable
+root compiler API.
+
+The helper reads the root config as JSONC through `jsonc-parser`. If needed, it
+creates an in-memory edit that sets `compilerOptions.noEmit` to `true`, rejecting
+duplicate or non-object/non-boolean shapes whose meaning would be ambiguous.
+That edited text is exposed only for the root config through the sync API's
+virtual `readFile` callback; all other reads return `undefined` and fall back to
+the real filesystem. Nothing is written to the user's config, source tree,
+dependency directory, lockfile, or build-info path. Config diagnostic positions
+are mapped back through the inverse edit so they still identify the original
+JSONC.
+
+The helper opens the project with
+`API.updateSnapshot({ openProjects: [configPath] })`, collects the compiler's
+structured diagnostic stages, deduplicates them, converts TypeScript 7's UTF-16
+offsets to UTF-8 byte offsets, then disposes the snapshot and closes the API.
+The resulting JSON is the `tsc --pretty false --noEmit -p <config>` oracle; the
+CLI adapter owns orchestration only, while TypeScript owns the semantic result.
+
+`run_tsz` executes tsz **as an isolated subprocess** (`--try-tsz-worker`) so a
+tsz crash/timeout/OOM is captured as a `ResultState` rather than killing the
+harness. The worker (`run_tsz_worker`) runs `driver::compile` under
+`catch_unwind`, returning panics as exit 102 and errors as exit 101.
+`diff_diagnostics` produces a multiset diff
 (`extra_tsz`/`missing_tsc`/`order_mismatches`) over a `ComparableDiagnostic`
 projection, with config-deprecation codes (`5101`/`5107`) normalized to drop
 their location so the diff is position-insensitive

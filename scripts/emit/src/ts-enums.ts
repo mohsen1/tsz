@@ -14,7 +14,7 @@
  * - `parseModule` uses strict equality, matching the narrower `"commonjs"` /
  *   `"node16"` token space that `module` values come from.
  */
-export const TS_TARGET_DEFAULT = 12; // ES2025 — TS6 default
+export const TS_TARGET_DEFAULT = 12; // ES2025 — TS7 default
 export const TS_MODULE_DEFAULT = 0; // none
 
 const TARGET_CLI_ARGS: Record<number, string> = {
@@ -98,7 +98,7 @@ export function moduleToCliArg(module: number): string {
 }
 
 /**
- * Infer default module kind from target, matching TS6's computed module defaults:
+ * Infer default module kind from target, matching TS7's computed module defaults:
  * - ESNext (99) → ESNext module (99)
  * - >= ES2022 (9) → ES2022 module (7)
  * - >= ES2020 (7) → ES2020 module (6)

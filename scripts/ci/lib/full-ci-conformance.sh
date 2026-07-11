@@ -1,18 +1,31 @@
 read_conformance_results() {
   local last_run_path="$1"
-  python3 - "$last_run_path" <<'PY' 2>/dev/null || echo "0 0"
+  python3 - "$last_run_path" <<'PY' 2>/dev/null || echo "0 0 0 0 0"
 import sys
 
 passed = 0
-recorded = 0
+candidates = 0
+runnable = 0
+unsupported = 0
+skipped = 0
 with open(sys.argv[1], encoding="utf-8", errors="replace") as f:
     for line in f:
-        if line.startswith(("PASS ", "FAIL ", "XFAIL ", "CRASH ", "TIMEOUT ")):
-            recorded += 1
-        if line.startswith("PASS "):
+        result = line.removeprefix("⏱️ ")
+        if result.startswith(
+            ("PASS ", "FAIL ", "XFAIL ", "CRASH ", "TIMEOUT ", "SKIP ", "UNSUPPORTED ")
+        ):
+            candidates += 1
+        if result.startswith("PASS "):
             passed += 1
+            runnable += 1
+        elif result.startswith(("FAIL ", "XFAIL ", "CRASH ", "TIMEOUT ")):
+            runnable += 1
+        elif result.startswith("UNSUPPORTED "):
+            unsupported += 1
+        elif result.startswith("SKIP "):
+            skipped += 1
 
-print(passed, recorded)
+print(passed, candidates, runnable, unsupported, skipped)
 PY
 }
 
@@ -80,7 +93,8 @@ conformance_shard_plan() {
 
   "$runner_bin" "${plan_args[@]}" \
     | jq -r --argjson index "$shard_index" \
-        '.shards[$index] // error("missing conformance shard plan entry") | "\(.passed) \(.total) \(.weight)"'
+        '.shards[$index] // error("missing conformance shard plan entry") |
+         "\(.passed) \(.candidates // .total // 0) \(.runnable // .total // 0) \(.unsupported // 0) \(.skipped // 0) \(.weight)"'
 }
 
 run_conformance() {
@@ -91,7 +105,9 @@ run_conformance() {
   local last_run="scripts/conformance/conformance-last-run.txt"
   rm -f "$last_run"
 
-  local shard_index shard_count shard_offset shard_max shard_expected_passed shard_expected_total shard_expected_weight
+  local shard_index shard_count shard_offset shard_max shard_expected_passed
+  local shard_expected_candidates shard_expected_runnable shard_expected_unsupported
+  local shard_expected_skipped shard_expected_weight
   local shard_weights_file timings_file
   local conformance_args=()
   local conformance_timeout
@@ -113,7 +129,8 @@ run_conformance() {
       cp scripts/conformance/conformance-shard-weights.json "$shard_weights_file"
       echo "Using checked-in conformance shard weights."
     fi
-    read -r shard_expected_passed shard_expected_total shard_expected_weight < <(
+    read -r shard_expected_passed shard_expected_candidates shard_expected_runnable \
+      shard_expected_unsupported shard_expected_skipped shard_expected_weight < <(
       conformance_shard_plan "$shard_index" "$shard_count" "$CONFORMANCE_SHARD_STRATEGY" "$shard_weights_file"
     )
     shard_offset=0
@@ -124,12 +141,15 @@ run_conformance() {
       conformance_args+=(--shard-weights "$shard_weights_file")
     fi
     conformance_args+=(--timings-file "$timings_file")
-    echo "Conformance shard: ${shard_index}/${shard_count} strategy=${CONFORMANCE_SHARD_STRATEGY} expected=${shard_expected_passed}/${shard_expected_total} weight=${shard_expected_weight:-0}"
+    echo "Conformance shard: ${shard_index}/${shard_count} strategy=${CONFORMANCE_SHARD_STRATEGY} expected=${shard_expected_passed}/${shard_expected_runnable} candidates=${shard_expected_candidates} unsupported=${shard_expected_unsupported} skipped=${shard_expected_skipped} weight=${shard_expected_weight:-0}"
   else
     shard_offset=0
     shard_max=0
     shard_expected_passed=0
-    shard_expected_total=0
+    shard_expected_candidates=0
+    shard_expected_runnable=0
+    shard_expected_unsupported=0
+    shard_expected_skipped=0
     shard_expected_weight=0
     conformance_args+=(--timings-file "$timings_file")
   fi
@@ -146,29 +166,46 @@ run_conformance() {
   final_results_line="$(grep -a 'FINAL RESULTS:' "$log_file" | tail -1 || true)"
   [[ -n "$final_results_line" ]] && echo "$final_results_line"
 
-  local total_passed=0 total_tests=0 skipped_tests=0
+  local total_passed=0 candidate_tests=0 runnable_tests=0 unsupported_tests=0 skipped_tests=0
   if [[ -f "$last_run" ]]; then
-    read -r total_passed total_tests < <(read_conformance_results "$last_run")
+    read -r total_passed candidate_tests runnable_tests unsupported_tests skipped_tests < <(
+      read_conformance_results "$last_run"
+    )
   fi
-  skipped_tests="$(awk '/^[[:space:]]*Skipped:/ { value=$2 } END { print value + 0 }' "$log_file")"
-  skipped_tests="$(num_or_zero "$skipped_tests")"
+
+  local summary_candidates summary_runnable summary_unsupported summary_skipped
+  summary_candidates="$(awk '/^[[:space:]]*Candidates:/ { value=$2; found=1 } END { if (found) print value }' "$log_file")"
+  summary_runnable="$(awk '/^[[:space:]]*Runnable:/ { value=$2; found=1 } END { if (found) print value }' "$log_file")"
+  summary_unsupported="$(awk '/^[[:space:]]*Unsupported:/ { value=$2; found=1 } END { if (found) print value }' "$log_file")"
+  summary_skipped="$(awk '/^[[:space:]]*Skipped:/ { value=$2; found=1 } END { if (found) print value }' "$log_file")"
   if [[ "$final_results_line" =~ FINAL[[:space:]]RESULTS:[[:space:]]([0-9]+)/([0-9]+)[[:space:]]passed ]]; then
     total_passed="${BASH_REMATCH[1]}"
-    # The runner reports evaluated tests in FINAL RESULTS and skipped tests
-    # separately. Count both toward coverage so runtime SKIP entries do not
-    # look like missing shard coverage in the aggregate job.
-    total_tests=$(( ${BASH_REMATCH[2]} + skipped_tests ))
+    runnable_tests="${BASH_REMATCH[2]}"
   fi
-  total_passed="$(num_or_zero "$total_passed")"
-  total_tests="$(num_or_zero "$total_tests")"
+  [[ -n "$summary_candidates" ]] && candidate_tests="$summary_candidates"
+  [[ -n "$summary_runnable" ]] && runnable_tests="$summary_runnable"
+  [[ -n "$summary_unsupported" ]] && unsupported_tests="$summary_unsupported"
+  [[ -n "$summary_skipped" ]] && skipped_tests="$summary_skipped"
 
-  printf '{"rc":%s,"passed":%s,"total":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s,"expected_weight":%s,"strategy":"%s"}\n' \
-    "$rc" "$total_passed" "$total_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
-    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_total" "$(num_or_zero "$shard_expected_weight")" "$CONFORMANCE_SHARD_STRATEGY" \
+  total_passed="$(num_or_zero "$total_passed")"
+  candidate_tests="$(num_or_zero "$candidate_tests")"
+  runnable_tests="$(num_or_zero "$runnable_tests")"
+  unsupported_tests="$(num_or_zero "$unsupported_tests")"
+  skipped_tests="$(num_or_zero "$skipped_tests")"
+  local partition_total=$(( runnable_tests + unsupported_tests + skipped_tests ))
+  if [[ "$candidate_tests" -gt 0 && "$candidate_tests" -ne "$partition_total" ]]; then
+    echo "warning: conformance candidate summary ${candidate_tests} disagrees with partition ${partition_total}" >&2
+  fi
+  candidate_tests="$partition_total"
+
+  printf '{"rc":%s,"passed":%s,"total":%s,"candidates":%s,"runnable":%s,"unsupported":%s,"skipped":%s,"workers":%s,"shard_index":%s,"shard_count":%s,"offset":%s,"max":%s,"expected_passed":%s,"expected_total":%s,"expected_candidates":%s,"expected_runnable":%s,"expected_unsupported":%s,"expected_skipped":%s,"expected_weight":%s,"strategy":"%s"}\n' \
+    "$rc" "$total_passed" "$runnable_tests" "$candidate_tests" "$runnable_tests" "$unsupported_tests" "$skipped_tests" "$CONFORMANCE_WORKERS" \
+    "$shard_index" "$shard_count" "$shard_offset" "$shard_max" "$shard_expected_passed" "$shard_expected_runnable" "$shard_expected_candidates" "$shard_expected_runnable" "$shard_expected_unsupported" "$shard_expected_skipped" "$(num_or_zero "$shard_expected_weight")" "$CONFORMANCE_SHARD_STRATEGY" \
     > "$METRICS_DIR/conformance.json"
   echo "Conformance workers: ${CONFORMANCE_WORKERS}"
   echo "Conformance wrapper exit: ${rc}"
-  echo "Conformance aggregate: ${total_passed}/${total_tests}"
+  echo "Conformance aggregate: ${total_passed}/${runnable_tests} runnable (${candidate_tests} candidates)"
+  echo "Conformance unsupported: ${unsupported_tests}"
   echo "Conformance skipped: ${skipped_tests}"
 
   local failures_file="$METRICS_DIR/conformance-failures-${shard_index}.txt"
@@ -191,10 +228,10 @@ run_conformance() {
 
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
-  baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  baseline_total="$(jq -r '.summary.runnable // .summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
   local total_tolerance=5
-  if [[ "$baseline_total" -gt 0 && "$total_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
-    echo "error: conformance coverage is incomplete: ${total_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
+  if [[ "$baseline_total" -gt 0 && "$runnable_tests" -lt $(( baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance runnable coverage is incomplete: ${runnable_tests} < ${baseline_total} (tolerance ${total_tolerance})" >&2
     show_log_tail "$log_file"
     return 1
   fi
@@ -254,25 +291,50 @@ run_conformance_aggregate() {
     return 1
   fi
 
-  local total_passed=0 total_tests=0 shard_count=0
-  local total_expected_passed=0 total_expected_tests=0
+  local total_passed=0 total_candidates=0 total_runnable=0
+  local total_unsupported=0 total_skipped=0 shard_count=0
+  local total_expected_passed=0 total_expected_candidates=0 total_expected_runnable=0
+  local total_expected_unsupported=0 total_expected_skipped=0
   for f in "$tmp_dir"/shard-*.json; do
     [[ -f "$f" ]] || continue
-    local p t ep et
-    p="$(jq -r '.passed // 0' "$f" 2>/dev/null)"
-    t="$(jq -r '.total // 0' "$f" 2>/dev/null)"
-    ep="$(jq -r '.expected_passed // 0' "$f" 2>/dev/null)"
-    et="$(jq -r '.expected_total // 0' "$f" 2>/dev/null)"
+    local p c r u s ep ec er eu es
+    read -r p c r u s ep ec er eu es < <(
+      jq -r '
+        (.unsupported // 0) as $unsupported |
+        (.skipped // 0) as $skipped |
+        (.runnable //
+          (if has("candidates") or has("runnable")
+           then (.total // 0)
+           else ([((.total // 0) - $skipped), 0] | max)
+           end)) as $runnable |
+        ($runnable + $unsupported + $skipped) as $candidates |
+        (.expected_unsupported // 0) as $expected_unsupported |
+        (.expected_skipped // 0) as $expected_skipped |
+        (.expected_runnable // .expected_total // 0) as $expected_runnable |
+        ($expected_runnable + $expected_unsupported + $expected_skipped) as $expected_candidates |
+        [
+          (.passed // 0), $candidates, $runnable, $unsupported, $skipped,
+          (.expected_passed // 0), $expected_candidates, $expected_runnable,
+          $expected_unsupported, $expected_skipped
+        ] | @tsv
+      ' "$f" 2>/dev/null
+    )
     total_passed=$(( total_passed + $(num_or_zero "$p") ))
-    total_tests=$(( total_tests + $(num_or_zero "$t") ))
+    total_candidates=$(( total_candidates + $(num_or_zero "$c") ))
+    total_runnable=$(( total_runnable + $(num_or_zero "$r") ))
+    total_unsupported=$(( total_unsupported + $(num_or_zero "$u") ))
+    total_skipped=$(( total_skipped + $(num_or_zero "$s") ))
     total_expected_passed=$(( total_expected_passed + $(num_or_zero "$ep") ))
-    total_expected_tests=$(( total_expected_tests + $(num_or_zero "$et") ))
+    total_expected_candidates=$(( total_expected_candidates + $(num_or_zero "$ec") ))
+    total_expected_runnable=$(( total_expected_runnable + $(num_or_zero "$er") ))
+    total_expected_unsupported=$(( total_expected_unsupported + $(num_or_zero "$eu") ))
+    total_expected_skipped=$(( total_expected_skipped + $(num_or_zero "$es") ))
     shard_count=$(( shard_count + 1 ))
   done
 
-  echo "Conformance aggregate: ${total_passed}/${total_tests} across ${shard_count}/${expected_shards} shards"
-  if [[ "$total_expected_tests" -gt 0 ]]; then
-    echo "Conformance expected aggregate: ${total_expected_passed}/${total_expected_tests}"
+  echo "Conformance aggregate: ${total_passed}/${total_runnable} across ${shard_count}/${expected_shards} shards (${total_candidates} candidates; ${total_unsupported} unsupported; ${total_skipped} skipped)"
+  if [[ "$total_expected_candidates" -gt 0 ]]; then
+    echo "Conformance expected aggregate: ${total_expected_passed}/${total_expected_runnable} (${total_expected_candidates} candidates; ${total_expected_unsupported} unsupported; ${total_expected_skipped} skipped)"
   fi
 
   if [[ "$shard_count" -lt "$expected_shards" ]]; then
@@ -283,17 +345,17 @@ run_conformance_aggregate() {
   local baseline baseline_total
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
-  baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  baseline_total="$(jq -r '.summary.runnable // .summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
   # Planned shard totals are drift diagnostics, but they also describe the
   # active shard domain. Do not let a larger snapshot domain fail a complete
   # run for a smaller planned domain.
   local coverage_baseline_total="$baseline_total"
-  if [[ "$total_expected_tests" -gt 0 && "$total_expected_tests" -lt "$coverage_baseline_total" ]]; then
-    coverage_baseline_total="$total_expected_tests"
+  if [[ "$total_expected_runnable" -gt 0 && "$total_expected_runnable" -lt "$coverage_baseline_total" ]]; then
+    coverage_baseline_total="$total_expected_runnable"
   fi
   local total_tolerance=5
-  if [[ "$coverage_baseline_total" -gt 0 && "$total_tests" -lt $(( coverage_baseline_total - total_tolerance )) ]]; then
-    echo "error: conformance coverage is incomplete: ${total_tests} < ${coverage_baseline_total} (tolerance ${total_tolerance})" >&2
+  if [[ "$coverage_baseline_total" -gt 0 && "$total_runnable" -lt $(( coverage_baseline_total - total_tolerance )) ]]; then
+    echo "error: conformance runnable coverage is incomplete: ${total_runnable} < ${coverage_baseline_total} (tolerance ${total_tolerance})" >&2
     return 1
   fi
   if [[ "$total_expected_passed" -gt 0 ]]; then
@@ -318,14 +380,31 @@ run_conformance_aggregate() {
     fi
   fi
   local pass_rate
-  pass_rate="$(awk -v p="$total_passed" -v t="$total_tests" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
+  pass_rate="$(awk -v p="$total_passed" -v t="$total_runnable" 'BEGIN { if (t > 0) printf "%.1f", (p / t) * 100; else print "0.0" }')"
   jq -n \
     --arg suite "conformance" \
     --arg pass_rate "$pass_rate" \
     --argjson passed "$total_passed" \
-    --argjson total "$total_tests" \
+    --argjson total "$total_runnable" \
+    --argjson candidates "$total_candidates" \
+    --argjson runnable "$total_runnable" \
+    --argjson unsupported "$total_unsupported" \
+    --argjson skipped "$total_skipped" \
     --argjson shards "$shard_count" \
-    '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, shards:$shards}' \
+    --argjson expected_passed "$total_expected_passed" \
+    --argjson expected_total "$total_expected_runnable" \
+    --argjson expected_candidates "$total_expected_candidates" \
+    --argjson expected_runnable "$total_expected_runnable" \
+    --argjson expected_unsupported "$total_expected_unsupported" \
+    --argjson expected_skipped "$total_expected_skipped" \
+    '{
+      suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total,
+      candidates:$candidates, runnable:$runnable, unsupported:$unsupported,
+      skipped:$skipped, shards:$shards, expected_passed:$expected_passed,
+      expected_total:$expected_total, expected_candidates:$expected_candidates,
+      expected_runnable:$expected_runnable,
+      expected_unsupported:$expected_unsupported, expected_skipped:$expected_skipped
+    }' \
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
 

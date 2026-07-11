@@ -1,5 +1,5 @@
 //! Emit, strict-family, lib, and `extends` diagnostic tests
-//! (TS6082 `outFile`, TS5107 / TS5108 `alwaysStrict` + target, TS5101 / TS5090
+//! (TS6082 `outFile`, TS5102 / TS5108 removed options, TS5090
 //! `baseUrl` + paths, strict-family defaults, TS6304 / TS6379 composite, lib
 //! references and JSONC handling, extends-base anchoring, `watchOptions`
 //! TS6046).
@@ -118,28 +118,11 @@ fn test_ts5071_bundler_implied_resolve_json_module_with_system() {
 }
 
 #[test]
-fn test_ts5071_explicit_resolve_json_module_reports_both_keys() {
+fn test_module_none_is_rejected_before_resolve_json_module_checks() {
     let source = r#"{"compilerOptions":{"module":"none","moduleResolution":"bundler","resolveJsonModule":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-    let ts5071: Vec<_> = parsed
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 5071)
-        .collect();
-    assert_eq!(
-        ts5071.len(),
-        2,
-        "Expected TS5071 at both 'module' and 'resolveJsonModule', got: {ts5071:?}"
-    );
-    let starts: Vec<u32> = ts5071.iter().map(|d| d.start).collect();
-    assert!(
-        starts.contains(&find_key_offset_in_source(source, "module")),
-        "Expected TS5071 anchored to 'module', got starts: {starts:?}"
-    );
-    assert!(
-        starts.contains(&find_key_offset_in_source(source, "resolveJsonModule")),
-        "Expected TS5071 anchored to 'resolveJsonModule', got starts: {starts:?}"
-    );
+    let codes: Vec<_> = parsed.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![6046], "expected only TS6046, got {codes:?}");
 }
 
 #[test]
@@ -241,12 +224,12 @@ fn test_preserve_symlinks_resolved_from_tsconfig() {
 }
 
 #[test]
-fn test_ts5107_always_strict_false() {
+fn test_ts5108_always_strict_false() {
     let source = r#"{"compilerOptions":{"alwaysStrict":false}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     assert!(
-        parsed.diagnostics.iter().any(|d| d.code == 5107),
-        "alwaysStrict=false should trigger TS5107; got: {:?}",
+        parsed.diagnostics.iter().any(|d| d.code == 5108),
+        "alwaysStrict=false should trigger TS5108; got: {:?}",
         parsed
             .diagnostics
             .iter()
@@ -256,12 +239,12 @@ fn test_ts5107_always_strict_false() {
 }
 
 #[test]
-fn test_ts5107_target_es5() {
+fn test_ts5108_target_es5() {
     let source = r#"{"compilerOptions":{"target":"ES5"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     assert!(
-        parsed.diagnostics.iter().any(|d| d.code == 5107),
-        "target=ES5 should trigger TS5107; got: {:?}",
+        parsed.diagnostics.iter().any(|d| d.code == 5108),
+        "target=ES5 should trigger TS5108; got: {:?}",
         parsed
             .diagnostics
             .iter()
@@ -271,14 +254,84 @@ fn test_ts5107_target_es5() {
 }
 
 #[test]
-fn test_ts5108_target_es3() {
-    // target=ES3 was removed in TS 6.0 (TS5108, not suppressible by ignoreDeprecations).
+fn ts7_removed_option_matrix_matches_tsc_codes_and_display_values() {
+    for (source, code, fragment) in [
+        (
+            r#"{"compilerOptions":{"moduleResolution":"node"}}"#,
+            5108,
+            "moduleResolution=node10",
+        ),
+        (
+            r#"{"compilerOptions":{"moduleResolution":"classic"}}"#,
+            5108,
+            "moduleResolution=Classic",
+        ),
+        (
+            r#"{"compilerOptions":{"module":"system"}}"#,
+            5108,
+            "module=System",
+        ),
+        (
+            r#"{"compilerOptions":{"esModuleInterop":false}}"#,
+            5108,
+            "esModuleInterop=false",
+        ),
+        (
+            r#"{"compilerOptions":{"downlevelIteration":false}}"#,
+            5102,
+            "downlevelIteration",
+        ),
+    ] {
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        assert!(
+            parsed
+                .diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == code
+                    && diagnostic.message_text.contains(fragment)),
+            "expected TS{code} containing {fragment:?}, got {:?}",
+            parsed.diagnostics
+        );
+    }
+}
+
+#[test]
+fn ts7_removed_option_null_is_unset_and_wrong_type_is_ts5024_only() {
+    let null =
+        parse_tsconfig_with_diagnostics(r#"{"compilerOptions":{"baseUrl":null}}"#, "tsconfig.json")
+            .unwrap();
+    assert!(null.diagnostics.is_empty(), "{:?}", null.diagnostics);
+
+    let wrong_type =
+        parse_tsconfig_with_diagnostics(r#"{"compilerOptions":{"baseUrl":true}}"#, "tsconfig.json")
+            .unwrap();
+    assert!(
+        wrong_type
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == 5024),
+        "{:?}",
+        wrong_type.diagnostics
+    );
+    assert!(
+        wrong_type
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != 5102),
+        "{:?}",
+        wrong_type.diagnostics
+    );
+}
+
+#[test]
+fn test_ts6046_target_es3() {
+    // TS7 no longer parses ES3 as a target value.
     for value in &["ES3", "es3"] {
         let source = format!(r#"{{"compilerOptions":{{"target":"{value}"}}}}"#);
         let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
         assert!(
-            parsed.diagnostics.iter().any(|d| d.code == 5108),
-            "target={value} should trigger TS5108; got: {:?}",
+            parsed.diagnostics.iter().any(|d| d.code == 6046),
+            "target={value} should trigger TS6046; got: {:?}",
             parsed
                 .diagnostics
                 .iter()
@@ -289,9 +342,8 @@ fn test_ts5108_target_es3() {
 }
 
 #[test]
-fn test_ts5108_target_es3_not_suppressed_by_ignore_deprecations() {
-    // TS5108 (removed value) must fire even when ignoreDeprecations="6.0" is set.
-    let source = r#"{"compilerOptions":{"target":"ES3","ignoreDeprecations":"6.0"}}"#;
+fn test_ts5108_target_es5_not_suppressed_by_ignore_deprecations() {
+    let source = r#"{"compilerOptions":{"target":"ES5","ignoreDeprecations":"6.0"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     assert!(
         parsed.diagnostics.iter().any(|d| d.code == 5108),
@@ -305,12 +357,12 @@ fn test_ts5108_target_es3_not_suppressed_by_ignore_deprecations() {
 }
 
 #[test]
-fn test_ts5107_suppressed_by_ignore_deprecations_6_0() {
+fn test_ts5108_not_suppressed_by_ignore_deprecations_6_0() {
     let source = r#"{"compilerOptions":{"alwaysStrict":false,"ignoreDeprecations":"6.0"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     assert!(
-        !parsed.diagnostics.iter().any(|d| d.code == 5107),
-        "ignoreDeprecations=6.0 should suppress TS5107; got: {:?}",
+        parsed.diagnostics.iter().any(|d| d.code == 5108),
+        "ignoreDeprecations=6.0 must not suppress TS5108; got: {:?}",
         parsed
             .diagnostics
             .iter()
@@ -320,7 +372,7 @@ fn test_ts5107_suppressed_by_ignore_deprecations_6_0() {
 }
 
 #[test]
-fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
+fn test_child_ignore_deprecations_does_not_suppress_inherited_ts5108() {
     let temp = tempdir().expect("create temp dir");
     let base_path = temp.path().join("base.json");
     std::fs::write(
@@ -348,8 +400,8 @@ fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
 
     let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
     assert!(
-        !parsed.diagnostics.iter().any(|d| d.code == 5107),
-        "child ignoreDeprecations=6.0 should suppress inherited TS5107, got: {:?}",
+        parsed.diagnostics.iter().any(|d| d.code == 5108),
+        "child ignoreDeprecations=6.0 must not suppress inherited TS5108, got: {:?}",
         parsed
             .diagnostics
             .iter()
@@ -359,12 +411,12 @@ fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
 }
 
 #[test]
-fn test_ts5101_base_url() {
+fn test_ts5102_base_url() {
     let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     assert!(
-        parsed.diagnostics.iter().any(|d| d.code == 5101),
-        "baseUrl should trigger TS5101; got: {:?}",
+        parsed.diagnostics.iter().any(|d| d.code == 5102),
+        "baseUrl should trigger TS5102; got: {:?}",
         parsed
             .diagnostics
             .iter()
@@ -1192,85 +1244,69 @@ fn ts6046_silent_for_valid_watch_file_value() {
     );
 }
 
-// TS5107 and TS5101 must produce the same combined message as tsc's
-// `flattenDiagnosticMessageText` ("\n  " separator before the TS5111 URL)
-// so `try-tsz` project comparisons match tsc output on (code, message) tuples.
+// TS7 removal messages must preserve tsc's canonical value casing and related
+// guidance text.
 
 #[test]
-fn ts5107_message_with_migration_url_equals_flattened_tsc_output() {
+fn ts5108_node10_message_matches_tsc() {
     let source = r#"{"compilerOptions":{"moduleResolution":"node10"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
         .diagnostics
         .iter()
-        .find(|d| d.code == 5107)
-        .expect("expected TS5107 for moduleResolution=node10");
-    let expected = concat!(
-        "Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0.",
-        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
-        "\n  Visit https://aka.ms/ts6 for migration information.",
-    );
+        .find(|d| d.code == 5108)
+        .expect("expected TS5108 for moduleResolution=node10");
     assert_eq!(
-        diag.message_text, expected,
-        "TS5107 message must exactly match tsc flattenDiagnosticMessageText output"
+        diag.message_text,
+        "Option 'moduleResolution=node10' has been removed. Please remove it from your configuration."
     );
 }
 
 #[test]
-fn ts5107_message_without_migration_url_equals_flattened_tsc_output() {
+fn ts5108_boolean_false_message_matches_tsc() {
     let source = r#"{"compilerOptions":{"allowSyntheticDefaultImports":false}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
         .diagnostics
         .iter()
-        .find(|d| d.code == 5107)
-        .expect("expected TS5107 for allowSyntheticDefaultImports=false");
-    let expected = concat!(
-        "Option 'allowSyntheticDefaultImports=false' is deprecated and will stop ",
-        "functioning in TypeScript 7.0. Specify compilerOption ",
-        "'\"ignoreDeprecations\": \"6.0\"' to silence this error.",
-    );
+        .find(|d| d.code == 5108)
+        .expect("expected TS5108 for allowSyntheticDefaultImports=false");
     assert_eq!(
-        diag.message_text, expected,
-        "TS5107 message must omit the TS5111 URL when tsc has no related message"
+        diag.message_text,
+        "Option 'allowSyntheticDefaultImports=false' has been removed. Please remove it from your configuration."
     );
 }
 
 #[test]
-fn ts5107_classic_module_resolution_omits_migration_url() {
+fn ts5108_classic_module_resolution_uses_canonical_casing() {
     let source = r#"{"compilerOptions":{"moduleResolution":"classic"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
         .diagnostics
         .iter()
-        .find(|d| d.code == 5107)
-        .expect("expected TS5107 for moduleResolution=classic");
-    let expected = concat!(
-        "Option 'moduleResolution=classic' is deprecated and will stop functioning in TypeScript 7.0.",
-        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
-    );
+        .find(|d| d.code == 5108)
+        .expect("expected TS5108 for moduleResolution=classic");
     assert_eq!(
-        diag.message_text, expected,
-        "TS5107 must distinguish node10 from classic for the TS5111 URL"
+        diag.message_text,
+        "Option 'moduleResolution=Classic' has been removed. Please remove it from your configuration."
     );
 }
 
 #[test]
-fn ts5101_message_with_migration_url_equals_flattened_tsc_output() {
+fn ts5102_base_url_message_includes_paths_replacement() {
     let source = r#"{"compilerOptions":{"baseUrl":"."}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let diag = parsed
         .diagnostics
         .iter()
-        .find(|d| d.code == 5101)
-        .expect("expected TS5101 for baseUrl");
+        .find(|d| d.code == 5102)
+        .expect("expected TS5102 for baseUrl");
     let expected = concat!(
-        "Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0.",
-        " Specify compilerOption '\"ignoreDeprecations\": \"6.0\"' to silence this error.",
-        "\n  Visit https://aka.ms/ts6 for migration information.",
+        "Option 'baseUrl' has been removed. Please remove it from your configuration.",
+        "\n  Use '\"paths\": {\"*\": [\"./*\"]}' instead.",
     );
     assert_eq!(
         diag.message_text, expected,
-        "TS5101 message must exactly match tsc flattenDiagnosticMessageText output"
+        "TS5102 must include tsc's structural paths replacement"
     );
 }

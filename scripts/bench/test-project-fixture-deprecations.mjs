@@ -1,23 +1,17 @@
 #!/usr/bin/env node
 /**
- * Guards the TS 6.0 deprecation invariant for the generated project-fixture
+ * Guards the TypeScript 7 option invariant for the generated project-fixture
  * tsconfigs.
  *
- * tsc 6.0.x emits TS5101 ("Option 'baseUrl' is deprecated and will stop
- * functioning in TypeScript 7.0. Specify '"ignoreDeprecations": "6.0"' to
- * silence this error.") whenever a tsconfig sets `baseUrl` without
- * `ignoreDeprecations`. The project-compatibility guard subtracts tsc's own
- * diagnostics from tsz's, so a fixture that omits `ignoreDeprecations` would
- * trip TS5101 on both sides — but only after the vendored TypeScript submodule
- * was bumped to 6.0. The io-ts row regressed exactly this way: it set
- * `baseUrl` but, unlike its sibling baseUrl-setting configs
- * (drizzle-orm/arktype/type-graphql), did not also set
- * `"ignoreDeprecations": "6.0"`.
+ * TS7 removes `baseUrl` and the legacy `node`/`node10` module-resolution mode.
+ * `paths` entries now resolve relative to the config directory directly, so
+ * fixture writers must retain their structural mappings without carrying the
+ * old `baseUrl` + `ignoreDeprecations: "6.0"` workaround.
  *
- * This test generates each baseUrl-setting fixture config and asserts the
- * structural rule: when a generated tsconfig sets `baseUrl`, it must also set
- * `"ignoreDeprecations": "6.0"`, so the corpus row stays tsc-clean (and
- * tsz-clean) on the deprecation diagnostic.
+ * This test generates every fixture writer that previously used `baseUrl` and
+ * verifies that its mappings survive while the TS6-only options do not. A
+ * source-level audit also covers generated configs that are impractical to run
+ * here (notably the Type Challenges corpus generator).
  *
  * The config writers only emit the tsconfig (plus any module stubs) into the
  * output directory; they do not read the cloned source, so the test runs
@@ -36,10 +30,9 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const PROJECT_FIXTURES_SCRIPT = path.join(SCRIPT_DIR, "project-fixtures.sh");
 const PROJECT_FIXTURE_STUBS = path.join(SCRIPT_DIR, "lib", "project-fixture-stubs.sh");
 
-// Every fixture config writer that sets `baseUrl`. Keep this list in sync with
-// the `"baseUrl"` lines in scripts/bench/project-fixtures.sh — a new
-// baseUrl-setting config must also set `ignoreDeprecations: "6.0"`.
-const BASE_URL_CONFIG_WRITERS = [
+// Every fixture config writer whose `paths` mapping previously relied on
+// `baseUrl`. TS7 resolves these mappings relative to the generated config.
+const PATHS_CONFIG_WRITERS = [
   "tsz_write_io_ts_config",
   "tsz_write_drizzle_orm_config",
   "tsz_write_arktype_config",
@@ -90,28 +83,48 @@ function test(name, fn) {
   }
 }
 
-const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-fixture-deprecations-"));
+const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-fixture-ts7-options-"));
 
 try {
-  console.log("test-project-fixture-deprecations: baseUrl => ignoreDeprecations 6.0");
+  console.log("test-project-fixture-deprecations: TypeScript 7 option audit");
 
-  for (const writerFn of BASE_URL_CONFIG_WRITERS) {
-    test(`${writerFn} sets baseUrl with ignoreDeprecations 6.0`, () => {
+  for (const writerFn of PATHS_CONFIG_WRITERS) {
+    test(`${writerFn} keeps paths without TS6 baseUrl workarounds`, () => {
       const outDir = path.join(tmpBase, writerFn);
       fs.mkdirSync(outDir, { recursive: true });
       const config = generateConfig(writerFn, path.join(outDir, "tsconfig.tsz-guard.json"));
       const options = config.compilerOptions ?? {};
       assert.ok(
-        "baseUrl" in options,
-        `${writerFn} should set baseUrl (this writer is listed as a baseUrl-setting config)`,
+        options.paths && Object.keys(options.paths).length > 0,
+        `${writerFn} must retain its structural paths mapping`,
+      );
+      assert.equal(
+        options.baseUrl,
+        undefined,
+        `${writerFn} must not emit TS7's removed baseUrl option`,
       );
       assert.equal(
         options.ignoreDeprecations,
-        "6.0",
-        `${writerFn} sets baseUrl, so it must also set ignoreDeprecations: "6.0" or tsc 6.0.x emits TS5101`,
+        undefined,
+        `${writerFn} must not emit the obsolete TS6 deprecation workaround`,
       );
     });
   }
+
+  test("project fixture source contains no TS7-removed option values", () => {
+    const source = fs.readFileSync(PROJECT_FIXTURES_SCRIPT, "utf8");
+    assert.doesNotMatch(source, /"baseUrl"\s*:/, "baseUrl has been removed in TS7");
+    assert.doesNotMatch(
+      source,
+      /"moduleResolution"\s*:\s*"(?:node|node10|classic)"/i,
+      "legacy node/node10/classic module resolution has been removed in TS7",
+    );
+    assert.doesNotMatch(
+      source,
+      /"ignoreDeprecations"\s*:\s*"6\.0"/,
+      "fixture writers must not retain TS6-only option workarounds",
+    );
+  });
 } finally {
   fs.rmSync(tmpBase, { recursive: true, force: true });
 }

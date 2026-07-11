@@ -492,12 +492,6 @@ pub fn prepare_test_dir_with_lib_dir(
                 map.entry("skipLibCheck".to_string())
                     .or_insert(serde_json::Value::Bool(true));
             }
-            if no_types_and_symbols {
-                map.insert(
-                    "noTypesAndSymbols".to_string(),
-                    serde_json::Value::Bool(true),
-                );
-            }
         }
         let tsconfig_content = if let Some(root_files) = harness_root_files {
             serde_json::json!({
@@ -1292,12 +1286,6 @@ fn copy_tsconfig_to_project_if_needed(
                     for (key, value) in directive_map {
                         opts.insert(key.clone(), value.clone());
                     }
-                }
-                if no_types_and_symbols {
-                    opts.insert(
-                        "noTypesAndSymbols".to_string(),
-                        serde_json::Value::Bool(true),
-                    );
                 }
             }
         }

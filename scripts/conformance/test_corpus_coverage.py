@@ -1,11 +1,20 @@
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
+
+from lib.cache_domain import (
+    load_json_object,
+    resolve_pinned_typescript_version,
+    validate_cache_domain,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
 CACHE_PATH = ROOT / "scripts/conformance/tsc-cache-full.json"
+DOMAIN_PATH = ROOT / "scripts/conformance/conformance-domain.json"
+VERSIONS_PATH = ROOT / "scripts/conformance/typescript-versions.json"
 TEST_CASES_PATH = ROOT / "TypeScript/tests/cases"
 DIRECTIVE_SPEC_VECTORS_PATH = ROOT / "scripts/test-directives/spec-vectors.json"
 
@@ -46,31 +55,20 @@ def skipped_conformance_cache_reason(path: str):
     return None
 
 
-def has_skip_directive(path: Path) -> bool:
-    options = {}
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        directive = parse_directive_line(line)
-        if directive is not None:
-            key, value = directive
-            options[key] = value
+def discover_candidate_keys(test_cases_path=TEST_CASES_PATH):
+    """Mirror Rust discovery before runnable/unsupported/skipped partitioning."""
 
-    return "skip" in options or options.get("nocheck") == "true"
-
-
-def discover_expected_cache_keys():
     keys = []
-    for path in TEST_CASES_PATH.rglob("*"):
+    for path in test_cases_path.rglob("*"):
         if not path.is_file():
             continue
 
-        relative = path.relative_to(TEST_CASES_PATH).as_posix()
+        relative = path.relative_to(test_cases_path).as_posix()
         if path.suffix not in SOURCE_SUFFIXES:
             continue
         if relative.endswith(DECLARATION_SUFFIXES):
             continue
         if skipped_conformance_cache_reason(relative) is not None:
-            continue
-        if has_skip_directive(path):
             continue
 
         keys.append(relative)
@@ -106,6 +104,23 @@ class DirectiveSpecVectorTests(unittest.TestCase):
             )
 
 
+class CorpusDiscoveryTests(unittest.TestCase):
+    def test_skip_directives_remain_in_candidate_domain(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cases = Path(temp)
+            compiler = cases / "compiler"
+            compiler.mkdir()
+            compiler.joinpath("ordinary.ts").write_text("let x = 1;\n")
+            compiler.joinpath("skipped.ts").write_text("// @skip: true\n")
+            compiler.joinpath("lib.d.ts").write_text("declare const x: number;\n")
+            compiler.joinpath("APISample_case.ts").write_text("let x = 1;\n")
+
+            self.assertEqual(
+                ["compiler/ordinary.ts", "compiler/skipped.ts"],
+                discover_candidate_keys(cases),
+            )
+
+
 class ConformanceCorpusCoverageTests(unittest.TestCase):
     def test_appledouble_files_are_not_runnable_corpus_entries(self):
         self.assertEqual(
@@ -123,13 +138,28 @@ class ConformanceCorpusCoverageTests(unittest.TestCase):
 
         self.assertEqual([], unrunnable)
 
-    def test_checked_in_tsc_cache_matches_discovered_corpus(self):
+    def test_checked_in_cache_domain_partition_is_valid(self):
+        cache = load_json_object(CACHE_PATH, "TSC cache")
+        domain = load_json_object(DOMAIN_PATH, "conformance domain")
+        versions = load_json_object(VERSIONS_PATH, "TypeScript version manifest")
+        pinned_version = resolve_pinned_typescript_version(versions)
+
+        summary = validate_cache_domain(cache, domain, pinned_version)
+
+        self.assertEqual(summary.runnable, len(cache))
+        self.assertEqual(summary.unsupported, len(domain["unsupported"]))
+        self.assertEqual(summary.skipped, len(domain["skipped"]))
+
+    def test_checked_in_partition_matches_discovered_corpus(self):
         if not TEST_CASES_PATH.exists():
             self.skipTest("TypeScript test corpus is not checked out")
 
-        cache = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
-        expected = discover_expected_cache_keys()
-        actual = sorted(cache)
+        cache = load_json_object(CACHE_PATH, "TSC cache")
+        domain = load_json_object(DOMAIN_PATH, "conformance domain")
+        expected = discover_candidate_keys()
+        actual = sorted(
+            set(cache) | set(domain["unsupported"]) | set(domain["skipped"])
+        )
 
         self.assertEqual(expected, actual)
 

@@ -1501,8 +1501,8 @@ fn compile_resolves_node_modules_types_versions_default_uses_patch_version() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "moduleResolution": "node",
-            "module": "commonjs",
+            "moduleResolution": "node16",
+            "module": "node16",
             "target": "es2020",
             "noEmit": true,
             "skipLibCheck": true,
@@ -1515,7 +1515,7 @@ fn compile_resolves_node_modules_types_versions_default_uses_patch_version() {
         &base.join("src/index.ts"),
         r#"import { widget } from "pkg/feature/widget";
 
-const exact: 603 = widget;
+const exact: 702 = widget;
 "#,
     );
     write_file(
@@ -1524,7 +1524,10 @@ const exact: 603 = widget;
           "name": "pkg",
           "version": "1.0.0",
           "typesVersions": {
-            ">=6.0.3": {
+            ">=7.0.2": {
+              "feature/*": ["types/ts702/feature/*"]
+            },
+            ">=6.0.3 <7.0.0": {
               "feature/*": ["types/ts603/feature/*"]
             },
             "*": {
@@ -1532,6 +1535,10 @@ const exact: 603 = widget;
             }
           }
         }"#,
+    );
+    write_file(
+        &base.join("node_modules/pkg/types/ts702/feature/widget.d.ts"),
+        "export const widget: 702;\n",
     );
     write_file(
         &base.join("node_modules/pkg/types/ts603/feature/widget.d.ts"),
@@ -1549,7 +1556,7 @@ const exact: 603 = widget;
 
     assert!(
         result.diagnostics.is_empty(),
-        "default typesVersions compiler version should select >=6.0.3 entry, got: {:#?}",
+        "default typesVersions compiler version should select >=7.0.2 entry, got: {:#?}",
         result.diagnostics
     );
 }

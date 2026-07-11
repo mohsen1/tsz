@@ -1,6 +1,6 @@
 //! Auto-generated diagnostic message data.
 //!
-//! DO NOT EDIT MANUALLY - run `node scripts/gen_diagnostics.mjs` to regenerate.
+//! DO NOT EDIT MANUALLY - run `node scripts/setup/sync-typescript-diagnostics.mjs --write` to regenerate.
 
 crate::diagnostics::table_macro::define_diagnostics! {
     (UNTERMINATED_STRING_LITERAL, 1002, Error, "Unterminated string literal."),
@@ -281,7 +281,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I, 1340, Error, "Module '{0}' does not refer to a type, but is used as a type here. Did you mean 'typeof import('{0}')'?"),
     (CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR, 1341, Error, "Class constructor may not be an accessor."),
     (THE_IMPORT_META_META_PROPERTY_IS_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_ES2020_E, 1343, Error, "The 'import.meta' meta-property is only allowed when the '--module' option is 'es2020', 'es2022', 'esnext', 'system', 'node16', 'node18', 'node20', or 'nodenext'."),
-    (A_LABEL_IS_NOT_ALLOWED_HERE, 1344, Error, "'A label is not allowed here."),
+    (A_LABEL_IS_NOT_ALLOWED_HERE, 1344, Error, "A label is not allowed here."),
     (AN_EXPRESSION_OF_TYPE_VOID_CANNOT_BE_TESTED_FOR_TRUTHINESS, 1345, Error, "An expression of type 'void' cannot be tested for truthiness."),
     (THIS_PARAMETER_IS_NOT_ALLOWED_WITH_USE_STRICT_DIRECTIVE, 1346, Error, "This parameter is not allowed with 'use strict' directive."),
     (USE_STRICT_DIRECTIVE_CANNOT_BE_USED_WITH_NON_SIMPLE_PARAMETER_LIST, 1347, Error, "'use strict' directive cannot be used with non-simple parameter list."),

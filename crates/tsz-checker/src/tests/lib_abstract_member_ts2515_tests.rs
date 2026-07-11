@@ -11,7 +11,7 @@ fn lib_files() -> &'static Vec<Arc<LibFile>> {
             "es5.d.ts",
             "es2015.iterable.d.ts",
             "es2015.generator.d.ts",
-            "esnext.iterator.d.ts",
+            "es2025.iterator.d.ts",
         ])
     })
 }

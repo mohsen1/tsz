@@ -104,7 +104,9 @@ resolve_tsc_binary() {
     scripts_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
 
     local candidates=(
+        "$scripts_dir/node_modules/typescript/bin/tsc"
         "$scripts_dir/node_modules/.bin/tsc"
+        "$SCRIPT_DIR/node_modules/typescript/bin/tsc"
         "$SCRIPT_DIR/node_modules/.bin/tsc"
     )
 
@@ -321,20 +323,16 @@ build_runner() {
     log_step "Building emit runner..."
     local scripts_dir
     scripts_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
-    # Install from the consolidated scripts/ package (parent of emit/)
-    if [[ ! -d "$scripts_dir/node_modules" ]]; then
-        log_step "Installing scripts dependencies..."
-        (cd "$scripts_dir" && npm install --silent 2>/dev/null || npm install)
+    # Install/validate the exact native compiler and platform standard libs.
+    if ! "$scripts_dir/setup/ensure-pinned-typescript.sh" "$scripts_dir"; then
+        die "Install the pinned TypeScript compiler and retry"
+    fi
+    if ! node -e 'const {createRequire}=require("node:module"); const r=createRequire(process.argv[1]); const jsonc=r("jsonc-parser"); if (typeof jsonc.parse !== "function") process.exit(1)' "$scripts_dir/package.json"; then
+        die "Pinned JSONC parser is unavailable in scripts dependencies"
     fi
 
-    if [[ ! -x "$scripts_dir/node_modules/.bin/tsc" ]]; then
-        log_step "Installing TypeScript in scripts dependencies..."
-        (cd "$scripts_dir" && npm install typescript --include=dev --no-fund --no-audit)
-    fi
-
-    # Re-check legacy location for older layouts where dependencies may live
-    # under `scripts/emit/node_modules`.
-    if [[ ! -x "$scripts_dir/node_modules/.bin/tsc" && -d "$SCRIPT_DIR/node_modules" ]]; then
+    # Re-check the legacy emitter-local location when dependencies live there.
+    if [[ ! -x "$scripts_dir/node_modules/typescript/bin/tsc" && -d "$SCRIPT_DIR/node_modules" ]]; then
         log_info "TS compiler not available in scripts/node_modules; using scripts/emit/node_modules fallback"
     fi
 
@@ -359,7 +357,9 @@ build_runner() {
     if ! resolve_tsc_binary; then
         log_error "TypeScript compiler not found in scripts dependencies."
         log_error "  Tried:"
+        log_error "  $scripts_dir/node_modules/typescript/bin/tsc"
         log_error "  $scripts_dir/node_modules/.bin/tsc"
+        log_error "  $SCRIPT_DIR/node_modules/typescript/bin/tsc"
         log_error "  $SCRIPT_DIR/node_modules/.bin/tsc"
         die "Install TypeScript in scripts package and retry"
     fi

@@ -38,8 +38,8 @@ fn load_website_libs(names: &[&str]) -> Vec<Arc<LibFile>> {
 /// The binary's `PrinterOptions` defaults to `ScriptTarget::ES2024`, which resolves
 /// to `lib.es2024.full.d.ts`. That file references: es2024, dom, webworker.importscripts,
 /// scripthost, dom.iterable, dom.asynciterable — exactly what this list covers.
-/// Unlike `ESNext`, ES2024 does NOT include `lib.esnext.iterator.d.ts` (which adds
-/// `map`/`filter`/etc. to `IteratorObject`). The missing `esnext.iterator` is what
+/// Unlike `ESNext`, ES2024 does NOT include `lib.es2025.iterator.d.ts` (which adds
+/// `map`/`filter`/etc. to `IteratorObject`). The missing iterator helpers are what
 /// causes `ArrayIterator` to be modelled differently and triggers the false TS2322.
 fn website_libs() -> &'static Vec<Arc<LibFile>> {
     static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
@@ -183,8 +183,8 @@ fn full_libs() -> &'static Vec<Arc<LibFile>> {
             "lib.esnext.disposable.d.ts",
             "lib.esnext.error.d.ts",
             "lib.esnext.intl.d.ts",
-            "lib.esnext.iterator.d.ts",
-            "lib.esnext.promise.d.ts",
+            "lib.es2025.iterator.d.ts",
+            "lib.es2025.promise.d.ts",
             "lib.esnext.sharedmemory.d.ts",
             "lib.esnext.temporal.d.ts",
             "lib.esnext.typedarrays.d.ts",

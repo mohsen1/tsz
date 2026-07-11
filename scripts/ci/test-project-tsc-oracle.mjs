@@ -25,6 +25,43 @@ const LIB = path.join(ROOT, "scripts", "ci", "lib", "project-tsc-oracle.sh");
 
 assert.ok(fs.existsSync(LIB), `tsc oracle library missing: ${LIB}`);
 
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(value)}\n`);
+}
+
+function runOracleCommand(root) {
+  const harness = `
+    set -Eeuo pipefail
+    source "$1"
+    ROOT_DIR="$2"
+    tsz_project_oracle_tsc_command
+  `;
+  const result = spawnSync("bash", ["-c", harness, "bash", LIB, root], {
+    encoding: "utf8",
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key !== "TSZ_PROJECT_TSC_ORACLE_BIN"),
+    ),
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return String(result.stdout).trim().split("\n").filter(Boolean);
+}
+
+function writePinnedOracle(root, { installed = "7.0.2", reported = installed } = {}) {
+  const versions = path.join(root, "scripts", "conformance", "typescript-versions.json");
+  const packageJson = path.join(root, "scripts", "node_modules", "typescript", "package.json");
+  const tsc = path.join(root, "scripts", "node_modules", "typescript", "lib", "tsc.js");
+  writeJson(versions, {
+    current: "corpus-pin",
+    mappings: { "corpus-pin": { npm: "7.0.2" } },
+    default: { npm: "7.0.2" },
+  });
+  writeJson(packageJson, { name: "typescript", version: installed });
+  fs.mkdirSync(path.dirname(tsc), { recursive: true });
+  fs.writeFileSync(tsc, `console.log("Version ${reported}");\n`);
+  return tsc;
+}
+
 // Run a delta+count for one (tsz, tsc) log pair. Returns the tsz-only count and
 // the raw delta body. tsz/tsc are arrays of diagnostic-log lines.
 function runDelta(tszLines, tscLines) {
@@ -151,6 +188,39 @@ const Dpretty = (p, l, c, code) => `${p}:${l}:${c} - error ${code}: message text
     assert.deepEqual(keys, ["a.ts\t1\t2\tTS2322", "b.ts\t3\t4\tTS2345"].sort());
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// 10. The project oracle resolves only the exact pinned scripts/npm compiler.
+//     The legacy corpus tree is not a TypeScript 7 compiler source checkout.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-oracle-command-"));
+  try {
+    const tsc = writePinnedOracle(root);
+    assert.deepEqual(runOracleCommand(root), ["node", tsc]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// 11. Wrapper metadata and the executable's own version must both match the
+//     pin; arbitrary source-tree and top-level shims are never fallbacks.
+for (const mismatch of [
+  { installed: "7.0.1", reported: "7.0.1" },
+  { installed: "7.0.2", reported: "7.0.1" },
+]) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-oracle-mismatch-"));
+  try {
+    writePinnedOracle(root, mismatch);
+    const sourceTreeTsc = path.join(root, "typescript", "lib", "tsc.js");
+    const topLevelTsc = path.join(root, "node_modules", ".bin", "tsc");
+    fs.mkdirSync(path.dirname(sourceTreeTsc), { recursive: true });
+    fs.mkdirSync(path.dirname(topLevelTsc), { recursive: true });
+    fs.writeFileSync(sourceTreeTsc, "console.log('Version 7.0.2');\n");
+    fs.writeFileSync(topLevelTsc, "#!/bin/sh\necho 'Version 7.0.2'\n", { mode: 0o755 });
+    assert.deepEqual(runOracleCommand(root), []);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 }
 

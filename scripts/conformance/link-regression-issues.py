@@ -297,12 +297,22 @@ def _escape_pipe(text: str) -> str:
 def render_markdown(results: list[InputResult], index: SnapshotIndex) -> str:
     summary = index.summary
     passed = summary.get("passed", "?")
-    total = summary.get("total_tests", summary.get("total", "?"))
+    runnable = summary.get(
+        "runnable",
+        summary.get("total_tests", summary.get("total", "?")),
+    )
+    accounting = f"{passed} / {runnable} passing"
+    if summary.get("candidates") is not None:
+        accounting += (
+            f" · {summary['candidates']} candidates "
+            f"({summary.get('unsupported', 0)} unsupported, "
+            f"{summary.get('skipped', 0)} skipped)"
+        )
     lines: list[str] = [
         "## Conformance regression issue ↔ snapshot link",
         "",
         f"_Snapshot {index.timestamp or '(unknown timestamp)'} · "
-        f"git `{index.git_sha or 'unknown'}` · {passed} / {total} passing._",
+        f"git `{index.git_sha or 'unknown'}` · {accounting}._",
         "",
         "| Input | Test | Status |",
         "|-------|------|--------|",

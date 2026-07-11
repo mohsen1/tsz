@@ -12,6 +12,7 @@ use tsz_common::diagnostics::format_message;
 use tsz_scanner::{is_ecmascript_identifier_part, is_ecmascript_identifier_start};
 mod deprecation_helpers;
 mod extends;
+mod jsonc;
 mod lib_offsets;
 mod lib_resolution;
 
@@ -19,7 +20,10 @@ use extends::{
     anchor_inherited_path_options, anchor_inherited_root_selectors, merge_configs,
     resolve_extends_path, substitute_config_dir_templates,
 };
+use jsonc::remove_trailing_commas;
 use lib_offsets::find_lib_entry_offset;
+
+pub use jsonc::{normalize_jsonc, strip_jsonc};
 
 pub use lib_resolution::{
     LibReference, apply_explicit_lib_aliases, core_lib_name_for_target, default_lib_dir,
@@ -801,7 +805,6 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "inlineSources"
         | "isolatedDeclarations"
         | "isolatedModules"
-        | "keyofStringsOnly"
         | "noEmit"
         | "noEmitHelpers"
         | "noEmitOnError"
@@ -811,19 +814,16 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "noImplicitOverride"
         | "noImplicitReturns"
         | "noImplicitThis"
-        | "noImplicitUseStrict"
         | "noLib"
         | "libReplacement"
         | "noPropertyAccessFromIndexSignature"
         | "noResolve"
-        | "noStrictGenericChecks"
         | "noUncheckedIndexedAccess"
         | "noUncheckedSideEffectImports"
         | "noUnusedLocals"
         | "noUnusedParameters"
         | "preserveConstEnums"
         | "preserveSymlinks"
-        | "preserveValueImports"
         | "pretty"
         | "removeComments"
         | "resolveJsonModule"
@@ -844,15 +844,12 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "strictNullChecks"
         | "strictPropertyInitialization"
         | "stripInternal"
-        | "suppressExcessPropertyErrors"
-        | "suppressImplicitAnyIndexErrors"
         | "traceResolution"
         | "useDefineForClassFields"
         | "useUnknownInCatchVariables"
         | "verbatimModuleSyntax" => "boolean",
         // String options
         "baseUrl"
-        | "charset"
         | "declarationDir"
         | "jsx"
         | "jsxFactory"
@@ -863,7 +860,6 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "moduleDetection"
         | "moduleResolution"
         | "newLine"
-        | "out"
         | "outDir"
         | "outFile"
         | "reactNamespace"
@@ -881,23 +877,6 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         // Object options
         "paths" => "object",
         _ => "",
-    }
-}
-
-/// Check if a compiler option has been removed in TypeScript 5.5.
-/// Returns `Some(use_instead)` if removed, where `use_instead` is "" or a replacement name.
-/// These options were deprecated in TS 5.0 and removed in TS 5.5.
-fn removed_compiler_option(key: &str) -> Option<&'static str> {
-    match key {
-        "noImplicitUseStrict"
-        | "keyofStringsOnly"
-        | "suppressExcessPropertyErrors"
-        | "suppressImplicitAnyIndexErrors"
-        | "noStrictGenericChecks"
-        | "charset" => Some(""),
-        "importsNotUsedAsValues" | "preserveValueImports" => Some("verbatimModuleSyntax"),
-        "out" => Some("outFile"),
-        _ => None,
     }
 }
 
@@ -938,7 +917,6 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "allowUnusedLabels",
     "alwaysStrict",
     "baseUrl",
-    "charset",
     "checkJs",
     "composite",
     "customConditions",
@@ -966,7 +944,6 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "generateTrace",
     "ignoreDeprecations",
     "importHelpers",
-    "importsNotUsedAsValues",
     "incremental",
     "inlineSourceMap",
     "inlineSources",
@@ -976,7 +953,6 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "jsxFactory",
     "jsxFragmentFactory",
     "jsxImportSource",
-    "keyofStringsOnly",
     "lib",
     "libReplacement",
     "listEmittedFiles",
@@ -1000,24 +976,20 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "noImplicitOverride",
     "noImplicitReturns",
     "noImplicitThis",
-    "noImplicitUseStrict",
     "noLib",
     "noTypesAndSymbols",
     "noPropertyAccessFromIndexSignature",
     "noResolve",
-    "noStrictGenericChecks",
     "noUncheckedIndexedAccess",
     "noUncheckedSideEffectImports",
     "noUnusedLocals",
     "noUnusedParameters",
-    "out",
     "outDir",
     "outFile",
     "paths",
     "plugins",
     "preserveConstEnums",
     "preserveSymlinks",
-    "preserveValueImports",
     "preserveWatchOutput",
     "pretty",
     "reactNamespace",
@@ -1044,8 +1016,6 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "strictPropertyInitialization",
     "stripInternal",
     "stableTypeOrdering",
-    "suppressExcessPropertyErrors",
-    "suppressImplicitAnyIndexErrors",
     "target",
     "traceResolution",
     "tsBuildInfoFile",
@@ -1055,6 +1025,20 @@ const KNOWN_COMPILER_OPTION_CANONICAL_NAMES: &[&str] = &[
     "useDefineForClassFields",
     "useUnknownInCatchVariables",
     "verbatimModuleSyntax",
+];
+
+/// Former compiler options that TS7 dropped from its option declarations.
+/// They are unknown options without spelling suggestions when non-null.
+const TS7_DROPPED_COMPILER_OPTIONS: &[&str] = &[
+    "charset",
+    "importsnotusedasvalues",
+    "keyofstringsonly",
+    "noimplicitusestrict",
+    "nostrictgenericchecks",
+    "out",
+    "preservevalueimports",
+    "suppressexcesspropertyerrors",
+    "suppressimplicitanyindexerrors",
 ];
 
 /// Comprehensive map of all known TypeScript compiler options.
@@ -1070,7 +1054,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "allowunusedlabels" => Some("allowUnusedLabels"),
         "alwaysstrict" => Some("alwaysStrict"),
         "baseurl" => Some("baseUrl"),
-        "charset" => Some("charset"),
         "checkjs" => Some("checkJs"),
         "composite" => Some("composite"),
         "customconditions" => Some("customConditions"),
@@ -1103,7 +1086,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "generatetrace" => Some("generateTrace"),
         "ignoredeprecations" => Some("ignoreDeprecations"),
         "importhelpers" => Some("importHelpers"),
-        "importsnotusedasvalues" => Some("importsNotUsedAsValues"),
         "incremental" => Some("incremental"),
         "inlinesourcemap" => Some("inlineSourceMap"),
         "inlinesources" => Some("inlineSources"),
@@ -1113,7 +1095,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "jsxfactory" => Some("jsxFactory"),
         "jsxfragmentfactory" => Some("jsxFragmentFactory"),
         "jsximportsource" => Some("jsxImportSource"),
-        "keyofstringsonly" => Some("keyofStringsOnly"),
         "lib" => Some("lib"),
         "libreplacement" => Some("libReplacement"),
         "listemittedfiles" => Some("listEmittedFiles"),
@@ -1137,24 +1118,20 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "noimplicitoverride" => Some("noImplicitOverride"),
         "noimplicitreturns" => Some("noImplicitReturns"),
         "noimplicitthis" => Some("noImplicitThis"),
-        "noimplicitusestrict" => Some("noImplicitUseStrict"),
         "nolib" => Some("noLib"),
         "notypesandsymbols" => Some("noTypesAndSymbols"),
         "nopropertyaccessfromindexsignature" => Some("noPropertyAccessFromIndexSignature"),
         "noresolve" => Some("noResolve"),
-        "nostrictgenericchecks" => Some("noStrictGenericChecks"),
         "nouncheckedindexedaccess" => Some("noUncheckedIndexedAccess"),
         "nouncheckedsideeffectimports" => Some("noUncheckedSideEffectImports"),
         "nounusedlocals" => Some("noUnusedLocals"),
         "nounusedparameters" => Some("noUnusedParameters"),
-        "out" => Some("out"),
         "outdir" => Some("outDir"),
         "outfile" => Some("outFile"),
         "paths" => Some("paths"),
         "plugins" => Some("plugins"),
         "preserveconstenums" => Some("preserveConstEnums"),
         "preservesymlinks" => Some("preserveSymlinks"),
-        "preservevalueimports" => Some("preserveValueImports"),
         "preservewatchoutput" => Some("preserveWatchOutput"),
         "pretty" => Some("pretty"),
         "reactnamespace" => Some("reactNamespace"),
@@ -1181,8 +1158,6 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "strictpropertyinitialization" => Some("strictPropertyInitialization"),
         "stripinternal" => Some("stripInternal"),
         "stabletypeordering" => Some("stableTypeOrdering"),
-        "suppressexcesspropertyerrors" => Some("suppressExcessPropertyErrors"),
-        "suppressimplicitanyindexerrors" => Some("suppressImplicitAnyIndexErrors"),
         "target" => Some("target"),
         "traceresolution" => Some("traceResolution"),
         "tsbuildinfofile" => Some("tsBuildInfoFile"),
@@ -1322,7 +1297,6 @@ fn load_tsconfig_inner_with_diagnostics(
             ExtendsValue::Array(arr) => arr,
         };
         let mut accumulated: Option<TsConfig> = None;
-        let mut base_removed_options: Vec<String> = Vec::new();
         let stripped = strip_jsonc(&source);
         for extends_path_str in &extends_paths {
             // An `extends` specifier that names no existing config file is a
@@ -1342,35 +1316,13 @@ fn load_tsconfig_inner_with_diagnostics(
                 ));
                 continue;
             };
-            // Collect removed options from base configs for TS5102 diagnostics.
-            // TSC checks the merged result and emits TS5102 at the child's key position
-            // when removed options come from base configs via extends.
-            collect_removed_options_from_config(&base_path, &mut base_removed_options);
-            // Route base configs through the diagnostic path so TS5024 / TS5025
+            // Route base configs through the diagnostic path so TS5023 / TS5024 / TS5025
             // fire on the *base* file (matching tsc's `base.json(L,C):` anchor)
             // instead of the child's invalid option being silently coerced through
             // the type-validating-free `load_tsconfig_inner`.
-            //
-            // TS5102 (removed compiler option) is filtered out of the base's
-            // diagnostics because tsc only re-anchors that one at the child's
-            // `compilerOptions` key (and only when the child opts into the
-            // `verbatimModuleSyntax` replacement). The post-merge block below
-            // owns that re-emission; letting the base's per-option TS5102
-            // through would double-report and anchor at the wrong file.
             let base_parsed =
                 load_tsconfig_inner_with_diagnostics(&base_path, visited, true, config_dir)?;
-            parsed
-                .diagnostics
-                .extend(base_parsed.diagnostics.into_iter().filter(|d| {
-                    d.code
-                        != diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
-                }));
-            // Removed-but-honored flags are file-scoped semantics: once any file
-            // in the chain sets them, the merged config must honor them.
-            parsed.suppress_excess_property_errors |= base_parsed.suppress_excess_property_errors;
-            parsed.suppress_implicit_any_index_errors |=
-                base_parsed.suppress_implicit_any_index_errors;
-            parsed.no_implicit_use_strict |= base_parsed.no_implicit_use_strict;
+            parsed.diagnostics.extend(base_parsed.diagnostics);
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_parsed.config),
                 None => base_parsed.config,
@@ -1378,37 +1330,6 @@ fn load_tsconfig_inner_with_diagnostics(
         }
         if let Some(base) = accumulated {
             parsed.config = merge_configs(base, parsed.config);
-        }
-
-        // TS5102: When verbatimModuleSyntax is set in the child config and base configs
-        // contain removed options that it replaces, TSC emits TS5102 at the child's
-        // `compilerOptions` key position for each replaced option (matching tsc's
-        // anchor on the property whose presence introduces the removed-option
-        // surface, not on `verbatimModuleSyntax` itself).
-        let stripped = strip_jsonc(&source);
-        let child_has_vms = stripped.contains("\"verbatimModuleSyntax\"");
-        if child_has_vms && !base_removed_options.is_empty() {
-            // Anchor at the child's `compilerOptions` key, matching tsc's
-            // `/tsconfig.json(L,C): error TS5102 …` baseline output.
-            let key = "compilerOptions";
-            let start = stripped
-                .find(&format!("\"{key}\""))
-                .map(|p| p as u32)
-                .unwrap_or(0);
-            let key_len = key.len() as u32 + 2;
-            for opt_name in &base_removed_options {
-                let msg = format_message(
-                    diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                    &[opt_name],
-                );
-                parsed.diagnostics.push(Diagnostic::error(
-                    &file_display,
-                    start,
-                    key_len,
-                    msg,
-                    diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                ));
-            }
         }
     }
 
@@ -1420,47 +1341,6 @@ fn load_tsconfig_inner_with_diagnostics(
 
     visited.remove(&canonical);
     Ok(parsed)
-}
-
-/// Collect removed compiler option names from a config file (and its base configs).
-/// Used to detect removed options inherited via `extends` for TS5102 diagnostics.
-fn collect_removed_options_from_config(path: &Path, removed: &mut Vec<String>) {
-    let Ok(source) = std::fs::read_to_string(path) else {
-        return;
-    };
-    let normalized = normalize_jsonc(&source);
-    let Ok(raw) = serde_json::from_str::<serde_json::Value>(&normalized) else {
-        return;
-    };
-    if let Some(compiler_opts) = raw
-        .as_object()
-        .and_then(|o| o.get("compilerOptions"))
-        .and_then(|v| v.as_object())
-    {
-        for key in compiler_opts.keys() {
-            if removed_compiler_option(key).is_some() {
-                // Only include if the value is actually set (non-null, non-false)
-                let is_set = match compiler_opts.get(key) {
-                    Some(serde_json::Value::Bool(b)) => *b,
-                    Some(serde_json::Value::String(s)) => !s.is_empty(),
-                    Some(serde_json::Value::Null) | None => false,
-                    Some(_) => true,
-                };
-                if is_set {
-                    removed.push(key.clone());
-                }
-            }
-        }
-    }
-    // Also check base configs recursively
-    if let Some(extends) = raw
-        .as_object()
-        .and_then(|o| o.get("extends"))
-        .and_then(|v| v.as_str())
-        && let Ok(Some(base_path)) = resolve_extends_path(path, extends)
-    {
-        collect_removed_options_from_config(&base_path, removed);
-    }
 }
 
 fn parse_script_target(value: &str) -> Result<ScriptTarget> {
@@ -1631,139 +1511,14 @@ fn normalize_enum_option_value(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-pub fn strip_jsonc(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escape = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-
-    while let Some(ch) = chars.next() {
-        if in_line_comment {
-            if ch == '\n' {
-                in_line_comment = false;
-                out.push(ch);
-            }
-            continue;
-        }
-
-        if in_block_comment {
-            if ch == '*' {
-                if let Some('/') = chars.peek().copied() {
-                    chars.next();
-                    in_block_comment = false;
-                }
-            } else if ch == '\n' {
-                out.push(ch);
-            }
-            continue;
-        }
-
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-
-        if ch == '/'
-            && let Some(&next) = chars.peek()
-        {
-            if next == '/' {
-                chars.next();
-                in_line_comment = true;
-                continue;
-            }
-            if next == '*' {
-                chars.next();
-                in_block_comment = true;
-                continue;
-            }
-        }
-
-        out.push(ch);
-    }
-
-    out
-}
-
-/// Convert tsconfig-style JSONC into strict JSON by removing comments and
-/// trailing commas while preserving string contents.
-pub fn normalize_jsonc(input: &str) -> String {
-    let stripped = strip_jsonc(input);
-    remove_trailing_commas(&stripped)
-}
-
-fn remove_trailing_commas(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escape = false;
-
-    while let Some(ch) = chars.next() {
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-
-        if ch == ',' {
-            let mut lookahead = chars.clone();
-            while let Some(next) = lookahead.peek().copied() {
-                if next.is_whitespace() {
-                    lookahead.next();
-                    continue;
-                }
-                if next == '}' || next == ']' {
-                    break;
-                }
-                break;
-            }
-
-            if let Some(next) = lookahead.peek().copied()
-                && (next == '}' || next == ']')
-            {
-                continue;
-            }
-        }
-
-        out.push(ch);
-    }
-
-    out
-}
-
-// TS6046: Valid option value lists (lowercase canonical spellings, matching tsc 6.0)
-// These must match the values tsc accepts and lists in its TS6046 messages.
+// TS6046 option metadata for TypeScript 7. Parse-accepted values may include
+// legacy values that receive a later removal diagnostic; display lists contain
+// only the values TS7 advertises in TS6046 messages.
 
 /// Valid `--target` values. The display list uses tsc's canonical casing.
 const VALID_TARGET_VALUES: &[&str] = &[
-    "es3", "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021",
-    "es2022", "es2023", "es2024", "es2025", "esnext",
+    "es5", "es6", "es2015", "es2016", "es2017", "es2018", "es2019", "es2020", "es2021", "es2022",
+    "es2023", "es2024", "es2025", "esnext",
 ];
 // TSC 7.0 no longer lists deprecated targets (es3, es5) in the error message
 // and added es2025. Match TSC's display.
@@ -1771,8 +1526,8 @@ const VALID_TARGET_DISPLAY: &str = "'es6', 'es2015', 'es2016', 'es2017', 'es2018
 
 /// Valid `--module` values.
 const VALID_MODULE_VALUES: &[&str] = &[
-    "none", "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext",
-    "node16", "node18", "node20", "nodenext", "preserve",
+    "commonjs", "amd", "system", "umd", "es6", "es2015", "es2020", "es2022", "esnext", "node16",
+    "node18", "node20", "nodenext", "preserve",
 ];
 // TSC 7.0 no longer lists deprecated module kinds (none, amd, system, umd) in the error
 // message, though they are still accepted. Match TSC's display.
@@ -1781,8 +1536,7 @@ const VALID_MODULE_DISPLAY: &str = "'commonjs', 'es6', 'es2015', 'es2020', 'es20
 /// Valid `--moduleResolution` values.
 const VALID_MODULE_RESOLUTION_VALUES: &[&str] =
     &["classic", "node", "node10", "node16", "nodenext", "bundler"];
-const VALID_MODULE_RESOLUTION_DISPLAY: &str =
-    "'classic', 'node', 'node10', 'node16', 'nodenext', 'bundler'";
+const VALID_MODULE_RESOLUTION_DISPLAY: &str = "'node16', 'nodenext', 'bundler'";
 
 /// Valid `--jsx` values.
 const VALID_JSX_VALUES: &[&str] = &[
@@ -1834,7 +1588,7 @@ const VALID_FALLBACK_POLLING_VALUES: &[&str] = &[
 const VALID_FALLBACK_POLLING_DISPLAY: &str =
     "'fixedinterval', 'priorityinterval', 'dynamicpriority', 'fixedchunksize'";
 
-/// Valid `--lib` values. This list matches tsc 6.0's accepted lib names.
+/// Valid TypeScript 7 `--lib` values.
 const VALID_LIB_VALUES: &[&str] = &[
     "es5",
     "es6",

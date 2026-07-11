@@ -1,19 +1,8 @@
 {
-  "version": "6.0.0-dev.20260116",
-  "source": "npm",
-  "generatedAt": "2026-02-01T14:12:19.074Z",
+  "version": "7.0.2",
+  "source": "@typescript/typescript-darwin-arm64@7.0.2",
+  "generatedAt": "2026-07-08T00:00:00.000Z",
   "libs": {
-    "es5.full": {
-      "fileName": "es5.full.d.ts",
-      "canonicalFileName": "lib.d.ts",
-      "references": [
-        "es5",
-        "dom",
-        "webworker.importscripts",
-        "scripthost"
-      ],
-      "size": 953
-    },
     "decorators": {
       "fileName": "decorators.d.ts",
       "canonicalFileName": "lib.decorators.d.ts",
@@ -39,7 +28,7 @@
         "es2015",
         "es2018.asynciterable"
       ],
-      "size": 1963731
+      "size": 2349483
     },
     "dom.iterable": {
       "fileName": "dom.iterable.d.ts",
@@ -51,13 +40,13 @@
       "fileName": "es2015.collection.d.ts",
       "canonicalFileName": "lib.es2015.collection.d.ts",
       "references": [],
-      "size": 5190
+      "size": 5627
     },
     "es2015.core": {
       "fileName": "es2015.core.d.ts",
       "canonicalFileName": "lib.es2015.core.d.ts",
       "references": [],
-      "size": 22807
+      "size": 22821
     },
     "es2015": {
       "fileName": "es2015.d.ts",
@@ -90,7 +79,7 @@
       "references": [
         "es2015.symbol"
       ],
-      "size": 18161
+      "size": 18185
     },
     "es2015.promise": {
       "fileName": "es2015.promise.d.ts",
@@ -114,7 +103,7 @@
       "fileName": "es2015.symbol.d.ts",
       "canonicalFileName": "lib.es2015.symbol.d.ts",
       "references": [],
-      "size": 1610
+      "size": 1608
     },
     "es2015.symbol.wellknown": {
       "fileName": "es2015.symbol.wellknown.d.ts",
@@ -122,7 +111,7 @@
       "references": [
         "es2015.symbol"
       ],
-      "size": 10969
+      "size": 10971
     },
     "es2016.array.include": {
       "fileName": "es2016.array.include.d.ts",
@@ -222,7 +211,7 @@
       "fileName": "es2017.string.d.ts",
       "canonicalFileName": "lib.es2017.string.d.ts",
       "references": [],
-      "size": 2339
+      "size": 2540
     },
     "es2017.typedarrays": {
       "fileName": "es2017.typedarrays.d.ts",
@@ -355,7 +344,7 @@
       "references": [
         "es2020.intl"
       ],
-      "size": 38142
+      "size": 38258
     },
     "es2020": {
       "fileName": "es2020.d.ts",
@@ -400,7 +389,7 @@
       "references": [
         "es2018.intl"
       ],
-      "size": 22399
+      "size": 22394
     },
     "es2020.number": {
       "fileName": "es2020.number.d.ts",
@@ -441,7 +430,7 @@
         "es2015.iterable",
         "es2015.symbol"
       ],
-      "size": 1567
+      "size": 1566
     },
     "es2021": {
       "fileName": "es2021.d.ts",
@@ -551,7 +540,7 @@
       "fileName": "es2022.regexp.d.ts",
       "canonicalFileName": "lib.es2022.regexp.d.ts",
       "references": [],
-      "size": 1292
+      "size": 1304
     },
     "es2022.string": {
       "fileName": "es2022.string.d.ts",
@@ -599,7 +588,7 @@
       "fileName": "es2023.intl.d.ts",
       "canonicalFileName": "lib.es2023.intl.d.ts",
       "references": [],
-      "size": 2606
+      "size": 2854
     },
     "es2024.arraybuffer": {
       "fileName": "es2024.arraybuffer.d.ts",
@@ -681,6 +670,70 @@
       ],
       "size": 3839
     },
+    "es2025": {
+      "fileName": "es2025.d.ts",
+      "canonicalFileName": "lib.es2025.d.ts",
+      "references": [
+        "es2024",
+        "es2025.collection",
+        "es2025.float16",
+        "es2025.intl",
+        "es2025.iterator",
+        "es2025.promise",
+        "es2025.regexp"
+      ],
+      "size": 1079
+    },
+    "es2025.float16": {
+      "fileName": "es2025.float16.d.ts",
+      "canonicalFileName": "lib.es2025.float16.d.ts",
+      "references": [
+        "es2015.symbol",
+        "es2015.iterable"
+      ],
+      "size": 20489
+    },
+    "es2025.full": {
+      "fileName": "es2025.full.d.ts",
+      "canonicalFileName": "lib.es2025.full.d.ts",
+      "references": [
+        "es2025",
+        "dom",
+        "webworker.importscripts",
+        "scripthost",
+        "dom.iterable",
+        "dom.asynciterable"
+      ],
+      "size": 1035
+    },
+    "es2025.intl": {
+      "fileName": "es2025.intl.d.ts",
+      "canonicalFileName": "lib.es2025.intl.d.ts",
+      "references": [
+        "es2018.intl"
+      ],
+      "size": 9390
+    },
+    "es2025.iterator": {
+      "fileName": "es2025.iterator.d.ts",
+      "canonicalFileName": "lib.es2025.iterator.d.ts",
+      "references": [
+        "es2015.iterable"
+      ],
+      "size": 8637
+    },
+    "es2025.promise": {
+      "fileName": "es2025.promise.d.ts",
+      "canonicalFileName": "lib.es2025.promise.d.ts",
+      "references": [],
+      "size": 1619
+    },
+    "es2025.regexp": {
+      "fileName": "es2025.regexp.d.ts",
+      "canonicalFileName": "lib.es2025.regexp.d.ts",
+      "references": [],
+      "size": 1255
+    },
     "es5": {
       "fileName": "es5.d.ts",
       "canonicalFileName": "lib.es5.d.ts",
@@ -688,7 +741,18 @@
         "decorators",
         "decorators.legacy"
       ],
-      "size": 218400
+      "size": 218947
+    },
+    "es5.full": {
+      "fileName": "es5.full.d.ts",
+      "canonicalFileName": "lib.d.ts",
+      "references": [
+        "es5",
+        "dom",
+        "webworker.importscripts",
+        "scripthost"
+      ],
+      "size": 953
     },
     "es6": {
       "fileName": "es6.d.ts",
@@ -720,20 +784,27 @@
       "fileName": "esnext.d.ts",
       "canonicalFileName": "lib.esnext.d.ts",
       "references": [
-        "es2024",
+        "es2025",
         "esnext.intl",
+        "esnext.collection",
         "esnext.decorators",
         "esnext.disposable",
-        "esnext.collection",
         "esnext.array",
-        "esnext.iterator",
-        "esnext.promise",
-        "esnext.float16",
         "esnext.error",
         "esnext.sharedmemory",
-        "esnext.typedarrays"
+        "esnext.typedarrays",
+        "esnext.temporal",
+        "esnext.date"
       ],
-      "size": 1286
+      "size": 1244
+    },
+    "esnext.date": {
+      "fileName": "esnext.date.d.ts",
+      "canonicalFileName": "lib.esnext.date.d.ts",
+      "references": [
+        "esnext.temporal"
+      ],
+      "size": 917
     },
     "esnext.decorators": {
       "fileName": "esnext.decorators.d.ts",
@@ -760,15 +831,6 @@
       "references": [],
       "size": 990
     },
-    "esnext.float16": {
-      "fileName": "esnext.float16.d.ts",
-      "canonicalFileName": "lib.esnext.float16.d.ts",
-      "references": [
-        "es2015.symbol",
-        "es2015.iterable"
-      ],
-      "size": 20489
-    },
     "esnext.full": {
       "fileName": "esnext.full.d.ts",
       "canonicalFileName": "lib.esnext.full.d.ts",
@@ -785,28 +847,26 @@
     "esnext.intl": {
       "fileName": "esnext.intl.d.ts",
       "canonicalFileName": "lib.esnext.intl.d.ts",
-      "references": [],
-      "size": 854
-    },
-    "esnext.iterator": {
-      "fileName": "esnext.iterator.d.ts",
-      "canonicalFileName": "lib.esnext.iterator.d.ts",
       "references": [
-        "es2015.iterable"
+        "esnext.temporal"
       ],
-      "size": 8637
-    },
-    "esnext.promise": {
-      "fileName": "esnext.promise.d.ts",
-      "canonicalFileName": "lib.esnext.promise.d.ts",
-      "references": [],
-      "size": 1619
+      "size": 5305
     },
     "esnext.sharedmemory": {
       "fileName": "esnext.sharedmemory.d.ts",
       "canonicalFileName": "lib.esnext.sharedmemory.d.ts",
       "references": [],
       "size": 1028
+    },
+    "esnext.temporal": {
+      "fileName": "esnext.temporal.d.ts",
+      "canonicalFileName": "lib.esnext.temporal.d.ts",
+      "references": [
+        "es2015.symbol.wellknown",
+        "es2020.intl",
+        "es2025.intl"
+      ],
+      "size": 22011
     },
     "esnext.typedarrays": {
       "fileName": "esnext.typedarrays.d.ts",
@@ -833,7 +893,7 @@
         "es2015",
         "es2018.asynciterable"
       ],
-      "size": 653429
+      "size": 787076
     },
     "webworker.importscripts": {
       "fileName": "webworker.importscripts.d.ts",
@@ -846,18 +906,6 @@
       "canonicalFileName": "lib.webworker.iterable.d.ts",
       "references": [],
       "size": 933
-    },
-    "tsserverlibrary": {
-      "fileName": "tsserverlibrary.d.ts",
-      "canonicalFileName": "lib.tsserverlibrary.d.ts",
-      "references": [],
-      "size": 866
-    },
-    "typescript": {
-      "fileName": "typescript.d.ts",
-      "canonicalFileName": "lib.typescript.d.ts",
-      "references": [],
-      "size": 588199
     }
   }
 }

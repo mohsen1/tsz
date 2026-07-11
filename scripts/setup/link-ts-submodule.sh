@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# link-ts-submodule.sh — share the TypeScript submodule across worktrees.
+# link-ts-submodule.sh — share the standalone TypeScript corpus across worktrees.
 #
 # When run inside a git worktree (not the primary checkout), replace the
 # local TypeScript/ directory with a symlink to a populated TypeScript/
 # checkout. By default the source is the primary checkout's TypeScript/, but
 # --source can point at another worktree or TypeScript/ directory when the
-# primary checkout has not been populated yet. The submodule is pinned to a
+# primary checkout has not been populated yet. The corpus is pinned to a
 # single SHA, so every worktree wants the same content — symlinking avoids
 # 250–500 MB of duplicated fixture data per worktree.
 #
@@ -16,15 +16,15 @@
 #   - the source TypeScript/ is missing or uninitialised
 #     (caller should populate the primary checkout or pass --source)
 #
-# Refuses to overwrite a TypeScript/ directory that has local edits
-# tracked by its submodule git, to avoid silently losing in-progress work.
+# Refuses to overwrite a non-Git or dirty TypeScript/ directory by default, to
+# avoid silently losing in-progress work. --force is the only destructive path.
 #
 # Usage:
 #   ./scripts/setup/link-ts-submodule.sh           # symlink (default)
 #   ./scripts/setup/link-ts-submodule.sh --force   # ignore dirty state
 #   ./scripts/setup/link-ts-submodule.sh --source ../tsz-main
 #                                                  # link to another populated worktree
-#   ./scripts/setup/link-ts-submodule.sh --unlink  # restore real submodule
+#   ./scripts/setup/link-ts-submodule.sh --unlink  # remove the shared symlink
 #   ./scripts/setup/link-ts-submodule.sh --quiet   # suppress info output
 
 set -euo pipefail
@@ -50,7 +50,7 @@ Usage:
   scripts/setup/link-ts-submodule.sh --force   # ignore dirty state in the local TypeScript/
   scripts/setup/link-ts-submodule.sh --source <repo-or-TypeScript-dir>
                                                 # link to an explicit populated source
-  scripts/setup/link-ts-submodule.sh --unlink  # remove the symlink so a real submodule can be restored
+  scripts/setup/link-ts-submodule.sh --unlink  # remove the shared symlink
   scripts/setup/link-ts-submodule.sh --quiet   # suppress info output
 USAGE
 }
@@ -135,7 +135,7 @@ if [[ "$UNLINK" == true ]]; then
   if [ -L "$LOCAL_TS" ]; then
     rm "$LOCAL_TS"
     log "removed symlink at $LOCAL_TS"
-    log "run scripts/setup/reset-ts-submodule.sh to restore the real submodule"
+    log "run scripts/setup/reset-ts-submodule.sh to restore a standalone corpus checkout"
   else
     log "TypeScript is not a symlink — nothing to unlink."
   fi
@@ -156,6 +156,17 @@ if [ ! -d "$MAIN_TS/tests/cases" ] || [ ! -e "$MAIN_TS/.git" ]; then
   exit 1
 fi
 
+# Never replace the selected source itself (or one of its parents) with a link.
+if [ -d "$LOCAL_TS" ] && [ ! -L "$LOCAL_TS" ]; then
+  local_ts_canonical="$(cd "$LOCAL_TS" && pwd -P)"
+  case "$MAIN_TS/" in
+    "$local_ts_canonical"/*)
+      echo "[link-ts] source TypeScript is inside the local replacement path; refusing to remove it." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 # Already linked?
 if [ -L "$LOCAL_TS" ]; then
   current="$(readlink "$LOCAL_TS")"
@@ -167,25 +178,33 @@ if [ -L "$LOCAL_TS" ]; then
   rm "$LOCAL_TS"
 fi
 
-# --- Refuse to clobber a dirty TypeScript ---------------------------------
-if [ -d "$LOCAL_TS" ] && [[ "$FORCE" != true ]]; then
-  if git -C "$LOCAL_TS" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    dirty="$(git -C "$LOCAL_TS" status --porcelain 2>/dev/null || true)"
-    if [ -n "$dirty" ]; then
-      echo "[link-ts] $LOCAL_TS has local edits — refusing to overwrite." >&2
-      echo "          commit/stash inside TypeScript/ or pass --force to discard." >&2
-      exit 1
-    fi
+# --- Refuse to clobber local data unless destruction is explicit -----------
+if [ -e "$LOCAL_TS" ] && [[ "$FORCE" != true ]]; then
+  if [ ! -d "$LOCAL_TS" ]; then
+    echo "[link-ts] $LOCAL_TS exists but is not a directory — refusing to overwrite." >&2
+    echo "          Move it aside or pass --force to discard it." >&2
+    exit 1
+  fi
+  if { [ ! -d "$LOCAL_TS/.git" ] && [ ! -f "$LOCAL_TS/.git" ]; } \
+      || ! git -C "$LOCAL_TS" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "[link-ts] $LOCAL_TS is not a Git checkout — refusing to delete it." >&2
+    echo "          Move it aside or pass --force to discard it." >&2
+    exit 1
+  fi
+  if ! dirty="$(git -C "$LOCAL_TS" status --porcelain --untracked-files=normal 2>/dev/null)"; then
+    echo "[link-ts] cannot inspect $LOCAL_TS — refusing to delete it." >&2
+    echo "          Repair its Git state or pass --force to discard it." >&2
+    exit 1
+  fi
+  if [ -n "$dirty" ]; then
+    echo "[link-ts] $LOCAL_TS has local edits or untracked files — refusing to overwrite." >&2
+    echo "          Commit/stash/move them or pass --force to discard." >&2
+    exit 1
   fi
 fi
 
-# Free up the worktree's submodule gitdir so future submodule commands in
-# this worktree don't try to manage the now-symlinked path. Safe to ignore
-# failures: deinit can't run on already-deinited submodules.
-git -C "$ROOT_DIR" submodule deinit -f -- TypeScript >/dev/null 2>&1 || true
-
 # Replace directory with symlink.
-[ -d "$LOCAL_TS" ] && rm -rf "$LOCAL_TS"
+[ -e "$LOCAL_TS" ] && rm -rf -- "$LOCAL_TS"
 ln -s "$MAIN_TS" "$LOCAL_TS"
 
 log "linked $LOCAL_TS → $MAIN_TS"

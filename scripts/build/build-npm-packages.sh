@@ -420,7 +420,8 @@ const pkg = {
     "try-tsz": "bin/try-tsz.js",
   },
   dependencies: {
-    typescript: "^6.0.3",
+    "jsonc-parser": "3.3.1",
+    typescript: "7.0.2",
   },
   optionalDependencies,
   files: ["bin/", "LICENSE.txt"],

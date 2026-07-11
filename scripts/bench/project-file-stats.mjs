@@ -13,10 +13,10 @@
 // the on-disk cache. The cache key is the absolute tsconfig path. Two layers
 // are cached:
 //   1. The resolved project file list (the recursive `include`/`exclude`
-//      directory walk done by TypeScript's `parseJsonConfigFileContent`).
+//      directory walk done by TypeScript 7's unstable sync API).
 //      Invalidated by the tsconfig's own `(mtime_ns, size)` and by the
-//      `mtime_ns` of every directory in the tree TypeScript watches for this
-//      config (its `wildcardDirectories`, expanded recursively), so a file
+//      `mtime_ns` of every directory TypeScript enumerates while parsing this
+//      config, so a file
 //      added/removed/renamed anywhere in the watched tree — including under a
 //      previously empty included directory — re-triggers discovery, while an
 //      unchanged tree skips loading TypeScript and re-globbing entirely.
@@ -181,67 +181,89 @@ export function aggregateProjectStats(files, { cache } = {}) {
   return { lines, bytes, fileCount };
 }
 
-function candidateTypeScriptModules() {
-  const candidates = [];
+function candidateTypeScriptPackageRoots() {
+  const candidates = new Set();
   if (process.env.TSC_TOOL_DIR_VALUE) {
-    candidates.push(path.join(process.env.TSC_TOOL_DIR_VALUE, "node_modules", "typescript"));
+    candidates.add(path.join(process.env.TSC_TOOL_DIR_VALUE, "node_modules", "typescript"));
   }
   if (process.env.TSC_BIN_VALUE) {
     try {
       const realTsc = fs.realpathSync(process.env.TSC_BIN_VALUE);
-      candidates.push(path.resolve(path.dirname(realTsc), ".."));
+      candidates.add(path.resolve(path.dirname(realTsc), ".."));
     } catch {
       // Fall back to the default module resolution candidates below.
     }
   }
-  candidates.push("typescript");
-  return candidates;
+  try {
+    candidates.add(path.dirname(require.resolve("typescript/package.json")));
+  } catch {
+    // The explicit bench-tool candidates above may still be usable.
+  }
+  return [...candidates];
 }
 
-function loadTypeScript() {
-  for (const candidate of candidateTypeScriptModules()) {
+function unstableSyncEntry(packageRoot) {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(packageRoot, "package.json"), "utf8"),
+  );
+  const exported = packageJson.exports?.["./unstable/sync"];
+  const relativeEntry =
+    typeof exported === "string" ? exported : (exported?.import ?? exported?.default);
+  if (typeof relativeEntry !== "string") return null;
+  return path.resolve(packageRoot, relativeEntry);
+}
+
+async function loadTypeScriptSyncAPI() {
+  for (const packageRoot of candidateTypeScriptPackageRoots()) {
     try {
-      return require(candidate);
+      const entry = unstableSyncEntry(packageRoot);
+      if (!entry) continue;
+      const module = await import(pathToFileURL(entry).href);
+      if (typeof module.API === "function") return module.API;
     } catch {
       // Try the next candidate.
     }
   }
-  throw new Error("Unable to load the TypeScript package for tsconfig parsing");
+  throw new Error("Unable to load the TypeScript 7 unstable sync API for tsconfig parsing");
 }
 
-// TypeScript's `WatchDirectoryFlags.Recursive`. `parseJsonConfigFileContent`
-// reports each `include`-derived wildcard directory with this flag set when the
-// glob descends into subdirectories (e.g. `"src"` or `"src/**"`); a flat glob
-// like `"src/*.ts"` reports the directory with no recursive flag.
-const TS_WATCH_DIRECTORY_RECURSIVE = 1;
+const TypeScriptSyncAPI = await loadTypeScriptSyncAPI();
 
-// Resolve the project file list AND the directories TypeScript watches for this
-// config. The watched directories (TypeScript's `wildcardDirectories`) are what
-// determine when the file list can change: a file added/removed under a watched
-// directory alters the result even when no currently resolved file lives there
-// (e.g. a previously empty included directory). Returning them lets the cache
-// invalidate correctly instead of inferring directories from resolved files
-// only.
+// Resolve the project file list and record the directories TypeScript enumerates
+// while expanding the config's include/exclude patterns. The TS7 unstable sync
+// API intentionally exposes only `{ options, fileNames }`, not the stable API's
+// former `wildcardDirectories`. Its virtual-filesystem callback is a precise
+// substitute: returning `undefined` delegates each read to the real filesystem,
+// while recording every directory visited by the native config parser. Each
+// visited directory is an exact, non-recursive watch point; if a file or child
+// directory is later added/removed/renamed, that directory's mtime changes and
+// invalidates the cached file list. Previously empty included directories are
+// recorded too.
 export function resolveTsconfigFiles(tsconfigAbsolutePath) {
-  const ts = loadTypeScript();
-  const config = ts.readConfigFile(tsconfigAbsolutePath, ts.sys.readFile);
-  if (config.error) {
-    throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
+  const enumeratedDirectories = new Set();
+  const api = new TypeScriptSyncAPI({
+    cwd: path.dirname(tsconfigAbsolutePath),
+    fs: {
+      getAccessibleEntries(directoryName) {
+        const absolute = path.resolve(directoryName);
+        if (!isExcludedDirectory(absolute)) enumeratedDirectories.add(absolute);
+        return undefined;
+      },
+    },
+  });
+  let parsed;
+  try {
+    parsed = api.parseConfigFile(tsconfigAbsolutePath);
+  } finally {
+    api.close();
   }
-  const parsed = ts.parseJsonConfigFileContent(
-    config.config,
-    ts.sys,
-    path.dirname(tsconfigAbsolutePath),
-    {},
-    tsconfigAbsolutePath,
-  );
   const files = [...new Set(parsed.fileNames)]
     .filter(isTypeScriptFile)
     .filter(isLocalProjectFile)
     .sort();
-  const watchDirectories = Object.entries(parsed.wildcardDirectories ?? {}).map(
-    ([dir, flag]) => ({ dir, recursive: flag === TS_WATCH_DIRECTORY_RECURSIVE }),
-  );
+  const watchDirectories = [...enumeratedDirectories]
+    .sort()
+    .map((dir) => ({ dir, recursive: false }));
   return { files, watchDirectories };
 }
 
