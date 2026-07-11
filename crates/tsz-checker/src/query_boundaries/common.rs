@@ -9,8 +9,8 @@ pub(crate) use tsz_solver::computation::CompatChecker;
 pub(crate) use tsz_solver::construction::TypeInterner;
 pub(crate) use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 pub(crate) use tsz_solver::narrowing::{
-    CachedPropertyType, NarrowingCache, NarrowingContext, OptionalPropertyChainKey, TypeGuard,
-    TypeofKind,
+    CachedChainType, CachedPropertyType, NarrowingCache, NarrowingContext,
+    OptionalPropertyChainKey, TypeGuard, TypeofKind,
 };
 pub(crate) use tsz_solver::objects::IndexSignatureResolver;
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;

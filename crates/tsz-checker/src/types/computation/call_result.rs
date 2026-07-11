@@ -80,6 +80,7 @@ impl<'a> CheckerState<'a> {
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
+        call_idx: NodeIndex,
         callee_type: TypeId,
         arg_types: &[TypeId],
         return_type: TypeId,
@@ -122,8 +123,14 @@ impl<'a> CheckerState<'a> {
             return_type
         };
         if is_optional_chain {
+            // The `| undefined` added below is the chain short-circuit marker;
+            // track whether the return type itself already carried `undefined`
+            // so outer chain continuations can strip only the marker.
+            self.record_optional_chain_marker(call_idx, return_type);
             call_checker::call_result_optional_chain_return(self.ctx.types, return_type)
         } else {
+            // No clear needed: only the chain arm above ever records a bit
+            // for a call node, so a non-chain call was never inserted.
             return_type
         }
     }
@@ -880,6 +887,7 @@ impl<'a> CheckerState<'a> {
                 self.report_polymorphic_this_indexed_conditional_arg(callee_type, args, arg_types);
                 self.finalize_call_return_like_success(
                     callee_expr,
+                    call_idx,
                     callee_type,
                     arg_types,
                     return_type,
@@ -1002,6 +1010,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.finalize_call_return_like_success(
                         callee_expr,
+                        call_idx,
                         callee_type,
                         arg_types,
                         return_type,

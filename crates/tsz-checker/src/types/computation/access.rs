@@ -188,16 +188,29 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // Strip nullish from the object type when this element access continues
-        // an optional chain (e.g., the `["c"]` in `o?.b["c"]`). Track whether
-        // stripping occurred so we can add `| undefined` back to the result.
-        let (object_type, is_chain_continuation) =
-            if !access.question_dot_token && is_optional_chain(self.ctx.arena, access.expression) {
-                let (non_nullish, stripped) = self.split_nullish_type(object_type);
-                (non_nullish.unwrap_or(object_type), stripped.is_some())
-            } else {
-                (object_type, false)
-            };
+        // Remove the chain-introduced `undefined` marker from the object type
+        // when this element access continues an optional chain (e.g., the
+        // `["c"]` in `o?.b["c"]`), mirroring tsc's `removeOptionalTypeMarker`:
+        // when `b` itself is optional, its own `undefined` survives and the
+        // normal possibly-nullish path reports TS18048. Track whether the
+        // receiver could be nullish at this link so we can add `| undefined`
+        // back to the result.
+        let (object_type, is_chain_continuation) = if !access.question_dot_token
+            && is_optional_chain(self.ctx.arena, access.expression)
+        {
+            let non_optional = self.remove_optional_chain_marker(access.expression, object_type);
+            let had_marker = non_optional != object_type;
+            // Honor guards (`if (o?.f) o?.f["g"]`) before diagnosing:
+            // tsc's receiver is the flow-narrowed reference.
+            let narrowed =
+                self.flow_narrow_optional_chain_remainder(access.expression, non_optional);
+            // The chain can short-circuit when the marker was present or
+            // the receiver can still be nullish after narrowing.
+            let still_nullish = self.split_nullish_type(narrowed).1.is_some();
+            (narrowed, had_marker || still_nullish)
+        } else {
+            (object_type, false)
+        };
         let object_type = if !skip_flow_narrowing
             && self
                 .resolve_identifier_symbol(access.expression)
@@ -1824,25 +1837,25 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(cause) = nullish_cause {
-            if access.question_dot_token {
-                result_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(result_type, TypeId::UNDEFINED);
-            } else if !report_no_index {
-                self.report_possibly_nullish_object(access.expression, cause);
-            }
+        if access.question_dot_token {
+            // The added `| undefined` is the chain short-circuit marker; the
+            // helper tracks whether the element type itself already carried
+            // `undefined` so chain continuations can strip only the marker.
+            result_type = self
+                .union_optional_chain_undefined(idx, result_type, nullish_cause.is_some())
+                .0;
+        } else if let Some(cause) = nullish_cause
+            && !report_no_index
+        {
+            self.report_possibly_nullish_object(access.expression, cause);
         }
 
         // The chain can short-circuit at the `?.`; add back the `| undefined`
         // that was stripped when resolving the element access.
         if is_chain_continuation {
-            result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
-                self.ctx.types,
-                result_type,
-            );
+            result_type = self
+                .union_optional_chain_undefined(idx, result_type, true)
+                .0;
         }
 
         let result_type = if skip_flow_narrowing {

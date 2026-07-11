@@ -256,9 +256,8 @@ impl<'a> FlowAnalyzer<'a> {
             ) else {
                 return false;
             };
-            if access_a.question_dot_token || access_b.question_dot_token {
-                return false;
-            }
+            // `?.` does not change the reference identity (see
+            // `property_reference`).
             return self.is_matching_reference(access_a.expression, access_b.expression)
                 && self
                     .is_matching_reference(access_a.name_or_argument, access_b.name_or_argument);
@@ -544,11 +543,12 @@ impl<'a> FlowAnalyzer<'a> {
             return self.property_reference(assertion.expression);
         }
 
+        // `?.` accesses form the same reference as their non-optional
+        // spelling: tsc's `isMatchingReference` keys on the accessed property
+        // name and ignores `questionDotToken`, so `if (a.b) { a?.b }` and
+        // `if (a?.b) { a.b }` both narrow.
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
-            if access.question_dot_token {
-                return None;
-            }
             let ident = self.arena.get_identifier_at(access.name_or_argument)?;
             let name = self.interner.intern_string(&ident.escaped_text);
             return Some((access.expression, name));
@@ -556,9 +556,6 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
             let access = self.arena.get_access_expr(node)?;
-            if access.question_dot_token {
-                return None;
-            }
             let name = self.literal_atom_from_node_or_type(access.name_or_argument);
             tracing::trace!(
                 ?idx,

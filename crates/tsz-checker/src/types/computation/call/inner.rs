@@ -465,32 +465,64 @@ impl<'a> CheckerState<'a> {
         // A call is in an optional chain when it uses `?.()` directly, or when
         // the callee expression continues an earlier optional chain such as
         // `o?.a.b()`.
-        let callee_is_optional_chain = node.is_optional_chain()
-            || crate::types_domain::computation::access::is_optional_chain(
-                self.ctx.arena,
-                call.expression,
-            );
+        let callee_expr_is_chain = crate::types_domain::computation::access::is_optional_chain(
+            self.ctx.arena,
+            call.expression,
+        );
+        let callee_is_optional_chain = node.is_optional_chain() || callee_expr_is_chain;
         if callee_is_optional_chain {
             // Evaluate the callee type to resolve Application/Lazy types before
             // splitting nullish members. Without this, `Transform1<T>` stays as an
             // unevaluated Application and split_nullish_type can't see its union members.
             let callee_for_split = self.evaluate_type_with_env(callee_type);
-            let (non_nullish, cause) = self.split_nullish_type(callee_for_split);
-            nullish_cause = cause;
-            let Some(non_nullish) = non_nullish else {
-                // The callee is entirely nullish (`null`, `undefined`, or
-                // `null | undefined`). The chain short-circuits to `undefined`,
-                // but tsc still computes the non-nullish slice as `never`, which
-                // has no call signatures, and reports TS2349 — unless a property
-                // access on a `never` receiver already emitted the companion
-                // TS2339. Mirror that so `fn?.()` where `fn: undefined` is not
-                // silently accepted.
-                if !self.never_callee_has_companion_property_diagnostic(call.expression) {
-                    self.error_not_callable_at(TypeId::NEVER, call.expression);
+            if call.question_dot_token || !callee_expr_is_chain {
+                // The `?.` guards the invoked value itself (`f?.()`,
+                // `o.m?.()`, `o?.f?.()`): strip all of its nullishness,
+                // mirroring tsc's chain-root `getNonNullableType`.
+                let (non_nullish, cause) = self.split_nullish_type(callee_for_split);
+                nullish_cause = cause;
+                let Some(non_nullish) = non_nullish else {
+                    // The callee is entirely nullish (`null`, `undefined`, or
+                    // `null | undefined`). The chain short-circuits to `undefined`,
+                    // but tsc still computes the non-nullish slice as `never`, which
+                    // has no call signatures, and reports TS2349 — unless a property
+                    // access on a `never` receiver already emitted the companion
+                    // TS2339. Mirror that so `fn?.()` where `fn: undefined` is not
+                    // silently accepted.
+                    if !self.never_callee_has_companion_property_diagnostic(call.expression) {
+                        self.error_not_callable_at(TypeId::NEVER, call.expression);
+                    }
+                    return TypeId::UNDEFINED;
+                };
+                callee_type = non_nullish;
+            } else {
+                // The call continues a chain without its own `?.` (`o?.f()`):
+                // tsc's `getOptionalExpressionType` removes only the
+                // chain-introduced `undefined` here, so a callee whose own type
+                // includes `undefined`/`null` still fails resolution and
+                // reports TS2721/TS2722/TS2723 through the normal
+                // possibly-nullish path.
+                let non_optional =
+                    self.remove_optional_chain_marker(call.expression, callee_for_split);
+                if non_optional != callee_for_split {
+                    // The chain can short-circuit: the call result gains the
+                    // `| undefined` marker.
+                    nullish_cause = Some(TypeId::UNDEFINED);
                 }
-                return TypeId::UNDEFINED;
-            };
-            callee_type = non_nullish;
+                let (non_nullish, _) = self.split_nullish_type(non_optional);
+                if non_nullish.is_none()
+                    && self.never_callee_has_companion_property_diagnostic(call.expression)
+                {
+                    // The callee access already reported TS2339 on an
+                    // entirely-nullish receiver (`o?.f()` with `o: undefined`);
+                    // tsc's callee is errorType there and the call stays silent.
+                    return TypeId::UNDEFINED;
+                }
+                // Honor guards (`if (o?.f) o?.f()`) before diagnosing: tsc's
+                // callee is the flow-narrowed reference.
+                callee_type =
+                    self.flow_narrow_optional_chain_remainder(call.expression, non_optional);
+            }
             if callee_type == TypeId::ANY {
                 return TypeId::ANY;
             }

@@ -1388,6 +1388,97 @@ impl<'a> CheckerState<'a> {
         split
     }
 
+    /// Record whether `idx`'s optional-chain result type owes its `undefined`
+    /// member solely to chain short-circuiting. `pre_marker` is the result
+    /// type before the chain's `| undefined` was unioned in; when it already
+    /// contains `undefined`, that `undefined` is inherent and must survive
+    /// marker removal. Mirrors tsc's `addOptionalTypeMarker`, which keeps the
+    /// chain-introduced `undefined` distinguishable from a member's own.
+    pub(crate) fn record_optional_chain_marker(&mut self, idx: NodeIndex, pre_marker: TypeId) {
+        let inherent = crate::query_boundaries::common::type_contains_undefined(
+            self.ctx.types.as_type_database(),
+            pre_marker,
+        );
+        self.set_optional_chain_marker_only(idx, !inherent);
+    }
+
+    /// Set or clear the marker-only bit for an optional-chain node. Producers
+    /// call this on every recomputation so speculative or stale entries
+    /// self-correct. The emptiness fast-path keeps clears free for programs
+    /// without optional chains.
+    pub(crate) fn set_optional_chain_marker_only(&mut self, idx: NodeIndex, marker_only: bool) {
+        if marker_only {
+            self.ctx.optional_chain_marker_only_nodes.insert(idx.0);
+        } else if !self.ctx.optional_chain_marker_only_nodes.is_empty() {
+            self.ctx.optional_chain_marker_only_nodes.remove(&idx.0);
+        }
+    }
+
+    /// Union the chain short-circuit `undefined` into an optional-chain result
+    /// and record the marker bit for `idx`; clears the bit when the chain
+    /// cannot short-circuit. Returns the result type and whether its
+    /// `undefined` is marker-only.
+    pub(crate) fn union_optional_chain_undefined(
+        &mut self,
+        idx: NodeIndex,
+        type_id: TypeId,
+        chain_can_short_circuit: bool,
+    ) -> (TypeId, bool) {
+        if chain_can_short_circuit {
+            let result = crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                type_id,
+            );
+            // `undefined` was newly added exactly when the member lacked its
+            // own `undefined` — the marker-only case.
+            let marker_only = result != type_id;
+            self.set_optional_chain_marker_only(idx, marker_only);
+            (result, marker_only)
+        } else {
+            self.set_optional_chain_marker_only(idx, false);
+            (type_id, false)
+        }
+    }
+
+    /// tsc `removeOptionalTypeMarker`: strip `undefined` from a chain node's
+    /// type only when it was introduced by the chain short-circuit. Inherent
+    /// nullishness (an optional member's own `undefined`, or `null`) stays,
+    /// so the normal possibly-nullish checks (TS18047/TS18048/TS2721/TS2722)
+    /// still fire on chain continuations like `o?.f()` and `o?.f.g`.
+    pub(crate) fn remove_optional_chain_marker(
+        &mut self,
+        expr: NodeIndex,
+        type_id: TypeId,
+    ) -> TypeId {
+        if self.ctx.optional_chain_marker_only_nodes.contains(&expr.0) {
+            crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id)
+        } else {
+            type_id
+        }
+    }
+
+    /// Flow-narrow the remainder of an optional-chain node's type on the cold
+    /// (possibly-nullish) path. `apply_flow_narrowing` skips `?.` access nodes
+    /// as a hot-path optimization, so a guard like `if (o?.f) o?.f()` has not
+    /// been applied to the chain node's type when a continuation consumes it.
+    /// Returns the type unchanged unless it still carries nullish members, so
+    /// successful marker-only chains pay no flow-analysis cost.
+    pub(crate) fn flow_narrow_optional_chain_remainder(
+        &mut self,
+        expr: NodeIndex,
+        type_id: TypeId,
+    ) -> TypeId {
+        let (_, nullish) = self.split_nullish_type(type_id);
+        if nullish.is_none() {
+            return type_id;
+        }
+        let Some(flow_node) = self.flow_node_for_reference_usage(expr) else {
+            return type_id;
+        };
+        self.flow_analyzer_for_property_reads()
+            .get_flow_type(expr, type_id, flow_node)
+    }
+
     /// Check if a node is a literal `null` keyword or an identifier named `undefined`.
     /// Used to distinguish `null.foo` / `undefined.bar` from `x.foo` where `x: null`.
     pub(crate) fn is_literal_null_or_undefined_node(&self, idx: NodeIndex) -> bool {

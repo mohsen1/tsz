@@ -1276,6 +1276,13 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1438 // Interface must be given a name (recovery creates invalid expression statements)
         | 1442 // Identifier or expression expected (TS-only construct in JS)
         | 1477 // Member must have an initializer
+        // TS18030 is emitted by tsc's parser (`parseErrorAtRange` on a private
+        // identifier in an optional chain), so it belongs to the syntactic
+        // phase: tsc reports it and then skips the whole program's semantic
+        // diagnostics. Without this entry a chain continuation such as
+        // `o?.a.#b` would still surface the receiver's possibly-nullish
+        // TS2532/TS18048, which tsc suppresses.
+        | 18030 // An optional chain cannot contain private identifiers
     )
 }
 

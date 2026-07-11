@@ -12,8 +12,29 @@ type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
 type PropertyCacheKey = (TypeId, Atom);
 type NarrowedPropertyCache = GenerationMemo<PropertyCacheKey, Option<CachedPropertyType>>;
 type RequiredPropertyCache = GenerationMemo<PropertyCacheKey, bool>;
-type OptionalChainCache = GenerationMemo<PropertyCacheKey, TypeId>;
-type OptionalPropertyChainCache = GenerationMemo<OptionalPropertyChainKey, TypeId>;
+type OptionalChainCache = GenerationMemo<PropertyCacheKey, CachedChainType>;
+type OptionalPropertyChainCache = GenerationMemo<OptionalPropertyChainKey, CachedChainType>;
+
+/// Final optional-chain read result plus whether its `undefined` member exists
+/// only because the chain can short-circuit (the equivalent of tsc's
+/// optional-type marker). Chain continuations remove `undefined` from the
+/// receiver only when `undefined_is_marker_only` is set, so a member's own
+/// `undefined` still drives the possibly-nullish diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CachedChainType {
+    pub type_id: TypeId,
+    pub undefined_is_marker_only: bool,
+}
+
+impl CachedChainType {
+    #[must_use]
+    pub const fn new(type_id: TypeId, undefined_is_marker_only: bool) -> Self {
+        Self {
+            type_id,
+            undefined_is_marker_only,
+        }
+    }
+}
 
 /// Cache key for a successful identifier-rooted optional property chain.
 ///

@@ -191,6 +191,7 @@ impl ParserState {
                         CallExprData {
                             expression: expr,
                             type_arguments: None,
+                            question_dot_token: false,
                             arguments: Some(arguments),
                         },
                     );
@@ -237,6 +238,7 @@ impl ParserState {
                                 CallExprData {
                                     expression: expr,
                                     type_arguments: Some(type_args),
+                                    question_dot_token: true,
                                     arguments: Some(arguments),
                                 },
                             );
@@ -277,6 +279,7 @@ impl ParserState {
                             CallExprData {
                                 expression: expr,
                                 type_arguments: Some(type_args),
+                                question_dot_token: true,
                                 arguments: Some(Self::make_node_list(Vec::new())),
                             },
                         );
@@ -319,6 +322,7 @@ impl ParserState {
                             CallExprData {
                                 expression: expr,
                                 type_arguments: None,
+                                question_dot_token: true,
                                 arguments: Some(arguments),
                             },
                         );
@@ -435,6 +439,7 @@ impl ParserState {
                                 CallExprData {
                                     expression: expr,
                                     type_arguments: Some(type_args),
+                                    question_dot_token: false,
                                     arguments: Some(arguments),
                                 },
                             );
@@ -488,6 +493,7 @@ impl ParserState {
                                 CallExprData {
                                     expression: expr,
                                     type_arguments: Some(type_args),
+                                    question_dot_token: false,
                                     arguments: Some(arguments),
                                 },
                             );

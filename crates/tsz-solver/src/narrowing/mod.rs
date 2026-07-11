@@ -48,7 +48,9 @@ pub use utils::{
 // Re-export public items from compound narrowing
 pub use self::compound::NullishFilter;
 
-pub use self::cache::{CachedPropertyType, NarrowingCache, OptionalPropertyChainKey};
+pub use self::cache::{
+    CachedChainType, CachedPropertyType, NarrowingCache, OptionalPropertyChainKey,
+};
 
 pub use self::guard::{GuardSense, TypeGuard, TypeofKind};
 

@@ -14,6 +14,7 @@ mod optional_fast_path;
 mod partial_initializer;
 mod receiver_eval;
 mod resolve;
+mod this_receiver_class_type;
 mod value_import;
 
 #[cfg(test)]
