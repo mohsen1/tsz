@@ -1426,8 +1426,7 @@ fn cli_ts7_dropped_compiler_option_flags_do_not_block_emit() {
     );
     assert!(
         base.join("main.js").exists() && !result.emitted_files.is_empty(),
-        "TS5023 should not stop emit without noEmitOnError: {:#?}",
-        result
+        "TS5023 should not stop emit without noEmitOnError: {result:#?}"
     );
 
     std::fs::remove_file(base.join("main.js")).expect("remove first emitted output");
