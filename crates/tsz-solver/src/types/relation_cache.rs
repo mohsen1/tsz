@@ -127,6 +127,11 @@ pub enum CachedAnyMode {
     /// at-top/nested split. Results computed under this mode must never
     /// share a cache slot with the default assignable relation.
     AnySourceNotRelated,
+    /// tsc `isTypeIdenticalTo`: `any` is identical only to `any` at every
+    /// depth. Depth-independent, so it needs no at-top/nested split. Results
+    /// computed under this mode must never share a cache slot with the
+    /// default assignable relation (where nested `any` propagates).
+    IdenticalOnly,
 }
 
 /// Canonical cache-partitioning configuration for relation queries.

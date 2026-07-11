@@ -249,6 +249,9 @@ impl RelationPolicy {
             // Depth-independent: the overload subtype pass behaves the same
             // at every nesting level, so one cached mode covers all depths.
             AnyPropagationMode::AnySourceNotRelated => CachedAnyMode::AnySourceNotRelated,
+            // Depth-independent: `any` is identical only to `any` at every
+            // level, so one cached mode covers all depths.
+            AnyPropagationMode::IdenticalOnly => CachedAnyMode::IdenticalOnly,
         };
         self.cache_config_with_cached_any_mode(any_mode)
     }

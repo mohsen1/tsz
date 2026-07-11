@@ -456,6 +456,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             AnyPropagationMode::TopLevelOnly => CachedAnyMode::TopLevelOnlyNested,
             // Depth-independent mode: same behavior at every nesting level.
             AnyPropagationMode::AnySourceNotRelated => CachedAnyMode::AnySourceNotRelated,
+            AnyPropagationMode::IdenticalOnly => CachedAnyMode::IdenticalOnly,
         }
     }
 

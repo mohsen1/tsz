@@ -535,9 +535,9 @@ fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
     // distinct `CachedAnyMode` projection in `RelationPolicy::cache_config`.
     let other_any_mode = match any_propagation_mode {
         AnyPropagationMode::All => AnyPropagationMode::TopLevelOnly,
-        AnyPropagationMode::TopLevelOnly | AnyPropagationMode::AnySourceNotRelated => {
-            AnyPropagationMode::All
-        }
+        AnyPropagationMode::TopLevelOnly
+        | AnyPropagationMode::AnySourceNotRelated
+        | AnyPropagationMode::IdenticalOnly => AnyPropagationMode::All,
     };
     assert_subtype_partitions(
         "any_propagation_mode",
