@@ -344,6 +344,7 @@ impl<'a> Printer<'a> {
             pending_auto_accessor_inits: Vec::new(),
             next_auto_accessor_name_index: 0,
             hoisted_assignment_value_temps: Vec::new(),
+            preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
             loop_iife_body_depth: 0,

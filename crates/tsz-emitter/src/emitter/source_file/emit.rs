@@ -1193,12 +1193,14 @@ impl<'a> Printer<'a> {
         self.hoisted_assignment_temps.clear();
         self.hoisted_file_level_class_temps.clear();
         self.hoisted_assignment_value_temps.clear();
+        self.preallocated_logical_assignment_value_temps.clear();
         self.preallocated_assignment_temps.clear();
         self.preallocated_hoisted_temp_names.clear();
         self.hoisted_for_of_temps.clear();
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();
         self.iterator_for_of_depth = 0;
+        self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
         self.preallocate_iterator_return_temps_for_statements(&source.statements.nodes);
         self.prealloc_for_of_destructure_temps(&source.statements.nodes);
@@ -1956,10 +1958,10 @@ impl<'a> Printer<'a> {
             (hoisted_var_byte_offset, hoisted_var_line)
         };
 
-        // Logical-assignment (`??=`) read-cache value temps share the file's temp
-        // counter with the reference temps; declare them all in one `var` in
-        // allocation order (matching `tsc`) rather than on a separate line.
-        let ref_vars = self.collect_hoisted_ref_vars();
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+        let values_first = self.value_temps_precede_refs(&ref_vars);
 
         // A class-lowering temp can be reachable from more than one hoist
         // bucket (e.g. a class alias reserved as a file-level class temp that
@@ -1977,6 +1979,15 @@ impl<'a> Printer<'a> {
             })
             .cloned()
             .collect();
+
+        // Insertions share one anchor and therefore appear in reverse call
+        // order. Insert the later-allocated bucket first so the final text is
+        // ordered by each bucket's first allocation rank.
+        if !values_first && !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!("var {};", self.hoisted_assignment_value_temps.join(", "));
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
 
         if !self.ctx.options.legacy_decorators {
             self.insert_nonlegacy_same_location_hoists(
@@ -2006,6 +2017,12 @@ impl<'a> Printer<'a> {
                 self.writer
                     .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
             }
+        }
+
+        if values_first && !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!("var {};", self.hoisted_assignment_value_temps.join(", "));
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }
 
         // Insert CJS destructuring export temps before the __esModule marker.

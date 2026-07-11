@@ -1,6 +1,5 @@
 use super::super::super::Printer;
 use super::super::super::core::JsxEmit;
-use super::super::super::helpers::temp_name_rank;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -532,6 +531,15 @@ impl<'a> Printer<'a> {
                 .as_ref()
                 .is_some_and(|args| args.nodes.len() >= 2)
     }
+}
+
+fn temp_name_rank(name: &str) -> Option<u32> {
+    let tail = name.strip_prefix('_')?;
+    let bytes = tail.as_bytes();
+    if bytes.len() == 1 && bytes[0].is_ascii_lowercase() {
+        return Some(u32::from(bytes[0] - b'a'));
+    }
+    tail.parse::<u32>().ok().map(|rank| rank + 26)
 }
 
 pub(in crate::emitter) fn jsx_dev_file_name(file_name: &str) -> String {
