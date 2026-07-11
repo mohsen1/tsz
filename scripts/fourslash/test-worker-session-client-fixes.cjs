@@ -18,6 +18,7 @@ module.exports = function patchSessionClientFixes(proto, ts, {
     installTypesEligibleCodes,
     installTypesFixId,
     installTypesFixAllDescription,
+    moduleSpecifierToTypesPackageName,
 }) {
     const tszPreferredFixNames = new Set([
         "addMissingNewOperator",
