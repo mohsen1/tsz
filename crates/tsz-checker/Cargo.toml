@@ -2434,3 +2434,8 @@ path = "tests/interface_extends_generic_mapped_base_no_ts2430_tests.rs"
 [[test]]
 name = "vendored_fixture_drift_tests"
 path = "tests/vendored_fixture_drift_tests.rs"
+
+
+[[test]]
+name = "generic_mapped_intersection_deferral_tests"
+path = "tests/generic_mapped_intersection_deferral_tests.rs"

@@ -702,3 +702,86 @@ fn extract_mapped_keys_does_not_taint_on_resolvable_constraint() {
          extraction taint must stay clear (#14347)"
     );
 }
+
+/// `{ readonly [K in keyof <operand>]: <operand>[K] }` — the shared shape for
+/// the composite-operand deferral tests below.
+fn readonly_mapped_over_keyof(interner: &TypeInterner, operand: TypeId) -> MappedType {
+    let constraint = interner.keyof(operand);
+    let key_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let key_param = interner.type_param(key_info);
+    MappedType {
+        type_param: key_info,
+        constraint,
+        name_type: None,
+        template: interner.index_access(operand, key_param),
+        readonly_modifier: Some(MappedModifier::Add),
+        optional_modifier: None,
+    }
+}
+
+fn string_prop_object(interner: &TypeInterner, name: &str) -> TypeId {
+    interner.object(vec![PropertyInfo {
+        name: interner.intern_string(name),
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        is_string_named: true,
+        ..Default::default()
+    }])
+}
+
+/// A homomorphic mapped type keyed by `keyof (T & X)` where `T` is a free type
+/// parameter is still *generic*: its key set includes `keyof T`, which has no
+/// concrete expansion. Eagerly materializing it used to keep only the concrete
+/// member's keys (dropping every key `T` contributes), which broke the
+/// `Readonly<T & { p }> <: Readonly<T>` relation behind kysely's freeze-factory
+/// pattern (#10663). tsc's `isGenericIndexType` defers here; so must tsz.
+#[test]
+fn mapped_over_keyof_intersection_with_free_param_stays_deferred() {
+    let interner = TypeInterner::new();
+    let t_param = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let concrete = string_prop_object(&interner, "where");
+
+    for operand in [
+        interner.intersection(vec![t_param, concrete]),
+        interner.intersection(vec![concrete, t_param]),
+        interner.union(vec![t_param, concrete]),
+    ] {
+        let mapped = readonly_mapped_over_keyof(&interner, operand);
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let result = evaluator.evaluate_mapped(&mapped);
+        assert!(
+            matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+            "mapped over keyof of a composite containing a free type parameter must stay \
+             deferred, got {:?}",
+            interner.lookup(result)
+        );
+    }
+}
+
+/// Precision floor for the composite-operand deferral: `keyof (A & B)` over
+/// fully concrete members has a complete key set, so the mapped type must keep
+/// materializing eagerly (deferring here would regress display and
+/// excess-property behavior for concrete intersections).
+#[test]
+fn mapped_over_keyof_concrete_intersection_still_materializes() {
+    let interner = TypeInterner::new();
+    let operand = interner.intersection(vec![
+        string_prop_object(&interner, "a"),
+        string_prop_object(&interner, "b"),
+    ]);
+    let mapped = readonly_mapped_over_keyof(&interner, operand);
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+    assert!(
+        !matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
+        "mapped over keyof of a fully concrete intersection must still materialize, got {:?}",
+        interner.lookup(result)
+    );
+}

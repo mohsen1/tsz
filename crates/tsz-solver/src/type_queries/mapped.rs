@@ -1550,6 +1550,37 @@ pub fn expand_mapped_type_to_properties(
     properties
 }
 
+/// Whether a `keyof` operand is a free type parameter, an `infer` placeholder,
+/// or a composite (union/intersection) containing one — i.e. whether a mapped
+/// type keyed by `keyof <operand>` is still *generic* and must stay deferred.
+///
+/// The key set of `keyof (T & X)` includes `keyof T`, which has no concrete
+/// expansion while `T` is free, so eagerly materializing such a mapped type
+/// would drop every key contributed by `T`. tsc's `isGenericIndexType` treats
+/// these constraints as generic and keeps the mapped type deferred; this
+/// predicate is the shape query behind tsz's equivalent deferral.
+pub fn keyof_operand_is_generic(db: &dyn TypeDatabase, source: TypeId) -> bool {
+    match db.lookup(source) {
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+        Some(TypeData::Substitution { base_type, .. }) => matches!(
+            db.lookup(base_type),
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        ),
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.get_mapped(mapped_id);
+            match db.lookup(mapped.constraint) {
+                Some(TypeData::KeyOf(inner)) => keyof_operand_is_generic(db, inner),
+                _ => false,
+            }
+        }
+        Some(TypeData::Intersection(members) | TypeData::Union(members)) => db
+            .type_list(members)
+            .iter()
+            .any(|&member| keyof_operand_is_generic(db, member)),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
