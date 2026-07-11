@@ -288,16 +288,42 @@ fn main() -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
     let node_semaphore = Arc::new(CountingSemaphore::new(max_node));
+    let retry_lock = Mutex::new(());
 
     test_files.par_iter().for_each(|path| {
-        match process_test_file(
+        let first_attempt = process_test_file(
             path,
             &test_dir_path,
             tsc_path_ref,
             tsc_version.as_str(),
             args.timeout,
             &node_semaphore,
-        ) {
+        );
+        let outcome = match first_attempt {
+            Ok(outcome) => Ok(outcome),
+            Err(first_error) => {
+                let _retry_guard = retry_lock.lock().unwrap();
+                eprintln!(
+                    "↻ Retrying {} after processing error: {first_error:#}",
+                    path.display()
+                );
+                process_test_file(
+                    path,
+                    &test_dir_path,
+                    tsc_path_ref,
+                    tsc_version.as_str(),
+                    args.timeout,
+                    &node_semaphore,
+                )
+                .map_err(|retry_error| {
+                    anyhow::anyhow!(
+                        "initial attempt: {first_error:#}; serialized retry: {retry_error:#}"
+                    )
+                })
+            }
+        };
+
+        match outcome {
             Ok(ProcessOutcome::Cached(key, entry)) => {
                 cache.lock().unwrap().insert(key, entry);
             }

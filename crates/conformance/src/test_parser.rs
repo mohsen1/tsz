@@ -231,7 +231,7 @@ fn split_option_values(key: &str, raw: &str) -> Vec<String> {
         .filter_map(|token| token.strip_prefix('-').or_else(|| token.strip_prefix('!')))
         .map(|token| normalized_option_value(key, token))
         .collect();
-    let has_wildcard = tokens.iter().any(|token| *token == "*");
+    let has_wildcard = tokens.contains(&"*");
     let mut values: Vec<String> = tokens
         .iter()
         .filter(|token| **token != "*" && !token.starts_with('-') && !token.starts_with('!'))
