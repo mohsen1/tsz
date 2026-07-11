@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::context::transform::IdentifierId;
 use crate::emitter::Printer;
+use crate::text_utils::format_js_number;
 use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
@@ -954,10 +955,6 @@ impl<'a> Printer<'a> {
             self.write(&format!("\\u{high:04X}\\u{low:04X}"));
         }
     }
-}
-
-fn format_js_number(value: f64) -> String {
-    crate::text_utils::format_js_number(value)
 }
 
 fn decimal_literal_has_exponent(text: &str) -> bool {

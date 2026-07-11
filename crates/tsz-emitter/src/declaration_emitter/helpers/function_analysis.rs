@@ -1421,7 +1421,7 @@ impl<'a> DeclarationEmitter<'a> {
                     super::escape_string_for_double_quote(&interner.resolve_atom(*atom))
                 )
             }
-            tsz_solver::types::LiteralValue::Number(n) => Self::format_js_number(n.0),
+            tsz_solver::types::LiteralValue::Number(n) => crate::text_utils::format_js_number(n.0),
             tsz_solver::types::LiteralValue::Boolean(b) => b.to_string(),
             tsz_solver::types::LiteralValue::BigInt(atom) => {
                 format!("{}n", interner.resolve_atom(*atom))
@@ -1546,10 +1546,7 @@ impl<'a> DeclarationEmitter<'a> {
                     // Strip numeric separators (tsc strips them in .d.ts output)
                     if text.contains('_') {
                         if let Some(v) = lit.value {
-                            if v.fract() == 0.0 && v.abs() < 1e20 {
-                                return format!("{}", v as i64);
-                            }
-                            return v.to_string();
+                            return crate::text_utils::format_js_number(v);
                         }
                         return text.replace('_', "");
                     }
@@ -1559,7 +1556,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if digits >= 21
                         && let Ok(n) = text.parse::<f64>()
                     {
-                        return Self::format_js_number(n);
+                        return crate::text_utils::format_js_number(n);
                     }
                     text.clone()
                 })

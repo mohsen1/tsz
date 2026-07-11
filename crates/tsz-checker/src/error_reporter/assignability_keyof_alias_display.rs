@@ -374,14 +374,7 @@ impl<'a> CheckerState<'a> {
                 Some(format!("\"{}\"", self.ctx.types.resolve_atom_ref(atom)))
             }
             tsz_solver::LiteralValue::Number(value) => {
-                let value = value.0;
-                if value == 0.0 {
-                    Some("0".to_string())
-                } else if value.is_finite() && value.fract() == 0.0 {
-                    Some(format!("{value:.0}"))
-                } else {
-                    Some(value.to_string())
-                }
+                Some(tsz_solver::utils::js_number_to_string(value.0).into_owned())
             }
             tsz_solver::LiteralValue::BigInt(atom) => {
                 Some(format!("{}n", self.ctx.types.resolve_atom_ref(atom)))

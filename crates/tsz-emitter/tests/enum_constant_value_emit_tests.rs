@@ -168,3 +168,30 @@ fn namespace_enum_division_is_float_at_es5_and_esnext() {
         );
     }
 }
+
+#[test]
+fn enum_es5_float_member_values_use_number_tostring_text() {
+    // tsc renders evaluated float member values through `Number::toString`
+    // (`1e21` → `1e+21`, `1e-7` → `1e-7`), not Rust's `Display` shortest form.
+    let output = parse_lower_emit(
+        r#"
+enum Big {
+    A = 1e21,
+    B = 1e-7,
+}
+"#,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"Big[Big["A"] = 1e+21] = "A";"#),
+        "ES5 enum float value should print as JS Number::toString text.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"Big[Big["B"] = 1e-7] = "B";"#),
+        "ES5 enum small float value should print as JS Number::toString text.\nOutput:\n{output}"
+    );
+}

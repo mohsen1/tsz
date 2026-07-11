@@ -1524,10 +1524,9 @@ impl<'a> CheckerState<'a> {
                     let mut names = Vec::with_capacity(string_keys.len() + number_keys.len());
                     names.extend(string_keys);
                     names.extend(number_keys.into_iter().map(|num| {
-                        self.ctx.types.intern_string(
-                            &tsz_solver::utils::canonicalize_numeric_name(&num.to_string())
-                                .unwrap_or_else(|| num.to_string()),
-                        )
+                        self.ctx
+                            .types
+                            .intern_string(&tsz_solver::utils::js_number_to_string(num))
                     }));
                     names
                 } else {

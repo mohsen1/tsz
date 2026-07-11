@@ -1776,7 +1776,8 @@ impl<'a> InferenceContext<'a> {
         {
             // Convert captured strings to literal types and add as candidates
             for (infer_var, captured_string) in captures {
-                let literal_type = self.interner.literal_string(&captured_string);
+                let literal_type =
+                    self.coerce_captured_template_segment(infer_var, &captured_string);
                 self.add_candidate(infer_var, literal_type, priority);
             }
         }

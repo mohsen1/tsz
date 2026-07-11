@@ -611,12 +611,7 @@ pub fn compute_template_expression_type(
             if let Some(lit_atom) = crate::type_queries::get_string_literal_value(db, part) {
                 result.push_str(&db.resolve_atom(lit_atom));
             } else if let Some(num) = crate::type_queries::get_number_literal_value(db, part) {
-                if num.fract() == 0.0 && num.abs() < 1e15 {
-                    let n = num as i64;
-                    result.push_str(&format!("{n}"));
-                } else {
-                    result.push_str(&format!("{num}"));
-                }
+                result.push_str(&crate::utils::js_number_to_string(num));
             } else if part == TypeId::BOOLEAN_TRUE {
                 result.push_str("true");
             } else if part == TypeId::BOOLEAN_FALSE {

@@ -294,43 +294,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match lit {
             LiteralValue::String(atom) => Some(self.interner().resolve_atom_ref(atom).to_string()),
             LiteralValue::Number(n) => {
-                // Convert number to string matching JavaScript's Number::toString(10).
-                // ECMAScript spec: use scientific notation if |x| < 10^-6 or |x| >= 10^21.
-                let n_val = n.0;
-                let abs_val = n_val.abs();
-
-                tracing::trace!(
-                    number = n_val,
-                    abs_val = abs_val,
-                    "extract_literal_strings: converting number to string"
-                );
-
-                if n_val == 0.0 {
-                    Some("0".to_string())
-                } else if !(1e-6..1e21).contains(&abs_val) {
-                    // Use scientific notation (Rust adds sign for negative exponents, but not positive).
-                    let mut s = format!("{n_val:e}");
-                    // Rust outputs "1e-7" for 1e-7 (good) but "1e21" instead of "1e+21" for 1e21.
-                    // We need to add "+" to positive exponents.
-                    if s.contains("e") && !s.contains("e-") && !s.contains("e+") {
-                        let parts: Vec<&str> = s.split('e').collect();
-                        if parts.len() == 2 {
-                            s = format!("{}e+{}", parts[0], parts[1]);
-                        }
-                    }
-                    tracing::trace!(result = %s, "extract_literal_strings: scientific notation");
-                    Some(s)
-                } else if n_val.fract() == 0.0 && abs_val < 1e15 {
-                    // Integer-like number - avoid scientific notation.
-                    let s = (n_val as i64).to_string();
-                    tracing::trace!(result = %s, "extract_literal_strings: integer-like");
-                    Some(s)
-                } else {
-                    // Fixed-point notation.
-                    let s = format!("{n_val}");
-                    tracing::trace!(result = %s, "extract_literal_strings: fixed-point");
-                    Some(s)
-                }
+                // JS Number::toString semantics via the shared owner
+                // (1e21 -> "1e+21", 1e-7 -> "1e-7", -0 -> "0").
+                Some(crate::utils::js_number_to_string(n.0).into_owned())
             }
             LiteralValue::Boolean(b) => Some(if b { "true" } else { "false" }.to_string()),
             LiteralValue::BigInt(atom) => {

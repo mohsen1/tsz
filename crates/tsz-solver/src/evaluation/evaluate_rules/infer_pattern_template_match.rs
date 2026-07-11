@@ -71,12 +71,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        let literal = self.interner().literal_number(value);
-        let round_trips = match value {
-            v if v.fract() == 0.0 && v.abs() < 1e15 => (v as i64).to_string() == captured,
-            v => format!("{v}") == captured,
-        };
-        Some(if round_trips { literal } else { TypeId::NUMBER })
+        // tsc's isValidNumberString(s, roundTripOnly=true): the capture keeps
+        // its literal type only when JS Number::toString reproduces the text.
+        if crate::utils::js_number_to_string(value) == captured {
+            Some(self.interner().literal_number(value))
+        } else {
+            Some(TypeId::NUMBER)
+        }
     }
 
     fn parse_template_bigint_capture(&self, captured: &str) -> Option<TypeId> {

@@ -1160,9 +1160,20 @@ impl<'a> CheckerState<'a> {
             && node.kind == SyntaxKind::NumericLiteral as u16
             && let Some(lit) = self.ctx.arena.get_literal(node)
         {
-            let property_name = &lit.text;
+            // Derive the key from the index literal type — the solver query
+            // owns numeric-name canonicalization, so source spellings like
+            // `1e21` look up the declared property name `"1e+21"`. Fall back
+            // to canonicalized source text when the index type widened.
+            let property_name =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    index_type,
+                )
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+                .or_else(|| tsz_solver::utils::canonicalize_numeric_name(&lit.text))
+                .unwrap_or_else(|| lit.text.clone());
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            let result = self.resolve_property_access_with_env(resolved_type, property_name);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             if let PropertyAccessResult::Success {
                 type_id,
                 write_type,

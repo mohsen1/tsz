@@ -41,8 +41,15 @@ impl TypeInterner {
         self.intern(TypeData::Literal(LiteralValue::String(atom)))
     }
 
-    /// Intern a literal number type
+    /// Intern a literal number type.
+    ///
+    /// Number literal types are keyed by `SameValueZero`, matching tsc's
+    /// `getNumberLiteralType` map: `-0` and `0` intern to the same type
+    /// (`const a: -0 = 0` is clean and `-0` displays as `0`), and every NaN
+    /// bit pattern collapses to the canonical NaN. `OrderedFloat` compares by
+    /// raw bits, so both must be normalized before interning.
     pub fn literal_number(&self, value: f64) -> TypeId {
+        let value = OrderedFloat::same_value_zero_canonical(value);
         self.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(value))))
     }
 

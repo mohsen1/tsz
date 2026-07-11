@@ -630,10 +630,7 @@ impl<'a> TypeFormatter<'a> {
                     Self::push_template_literal_text(result, &text);
                 }
                 LiteralValue::Number(number) => {
-                    let text =
-                        crate::relations::subtype::rules::literals::format_number_for_template(
-                            number.0,
-                        );
+                    let text = crate::utils::js_number_to_string(number.0);
                     Self::push_template_literal_text(result, &text);
                 }
                 LiteralValue::Boolean(value) => {

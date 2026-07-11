@@ -144,8 +144,9 @@ impl TypeInterner {
                 }
                 Some(TypeData::Literal(LiteralValue::Boolean(b))) => Some(b.to_string()),
                 Some(TypeData::Literal(LiteralValue::Number(n))) => {
-                    // TypeScript stringifies numbers in templates (e.g., 1 -> "1", 1.5 -> "1.5")
-                    Some(format!("{}", n.0))
+                    // TypeScript stringifies numbers in templates with JS
+                    // Number::toString semantics (1e21 -> "1e+21", -0 -> "0").
+                    Some(crate::utils::js_number_to_string(n.0).into_owned())
                 }
                 Some(TypeData::Literal(LiteralValue::BigInt(atom))) => {
                     // BigInts in templates are stringified (e.g., 100n -> "100")
@@ -158,7 +159,9 @@ impl TypeInterner {
                     Some(TypeData::Literal(LiteralValue::String(atom))) => {
                         Some(self.resolve_atom_ref(atom).to_string())
                     }
-                    Some(TypeData::Literal(LiteralValue::Number(n))) => Some(format!("{}", n.0)),
+                    Some(TypeData::Literal(LiteralValue::Number(n))) => {
+                        Some(crate::utils::js_number_to_string(n.0).into_owned())
+                    }
                     _ => None,
                 },
                 _ => None,
@@ -365,7 +368,9 @@ impl TypeInterner {
                                 let s = self.resolve_atom_ref(atom);
                                 (!s.is_empty()).then(|| s.to_string())
                             }
-                            LiteralValue::Number(n) => Some(format!("{}", n.0)),
+                            LiteralValue::Number(n) => {
+                                Some(crate::utils::js_number_to_string(n.0).into_owned())
+                            }
                             LiteralValue::Boolean(b) => Some(b.to_string()),
                             LiteralValue::BigInt(_) => {
                                 if let Some(text) = pending_text.take()

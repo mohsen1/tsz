@@ -132,16 +132,20 @@ fn test_ordered_float_equality() {
     assert_ne!(OrderedFloat(1.5), OrderedFloat(2.5));
     assert_ne!(OrderedFloat(1.0), OrderedFloat(-1.0));
 
-    // Note: 0.0 and -0.0 have different bit representations
-    assert_ne!(OrderedFloat(0.0), OrderedFloat(-0.0));
+    // SameValueZero identity, matching tsc's number-literal-type keying:
+    // -0 and +0 are one value despite distinct bit representations.
+    assert_eq!(OrderedFloat(0.0), OrderedFloat(-0.0));
 }
 
 #[test]
 fn test_ordered_float_nan() {
-    // NaN should equal itself (by bit comparison)
+    // NaN equals itself, including across distinct NaN bit patterns
+    // (SameValueZero collapses every NaN).
     let nan1 = OrderedFloat(f64::NAN);
     let nan2 = OrderedFloat(f64::NAN);
     assert_eq!(nan1, nan2);
+    let negated_nan = OrderedFloat(-f64::NAN);
+    assert_eq!(nan1, negated_nan);
 }
 
 #[test]

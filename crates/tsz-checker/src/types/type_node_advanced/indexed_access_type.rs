@@ -467,17 +467,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Collect the string-literal keys named by an indexed-access index type.
-    /// Returns one entry per string-literal union member (or the single literal),
-    /// so union-key access (`I["x" | "y"]`) is validated the same way as a single
-    /// literal regardless of where the indexed access appears syntactically.
+    /// Collect the literal keys named by an indexed-access index type.
+    /// Returns one entry per literal union member (or the single literal),
+    /// so union-key access (`I["x" | "y"]`) is validated the same way as a
+    /// single literal regardless of where the indexed access appears
+    /// syntactically. Keys come from the literal *types* so numeric indices
+    /// use the canonical JS property name (`O[1e21]` looks up `"1e+21"`, not
+    /// the raw source text); enum-literal and unique-symbol indices resolve
+    /// to their internal key spellings the same way. The AST fallback only
+    /// covers indices whose type did not resolve to a literal.
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
-        use crate::query_boundaries::common::{string_literal_value, union_members};
+        use crate::query_boundaries::common::union_members;
+        use crate::query_boundaries::type_computation::access::literal_property_name;
         let members =
             union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type].into());
         let keys: Vec<String> = members
             .iter()
-            .filter_map(|&member| string_literal_value(self.ctx.types, member))
+            .filter_map(|&member| literal_property_name(self.ctx.types, member))
             .map(|atom| self.ctx.types.resolve_atom(atom))
             .collect();
         if keys.is_empty() {

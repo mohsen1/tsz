@@ -76,7 +76,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write("\"");
             }
             EnumValue::Float(f) => {
-                self.write(&Self::format_js_number(*f));
+                self.write(&crate::text_utils::format_js_number(*f));
             }
             EnumValue::Computed => {
                 // For computed values, emit 0 as fallback

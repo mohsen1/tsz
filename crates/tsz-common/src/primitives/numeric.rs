@@ -1,4 +1,90 @@
-//! Utilities for parsing numeric literals.
+//! Utilities for parsing and stringifying numeric literals.
+
+use std::borrow::Cow;
+
+/// Converts a JavaScript number to its string representation, matching the
+/// ECMAScript `Number::toString(10)` abstract operation.
+///
+/// This is the single owner for JS number→string conversion. Every semantic
+/// or emit decision that turns a numeric value into JS text (template literal
+/// type evaluation, property-key canonicalization, indexed-access key
+/// derivation, `infer`-pattern round-trip checks, JS/DTS numeric emit) must
+/// route through it: raw Rust `Display` diverges from JS exactly where the
+/// spec switches notation (`1e21` → JS `"1e+21"` vs Rust
+/// `"1000000000000000000000"`, `1e-7` → JS `"1e-7"` vs Rust `"0.0000001"`,
+/// `-0` → JS `"0"` vs Rust `"-0"`).
+///
+/// Returns `Cow::Borrowed` for static special cases (`NaN`, `0`, infinities)
+/// and `Cow::Owned` for dynamically formatted numbers.
+pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
+    if value.is_nan() {
+        return Cow::Borrowed("NaN");
+    }
+    if value == 0.0 {
+        // Covers -0.0 as well: IEEE 754 comparison treats -0 == 0, and JS
+        // Number::toString(-0) is "0".
+        return Cow::Borrowed("0");
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() {
+            Cow::Borrowed("-Infinity")
+        } else {
+            Cow::Borrowed("Infinity")
+        };
+    }
+
+    // ECMAScript Number::toString uses scientific notation when the decimal
+    // exponent is >= 21 or <= -7, i.e. |value| >= 1e21 or |value| < 1e-6.
+    let abs = value.abs();
+    if !(1e-6..1e21).contains(&abs) {
+        let mut formatted = format!("{value:e}");
+        if let Some(split) = formatted.find('e') {
+            let (mantissa, exp) = formatted.split_at(split);
+            let exp_digits = exp.strip_prefix('e').unwrap_or("");
+            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
+                ('-', digits)
+            } else {
+                ('+', exp_digits)
+            };
+            let trimmed = digits.trim_start_matches('0');
+            let digits = if trimmed.is_empty() { "0" } else { trimmed };
+            formatted = format!("{mantissa}e{sign}{digits}");
+        }
+        return Cow::Owned(formatted);
+    }
+
+    Cow::Owned(value.to_string())
+}
+
+/// tsc's `isValidNumberString(text, roundTripOnly = true)`: parse `text` as a
+/// JS number and return the value only when [`js_number_to_string`]
+/// reproduces the text exactly.
+///
+/// This is the gate template-literal `infer` captures and inference-capture
+/// coercions use to decide whether a captured segment keeps a numeric literal
+/// type: `"42"` round-trips (→ `42`), while `"042"`, `"1.0"`, `"-0"`,
+/// `"0x2A"`, and `"Infinity"` do not.
+pub fn round_trip_js_number(text: &str) -> Option<f64> {
+    let value = parse_numeric_literal_value(text)?;
+    (value.is_finite() && js_number_to_string(value) == text).then_some(value)
+}
+
+/// tsc's `isValidBigIntString(text, roundTripOnly = true)`: an optional sign
+/// followed by decimal digits whose canonical bigint text reproduces the
+/// input — no leading zeros and no negative zero.
+///
+/// Returns the `(negative, digits)` split so callers can intern the literal
+/// without re-splitting.
+pub fn round_trip_js_bigint(text: &str) -> Option<(bool, &str)> {
+    let (negative, digits) = text
+        .strip_prefix('-')
+        .map_or((false, text), |rest| (true, rest));
+    (!digits.is_empty()
+        && digits.bytes().all(|b| b.is_ascii_digit())
+        && (digits == "0" || !digits.starts_with('0'))
+        && !(negative && digits == "0"))
+        .then_some((negative, digits))
+}
 
 /// Parse a numeric literal text representation into a f64 value.
 /// Supports standard floating point literals as well as 0x, 0b, and 0o prefixes.
@@ -8,14 +94,20 @@ pub fn parse_numeric_literal_value(text: &str) -> Option<f64> {
         return None;
     }
 
-    if text.len() > 2 {
-        let prefix = &text[0..2];
-        if prefix.eq_ignore_ascii_case("0x") {
-            return parse_radix_digits_as_f64(&text[2..], 16);
-        } else if prefix.eq_ignore_ascii_case("0b") {
-            return parse_radix_digits_as_f64(&text[2..], 2);
-        } else if prefix.eq_ignore_ascii_case("0o") {
-            return parse_radix_digits_as_f64(&text[2..], 8);
+    // Byte-wise prefix check: indexing `text[0..2]` would panic on multi-byte
+    // UTF-8 input (property names are arbitrary text), and a radix prefix is
+    // ASCII by construction.
+    if let [b'0', radix_marker, ..] = text.as_bytes() {
+        let radix = match radix_marker {
+            b'x' | b'X' => Some(16),
+            b'b' | b'B' => Some(2),
+            b'o' | b'O' => Some(8),
+            _ => None,
+        };
+        if let Some(radix) = radix
+            && text.len() > 2
+        {
+            return parse_radix_digits_as_f64(&text[2..], radix);
         }
     }
 
@@ -228,5 +320,70 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0x1p2"), None);
         assert_eq!(parse_numeric_literal_value("abc"), None);
         assert_eq!(parse_numeric_literal_value("1__2"), Some(12.0));
+    }
+
+    #[test]
+    fn js_number_to_string_specials() {
+        assert_eq!(js_number_to_string(f64::NAN), "NaN");
+        assert_eq!(js_number_to_string(f64::INFINITY), "Infinity");
+        assert_eq!(js_number_to_string(f64::NEG_INFINITY), "-Infinity");
+        assert_eq!(js_number_to_string(0.0), "0");
+        assert_eq!(js_number_to_string(-0.0), "0");
+    }
+
+    #[test]
+    fn js_number_to_string_fixed_point_range() {
+        assert_eq!(js_number_to_string(42.0), "42");
+        assert_eq!(js_number_to_string(-1.0), "-1");
+        assert_eq!(js_number_to_string(3.15), "3.15");
+        assert_eq!(js_number_to_string(-0.5), "-0.5");
+        assert_eq!(js_number_to_string(1e-6), "0.000001");
+        // 21-digit integers below 1e21 stay fixed-point, as in JS.
+        assert_eq!(js_number_to_string(1e20), "100000000000000000000");
+        assert_eq!(js_number_to_string(9.99e20), "999000000000000000000");
+    }
+
+    #[test]
+    fn js_number_to_string_scientific_range() {
+        assert_eq!(js_number_to_string(1e21), "1e+21");
+        assert_eq!(js_number_to_string(-1e21), "-1e+21");
+        assert_eq!(js_number_to_string(1e-7), "1e-7");
+        assert_eq!(
+            js_number_to_string(1.2345678912345678e53),
+            "1.2345678912345678e+53"
+        );
+    }
+
+    #[test]
+    fn round_trip_js_number_gate() {
+        assert_eq!(round_trip_js_number("42"), Some(42.0));
+        assert_eq!(round_trip_js_number("-1"), Some(-1.0));
+        assert_eq!(round_trip_js_number("1e+21"), Some(1e21));
+        assert_eq!(round_trip_js_number("042"), None);
+        assert_eq!(round_trip_js_number("1.0"), None);
+        assert_eq!(round_trip_js_number("-0"), None);
+        assert_eq!(round_trip_js_number("0x2A"), None);
+        assert_eq!(round_trip_js_number("Infinity"), None);
+        assert_eq!(round_trip_js_number(""), None);
+    }
+
+    #[test]
+    fn parse_numeric_literal_value_multibyte_utf8_is_safe() {
+        // Property names are arbitrary text; a multi-byte first character
+        // must not panic the byte-indexed radix-prefix check.
+        assert_eq!(parse_numeric_literal_value("日本語"), None);
+        assert_eq!(parse_numeric_literal_value("0あ"), None);
+        assert_eq!(round_trip_js_number("日本語"), None);
+    }
+
+    #[test]
+    fn round_trip_js_bigint_gate() {
+        assert_eq!(round_trip_js_bigint("42"), Some((false, "42")));
+        assert_eq!(round_trip_js_bigint("-42"), Some((true, "42")));
+        assert_eq!(round_trip_js_bigint("0"), Some((false, "0")));
+        assert_eq!(round_trip_js_bigint("042"), None);
+        assert_eq!(round_trip_js_bigint("-0"), None);
+        assert_eq!(round_trip_js_bigint("4.2"), None);
+        assert_eq!(round_trip_js_bigint(""), None);
     }
 }

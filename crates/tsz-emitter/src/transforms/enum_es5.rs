@@ -1070,8 +1070,8 @@ impl<'a> EnumES5Transformer<'a> {
             if val == val.floor() && val.is_finite() && val.abs() < (i64::MAX as f64) {
                 return IRNode::NumericLiteral((val as i64).to_string().into());
             }
-            // Otherwise emit as float
-            return IRNode::NumericLiteral(format!("{val}").into());
+            // Otherwise emit through `Number::toString` like tsc.
+            return IRNode::NumericLiteral(crate::text_utils::format_js_number(val).into());
         }
         if node.kind == SyntaxKind::BigIntLiteral as u16 {
             // BigInt literal names like `0n` are emitted as-is (no quotes)
@@ -1139,8 +1139,9 @@ impl<'a> EnumES5Transformer<'a> {
                 }
             }
         } else {
-            // Format with enough precision to round-trip
-            let s = format!("{val}");
+            // tsc emits the evaluated value through `Number::toString`
+            // (`1e21` → `1e+21`, `1e-7` → `1e-7`), not the source text.
+            let s = crate::text_utils::format_js_number(val);
             IRNode::NumericLiteral(s.into())
         }
     }

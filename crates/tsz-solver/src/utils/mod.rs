@@ -3,8 +3,6 @@
 //! This module contains common utilities used across multiple solver components
 //! to avoid code duplication.
 
-use std::borrow::Cow;
-
 use crate::caches::db::TypeDatabase;
 use crate::types::{ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeId};
 use crate::visitor::{array_element_type, readonly_inner_type, tuple_list_id};
@@ -156,19 +154,8 @@ pub fn is_synthetic_private_brand_name(name: &str) -> bool {
 /// - "`NaN`", "Infinity", "-Infinity"
 /// - Numeric strings that round-trip correctly through JavaScript's number-to-string conversion
 pub fn is_numeric_literal_name(name: &str) -> bool {
-    if name == "NaN" || name == "Infinity" || name == "-Infinity" {
-        return true;
-    }
-
-    let value: f64 = match name.parse() {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    if !value.is_finite() {
-        return false;
-    }
-
-    js_number_to_string(value) == name
+    matches!(name, "NaN" | "Infinity" | "-Infinity")
+        || tsz_common::numeric::round_trip_js_number(name).is_some()
 }
 
 /// Canonicalizes a numeric property name to its JavaScript canonical form.
@@ -186,53 +173,13 @@ pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
     Some(js_number_to_string(value).into_owned())
 }
 
-/// Converts a JavaScript number to its string representation.
+/// Converts a JavaScript number to its string representation, matching the
+/// ECMAScript `Number::toString(10)` abstract operation.
 ///
-/// This matches JavaScript's `Number.prototype.toString()` behavior for proper
-/// numeric literal name checking.
-///
-/// Returns `Cow::Borrowed` for static special cases (NaN, 0, Infinity) and
-/// `Cow::Owned` for dynamically formatted numbers.
-pub fn js_number_to_string(value: f64) -> Cow<'static, str> {
-    if value.is_nan() {
-        return Cow::Borrowed("NaN");
-    }
-    if value == 0.0 {
-        return Cow::Borrowed("0");
-    }
-    if value.is_infinite() {
-        return if value.is_sign_negative() {
-            Cow::Borrowed("-Infinity")
-        } else {
-            Cow::Borrowed("Infinity")
-        };
-    }
-
-    let abs = value.abs();
-    if !(1e-6..1e21).contains(&abs) {
-        let mut formatted = format!("{value:e}");
-        if let Some(split) = formatted.find('e') {
-            let (mantissa, exp) = formatted.split_at(split);
-            let exp_digits = exp.strip_prefix('e').unwrap_or("");
-            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
-                ('-', digits)
-            } else {
-                ('+', exp_digits)
-            };
-            let trimmed = digits.trim_start_matches('0');
-            let digits = if trimmed.is_empty() { "0" } else { trimmed };
-            formatted = format!("{mantissa}e{sign}{digits}");
-        }
-        return Cow::Owned(formatted);
-    }
-
-    let formatted = value.to_string();
-    if formatted == "-0" {
-        Cow::Borrowed("0")
-    } else {
-        Cow::Owned(formatted)
-    }
-}
+/// Re-exported from `tsz_common::numeric`, the cross-crate owner shared with
+/// the emitter; every solver/checker numeric-literal → string decision site
+/// must route through this rather than raw Rust `Display`.
+pub use tsz_common::numeric::js_number_to_string;
 
 /// Reduces a vector of types to a union, single type, or NEVER.
 ///
