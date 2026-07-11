@@ -104,8 +104,8 @@ impl<'a> DeclarationEmitter<'a> {
     ///
     /// Shared by the exported (`emit_exported_enum`) and non-exported
     /// (`emit_enum_declaration`) paths so the ambient member-value rule lives in
-    /// a single place. In an ambient context — a `declare` enum, an enum inside a
-    /// `declare namespace`, or any enum in a `.d.ts` source — `tsc` preserves
+    /// a single place. In a source-ambient context — a `declare` enum, an enum
+    /// inside a source `declare namespace`, or any enum in a `.d.ts` source — `tsc` preserves
     /// each member's source initializer form: members written with `= ...` keep
     /// it and bare members stay bare. Non-ambient enums always emit their
     /// evaluated values, and `const` enums emit values regardless of ambient
@@ -123,11 +123,14 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(enum_data) = self.arena.get_enum(enum_node) else {
             return;
         };
-        // Ambient context: `declare` modifier, inside a `declare namespace`, or a
-        // `.d.ts` source. The `declare` modifier is detected for both bare
+        // Source-ambient context: `declare` modifier, inside a source `declare
+        // namespace`, or a `.d.ts` source. `inside_declare_namespace` also becomes
+        // true while emitting an ordinary namespace as `declare namespace` in the
+        // output, so exclude the explicitly tracked non-ambient source scope.
+        // The `declare` modifier is detected for both bare
         // (`declare enum`) and exported (`export declare enum`) forms because the
         // parser keeps it on the enum node's own modifier list in both cases.
-        let is_ambient = self.inside_declare_namespace
+        let is_ambient = (self.inside_declare_namespace && !self.inside_non_ambient_namespace)
             || self.arena.is_declare(&enum_data.modifiers)
             || self.source_is_declaration_file;
 
