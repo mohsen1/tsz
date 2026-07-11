@@ -500,6 +500,55 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Contextual (target) type is a type-alias application whose body is a
+        // union — e.g. a declared return type
+        // `ParseReturnType<T> = Sync<T> | Async<T>`. tsc relates the
+        // placeholder-bearing signature return against the *reduced apparent
+        // type* of the contextual type, so an arm that shares the source's
+        // generic base (here the `Promise<...>` arm) must constrain the
+        // source's type arguments. `expand_type_alias_application` substitutes
+        // an alias body one level without deep-reducing its members, keeping
+        // that arm an Application so its type argument (which carries the
+        // tracked return placeholder) stays visible; a deep `evaluate_type`
+        // would collapse the arm to a bare object shape and lose the argument.
+        // Arms may themselves be alias wrappers of the source's generic (e.g.
+        // `AsyncParseReturnType<T> = Promise<Sync<T>>`), so expand each arm a
+        // bounded number of levels until its base matches the source. Without
+        // this the tracked return placeholder (`TResult1`) never receives a
+        // candidate and collapses to `never`, spuriously rejecting a
+        // non-thenable callback body against `PromiseLike<never>`.
+        if !constrained_structurally
+            && let Some(TypeData::Application(s_app_id)) = self.interner.lookup(source_ty)
+            && matches!(
+                self.interner.lookup(target_ty),
+                Some(TypeData::Application(_))
+            )
+            && let Some(expanded_target) = self.checker.expand_type_alias_application(target_ty)
+            && let Some(arms) = crate::type_queries::get_union_members(
+                self.interner.as_type_database(),
+                expanded_target,
+            )
+        {
+            let s_app = self.interner.type_application(s_app_id);
+            let s_base = s_app.base;
+            let s_args: Vec<TypeId> = s_app.args.to_vec();
+            for arm in arms.iter() {
+                if let Some(arm_args) = self.same_base_application_args(*arm, s_base, s_args.len())
+                {
+                    constrained_structurally = true;
+                    for (s_arg, arm_arg) in s_args.iter().zip(arm_args.iter()) {
+                        // Covariant return position: the contextual arm's type
+                        // argument is a candidate (lower bound) for the return
+                        // placeholder, so drive it as the source and the
+                        // placeholder-bearing return arg as the target. A union of
+                        // return placeholders (`TResult1 | TResult2`) is decomposed
+                        // on the target side, seeding each with the arm argument.
+                        self.constrain_types(infer_ctx, var_map, *arm_arg, *s_arg, priority);
+                    }
+                }
+            }
+        }
+
         let raw_functions = Self::get_source_signature_for_target(
             self.interner.as_type_database(),
             source_ty,
@@ -597,6 +646,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         constrained_structurally
+    }
+
+    /// Resolve `ty` to the type arguments of an application whose base is
+    /// `base` and whose arity is `arity`, expanding wrapping type aliases a
+    /// bounded number of levels. Used by the contextual-return union matcher to
+    /// recognise a union arm that reuses the source's generic base directly
+    /// (`Promise<Sync<T>>`) or through an alias (`Async<T> = Promise<Sync<T>>`).
+    fn same_base_application_args(
+        &mut self,
+        ty: TypeId,
+        base: TypeId,
+        arity: usize,
+    ) -> Option<Vec<TypeId>> {
+        const MAX_ARM_ALIAS_EXPANSIONS: usize = 4;
+        let mut candidate = ty;
+        for _ in 0..MAX_ARM_ALIAS_EXPANSIONS {
+            let app = match self.interner.lookup(candidate) {
+                Some(TypeData::Application(app_id)) => {
+                    let app = self.interner.type_application(app_id);
+                    Some((app.base, app.args.to_vec()))
+                }
+                _ => None,
+            };
+            if let Some((cand_base, cand_args)) = app
+                && cand_base == base
+                && cand_args.len() == arity
+            {
+                return Some(cand_args);
+            }
+            match self.checker.expand_type_alias_application(candidate) {
+                Some(next) if next != candidate => candidate = next,
+                _ => return None,
+            }
+        }
+        None
     }
 
     pub(super) fn collect_placeholder_vars_in_type(
