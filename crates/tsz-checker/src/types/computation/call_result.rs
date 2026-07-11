@@ -1706,17 +1706,25 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            // Generalization of the bare-parameter rule above: the in-flight
-            // `infer` holes already returned early, so every type parameter
-            // reaching this point is a RIGID enclosing-scope parameter that no
-            // later inference pass will substitute — a rejection computed
-            // against the same parameter set on both sides is permanent (e.g.
-            // two structurally divergent recursive conditional aliases applied
-            // to the same parameter). Deferring would silently drop a real
-            // TS2345; tsc checks the instantiated signature and reports.
+            // Generalization of the bare-parameter rule above, restricted to
+            // two *deferred generic aliases* — a conditional type or a generic
+            // application blocked on a rigid parameter — over the SAME rigid
+            // enclosing-scope parameter set. The in-flight `infer` holes already
+            // returned early, so no later inference pass substitutes these
+            // parameters; two structurally divergent recursive conditional
+            // aliases applied to the same parameter (`Grow2<[], T>` vs
+            // `Grow1<[], T>`) can never relate, and tsc reports the
+            // instantiated-signature mismatch. The alias-shape gate keeps two
+            // families that tsc accepts (or reports elsewhere) on the deferring
+            // path: a union vs a bare parameter, where tsc narrows the
+            // destructured source before the call (`dependentDestructuredVariables`),
+            // and template-literal / intrinsic-string mismatches, reported
+            // through a different elaboration (`templateLiteralTypes3`).
             let actual_type_params = self.referenced_type_params(actual);
             if !actual_type_params.is_empty()
                 && actual_type_params == self.referenced_type_params(expected)
+                && self.is_deferred_generic_alias(actual)
+                && self.is_deferred_generic_alias(expected)
             {
                 return false;
             }
@@ -1732,6 +1740,17 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .filter(|&referenced| common::type_param_info(self.ctx.types, referenced).is_some())
             .collect()
+    }
+
+    /// A deferred generic alias: a conditional type or a generic type
+    /// application whose evaluation is blocked on a rigid type parameter.
+    /// Two such aliases over the same parameter set are compared as written —
+    /// no later inference pass substitutes their parameters — so a rejection is
+    /// permanent. Unions, bare parameters, and template-literal / intrinsic
+    /// string types are deliberately excluded.
+    fn is_deferred_generic_alias(&self, ty: TypeId) -> bool {
+        common::is_conditional_type(self.ctx.types, ty)
+            || common::is_generic_application(self.ctx.types, ty)
     }
 
     /// Check if `actual` and `expected` are generic instantiations of different classes.

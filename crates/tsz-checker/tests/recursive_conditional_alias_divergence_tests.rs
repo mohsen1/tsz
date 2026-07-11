@@ -170,3 +170,35 @@ function caller<L extends number>(w: WrapTwo<L>) {
         "relation must terminate without an excessive-complexity overflow. Codes: {codes:?}"
     );
 }
+
+/// Negative control for the alias-shape gate on the checker's rigid-parameter
+/// rule: a generic call whose argument is a UNION over the enclosing type
+/// parameter and whose parameter is a bare parameter must keep DEFERRING, not
+/// report. `tsc` narrows the destructured discriminant so the union never
+/// reaches the call; matching it requires the rule to fire only for two
+/// deferred conditional/application aliases, never for `T[] | T` vs `T`. This
+/// is the `dependentDestructuredVariables.ts` regression that ejected the PR.
+#[test]
+fn union_argument_vs_bare_parameter_defers_no_spurious_ts2345() {
+    let source = r#"
+interface A<T> { variant: 'a', value: T }
+interface B<T> { variant: 'b', value: Array<T> }
+type AB<T> = A<T> | B<T>;
+declare function printValue<T>(t: T): void;
+declare function printValueList<T>(t: Array<T>): void;
+function unrefined1<T>(ab: AB<T>): void {
+    const { variant, value } = ab;
+    if (variant === 'a') {
+        printValue<T>(value);
+    } else {
+        printValueList<T>(value);
+    }
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    let codes = codes(&diags);
+    assert!(
+        !codes.contains(&2345),
+        "union-over-parameter argument vs bare parameter must defer, not report. Codes: {codes:?}"
+    );
+}
