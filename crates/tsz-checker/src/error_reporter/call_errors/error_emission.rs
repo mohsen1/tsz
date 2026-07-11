@@ -205,6 +205,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                 )
             };
+            if code
+                == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
+            {
+                arg_str = self.widen_weak_type_callable_source_display(arg_type, arg_str);
+            }
             let (arg_str, param_str) =
                 self.finalize_pair_display_for_diagnostic(arg_type, param_type, arg_str, param_str);
             let message = format_message(msg_template, &[&arg_str, &param_str]);
@@ -698,6 +703,30 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .diagnostics
             .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+    }
+
+    /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
+    /// widens *genuinely fresh* callable-source members for display
+    /// (`() => { timeout: 1000 }` renders `() => { timeout: number }`) while
+    /// leaving declared literal annotations literal (`… & { a: 1 }`). A fresh
+    /// object literal keeps its `1000` spelling only in display provenance over
+    /// an already-widened canonical shape, which the solver reports as
+    /// `display_residue`; a declared literal is canonical and produces none.
+    /// Mirrors the shared assignment/`satisfies` renderer so both diagnostic
+    /// sites use one fresh-versus-declared policy (#13075).
+    fn widen_weak_type_callable_source_display(&self, arg_type: TypeId, arg_str: String) -> String {
+        let widened = self.widen_annotation_literals_for_display(
+            self.widen_literal_type(arg_type),
+            crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+        );
+        if widened.display_residue {
+            // Fresh literal spellings live only in display provenance; render
+            // the canonical (display-property-free) widened form.
+            return self.format_type_diagnostic_widened(widened.type_id);
+        }
+        // No display residue: declared / `non_widening` literal annotations are
+        // canonical and authoritative, so keep the original rendered source.
+        arg_str
     }
 
     /// Check if a node is a `new` expression.
