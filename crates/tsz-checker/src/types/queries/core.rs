@@ -1261,8 +1261,18 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         fn class_decl_from_decl_idx(
             checker: &CheckerState<'_>,
+            sym_id: tsz_binder::SymbolId,
             decl_idx: NodeIndex,
         ) -> Option<NodeIndex> {
+            // A merged lib symbol's declaration index can collide with an
+            // unrelated node in the current arena; such a declaration is not
+            // a local class declaration (issue #15687).
+            if !checker
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            {
+                return None;
+            }
             let node = checker.ctx.arena.get(decl_idx)?;
             if checker.ctx.arena.get_class(node).is_some() {
                 return Some(decl_idx);
@@ -1293,17 +1303,17 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         let resolved = if symbol.value_declaration.is_some() {
             let decl_idx = symbol.value_declaration;
-            class_decl_from_decl_idx(self, decl_idx).or_else(|| {
+            class_decl_from_decl_idx(self, sym_id, decl_idx).or_else(|| {
                 symbol
                     .declarations
                     .iter()
-                    .find_map(|&decl_idx| class_decl_from_decl_idx(self, decl_idx))
+                    .find_map(|&decl_idx| class_decl_from_decl_idx(self, sym_id, decl_idx))
             })
         } else {
             symbol
                 .declarations
                 .iter()
-                .find_map(|&decl_idx| class_decl_from_decl_idx(self, decl_idx))
+                .find_map(|&decl_idx| class_decl_from_decl_idx(self, sym_id, decl_idx))
         };
 
         self.ctx

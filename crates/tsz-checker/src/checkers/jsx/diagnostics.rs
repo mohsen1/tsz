@@ -278,6 +278,17 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         for decl_idx in symbol.all_declarations() {
+            // A lib-merged symbol's declaration index belongs to its lib
+            // arena; the same index read against the current arena is an
+            // unrelated node. Besides yielding a wrong display, that
+            // collision can land back on the very declaration currently
+            // being displayed and recurse without bound (issue #15687).
+            if !self
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            {
+                continue;
+            }
             if let Some(display) =
                 self.get_jsx_component_props_display_text_from_declaration(decl_idx, props_name)
             {

@@ -1526,12 +1526,19 @@ impl CheckerState<'_> {
         // arena (e.g., class+interface merged symbol where value_declaration was
         // not propagated through program-level symbol merging), search all
         // declarations for a class node in the current arena.
-        // Guard against NodeIndex collisions: verify the class name matches
-        // the symbol name to avoid picking up an unrelated class from the arena.
-        if decl_idx.is_none() || self.ctx.arena.get_class_at(decl_idx).is_none() {
+        // Guard against NodeIndex collisions: check binder arena provenance and
+        // verify the class name matches the symbol name to avoid picking up an
+        // unrelated class from the arena.
+        if decl_idx.is_none()
+            || !self
+                .ctx
+                .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            || self.ctx.arena.get_class_at(decl_idx).is_none()
+        {
             let expected_name = &symbol.escaped_name;
             for &d in &symbol.declarations {
                 if d.is_some()
+                    && self.ctx.declaration_is_local_to_current_arena(sym_id, d)
                     && let Some(class) = self.ctx.arena.get_class_at(d)
                     && self
                         .ctx
@@ -1548,7 +1555,11 @@ impl CheckerState<'_> {
         if decl_idx.is_none() {
             return None;
         }
-        if let Some(class) = self.ctx.arena.get_class_at(decl_idx) {
+        if self
+            .ctx
+            .declaration_is_local_to_current_arena(sym_id, decl_idx)
+            && let Some(class) = self.ctx.arena.get_class_at(decl_idx)
+        {
             let canonical_sym = self.ctx.binder.get_node_symbol(decl_idx);
             let active_class_sym = canonical_sym.unwrap_or(sym_id);
             // Check if we're already resolving this class - return fallback to break cycle.
@@ -1648,7 +1659,7 @@ impl CheckerState<'_> {
         self.delegate_cross_arena_class_instance_type(sym_id)
     }
 
-    fn publish_delegated_class_instance_type(
+    pub(crate) fn publish_delegated_class_instance_type(
         &mut self,
         sym_id: SymbolId,
         instance_type: TypeId,

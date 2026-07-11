@@ -127,6 +127,24 @@ impl BinderState {
         false
     }
 
+    /// Remap every entry of a lib binder's `SymbolTable` through the Phase-1
+    /// `(lib_binder_ptr, old_id) -> new_id` map, dropping entries whose id was
+    /// not remapped. Shared by the exports/members remap (Phase 2) and the
+    /// ambient `module_exports` remap (Phase 3.5).
+    fn remap_symbol_table(
+        table: &SymbolTable,
+        lib_binder_ptr: usize,
+        lib_symbol_remap: &FxHashMap<(usize, SymbolId), SymbolId>,
+    ) -> SymbolTable {
+        let mut remapped = SymbolTable::new();
+        for (name, &id) in table.iter() {
+            if let Some(&new_id) = lib_symbol_remap.get(&(lib_binder_ptr, id)) {
+                remapped.set(name.clone(), new_id);
+            }
+        }
+        remapped
+    }
+
     /// Merge lib contexts into this binder's symbol arena with remapped IDs.
     ///
     /// This is the core fix for `SymbolId` collisions across lib binders. Instead of
@@ -388,14 +406,8 @@ impl BinderState {
 
                 // Remap exports
                 if let Some(exports) = &lib_sym.exports {
-                    let mut remapped_exports = SymbolTable::new();
-                    for (name, &export_id) in exports.iter() {
-                        if let Some(&new_export_id) =
-                            lib_symbol_remap.get(&(lib_binder_ptr, export_id))
-                        {
-                            remapped_exports.set(name.clone(), new_export_id);
-                        }
-                    }
+                    let remapped_exports =
+                        Self::remap_symbol_table(exports, lib_binder_ptr, &lib_symbol_remap);
                     if !remapped_exports.is_empty()
                         && let Some(sym) = self.symbols.get_mut(new_id)
                     {
@@ -414,14 +426,8 @@ impl BinderState {
 
                 // Remap members
                 if let Some(members) = &lib_sym.members {
-                    let mut remapped_members = SymbolTable::new();
-                    for (name, &member_id) in members.iter() {
-                        if let Some(&new_member_id) =
-                            lib_symbol_remap.get(&(lib_binder_ptr, member_id))
-                        {
-                            remapped_members.set(name.clone(), new_member_id);
-                        }
-                    }
+                    let remapped_members =
+                        Self::remap_symbol_table(members, lib_binder_ptr, &lib_symbol_remap);
                     if !remapped_members.is_empty()
                         && let Some(sym) = self.symbols.get_mut(new_id)
                     {
@@ -465,6 +471,35 @@ impl BinderState {
                     }
                     // Track all lib-originating symbols for unused checking exclusion
                     Arc::make_mut(&mut self.lib_symbol_ids).insert(new_id);
+                }
+            }
+        }
+
+        // Phase 3.5: Merge ambient module export tables with remapped SymbolIds.
+        //
+        // A lib context can declare ambient modules (`declare module "react"
+        // { export = __React }`). Their export tables live in the lib binder's
+        // `module_exports` keyed by module specifier and reference lib-local
+        // `SymbolId`s. Without remapping them into the program binder, module
+        // member resolution (e.g. `import React = require('react')` followed
+        // by `React.Component`) falls back to raw lib-binder ids, which
+        // collide with unrelated merged symbols in this binder (issue #15687).
+        // First lib to declare a module wins a name within its table; names
+        // absent from an existing table are merged in (declaration merging).
+        let module_exports_mut = Arc::make_mut(&mut self.module_exports);
+        for lib_ctx in lib_contexts {
+            let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
+
+            for (module_key, exports) in lib_ctx.binder.module_exports.iter() {
+                let remapped = Self::remap_symbol_table(exports, lib_binder_ptr, &lib_symbol_remap);
+                if remapped.is_empty() {
+                    continue;
+                }
+                let existing = module_exports_mut.entry(module_key.clone()).or_default();
+                for (name, id) in remapped.iter() {
+                    if !existing.has(name) {
+                        existing.set(name.clone(), *id);
+                    }
                 }
             }
         }

@@ -11,6 +11,31 @@ use tsz_solver::def::{DefId, DefinitionInfo};
 use crate::context::CheckerContext;
 
 impl CheckerContext<'_> {
+    /// Whether `def_id`'s recorded name matches `expected_name`.
+    ///
+    /// Raw `SymbolId`s are binder-relative, so every def lookup that starts
+    /// from a raw id must validate the def's name against the symbol it
+    /// thinks it resolved (issue #15687). Returns `None` when the def has no
+    /// recorded name; callers choose strict (`unwrap_or(false)`) or lenient
+    /// (`unwrap_or(true)`) handling. Uses the non-allocating atom read — this
+    /// runs on lazy-resolution hot paths.
+    pub(crate) fn def_name_matches(&self, def_id: DefId, expected_name: &str) -> Option<bool> {
+        self.definition_store
+            .get_name(def_id)
+            .map(|name| &*self.types.resolve_atom_ref(name) == expected_name)
+    }
+
+    /// Lenient raw-id collision guard: `true` unless THIS binder resolves
+    /// `sym_id` to a symbol whose name contradicts `def_id`'s recorded name.
+    /// Used where a missing local symbol or an unnamed def must not block
+    /// resolution (see [`CheckerContext::def_name_matches`]).
+    pub(crate) fn def_matches_local_symbol(&self, def_id: DefId, sym_id: SymbolId) -> bool {
+        self.binder.get_symbol(sym_id).is_none_or(|local| {
+            self.def_name_matches(def_id, &local.escaped_name)
+                .unwrap_or(true)
+        })
+    }
+
     pub(crate) fn def_info_matches_symbol_declaration(
         &self,
         info: &DefinitionInfo,
@@ -19,7 +44,7 @@ impl CheckerContext<'_> {
         file_idx: u32,
         expected_name: &str,
     ) -> bool {
-        if self.types.resolve_atom(info.name) != expected_name
+        if &*self.types.resolve_atom_ref(info.name) != expected_name
             || info.symbol_id != Some(sym_id.0)
             || info.file_id != Some(file_idx)
         {
@@ -53,9 +78,8 @@ impl CheckerContext<'_> {
             .definition_store
             .lookup_by_symbol(sym_id.0, file_idx_u32)
             && self
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| self.types.resolve_atom(info.name) == expected_name)
+                .def_name_matches(def_id, expected_name)
+                .unwrap_or(false)
         {
             return Some(def_id);
         }

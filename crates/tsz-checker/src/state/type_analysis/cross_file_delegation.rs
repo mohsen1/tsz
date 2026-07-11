@@ -23,6 +23,28 @@ impl<'a> CheckerState<'a> {
         self.ctx.get_binder_for_file(file_idx)?.get_symbol(sym_id)
     }
 
+    /// Resolve a lib-merged symbol back to its originating lib context.
+    ///
+    /// `merge_lib_contexts_into_binder` clones lib symbols into the program
+    /// binder under fresh `SymbolId`s, so a merged id exists in no per-file
+    /// binder and raw-id cross-file lookups cannot find it. The binder keeps
+    /// the reverse mapping in `lib_symbol_reverse_remap`; this returns the
+    /// owning lib binder (matched by pointer identity against
+    /// `ctx.lib_contexts`) together with the lib-local `SymbolId`.
+    pub(crate) fn lib_merged_symbol_origin(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<(&crate::context::LibContext, SymbolId)> {
+        let &(binder_ptr, local_id) = self.ctx.binder.lib_symbol_reverse_remap.get(&sym_id)?;
+        let lib_ctx = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .find(|lib| std::sync::Arc::as_ptr(&lib.binder) as usize == binder_ptr)?;
+        lib_ctx.binder.get_symbol(local_id)?;
+        Some((lib_ctx, local_id))
+    }
+
     pub(crate) fn clear_delegated_symbol_cache_collisions(
         &self,
         checker: &mut CheckerState<'_>,

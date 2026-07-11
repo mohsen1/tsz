@@ -779,6 +779,16 @@ impl CheckerState<'_> {
                 return Some((direct_type, direct_params));
             }
 
+            // Lib-merged ids exist in no per-file binder: when every direct
+            // shortcut above missed, the generic child path below would
+            // interpret the merged id in the wrong id space, so delegate into
+            // the owning lib context instead (issue #15687). Runs after the
+            // shortcuts so actual-lib aliases keep their canonical name-keyed
+            // resolution (and its materialization ratchets).
+            if let Some(result) = self.delegate_lib_merged_symbol_type(sym_id) {
+                return Some(result);
+            }
+
             if let Some(p) = perf {
                 p.delegate_cross_arena_misses
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1248,7 +1258,17 @@ impl CheckerState<'_> {
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
         let query_file_idx =
             delegate_file_idx.or_else(|| self.ctx.get_file_idx_for_arena(symbol_arena));
-        if self.query_file_is_declaration_file(query_file_idx) {
+        // Lib-merged symbols (issue #15687): a class merged from a lib context
+        // exists only in the program binder under a remapped `SymbolId`, so the
+        // declaration-file bailout below and the raw-id binder lookup both fail
+        // for it. Resolve the originating lib binder and lib-local id through
+        // `lib_symbol_reverse_remap` and delegate into that self-consistent
+        // (arena, binder, id) triple instead.
+        let lib_merged_origin = self
+            .lib_merged_symbol_origin(sym_id)
+            .filter(|(lib_ctx, _)| std::ptr::eq(lib_ctx.arena.as_ref(), symbol_arena))
+            .map(|(lib_ctx, local_id)| (std::sync::Arc::clone(&lib_ctx.binder), local_id));
+        if lib_merged_origin.is_none() && self.query_file_is_declaration_file(query_file_idx) {
             return None;
         }
         if let Some(file_idx) = query_file_idx
@@ -1303,7 +1323,9 @@ impl CheckerState<'_> {
         // Use the target file's binder when available so that node→symbol
         // lookups (e.g. `get_node_symbol` for private member `parent_id`)
         // resolve correctly instead of returning `None`.
-        let delegate_binder = if let Some(file_idx) = delegate_file_idx {
+        let delegate_binder = if let Some((lib_binder, _)) = lib_merged_origin.as_ref() {
+            lib_binder.as_ref()
+        } else if let Some(file_idx) = delegate_file_idx {
             self.ctx
                 .get_binder_for_file(file_idx)
                 .unwrap_or(self.ctx.binder)
@@ -1312,6 +1334,12 @@ impl CheckerState<'_> {
                 .get_binder_for_arena(symbol_arena)
                 .unwrap_or(self.ctx.binder)
         };
+        // The id the delegate binder knows the class by: the lib-local id for
+        // lib-merged symbols, the shared raw id otherwise. Results are cached
+        // under the caller-visible `sym_id` either way.
+        let delegate_sym_id = lib_merged_origin
+            .as_ref()
+            .map_or(sym_id, |&(_, local_id)| local_id);
         // Cache check above returned None → about to do real work, so this
         // entry is a miss. Counts toward the `misses` denominator for
         // cache-hit-rate metrics.
@@ -1332,7 +1360,7 @@ impl CheckerState<'_> {
             .or(delegate_file_idx)
             .unwrap_or(self.ctx.current_file_idx);
         let delegated_class_is_ambient = delegate_binder
-            .get_symbol(sym_id)
+            .get_symbol(delegate_sym_id)
             .and_then(tsz_binder::Symbol::primary_declaration)
             .is_some_and(|decl_idx| checker.is_ambient_class_declaration(decl_idx));
         // The cross-file resolution state (all arenas/binders, resolved modules,
@@ -1352,13 +1380,26 @@ impl CheckerState<'_> {
         // preserve ambient classes' cached-type reuse.
         checker.ctx.copy_cross_file_state_from(&self.ctx);
         if !delegated_class_is_ambient {
-            checker.ctx.symbol_types.remove(&sym_id);
-            checker.ctx.symbol_instance_types.remove(&sym_id);
-            checker.ctx.symbol_to_def.borrow_mut().remove(&sym_id);
+            checker.ctx.symbol_types.remove(&delegate_sym_id);
+            checker.ctx.symbol_instance_types.remove(&delegate_sym_id);
+            checker
+                .ctx
+                .symbol_to_def
+                .borrow_mut()
+                .remove(&delegate_sym_id);
         }
-        checker.propagate_class_delegation_setup(self, sym_id);
-        if !delegated_class_is_ambient {
-            self.clear_delegated_symbol_cache_collisions(&mut checker, delegate_binder, sym_id);
+        checker.propagate_class_delegation_setup(self, delegate_sym_id);
+        if let Some((lib_binder, _)) = lib_merged_origin.as_ref() {
+            // Lib-merged delegation always prepares the child, ambient or
+            // not: the parent's copied state is keyed in the MERGED id space
+            // (issue #15687).
+            self.prepare_lib_merged_delegation_child(&mut checker, lib_binder, delegate_sym_id);
+        } else if !delegated_class_is_ambient {
+            self.clear_delegated_symbol_cache_collisions(
+                &mut checker,
+                delegate_binder,
+                delegate_sym_id,
+            );
         }
 
         // Record a class instance-type boundary on the cross-arena alias stack:
@@ -1366,8 +1407,16 @@ impl CheckerState<'_> {
         // not a TS2456 cycle (see `mark_cross_arena_alias_cycle`).
         let result = {
             let _class_boundary = Self::enter_cross_arena_class_boundary();
-            checker.class_instance_type_with_params_from_symbol(sym_id)
+            checker.class_instance_type_with_params_from_symbol(delegate_sym_id)
         };
+        // Lib-merged symbols have no registered file target, so no other
+        // publish site runs for them; publish under the caller-visible id so
+        // repeated queries reuse the instance type instead of re-delegating.
+        if lib_merged_origin.is_some()
+            && let Some((instance_type, params)) = result.as_ref()
+        {
+            self.publish_delegated_class_instance_type(sym_id, *instance_type, params);
+        }
         if self.ctx.share_owner_symbol_type_results
             && let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
             && *type_id != TypeId::UNKNOWN

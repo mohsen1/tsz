@@ -137,6 +137,68 @@ impl<'a> CheckerContext<'a> {
             .is_some_and(|decl| decl.type_annotation.is_some())
     }
 
+    /// Whether `decl_idx` on `sym_id` is a declaration owned by the current
+    /// file's arena.
+    ///
+    /// Symbols merged from lib contexts (`merge_lib_contexts_into_binder`)
+    /// carry declaration `NodeIndex`es that point into their originating lib
+    /// arena; the binder records that provenance in `declaration_arenas`. The
+    /// same numeric `NodeIndex` can also be a valid index into the current
+    /// arena where it names an unrelated node, so a plain `arena.get(idx)`
+    /// probe misclassifies foreign declarations as local (issue #15687).
+    ///
+    /// The reliable test is node-storage identity: `self.arena` owns the
+    /// declaration exactly when it shares its `Arc<NodeArenaInner>` with a
+    /// recorded provenance arena. Cheap `NodeArena` clones keep distinct outer
+    /// wrapper addresses (so `std::ptr::eq` under-reports) but share storage,
+    /// while a genuine cross-arena `NodeIndex` collision lands in an arena with
+    /// different storage — making the decision deterministic and independent of
+    /// which same-named node happens to sit at `decl_idx` in another arena.
+    ///
+    /// A provenance entry does NOT prove the declaration is foreign-only: a
+    /// local declaration merged into a lib symbol (e.g. a `declare global`
+    /// `interface Array` augmentation) can share its `NodeIndex` value with a
+    /// lib declaration recorded under the same key. The binder's own
+    /// `node_symbols` disambiguates — a current-arena node bound to this very
+    /// symbol is a genuine local declaration.
+    ///
+    /// When the binder has no provenance entry the declaration was bound
+    /// locally.
+    pub(crate) fn declaration_is_local_to_current_arena(
+        &self,
+        sym_id: SymbolId,
+        decl_idx: tsz_parser::NodeIndex,
+    ) -> bool {
+        match self.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+            Some(arenas) => {
+                // `self.arena` genuinely owns this declaration when it shares
+                // node storage with a recorded provenance arena. A `NodeArena`
+                // is a cheap clone whose outer wrapper address differs per
+                // clone while the parsed pools (`Arc<NodeArenaInner>`) stay
+                // shared, so the merge-time copy in `declaration_arenas` and
+                // the copy walked during type computation are distinct
+                // wrappers over identical storage — `std::ptr::eq` on the
+                // wrapper misses them, but they share storage (issue #15687
+                // follow-up: a lib arena existing as more than one `Arc`
+                // instance). A cross-arena `NodeIndex` collision lands in an
+                // arena with *different* storage, so it stays foreign
+                // deterministically, independent of which same-named node
+                // happens to sit at `decl_idx` elsewhere.
+                arenas
+                    .iter()
+                    .any(|arena| arena.as_ref().shares_node_storage_with(self.arena))
+                    // A local declaration merged into a lib symbol (e.g. a
+                    // `declare global interface Array` augmentation) lives in
+                    // the current file's arena, which never shares storage with
+                    // the recorded lib arena; the current binder binds its
+                    // index to this very symbol. A #15687 collision binds the
+                    // index to a *different* symbol (or none) and stays foreign.
+                    || self.binder.get_node_symbol(decl_idx) == Some(sym_id)
+            }
+            None => true,
+        }
+    }
+
     fn declaration_belongs_only_to_arena(
         &self,
         sym_id: SymbolId,

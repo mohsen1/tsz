@@ -1083,6 +1083,22 @@ impl NodeArena {
         Arc::as_ptr(&self.inner) as usize
     }
 
+    /// Whether `self` and `other` share the same underlying node storage
+    /// (`Arc<NodeArenaInner>`).
+    ///
+    /// Two `NodeArena` values that are cheap clones of the same parsed source
+    /// share storage even though their outer wrapper addresses differ (cloning
+    /// bumps the inner `Arc` rather than deep-copying the pools); two
+    /// independently parsed arenas never do. Use this — not `std::ptr::eq` on
+    /// the wrapper — when the question is "is this the same parsed file?"
+    /// across clones, e.g. confirming a merged lib declaration's provenance
+    /// arena is the one currently being walked (issue #15687 follow-up).
+    #[inline]
+    #[must_use]
+    pub fn shares_node_storage_with(&self, other: &NodeArena) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Construct an arena with pool capacity pre-reserved for `capacity` nodes.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {

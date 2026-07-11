@@ -648,3 +648,108 @@ fn issue_14817_spread_attrs_target_shows_resolved_props_object() {
         "spread-attrs target must be the resolved props object, got: {diags:?}"
     );
 }
+
+// =============================================================================
+// Issue #15687: cross-file `export =` lib class resolution (merged-lib id space)
+//
+// Structural rule: when a class lives in a lib context behind
+// `declare module "m" { export = NS }`, the program binder's merged symbol
+// carries declaration NodeIndexes owned by the lib arena and a SymbolId that
+// exists in no per-file binder. Member resolution (`M.Class`), the class
+// instance type, and every declaration read must route through the binder's
+// merge provenance (module_exports remap, `symbol_arenas`,
+// `lib_symbol_reverse_remap`) instead of raw-id or NodeIndex coincidence.
+// The witnesses in issue #15687 collided with `lib.es5.d.ts`-sized id spaces;
+// these adjacent cases pin the rule under renamed binders plus a satisfied
+// (negative) case.
+// =============================================================================
+
+const WIDGET_LIB_SOURCE: &str = r#"
+declare namespace JSX {
+    interface Element {}
+    interface IntrinsicElements {
+        div: any;
+    }
+    interface ElementAttributesProperty { props: {} }
+    interface ElementChildrenAttribute { children: {} }
+    interface IntrinsicAttributes {}
+    interface IntrinsicClassAttributes<T> {}
+}
+declare namespace __WidgetLib {
+    type Renderable = string | number | null | undefined;
+    class Widget<P, S = {}> {
+        props: P & { children?: Renderable };
+        state: S;
+        constructor(props?: P, context?: any);
+        render(): JSX.Element | null;
+    }
+}
+declare module "widgetlib" {
+    export = __WidgetLib;
+}
+"#;
+
+#[test]
+fn cross_file_export_equals_lib_class_renamed_binders_reports_missing_props() {
+    let main_source = r#"
+import W = require('widgetlib');
+
+interface CardProps {
+    title: string;
+    kind: "big";
+}
+class Card extends W.Widget<CardProps, {}> {
+    render() {
+        return <div>Hi</div>;
+    }
+}
+
+let c = <Card />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        WIDGET_LIB_SOURCE,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
+    assert!(
+        diags.iter().any(|(code, message)| {
+            *code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                && message.contains("CardProps")
+                && message.contains("title")
+                && message.contains("kind")
+        }),
+        "Renamed export= lib class should still surface inherited props (TS2739), got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_export_equals_lib_class_satisfied_attrs_reports_nothing() {
+    let main_source = r#"
+import W = require('widgetlib');
+
+interface CardProps {
+    title: string;
+}
+class Card extends W.Widget<CardProps, {}> {
+    render() {
+        return <div>Hi</div>;
+    }
+}
+
+let ok = <Card title="hello" />;
+"#;
+
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        WIDGET_LIB_SOURCE,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
+    assert!(
+        diags.is_empty(),
+        "Satisfied attrs on a renamed export= lib class must be clean \
+         (no false TS2416/TS2607/TS2322), got: {diags:?}"
+    );
+}

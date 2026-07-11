@@ -2,6 +2,7 @@
 //! namespace/intrinsic lookups, children contextual typing, and attribute
 //! name extraction.
 
+mod class_signature;
 mod component_props;
 mod resolution;
 mod resolution_type_arguments;

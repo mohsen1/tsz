@@ -200,6 +200,17 @@ pub(crate) fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::Bu
     )
 }
 
+/// Free type parameters of `roots` whose declared name is in `names`, as
+/// `(name, TypeId)` pairs (the exact interned parameter ids). See
+/// [`tsz_solver::computation::free_type_params_named`].
+pub(crate) fn free_type_params_named<S: std::hash::BuildHasher>(
+    db: &dyn TypeDatabase,
+    roots: impl IntoIterator<Item = TypeId>,
+    names: &std::collections::HashSet<tsz_common::Atom, S>,
+) -> Vec<(tsz_common::Atom, TypeId)> {
+    tsz_solver::computation::free_type_params_named(db, roots, names)
+}
+
 /// Check if a type parameter has a constraint that contains a conditional type.
 /// This is used to suppress false-positive TS2339 errors when accessing properties
 /// on generic conditional types like `Parameters<T>["length"]` where the property
