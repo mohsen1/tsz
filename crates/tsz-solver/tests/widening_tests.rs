@@ -1217,6 +1217,86 @@ fn annotation_widen_object_property_literals() {
 }
 
 #[test]
+fn annotation_widen_preserves_non_widening_property_literals() {
+    let interner = TypeInterner::new();
+    let pinned = interner.literal_number(1.0);
+    let mut pinned_prop = PropertyInfo::new(interner.intern_string("pinned"), pinned);
+    pinned_prop.non_widening = true;
+    let obj = interner.object(vec![
+        pinned_prop,
+        PropertyInfo::new(
+            interner.intern_string("fresh"),
+            interner.literal_number(2.0),
+        ),
+    ]);
+
+    let outcome = annotation_widen_all(&interner, obj);
+    assert!(!outcome.display_residue);
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    assert_eq!(property_type(&interner, &shape, "pinned"), pinned);
+    assert_eq!(property_type(&interner, &shape, "fresh"), TypeId::NUMBER);
+}
+
+#[test]
+fn annotation_widen_non_widening_display_only_has_no_residue() {
+    let interner = TypeInterner::new();
+    let pinned = interner.literal_number(1.0);
+    let mut pinned_prop = PropertyInfo::new(interner.intern_string("pinned"), pinned);
+    pinned_prop.non_widening = true;
+    let obj = interner.object(vec![pinned_prop.clone()]);
+    interner.store_display_properties(obj, vec![pinned_prop]);
+
+    let outcome = annotation_widen_all(&interner, obj);
+    assert_eq!(outcome.type_id, obj);
+    assert!(
+        !outcome.display_residue,
+        "a non-widening display literal is canonical, not disposable residue"
+    );
+}
+
+#[test]
+fn annotation_widen_mixed_display_properties_preserve_only_non_widening_literal() {
+    let interner = TypeInterner::new();
+    let pinned = interner.literal_number(1.0);
+    let mut canonical_pinned = PropertyInfo::new(interner.intern_string("pinned"), pinned);
+    canonical_pinned.non_widening = true;
+    let obj = interner.object(vec![
+        canonical_pinned.clone(),
+        PropertyInfo::new(interner.intern_string("fresh"), TypeId::NUMBER),
+    ]);
+    let display_pinned = canonical_pinned;
+    interner.store_display_properties(
+        obj,
+        vec![
+            display_pinned,
+            PropertyInfo::new(
+                interner.intern_string("fresh"),
+                interner.literal_number(2.0),
+            ),
+        ],
+    );
+
+    let outcome = annotation_widen_all(&interner, obj);
+    assert_eq!(
+        outcome.type_id, obj,
+        "canonical shape is already normalized"
+    );
+    assert!(
+        outcome.display_residue,
+        "only the genuinely fresh display property should leave residue"
+    );
+    let shape = match interner.lookup(outcome.type_id) {
+        Some(TypeData::Object(id)) => interner.object_shape(id),
+        other => panic!("expected object, got {other:?}"),
+    };
+    assert_eq!(property_type(&interner, &shape, "pinned"), pinned);
+    assert_eq!(property_type(&interner, &shape, "fresh"), TypeId::NUMBER);
+}
+
+#[test]
 fn annotation_widen_object_index_signature_literals() {
     let interner = TypeInterner::new();
     let obj = interner.object_with_index(ObjectShape {

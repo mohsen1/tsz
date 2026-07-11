@@ -342,8 +342,20 @@ fn widen_annotation_object_shape(
     for (index, prop) in shape.properties.iter().enumerate() {
         let (widened, widened_write) = if mode == AnnotationWidenMode::Active {
             (
-                widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st),
-                widen_annotation_property_type(db, prop.write_type, prop.is_method, policy, st),
+                if prop.non_widening
+                    && super::readonly_property_preserves_top_level_type(db, prop.type_id)
+                {
+                    prop.type_id
+                } else {
+                    widen_annotation_property_type(db, prop.type_id, prop.is_method, policy, st)
+                },
+                if prop.non_widening
+                    && super::readonly_property_preserves_top_level_type(db, prop.write_type)
+                {
+                    prop.write_type
+                } else {
+                    widen_annotation_property_type(db, prop.write_type, prop.is_method, policy, st)
+                },
             )
         } else {
             (
@@ -594,20 +606,34 @@ fn widen_annotation_walk(
                     let mut widened_display = display_props.as_ref().clone();
                     let mut display_changed = false;
                     for prop in &mut widened_display {
-                        let widened = widen_annotation_property_type(
-                            db,
-                            prop.type_id,
-                            prop.is_method,
-                            policy,
-                            st,
-                        );
-                        let widened_write = widen_annotation_property_type(
-                            db,
-                            prop.write_type,
-                            prop.is_method,
-                            policy,
-                            st,
-                        );
+                        let widened = if prop.non_widening
+                            && super::readonly_property_preserves_top_level_type(db, prop.type_id)
+                        {
+                            prop.type_id
+                        } else {
+                            widen_annotation_property_type(
+                                db,
+                                prop.type_id,
+                                prop.is_method,
+                                policy,
+                                st,
+                            )
+                        };
+                        let widened_write = if prop.non_widening
+                            && super::readonly_property_preserves_top_level_type(
+                                db,
+                                prop.write_type,
+                            ) {
+                            prop.write_type
+                        } else {
+                            widen_annotation_property_type(
+                                db,
+                                prop.write_type,
+                                prop.is_method,
+                                policy,
+                                st,
+                            )
+                        };
                         display_changed |=
                             widened != prop.type_id || widened_write != prop.write_type;
                         prop.type_id = widened;

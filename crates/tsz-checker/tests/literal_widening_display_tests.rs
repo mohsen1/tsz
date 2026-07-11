@@ -1,11 +1,9 @@
-//! Pins for diagnostic displays that widen literal annotations for display.
+//! Pins for diagnostic displays that distinguish fresh widening from declared
+//! literal annotations.
 //!
-//! These tests capture the exact rendered diagnostic text at every checker
-//! site that historically rewrote rendered type strings byte-by-byte to widen
-//! literal annotations (`a: 1` → `a: number`). The strings asserted here were
-//! captured BEFORE the byte-walkers were replaced by the type-level
-//! `widen_object_property_literals_for_display` helper (issue #13075); the
-//! conversion must keep each one byte-identical.
+//! Inferred fresh members render through their canonical widened type, while
+//! explicitly declared literal members stay literal. This is structural type
+//! provenance; `TS2559` and `TS2560` use the same source display policy.
 
 use tsz_checker::test_utils::{check_source_code_messages, check_source_diagnostics};
 
@@ -146,12 +144,55 @@ const x: { opt?: string } = fn;
     );
 }
 
-/// TS2560 at a call site widens literal members of the argument display.
+/// TS2560 at a call site preserves declared literal members.
 #[test]
-fn ts2560_call_argument_literal_member_widens() {
+fn ts2560_call_argument_declared_literal_member_preserved() {
     let source = r#"
 declare function take(x: { opt?: string }): void;
 declare const fn: (() => { opt: string }) & { a: 1 };
+take(fn);
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2560_u32,
+            "Value of type '(() => { opt: string; }) & { a: 1; }' has no properties in \
+             common with type '{ opt?: string | undefined; }'. Did you mean to call it?"
+                .to_string()
+        )],
+    );
+}
+
+/// TS2559 at a call site preserves declared literal members through the same
+/// source display policy as TS2560.
+#[test]
+fn ts2559_call_argument_declared_literal_member_preserved() {
+    let source = r#"
+declare function take(x: { opt?: string }): void;
+declare const fn: (() => { a: number }) & { a: 1 };
+take(fn);
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '(() => { a: number; }) & { a: 1; }' has no properties in common with \
+             type '{ opt?: string | undefined; }'."
+                .to_string()
+        )],
+    );
+}
+
+/// A genuinely inferred fresh callable member is already widened canonically
+/// for TS2560.
+#[test]
+fn ts2560_call_argument_inferred_fresh_member_widens() {
+    let source = r#"
+declare function take(x: { opt?: string }): void;
+declare function merge<A extends object, B extends object>(a: A, b: B): A & B;
+const fn = merge(() => ({ opt: "ok" }), { a: 1 });
 take(fn);
 "#;
     let msgs = check_source_code_messages(source);
@@ -166,13 +207,13 @@ take(fn);
     );
 }
 
-/// TS2559 at a call site also widens literal members of the argument display
-/// (call-site weak-type displays widen regardless of the call suggestion).
+/// The same inferred-fresh rule applies to TS2559.
 #[test]
-fn ts2559_call_argument_literal_member_widens() {
+fn ts2559_call_argument_inferred_fresh_member_widens() {
     let source = r#"
 declare function take(x: { opt?: string }): void;
-declare const fn: (() => { a: number }) & { a: 1 };
+declare function merge<A extends object, B extends object>(a: A, b: B): A & B;
+const fn = merge(() => ({ a: 0 }), { a: 1 });
 take(fn);
 "#;
     let msgs = check_source_code_messages(source);
@@ -182,6 +223,69 @@ take(fn);
             2559_u32,
             "Type '(() => { a: number; }) & { a: number; }' has no properties in common with \
              type '{ opt?: string | undefined; }'."
+                .to_string()
+        )],
+    );
+}
+
+/// A const assertion turns one inferred member into a real literal annotation
+/// that TS2560 preserves while widening its fresh sibling.
+#[test]
+fn ts2560_call_argument_inferred_const_member_preserved() {
+    let source = r#"
+declare function take(x: { opt?: string }): void;
+declare function merge<A extends object, B extends object>(a: A, b: B): A & B;
+const fn = merge(() => ({ opt: "ok" }), { fresh: 1, pinned: 2 as const });
+take(fn);
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2560_u32,
+            "Value of type '(() => { opt: string; }) & { fresh: number; pinned: 2; }' has no \
+             properties in common with type '{ opt?: string | undefined; }'. Did you mean to \
+             call it?"
+                .to_string()
+        )],
+    );
+}
+
+/// The general failure renderer used by `satisfies` preserves declared
+/// literals for TS2560.
+#[test]
+fn ts2560_satisfies_declared_literal_member_preserved() {
+    let source = r#"
+declare const fn: (() => { opt: string }) & { a: 1 };
+fn satisfies { opt?: string };
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2560_u32,
+            "Value of type '(() => { opt: string; }) & { a: 1; }' has no properties in common \
+             with type '{ opt?: string | undefined; }'. Did you mean to call it?"
+                .to_string()
+        )],
+    );
+}
+
+/// The general failure renderer uses the same declared-literal policy for
+/// TS2559.
+#[test]
+fn ts2559_satisfies_declared_literal_member_preserved() {
+    let source = r#"
+declare const fn: (() => { a: number }) & { a: 1 };
+fn satisfies { opt?: string };
+"#;
+    let msgs = check_source_code_messages(source);
+    assert_eq!(
+        msgs,
+        vec![(
+            2559_u32,
+            "Type '(() => { a: number; }) & { a: 1; }' has no properties in common with type \
+             '{ opt?: string | undefined; }'."
                 .to_string()
         )],
     );

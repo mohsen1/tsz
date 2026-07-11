@@ -706,23 +706,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS2560 ("did you mean to call it?") in call-site weak-type comparisons
-    /// expects widened primitive names for callable sources: widen literal
-    /// annotations at the type level and reprint (#13075).
-    fn widen_weak_type_callable_source_display(
-        &self,
-        arg_type: TypeId,
-        _arg_str: String,
-    ) -> String {
+    /// widens *genuinely fresh* callable-source members for display
+    /// (`() => { timeout: 1000 }` renders `() => { timeout: number }`) while
+    /// leaving declared literal annotations literal (`… & { a: 1 }`). A fresh
+    /// object literal keeps its `1000` spelling only in display provenance over
+    /// an already-widened canonical shape, which the solver reports as
+    /// `display_residue`; a declared literal is canonical and produces none.
+    /// Mirrors the shared assignment/`satisfies` renderer so both diagnostic
+    /// sites use one fresh-versus-declared policy (#13075).
+    fn widen_weak_type_callable_source_display(&self, arg_type: TypeId, arg_str: String) -> String {
         let widened = self.widen_annotation_literals_for_display(
             self.widen_literal_type(arg_type),
             crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
         );
         if widened.display_residue {
-            // Literal spellings live only in display provenance; render the
-            // canonical (display-property-free) form.
+            // Fresh literal spellings live only in display provenance; render
+            // the canonical (display-property-free) widened form.
             return self.format_type_diagnostic_widened(widened.type_id);
         }
-        self.format_type_diagnostic(widened.type_id)
+        // No display residue: declared / `non_widening` literal annotations are
+        // canonical and authoritative, so keep the original rendered source.
+        arg_str
     }
 
     /// Check if a node is a `new` expression.

@@ -1472,6 +1472,19 @@ impl<'a> CheckerState<'a> {
                 };
                 let target_str = self.format_type_for_assignability_message(target);
 
+                // Fresh literal spellings can live only in display provenance
+                // while the canonical type is already widened. Normalize that
+                // residue for both `TS2559` and `TS2560`; canonical declared and
+                // non-widening literal annotations stay untouched.
+                let display_source = callable_widened_source.unwrap_or(source);
+                let widened = self.widen_annotation_literals_for_display(
+                    display_source,
+                    crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
+                );
+                if widened.display_residue {
+                    source_str = self.format_type_diagnostic_widened(widened.type_id);
+                }
+
                 // If calling the source would fix the mismatch, emit TS2560 instead.
                 let (msg_template, code) = if self
                     .should_suggest_calling_for_weak_type(source, target)
@@ -1486,28 +1499,6 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                     )
                 };
-                if code
-                    == diagnostic_codes::VALUE_OF_TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE_DID_YOU_MEAN_TO_CALL_IT
-                {
-                    // TS2560 widens literal members of the source display:
-                    // widen annotations at the type level and reprint with
-                    // the same formatter that produced the display (#13075).
-                    let display_source = callable_widened_source.unwrap_or(source);
-                    let widened = self.widen_annotation_literals_for_display(
-                        display_source,
-                        crate::query_boundaries::diagnostics::AnnotationLiteralWideningPolicy::ALL,
-                    );
-                    if widened.display_residue {
-                        // Literal spellings live only in display provenance;
-                        // render the canonical (display-property-free) form.
-                        source_str = self.format_type_diagnostic_widened(widened.type_id);
-                    } else if widened.type_id != display_source {
-                        source_str = match callable_widened_source {
-                            Some(_) => self.format_type_for_assignability_message(widened.type_id),
-                            None => self.format_type_diagnostic(widened.type_id),
-                        };
-                    }
-                }
                 let (source_str, target_str) = self
                     .finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
                 let message = format_message(msg_template, &[&source_str, &target_str]);
