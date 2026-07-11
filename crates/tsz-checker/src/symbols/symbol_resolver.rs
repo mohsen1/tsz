@@ -1592,10 +1592,32 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some((has_type_position_meaning, has_runtime_value)) =
                     export_surface_meanings
-                    && !has_type_position_meaning
-                    && has_runtime_value
                 {
-                    return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                    if !has_type_position_meaning && has_runtime_value {
+                        return Some(TypeSymbolResolution::ValueOnly(target_sym_id));
+                    }
+                    // The imported export surface positively declares a
+                    // type-position meaning (interface, type alias, class,
+                    // enum, or namespace/module). Trust it directly — in
+                    // type position the type meaning always wins, even when
+                    // the same name also carries a runtime value (tsc's dual
+                    // meaning rule). Re-deriving through
+                    // `classify_target_resolution` reads the target's flags
+                    // via `get_cross_file_symbol`, which — when the cross-file
+                    // target's raw `SymbolId` collides with a local import
+                    // alias of the same id (per-file binders reuse ids) —
+                    // short-circuits to the local alias and misreads a
+                    // value-only merge: a false TS2749 on `import type { A }`
+                    // + `const A: A` (the type-only import supplies the type,
+                    // the local const the value).
+                    if has_type_position_meaning {
+                        self.record_cross_file_symbol_if_needed(
+                            target_sym_id,
+                            expected_name,
+                            module_name,
+                        );
+                        return Some(TypeSymbolResolution::Type(target_sym_id));
+                    }
                 }
                 // Use get_cross_file_symbol first, then fall back to
                 // get_symbol_with_libs. When the target comes from a

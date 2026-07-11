@@ -77,6 +77,41 @@ export {};
     );
 }
 
+/// Anti-hardcoding twin of the indexed-access half: rename every binder
+/// (interface, both members, aliases) and the two-block merge must still be
+/// published to the interface's `DefId` so indexed access `X[K]` on either
+/// block's member resolves — the rule keys on the `declare global` shape, not
+/// the `Registry`/`a`/`b` names.
+#[test]
+fn renamed_two_global_blocks_merge_into_indexed_access() {
+    let diags = diagnostics(
+        &[(
+            "main.ts",
+            r#"
+declare global { interface Catalog { widget: number } }
+declare global { interface Catalog { gadget: string } }
+type Vw = Catalog["widget"];
+type Vg = Catalog["gadget"];
+const vw: Vw = 1;
+const vg: Vg = "x";
+export {};
+"#,
+        )],
+        "main.ts",
+    );
+
+    assert_eq!(
+        count_code(&diags, 2339),
+        0,
+        "indexed access of either merged-global block member must resolve; got {diags:#?}"
+    );
+    assert_eq!(
+        count_code(&diags, 2322),
+        0,
+        "both indexed-access member types must hold; got {diags:#?}"
+    );
+}
+
 /// Negative control: a key declared by NO block is still rejected — the fold
 /// merges members, it does not widen `keyof` to `string` or the value to `any`.
 #[test]

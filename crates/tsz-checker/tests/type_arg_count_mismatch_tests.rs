@@ -195,6 +195,37 @@ export type Bare = Query.SQL.Required
     );
 }
 
+/// Anti-hardcoding twin of the above: the namespace-import → nested-namespace →
+/// generic-class arity rule is structural, not name-driven. Rename every binder
+/// (import alias, outer namespace, class, member, type parameter) and the
+/// nested member must still resolve so the missing-type-argument diagnostic
+/// (TS2314) fires — proving the fix keys on the qualified-name shape, not the
+/// `Query`/`SQL`/`Required` identifiers.
+#[test]
+fn renamed_namespace_import_required_class_type_reference_still_requires_type_arg() {
+    let lib = r#"
+export namespace Db {
+  export class Entity<Row> {
+    row!: Row
+  }
+}
+"#;
+    let main = r#"
+import * as Store from './query'
+export type Bare = Store.Db.Entity
+"#;
+    let codes = check_namespace_import_codes(lib, main);
+
+    assert!(
+        codes.contains(&2314),
+        "renamed namespace-imported class should still emit TS2314, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2694),
+        "the nested member must resolve, not fall through to TS2694, got {codes:?}"
+    );
+}
+
 /// Calling a non-generic function with type arguments should emit TS2558
 /// but NOT emit spurious argument-related errors.
 #[test]
