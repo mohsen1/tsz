@@ -1368,6 +1368,13 @@ run_large_ts_repo_benchmarks() {
     echo
 }
 
+cleanup_benchmark_temp() {
+    local exit_code=$?
+    export_results_json || true
+    rm -rf -- "${TEMP_DIR:?}"
+    return "$exit_code"
+}
+
 main() {
     check_prerequisites
     if [ "$PREPARE_ONLY" = true ]; then
@@ -1387,7 +1394,7 @@ main() {
     # surfaces the rows that DID complete. Without this, an exit at any
     # point past the first benchmark would lose the entire dataset, leaving
     # the gh-pages deploy with no fresh artifact.
-    trap "export_results_json; rm -rf $TEMP_DIR" EXIT
+    trap cleanup_benchmark_temp EXIT
     trap "exit 130" INT
     trap "exit 143" TERM
 

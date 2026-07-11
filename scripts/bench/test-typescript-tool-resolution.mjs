@@ -39,6 +39,12 @@ function runHarness(body, args) {
 const benchSource = fs.readFileSync(BENCH_SCRIPT, "utf8");
 assert.doesNotMatch(benchSource, /node_modules\/\.bin\/tsc/);
 assert.match(benchSource, /node_modules\/typescript\/bin\/tsc/);
+assert.match(
+  benchSource,
+  /cleanup_benchmark_temp\(\) \{[\s\S]*?rm -rf -- "\$\{TEMP_DIR:\?\}"[\s\S]*?\}/,
+);
+assert.match(benchSource, /trap cleanup_benchmark_temp EXIT/);
+assert.doesNotMatch(benchSource, /trap ["']export_results_json; rm -rf/);
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-typescript-tool-resolution-"));
 try {

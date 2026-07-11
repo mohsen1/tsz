@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source scripts/ci/suite-metadata.sh
+# shellcheck source=scripts/ci/lib/typescript-corpus.sh
+source scripts/ci/lib/typescript-corpus.sh
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
@@ -80,8 +82,6 @@ fi
 if [[ "$LOG_DIR" != /* ]]; then
   LOG_DIR="$ROOT_DIR/$LOG_DIR"
 fi
-SYNTHETIC_GIT_CHECKOUT=0
-
 mkdir -p "$METRICS_DIR" "$LOG_DIR"
 
 ci_section() {
@@ -304,7 +304,6 @@ ensure_source_git_context() {
     return 0
   fi
 
-  SYNTHETIC_GIT_CHECKOUT=1
   git init
   git config user.email "ci@tsz.local"
   git config user.name "TSZ CI"
@@ -313,45 +312,9 @@ ensure_source_git_context() {
   git commit -q -m "ci source snapshot"
 }
 
-init_typescript_submodule() {
-  ci_section "Init TypeScript submodule"
-  local ref_file="$ROOT_DIR/scripts/ci/typescript-submodule-ref"
-  local expected_ref
-  expected_ref="$(tr -d '[:space:]' < "$ref_file")"
-
-  if [[ -f TypeScript/.tsz-cache-ref ]]; then
-    local cached_ref
-    cached_ref="$(tr -d '[:space:]' < TypeScript/.tsz-cache-ref)"
-    if [[ "$cached_ref" == "$expected_ref" && -f TypeScript/src/lib/es5.d.ts ]]; then
-      echo "Using cached TypeScript source tree at ${cached_ref}"
-      return 0
-    fi
-    echo "Discarding stale TypeScript cache: ${cached_ref} != ${expected_ref}" >&2
-    rm -rf TypeScript
-  fi
-
-  if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    local gitlink_ref
-    gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
-    if [[ -z "$gitlink_ref" ]]; then
-      rm -rf TypeScript
-      git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
-      git -C TypeScript fetch --depth 1 origin "$expected_ref"
-      git -C TypeScript checkout --detach FETCH_HEAD
-    elif [[ "$gitlink_ref" != "$expected_ref" ]]; then
-      echo "error: scripts/ci/typescript-submodule-ref is stale: ${expected_ref} != ${gitlink_ref}" >&2
-      return 1
-    else
-      git submodule update --init --depth 1 -- TypeScript
-    fi
-  else
-    rm -rf TypeScript
-    git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
-    git -C TypeScript fetch --depth 1 origin "$expected_ref"
-    git -C TypeScript checkout --detach FETCH_HEAD
-  fi
-
-  test -f TypeScript/src/lib/es5.d.ts
+init_typescript_corpus() {
+  ci_section "Init TypeScript corpus"
+  materialize_typescript_corpus
 }
 
 run_lint() {
@@ -415,6 +378,7 @@ run_lint() {
   python3 scripts/lib/check-sh-portability.py || return $?
   python3 scripts/lib/test_check_sh_portability.py || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/ci/test_typescript_corpus_init.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_summary.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
@@ -1110,12 +1074,11 @@ run_common_setup() {
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
   if suite_needs_typescript_source "$suite"; then
-    timed init_typescript_submodule init_typescript_submodule
+    timed init_typescript_corpus init_typescript_corpus
   else
-    # Skipping the submodule init avoids downloading ~50 MB of source and
-    # avoids the gitlink-vs-ref-file staleness check that's only relevant
-    # when the tree is actually used.
-    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+    # Skipping corpus initialization avoids downloading source for suites that
+    # do not consume the TypeScript test tree.
+    echo "info: skipping init_typescript_corpus (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
     if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then
