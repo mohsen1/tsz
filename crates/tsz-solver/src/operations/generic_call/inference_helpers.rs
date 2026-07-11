@@ -669,10 +669,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 _ => None,
             };
-            if let Some((cand_base, cand_args)) = app {
-                if cand_base == base && cand_args.len() == arity {
-                    return Some(cand_args);
-                }
+            if let Some((cand_base, cand_args)) = app
+                && cand_base == base
+                && cand_args.len() == arity
+            {
+                return Some(cand_args);
             }
             match self.checker.expand_type_alias_application(candidate) {
                 Some(next) if next != candidate => candidate = next,
