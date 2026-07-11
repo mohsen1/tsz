@@ -1456,7 +1456,7 @@ fn union_array_inherits_element_source_position() {
 }
 
 #[test]
-fn union_array_of_intrinsic_stays_after_primitive_builtin() {
+fn union_array_of_intrinsic_uses_typescript_7_flag_order() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1476,21 +1476,19 @@ fn union_array_of_intrinsic_stays_after_primitive_builtin() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     // `ReactChild = string` is a primitive-bodied alias, so it renders as
     // `string` (tsc attaches no `aliasSymbol` to the shared intrinsic). The
-    // point of this test is the union member ordering: the array of an
-    // intrinsic element type must not inherit `any`'s low builtin key, so it
-    // stays after the `boolean` primitive rather than sorting to the front.
+    // point of this test is TypeScript 7 stable ordering: `string` and
+    // `boolean` use their primitive TypeFlags positions, while `any[]` is an
+    // object and follows both.
     assert_eq!(
         fmt.format(union_id),
-        "boolean | any[] | string",
-        "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
+        "string | boolean | any[]",
+        "Arrays of intrinsic element types should use their object-type ordering"
     );
 }
 
-/// Regression: `Application(Container, [T])` should use the MAX position of
-/// the base and its arguments. This keeps generic instantiations sorted with
-/// the user-defined element type rather than with a built-in / lib base.
+/// TypeScript 7 compares visible generic base names before source positions.
 #[test]
-fn union_application_uses_max_arg_position() {
+fn union_application_uses_typescript_7_visible_name_order() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1528,9 +1526,7 @@ fn union_application_uses_max_arg_position() {
 
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
-    // `Container<Item>` inherits Item's position via the MAX rule, so the
-    // union preserves source order.
-    assert_eq!(result, "Item | Container<Item>");
+    assert_eq!(result, "Container<Item> | Item");
 }
 
 /// Regression: a union mixing a named type (tier 1, has source position) with

@@ -33,7 +33,23 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 }
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
-    load_compiled_lib_files(&["lib.es5.d.ts", "lib.es2015.d.ts"])
+    // `load_compiled_lib_files` parses only the named files; it does not follow
+    // `/// <reference lib>` directives. Spell out the ES2015 aggregate closure
+    // so value companions such as `Promise` and `Map` are present too.
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.decorators.d.ts",
+        "lib.decorators.legacy.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ])
 }
 
 fn lib_files_available() -> bool {
@@ -98,85 +114,6 @@ fn compile_with_lib_and_options(source: &str, options: CheckerOptions) -> Vec<(u
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
-}
-
-fn inspect_symbol_with_lib(
-    source: &str,
-    symbol_name: &str,
-    options: CheckerOptions,
-) -> (String, Vec<String>, Vec<String>) {
-    let lib_files = load_lib_files_for_test();
-
-    let (parser, root) = parse_test_source(source);
-
-    let mut binder = BinderState::new();
-    let checker_lib_contexts = if lib_files.is_empty() {
-        Vec::new()
-    } else {
-        let raw_contexts: Vec<_> = lib_files
-            .iter()
-            .map(|lib| BinderLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        binder.merge_lib_contexts_into_binder(&raw_contexts);
-        lib_files
-            .iter()
-            .map(|lib| CheckerLibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect()
-    };
-    binder.bind_source_file(parser.get_arena(), root);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        "test.ts".to_string(),
-        options,
-    );
-
-    if !checker_lib_contexts.is_empty() {
-        checker.ctx.set_lib_contexts(checker_lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
-
-    checker.check_source_file(root);
-
-    let sym_id = checker
-        .ctx
-        .binder
-        .file_locals
-        .get(symbol_name)
-        .expect("expected symbol to exist");
-    let ty = checker.get_type_of_symbol(sym_id);
-    let formatted = checker.format_type_diagnostic(ty);
-    let display_props = checker
-        .ctx
-        .types
-        .get_display_properties(ty)
-        .map(|props| {
-            props
-                .iter()
-                .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let shape_props = tsz_solver::type_queries::get_object_shape(checker.ctx.types, ty)
-        .map(|shape| {
-            shape
-                .properties
-                .iter()
-                .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    (formatted, display_props, shape_props)
 }
 
 // ---- Lib binder pre-population tests ----

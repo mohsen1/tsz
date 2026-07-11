@@ -143,21 +143,33 @@ impl<'a> TypeFormatter<'a> {
             .iter()
             .map(|&m| self.get_source_position_for_type(m, def_store))
             .collect();
+        let names: Vec<_> = members
+            .iter()
+            .map(|&member| self.stable_order_type_name(member, def_store))
+            .collect();
 
-        let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
+        type NamedMember = (TypeId, (u32, u32, u32), Option<String>);
+        let mut named: Vec<NamedMember> = Vec::new();
         let mut anonymous: Vec<TypeId> = Vec::new();
-        for (&id, &pos) in members.iter().zip(&positions) {
+        for ((&id, &pos), name) in members.iter().zip(&positions).zip(names) {
             if pos.0 < 2 {
-                named.push((id, pos));
+                named.push((id, pos, name));
             } else {
                 anonymous.push(id);
             }
         }
-        named.sort_by_key(|&(_, pos)| pos);
+        named.sort_by(|(_, left_pos, left_name), (_, right_pos, right_name)| {
+            match (left_name, right_name) {
+                (Some(left), Some(right)) => left.cmp(right).then_with(|| left_pos.cmp(right_pos)),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => left_pos.cmp(right_pos),
+            }
+        });
 
         named
             .into_iter()
-            .map(|(id, _)| id)
+            .map(|(id, _, _)| id)
             .chain(anonymous)
             .collect()
     }

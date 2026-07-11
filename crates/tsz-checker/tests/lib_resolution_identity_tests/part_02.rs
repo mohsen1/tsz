@@ -619,8 +619,8 @@ const iter3 = iter2.flatMap(() => g1);
 
     let ts2416_count = diagnostic_count(&diagnostics, 2416);
     assert_eq!(
-        ts2416_count, 2,
-        "Expected two TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
+        ts2416_count, 3,
+        "Expected three TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
     );
     assert!(
         has_diagnostic_code(&diagnostics, 2345),
@@ -634,9 +634,9 @@ const iter3 = iter2.flatMap(() => g1);
         has_diagnostic_code_message(
             &diagnostics,
             2322,
-            "Iterator<string, unknown, undefined> | Iterable<string, unknown, undefined>"
+            "Iterable<string, unknown, undefined> | Iterator<string, unknown, undefined>"
         ),
-        "Expected flatMap callback target union to keep tsc's Iterator-before-Iterable order. Got: {diagnostics:#?}"
+        "Expected flatMap callback target union to use TypeScript 7's Iterable-before-Iterator order. Got: {diagnostics:#?}"
     );
     assert!(
         has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
@@ -723,10 +723,10 @@ const iter3 = iter2.flatMap(() => g1);
     );
     assert!(
         union_order_messages.iter().all(|(_, message)| {
-            message.find("Iterator<").unwrap_or(usize::MAX)
-                < message.find("Iterable<").unwrap_or(usize::MAX)
+            message.find("Iterable<").unwrap_or(usize::MAX)
+                < message.find("Iterator<").unwrap_or(usize::MAX)
         }),
-        "Expected ESNext iterator target unions to keep tsc's Iterator-before-Iterable order. Got: {union_order_messages:#?}"
+        "Expected ESNext iterator target unions to use TypeScript 7's Iterable-before-Iterator order. Got: {union_order_messages:#?}"
     );
 }
 
