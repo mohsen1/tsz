@@ -100,6 +100,13 @@ pub(super) fn apply_fatal_config_notice_priority(
     }
 }
 
+/// Unknown compiler-option diagnostics are option-parsing failures in tsc.
+/// They suppress source diagnostics but do not imply `noEmitOnError`, so the
+/// emitter may still run when the user has not requested that policy.
+fn apply_unknown_compiler_option_priority(diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.clear();
+}
+
 pub(super) fn collect_parse_only_no_check_diagnostics(
     parse_results: &[parallel::ParseResult],
     options: &ResolvedCompilerOptions,
@@ -174,6 +181,49 @@ pub(super) fn no_lib_core_global_type_diagnostics() -> Vec<Diagnostic> {
 pub(super) fn compile_inner(
     args: &CliArgs,
     cwd: &Path,
+    cache: Option<&mut CompilationCache>,
+    changed_paths: Option<&[PathBuf]>,
+    forced_dirty_paths: Option<&FxHashSet<PathBuf>>,
+    explicit_config_path: Option<&Path>,
+) -> Result<CompilationResult> {
+    let direct_cli_parse_diagnostics: Vec<_> =
+        validate_cli_compiler_option_diagnostics(args, None)?
+            .into_iter()
+            .filter(|diagnostic| {
+                matches!(
+                    diagnostic.code,
+                    diagnostic_codes::UNKNOWN_COMPILER_OPTION
+                        | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
+                        | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
+                )
+            })
+            .collect();
+    let mut result = match compile_inner_impl(
+        args,
+        cwd,
+        cache,
+        changed_paths,
+        forced_dirty_paths,
+        explicit_config_path,
+    ) {
+        Ok(result) => result,
+        Err(_) if !direct_cli_parse_diagnostics.is_empty() => {
+            config_error_result(None, String::new(), 0)
+        }
+        Err(error) => return Err(error),
+    };
+    if !direct_cli_parse_diagnostics.is_empty() {
+        // Command-line parsing precedes every project/config/source phase in
+        // tsc. Preserve any emitted output, but make the direct parse
+        // diagnostics the final reported set on every return path.
+        result.diagnostics = direct_cli_parse_diagnostics;
+    }
+    Ok(result)
+}
+
+fn compile_inner_impl(
+    args: &CliArgs,
+    cwd: &Path,
     mut cache: Option<&mut CompilationCache>,
     changed_paths: Option<&[PathBuf]>,
     forced_dirty_paths: Option<&FxHashSet<PathBuf>>,
@@ -239,10 +289,37 @@ pub(super) fn compile_inner(
     let config_has_removed_option_diagnostic = config_diagnostics
         .iter()
         .any(|d| is_removed_option_diagnostic_code(d.code));
-    config_diagnostics.extend(validate_cli_compiler_option_diagnostics(
-        args,
-        config.as_ref(),
-    )?);
+    let cli_option_diagnostics = validate_cli_compiler_option_diagnostics(args, config.as_ref())?;
+    let cli_parse_diagnostics: Vec<_> = cli_option_diagnostics
+        .iter()
+        .filter(|d| {
+            matches!(
+                d.code,
+                diagnostic_codes::UNKNOWN_COMPILER_OPTION
+                    | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
+                    | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
+            )
+        })
+        .cloned()
+        .collect();
+    let has_unknown_cli_compiler_option_diagnostic = cli_parse_diagnostics.iter().any(|d| {
+        matches!(
+            d.code,
+            diagnostic_codes::UNKNOWN_COMPILER_OPTION
+                | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
+        )
+    });
+    let has_fatal_cli_enum_diagnostic = cli_parse_diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE);
+    if cli_parse_diagnostics.is_empty() {
+        config_diagnostics.extend(cli_option_diagnostics);
+    } else {
+        // Command-line parsing happens before project/config validation in tsc.
+        // Once it finds an unknown option or invalid enum, only those direct
+        // parse diagnostics survive; loaded-config and removal diagnostics do not.
+        config_diagnostics = cli_parse_diagnostics;
+    }
     if args.source_map || args.declaration_map {
         config_diagnostics.retain(|d| {
             !(d.code
@@ -257,19 +334,22 @@ pub(super) fn compile_inner(
         .iter()
         .any(|d| is_removed_option_value_diagnostic_code(d.code));
 
-    // TS6046 (invalid enum value) and TS5108 (removed option value) are fatal
-    // from either config or direct CLI validation. TS5103 (invalid
-    // ignoreDeprecations) and TS5102 (removed option) are fatal when they come
-    // from configuration. Direct CLI TS5102 remains reportable without forcing
-    // no-emit so emit baselines can still compare output for parsed legacy flags.
+    // Direct CLI TS6046 and TS5108 (removed option value) stop before source
+    // checking. Config-file TS6046 remains an option diagnostic that can
+    // coexist with source diagnostics. TS5103 (invalid ignoreDeprecations) and
+    // TS5102 (removed option) are fatal when they come from configuration.
+    // Direct CLI TS5102 remains reportable without forcing no-emit so emit
+    // baselines can still compare output for parsed legacy flags.
     let has_fatal_config_diagnostic = config_diagnostics.iter().any(|d| {
         d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
-            || d.code == diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
             || d.code
                 == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || (config_has_removed_option_diagnostic && is_removed_option_diagnostic_code(d.code))
     });
-    if has_removed_option_value_diagnostic || has_fatal_config_diagnostic {
+    if has_fatal_cli_enum_diagnostic
+        || has_removed_option_value_diagnostic
+        || has_fatal_config_diagnostic
+    {
         return Ok(CompilationResult {
             diagnostics: config_diagnostics,
             emitted_files: Vec::new(),
@@ -775,7 +855,9 @@ pub(super) fn compile_inner(
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
         }
 
-        if has_fatal_config_notice {
+        if has_unknown_cli_compiler_option_diagnostic {
+            apply_unknown_compiler_option_priority(&mut diagnostics);
+        } else if has_fatal_config_notice {
             apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
         }
 
@@ -860,7 +942,9 @@ pub(super) fn compile_inner(
             diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
         }
 
-        if has_fatal_config_notice {
+        if has_unknown_cli_compiler_option_diagnostic {
+            apply_unknown_compiler_option_priority(&mut diagnostics);
+        } else if has_fatal_config_notice {
             apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
         }
 
@@ -1033,7 +1117,9 @@ pub(super) fn compile_inner(
     // A fatal legacy deprecation or TypeScript 7 removal notice takes priority
     // over file-level semantic diagnostics unless a grammar error outranks it.
     // See `apply_fatal_config_notice_priority`.
-    if has_fatal_config_notice {
+    if has_unknown_cli_compiler_option_diagnostic {
+        apply_unknown_compiler_option_priority(&mut diagnostics);
+    } else if has_fatal_config_notice {
         apply_fatal_config_notice_priority(&mut diagnostics, &mut config_diagnostics);
     }
 

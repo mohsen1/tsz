@@ -1266,6 +1266,39 @@ fn config_target_es3_emits_ts6046() {
 }
 
 #[test]
+fn config_target_es3_keeps_source_semantic_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "let x: string = 1;\n");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "target": "es3"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let args =
+        CliArgs::try_parse_from(["tsz", "--pretty", "false"]).expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE),
+        "Expected config TS6046, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "Config TS6046 must coexist with source TS2322, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn cli_target_es3_emits_ts6046() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -1395,6 +1428,104 @@ fn cli_ts7_dropped_compiler_option_flags_do_not_block_emit() {
         base.join("main.js").exists() && !result.emitted_files.is_empty(),
         "TS5023 should not stop emit without noEmitOnError: {:#?}",
         result
+    );
+
+    std::fs::remove_file(base.join("main.js")).expect("remove first emitted output");
+    let no_emit_on_error_args = CliArgs::try_parse_from([
+        "tsz",
+        "--pretty",
+        "false",
+        "--typeRoots",
+        "./empty-types",
+        "--noEmitOnError",
+        "--preserveValueImports",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let no_emit_on_error_result =
+        compile(&no_emit_on_error_args, base).expect("compile should succeed");
+    assert!(
+        !base.join("main.js").exists() && no_emit_on_error_result.emitted_files.is_empty(),
+        "TS5023 must honor noEmitOnError: {no_emit_on_error_result:#?}"
+    );
+}
+
+#[test]
+fn cli_parse_diagnostics_outrank_later_option_config_and_source_diagnostics() {
+    let cases: &[(&[&str], &[u32])] = &[
+        (&["--keyofStringsOnly", "--target", "ES5"], &[5023]),
+        (&["--keyofStringsOnly", "--baseUrl", "."], &[5023]),
+        (&["--target", "ES3", "--module", "AMD"], &[6046]),
+        (&["--target", "ES3", "--keyofStringsOnly"], &[5023, 6046]),
+    ];
+
+    for (flag_args, expected_codes) in cases {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+        write_file(&base.join("main.ts"), "const n: number = \"s\";\n");
+        std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+        let mut argv = vec![
+            "tsz",
+            "--noEmit",
+            "--pretty",
+            "false",
+            "--typeRoots",
+            "./empty-types",
+        ];
+        argv.extend_from_slice(flag_args);
+        argv.push("main.ts");
+        let args = CliArgs::try_parse_from(argv)
+            .unwrap_or_else(|err| panic!("CLI args should parse for {flag_args:?}: {err}"));
+        let result = compile(&args, base).expect("compile should succeed");
+        let mut codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+        codes.sort_unstable();
+
+        assert_eq!(
+            codes.as_slice(),
+            *expected_codes,
+            "direct parse diagnostics must outrank later option and source diagnostics for {flag_args:?}: {:#?}",
+            result.diagnostics
+        );
+    }
+
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const n: number = \"s\";\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "baseUrl": ".",
+            "noEmit": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+
+    let args = CliArgs::try_parse_from(["tsz", "--pretty", "false", "--keyofStringsOnly"])
+        .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+    assert_eq!(
+        codes,
+        vec![5023],
+        "direct TS5023 must suppress config TS5102 and source TS2322: {:#?}",
+        result.diagnostics
+    );
+
+    let temp = TempDir::new().expect("temp dir");
+    let args = CliArgs::try_parse_from(["tsz", "--pretty", "false", "--keyofStringsOnly"])
+        .expect("CLI args should parse");
+    let result = compile(&args, &temp.path).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|diag| diag.code).collect();
+    assert_eq!(
+        codes,
+        vec![5023],
+        "direct TS5023 must also outrank no-input TS18003: {:#?}",
+        result.diagnostics
     );
 }
 
