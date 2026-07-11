@@ -39,6 +39,10 @@ impl ParserState {
         }
 
         while !self.is_greater_than_or_compound() && !self.is_token(SyntaxKind::EndOfFileToken) {
+            // tsc's `parseDelimitedList` records the element start so it can
+            // force progress when an element parses nothing (see the
+            // no-progress guard below). Mirror that here.
+            let element_start = self.token_pos();
             let param = self.parse_type_parameter();
             params.push(param);
 
@@ -86,10 +90,23 @@ impl ParserState {
             // `const`/variance modifier — all of which sort at or above
             // `Identifier`). Otherwise break and let `parse_expected_greater_than`
             // and the enclosing parser recover, mirroring tsc's `isListElement`
-            // gate. This also guarantees loop progress: every `continue` is
-            // followed by a `parse_type_parameter` that consumes the name token.
+            // gate.
             if !self.is_identifier_or_keyword() {
                 break;
+            }
+
+            // Guaranteed progress: the token above can *start* a type parameter,
+            // yet `parse_type_parameter` consumed nothing — this happens for a
+            // reserved word such as `class`/`function` that sorts at or above
+            // `Identifier` (so it is not broken out here) but which
+            // `parse_identifier` reports on without consuming. Force one token
+            // forward so the list cannot spin forever, mirroring tsc's
+            // `parseDelimitedList` no-progress `nextToken()` (`if (startPos ===
+            // scanner.getTokenFullStart()) nextToken()`). Truncated generics
+            // like `interface A<` followed by further declarations would
+            // otherwise wedge the parser here.
+            if self.token_pos() == element_start {
+                self.next_token();
             }
         }
 
