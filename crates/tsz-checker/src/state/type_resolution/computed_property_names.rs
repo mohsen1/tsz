@@ -3,9 +3,42 @@ use crate::types_domain::queries::core::{
     get_literal_or_well_known_property_name, get_literal_property_name,
 };
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
+use tsz_binder::BinderState;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+
+/// A resolved computed-property key together with its provenance.
+///
+/// `is_symbol` is `true` only when the key denotes a genuine binding identity
+/// (`__unique_<id>` / `__symbol_<file>_<id>` derived from a `unique symbol` or
+/// plain-`symbol` binding). It is `false` for string/number literal keys — even
+/// when the literal value happens to spell the synthetic `__unique_`/`__symbol_`
+/// prefix — and for well-known `[Symbol.X]` keys, which carry their own string
+/// key on the interface lowering path. This distinction is what
+/// `precompute_symbol_named_computed_property_names_in_arenas` needs to flag
+/// late-bound members without a string-prefix heuristic that cannot separate a
+/// real symbol from a `"__unique_1"`-valued string const.
+struct ResolvedComputedName {
+    name: String,
+    is_symbol: bool,
+}
+
+impl ResolvedComputedName {
+    const fn string(name: String) -> Self {
+        Self {
+            name,
+            is_symbol: false,
+        }
+    }
+
+    const fn symbol(name: String) -> Self {
+        Self {
+            name,
+            is_symbol: true,
+        }
+    }
+}
 
 impl<'a> CheckerState<'a> {
     fn with_current_arena(&self, declarations: &[NodeIndex]) -> Vec<(NodeIndex, &'a NodeArena)> {
@@ -13,6 +46,29 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|&decl_idx| (decl_idx, self.ctx.arena))
             .collect()
+    }
+
+    fn computed_property_owner_binder(&self, arena: &NodeArena) -> Option<&BinderState> {
+        if std::ptr::eq(arena, self.ctx.arena) {
+            return Some(self.ctx.binder);
+        }
+        if let Some(lib) = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .find(|lib| std::ptr::eq(lib.arena.as_ref(), arena))
+        {
+            return Some(lib.binder.as_ref());
+        }
+        let arenas = self.ctx.all_arenas.as_ref()?;
+        let file_idx = arenas
+            .iter()
+            .position(|candidate| std::ptr::eq(candidate.as_ref(), arena))?;
+        self.ctx
+            .all_binders
+            .as_ref()?
+            .get(file_idx)
+            .map(std::convert::AsRef::as_ref)
     }
 
     pub(crate) fn prewarm_member_type_reference_params(
@@ -118,12 +174,12 @@ impl<'a> CheckerState<'a> {
                 let Some(computed) = decl_arena.get_computed_property(name_node) else {
                     continue;
                 };
-                if let Some(name) =
+                if let Some(resolved) =
                     self.resolve_computed_property_name_in_arena(decl_arena, name_idx)
                 {
                     map.insert(
                         (computed.expression, arena_key),
-                        self.ctx.types.intern_string(&name),
+                        self.ctx.types.intern_string(&resolved.name),
                     );
                 }
             }
@@ -172,11 +228,15 @@ impl<'a> CheckerState<'a> {
                 let Some(computed) = decl_arena.get_computed_property(name_node) else {
                     continue;
                 };
+                // A member is late-bound (symbol-named) exactly when its key
+                // resolves to a genuine symbol binding identity. Reusing the same
+                // resolution the name map runs — and reading its provenance flag —
+                // keeps well-known `[Symbol.X]` keys and string/number literal keys
+                // (including a `"__unique_1"`-valued const) out of the set, which a
+                // string-prefix test over the resolved name cannot do.
                 if self
                     .resolve_computed_property_name_in_arena(decl_arena, name_idx)
-                    .is_some_and(|name| {
-                        name.starts_with("__unique_") || name.starts_with("__symbol_")
-                    })
+                    .is_some_and(|resolved| resolved.is_symbol)
                 {
                     set.insert((computed.expression, arena_key));
                 }
@@ -213,13 +273,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         arena: &NodeArena,
         name_idx: NodeIndex,
-    ) -> Option<String> {
+    ) -> Option<ResolvedComputedName> {
         if std::ptr::eq(arena, self.ctx.arena) {
             return self.resolve_local_computed_property_name(name_idx);
         }
 
+        // A literal key or a well-known `[Symbol.X]` key carries its own string
+        // key; neither is a binding-identity symbol member.
         if let Some(name) = get_literal_or_well_known_property_name(arena, name_idx) {
-            return Some(name);
+            return Some(ResolvedComputedName::string(name));
         }
 
         let name_node = arena.get(name_idx)?;
@@ -227,7 +289,7 @@ impl<'a> CheckerState<'a> {
         if let Some(name) =
             self.computed_expression_literal_name_in_arena(arena, computed.expression)
         {
-            return Some(name);
+            return Some(ResolvedComputedName::string(name));
         }
         // A computed key `[K]` whose `K` is a string/number `const` — `const K =
         // '$_TSR'` or `declare const K: '$R'` — keys the member under the literal
@@ -244,7 +306,7 @@ impl<'a> CheckerState<'a> {
         if let Some(literal_name) =
             self.cross_arena_const_literal_key_name(arena, computed.expression)
         {
-            return Some(literal_name);
+            return Some(ResolvedComputedName::string(literal_name));
         }
         let sym_id = self.resolve_computed_property_symbol_in_arena(arena, computed.expression)?;
         // Canonicalize to the declaring binder's symbol id so a cross-file
@@ -254,24 +316,32 @@ impl<'a> CheckerState<'a> {
         // whichever per-file alias copy resolved here, producing a spurious
         // TS2353/TS2561 excess-property mismatch.
         let sym_id = crate::types_domain::computed_names::follow_import_aliases(&self.ctx, sym_id);
-        Some(format!("__unique_{}", sym_id.0))
+        Some(ResolvedComputedName::symbol(format!(
+            "__unique_{}",
+            sym_id.0
+        )))
     }
 
-    fn resolve_local_computed_property_name(&mut self, name_idx: NodeIndex) -> Option<String> {
+    fn resolve_local_computed_property_name(
+        &mut self,
+        name_idx: NodeIndex,
+    ) -> Option<ResolvedComputedName> {
         if let Some(name) = get_literal_property_name(self.ctx.arena, name_idx) {
-            return Some(name);
+            return Some(ResolvedComputedName::string(name));
         }
 
         let name_node = self.ctx.arena.get(name_idx)?;
         let computed = self.ctx.arena.get_computed_property(name_node)?;
+        // A well-known `[Symbol.X]` key carries its own string key; it is not a
+        // binding-identity symbol member on the interface lowering path.
         if let Some(name) = self.local_well_known_symbol_property_name(computed.expression) {
-            return Some(name);
+            return Some(ResolvedComputedName::string(name));
         }
 
         if let Some(name) =
             self.computed_expression_literal_name_in_arena(self.ctx.arena, computed.expression)
         {
-            return Some(name);
+            return Some(ResolvedComputedName::string(name));
         }
         if let Some(literal_type) = self.const_object_member_literal_type_query(computed.expression)
             && let Some(name) =
@@ -280,7 +350,9 @@ impl<'a> CheckerState<'a> {
                     literal_type,
                 )
         {
-            return Some(self.ctx.types.resolve_atom_ref(name).to_string());
+            return Some(ResolvedComputedName::string(
+                self.ctx.types.resolve_atom_ref(name).to_string(),
+            ));
         }
         // A computed name `[base.s]` whose qualified expression resolves to a
         // binding with unique-symbol identity (e.g. a namespace-import-qualified
@@ -298,7 +370,10 @@ impl<'a> CheckerState<'a> {
         if let Some(sym_ref) =
             self.computed_identifier_unique_symbol_property_ref(computed.expression)
         {
-            return Some(format!("__unique_{}", sym_ref.0));
+            return Some(ResolvedComputedName::symbol(format!(
+                "__unique_{}",
+                sym_ref.0
+            )));
         }
         let prev = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
@@ -325,15 +400,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             expr_type,
         ) {
-            Some(self.ctx.types.resolve_atom_ref(name).to_string())
+            Some(ResolvedComputedName::string(
+                self.ctx.types.resolve_atom_ref(name).to_string(),
+            ))
         } else if let Some(name) =
             self.symbol_valued_binding_property_name(computed.expression, expr_type)
         {
-            Some(name)
+            Some(ResolvedComputedName::symbol(name))
         } else if let Some(sym_ref) =
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
         {
-            Some(format!("__unique_{}", sym_ref.0))
+            Some(ResolvedComputedName::symbol(format!(
+                "__unique_{}",
+                sym_ref.0
+            )))
         } else {
             // Value-position evaluation produced no key. The expression may
             // still denote a binding with unique-symbol / plain-`symbol`
@@ -342,9 +422,11 @@ impl<'a> CheckerState<'a> {
             // (`import type * as s; [s.member]`), whose value-position type is
             // ERROR. Delegate to the canonical computed-name policy, which keys
             // purely from the resolved binding's identity rather than from its
-            // value-position type, so the member is not dropped.
+            // value-position type, so the member is not dropped. Well-known
+            // `[Symbol.X]` keys were already returned above, so a name reached
+            // here denotes a binding-identity symbol member.
             self.computed_property_expression_name_atom(computed.expression)
-                .map(|atom| self.ctx.types.resolve_atom(atom))
+                .map(|atom| ResolvedComputedName::symbol(self.ctx.types.resolve_atom(atom)))
         }
     }
 
@@ -488,12 +570,26 @@ impl<'a> CheckerState<'a> {
     fn resolve_computed_property_symbol_in_arena(
         &self,
         arena: &NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let binder = self.computed_property_owner_binder(arena)?;
+        self.resolve_computed_property_symbol_with_binder_in_arena(arena, binder, expr_idx)
+    }
+
+    fn resolve_computed_property_symbol_with_binder_in_arena(
+        &self,
+        arena: &NodeArena,
+        binder: &BinderState,
         mut expr_idx: NodeIndex,
     ) -> Option<tsz_binder::SymbolId> {
         while let Some(node) = arena.get(expr_idx)
             && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
         {
             expr_idx = arena.get_parenthesized(node)?.expression;
+        }
+
+        if let Some(sym_id) = binder.resolve_identifier(arena, expr_idx) {
+            return Some(sym_id);
         }
 
         let name = if arena
@@ -507,7 +603,7 @@ impl<'a> CheckerState<'a> {
 
         resolve_name_to_lib_symbol(
             &name,
-            self.ctx.binder,
+            binder,
             self.ctx.global_file_locals_index.as_deref(),
             self.ctx
                 .all_binders

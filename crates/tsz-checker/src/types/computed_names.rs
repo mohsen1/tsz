@@ -644,12 +644,24 @@ pub(crate) fn computed_property_name_atom(
     resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
     expr_idx: NodeIndex,
 ) -> Option<Atom> {
-    if let Some(parts) = member_access_parts(ctx.arena, expr_idx)
+    computed_property_name_atom_in_arena(ctx, ctx.arena, ctx.binder, resolve_symbol, expr_idx)
+}
+
+/// Arena-aware form of [`computed_property_name_atom`] for interface
+/// declarations lowered outside the file currently being checked.
+pub(crate) fn computed_property_name_atom_in_arena(
+    ctx: &CheckerContext<'_>,
+    arena: &NodeArena,
+    binder: &BinderState,
+    resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
+    expr_idx: NodeIndex,
+) -> Option<Atom> {
+    if let Some(parts) = member_access_parts(arena, expr_idx)
         && let Some(member) = parts.member.as_deref()
     {
         if parts.base_text == "Symbol"
             && identifier_resolves_to_unshadowed_global_in_context(
-                ctx, ctx.arena, ctx.binder, parts.base, "Symbol",
+                ctx, arena, binder, parts.base, "Symbol",
             )
         {
             return Some(ctx.types.intern_string(&format!("[Symbol.{member}]")));
@@ -764,5 +776,16 @@ pub(crate) fn computed_property_is_symbol_named(
     resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
     expr_idx: NodeIndex,
 ) -> bool {
-    computed_property_name_atom(ctx, resolve_symbol, expr_idx).is_some()
+    computed_property_is_symbol_named_in_arena(ctx, ctx.arena, ctx.binder, resolve_symbol, expr_idx)
+}
+
+/// Arena-aware form of [`computed_property_is_symbol_named`].
+pub(crate) fn computed_property_is_symbol_named_in_arena(
+    ctx: &CheckerContext<'_>,
+    arena: &NodeArena,
+    binder: &BinderState,
+    resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
+    expr_idx: NodeIndex,
+) -> bool {
+    computed_property_name_atom_in_arena(ctx, arena, binder, resolve_symbol, expr_idx).is_some()
 }
