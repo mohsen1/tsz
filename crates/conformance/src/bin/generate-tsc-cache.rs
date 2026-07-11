@@ -283,7 +283,6 @@ fn main() -> Result<()> {
     let errors = AtomicUsize::new(0);
     let skipped = AtomicUsize::new(0);
     let total = test_files.len();
-    let verbose = args.verbose;
     let tsc_path_ref = &tsc_path;
     let test_dir_path = Path::new(&args.test_dir)
         .canonicalize()
@@ -320,9 +319,7 @@ fn main() -> Result<()> {
                 skipped.fetch_add(1, Ordering::SeqCst);
             }
             Err(e) => {
-                if verbose {
-                    println!("✗ Error processing {}: {}", path.display(), e);
-                }
+                eprintln!("✗ Error processing {}: {e:#}", path.display());
                 errors.fetch_add(1, Ordering::SeqCst);
             }
         }
