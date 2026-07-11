@@ -39,6 +39,11 @@ jobs:
         run: |
           python3 scripts/lib/check-sh-portability.py
           python3 scripts/lib/test_check_sh_portability.py
+      - name: Check TypeScript corpus and tool-resolution safety
+        run: |
+          python3 scripts/ci/test_typescript_corpus_init.py
+          python3 scripts/setup/test_reset_typescript_corpus.py
+          node scripts/bench/test-typescript-tool-resolution.mjs
       # Known-failures baseline contract (#15646): the unit job's green means
       # "no NEW unit failures", so the baseline may only move in reviewed ways
       # and the gate wiring itself is contract-tested here (cheap, <15s).
