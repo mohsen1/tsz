@@ -119,6 +119,13 @@ pub enum AnyPropagationMode {
     /// the assignable/comparable relations while a target `any` returns
     /// `true` for every relation.
     AnySourceNotRelated,
+    /// tsc `isTypeIdenticalTo`: `any` is identical only to `any` at every
+    /// depth. Neither an `any` source nor an `any` target short-circuits
+    /// against a non-`any` type at any nesting level (`any <: any` still
+    /// holds through the ordinary identity fast path). Used by conditional
+    /// extends-clause equivalence so `any[]`/`{ a: any }` are not equated
+    /// with `string[]`/`{ a: string }`.
+    IdenticalOnly,
 }
 
 impl AnyPropagationMode {
@@ -128,7 +135,7 @@ impl AnyPropagationMode {
         match self {
             Self::All => true,
             Self::TopLevelOnly => depth == 0,
-            Self::AnySourceNotRelated => false,
+            Self::AnySourceNotRelated | Self::IdenticalOnly => false,
         }
     }
 
@@ -138,6 +145,9 @@ impl AnyPropagationMode {
         match self {
             Self::All | Self::AnySourceNotRelated => true,
             Self::TopLevelOnly => depth == 0,
+            // Identity mode: an `any` target accepts only an `any` source
+            // (handled by the identity fast path), never an arbitrary type.
+            Self::IdenticalOnly => false,
         }
     }
 }

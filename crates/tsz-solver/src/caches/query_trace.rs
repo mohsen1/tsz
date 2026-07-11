@@ -106,6 +106,7 @@ const fn relation_cache_config_trace_fields(
         CachedAnyMode::TopLevelOnlyAtTop => "top_level_only_at_top",
         CachedAnyMode::TopLevelOnlyNested => "top_level_only_nested",
         CachedAnyMode::AnySourceNotRelated => "any_source_not_related",
+        CachedAnyMode::IdenticalOnly => "identical_only",
     };
     RelationCacheConfigTraceFields {
         flags: config.flags.bits(),

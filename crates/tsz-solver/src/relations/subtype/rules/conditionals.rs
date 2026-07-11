@@ -13,7 +13,7 @@ use crate::visitor::{
     conditional_type_id, contains_type_parameter_named, intrinsic_kind, type_param_info,
 };
 
-use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+use super::super::{AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Conditional extends-types use a stricter equivalence than ordinary
@@ -66,7 +66,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver)
+            .with_any_propagation_mode(AnyPropagationMode::IdenticalOnly);
         if let Some(db) = self.query_db {
             fallback = fallback.with_query_db(db);
         }
@@ -146,7 +147,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let saved_strict_readonly = self.strict_readonly_identity;
         self.exact_optional_property_types = true;
         self.strict_readonly_identity = true;
-        let result = self.with_identity_check_mode(f);
+        let result = self.with_identity_check_mode(|sub| {
+            // `with_identity_check_mode` sets `TopLevelOnly`, which still lets
+            // a nested `any` collapse into other types. tsc's
+            // `isTypeIdenticalTo` treats `any` as identical only to `any` at
+            // every depth, so override to `IdenticalOnly` for the extends-
+            // clause equivalence check.
+            let saved_any = sub.any_propagation;
+            sub.any_propagation = AnyPropagationMode::IdenticalOnly;
+            let inner = f(sub);
+            sub.any_propagation = saved_any;
+            inner
+        });
         self.exact_optional_property_types = saved_exact_optional;
         self.strict_readonly_identity = saved_strict_readonly;
         result
