@@ -72,18 +72,122 @@ fn test_function_used_type_param() {
 
 #[test]
 fn test_all_imports_unused_emits_ts6192() {
-    let diags = tsz_checker::test_utils::check_source_no_unused_locals(
-        "import d, { Member as M } from './b';\nvoid 0;\n",
+    let source = "import d, { Member as M } from './b';\nvoid 0;\n";
+    let diags = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let unused = diags
+        .iter()
+        .filter(|d| d.code == 6133 || d.code == 6192)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1, "unexpected diagnostics: {diags:?}");
+    assert_eq!(unused[0].code, 6192, "unexpected diagnostics: {diags:?}");
+    assert_eq!(unused[0].start, 0);
+    assert_eq!(
+        unused[0].length,
+        "import d, { Member as M } from './b';".len() as u32
     );
-    let ts6192_count = diags.iter().filter(|d| d.code == 6192).count();
-    assert!(
-        ts6192_count >= 1,
-        "Expected TS6192 for fully unused import declaration, got diagnostics: {:?}",
-        diags
+}
+
+#[test]
+fn test_ts7_individual_unused_imports_anchor_at_local_binding() {
+    let cases = [
+        ("import DefaultName from './b';\nvoid 0;", "DefaultName"),
+        (
+            "import * as NamespaceName from './b';\nvoid 0;",
+            "NamespaceName",
+        ),
+        ("import { MemberName } from './b';\nvoid 0;", "MemberName"),
+        (
+            "import { Member as LocalName } from './b';\nvoid 0;",
+            "LocalName",
+        ),
+        (
+            "import type { ShapeName } from './b';\nvoid 0;",
+            "ShapeName",
+        ),
+        (
+            "import { UsedName, SpareName } from './b';\nvoid UsedName;",
+            "SpareName",
+        ),
+    ];
+
+    for (source, local_name) in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+        let unused = diagnostics
             .iter()
-            .map(|d| (d.code, d.message_text.clone()))
-            .collect::<Vec<_>>()
+            .filter(|d| d.code == 6133 || d.code == 6192)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unused.len(),
+            1,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        assert_eq!(
+            unused[0].code, 6133,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        assert_eq!(unused[0].start, source.find(local_name).unwrap() as u32);
+        assert_eq!(unused[0].length, local_name.len() as u32);
+    }
+}
+
+#[test]
+fn test_ts7_unused_import_equals_anchors_at_local_binding() {
+    let source = "import LocalModule = require('./b');\nvoid 0;";
+    let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let unused = diagnostics
+        .iter()
+        .filter(|d| d.code == 6133 || d.code == 6192)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1, "unexpected diagnostics: {diagnostics:?}");
+    assert_eq!(unused[0].code, 6133);
+    assert_eq!(unused[0].start, source.find("LocalModule").unwrap() as u32);
+    assert_eq!(unused[0].length, "LocalModule".len() as u32);
+}
+
+#[test]
+fn test_ts7_underscore_es_imports_block_whole_import_aggregation() {
+    let cases = [
+        "import { _skip, alpha, beta } from './b';\nvoid 0;",
+        "import _skip, { alpha, beta } from './b';\nvoid 0;",
+        "import type { Skip as _skip, First as alpha, Second as beta } from './b';\nvoid 0;",
+    ];
+
+    for source in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+        let unused = diagnostics
+            .iter()
+            .filter(|d| d.code == 6133 || d.code == 6192)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unused.len(),
+            2,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        for (diagnostic, local_name) in unused.iter().zip(["alpha", "beta"]) {
+            assert_eq!(
+                diagnostic.code, 6133,
+                "unexpected diagnostics: {diagnostics:?}"
+            );
+            assert_eq!(diagnostic.start, source.find(local_name).unwrap() as u32);
+            assert_eq!(diagnostic.length, local_name.len() as u32);
+        }
+    }
+}
+
+#[test]
+fn test_ts7_underscore_import_equals_is_not_exempt() {
+    let source = "import _LocalModule = require('./b');\nvoid 0;";
+    let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|d| d.code == 6133)
+        .unwrap_or_else(|| panic!("expected TS6133: {diagnostics:?}"));
+    assert_eq!(
+        diagnostic.start,
+        source.find("_LocalModule").unwrap() as u32
     );
+    assert_eq!(diagnostic.length, "_LocalModule".len() as u32);
+    assert!(!diagnostics.iter().any(|d| d.code == 6192));
 }
 
 #[test]
