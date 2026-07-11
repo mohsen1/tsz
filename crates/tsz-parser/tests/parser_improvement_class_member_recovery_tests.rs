@@ -701,3 +701,73 @@ fn method_missing_body_still_emits_or_expected_not_brace_only() {
         "method recovery must not switch to the accessor-only `'{{' expected`"
     );
 }
+
+// Regression: a truncated generic declaration must never wedge the parser.
+//
+// Every construct below opens a type-parameter list (or a method whose `(`
+// never arrives) and hits EOF before it closes. Two recovery paths have to make
+// forward progress on each iteration for parsing to terminate:
+//   * `recover_from_missing_method_open_paren` must treat `EndOfFileToken` as a
+//     stop token — otherwise `next_token` idles on EOF forever (`class A { f<`).
+//   * the `parse_type_parameters` delimited-list loop must force one token
+//     forward when an element parses nothing (a reserved word like `class`
+//     sorts at or above `Identifier`, so it is not broken out, yet
+//     `parse_identifier` reports on it without consuming) — mirroring tsc's
+//     `parseDelimitedList` no-progress `nextToken()`.
+//
+// Witnessed by fourslash `completionListAtIdentifierDefinitionLocations_Generics`,
+// which hung past the 60s worker watchdog before both guards existed. In these
+// tests `parse_source` *returning at all* is the guard; a reintroduced loop
+// hangs the test.
+#[test]
+fn truncated_generic_declarations_terminate() {
+    // Marker-stripped body of the fourslash regression fixture.
+    let source = "interface A<\nclass A<\nclass B<T, \nclass A{\n     f<\nfunction A<\n";
+    let (parser, root) = parse_source(source);
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    assert!(
+        !source_file.statements.nodes.is_empty(),
+        "truncated generics should still yield recovered top-level statements"
+    );
+    assert!(
+        !parser.get_diagnostics().is_empty(),
+        "truncated generics must report parse diagnostics"
+    );
+}
+
+#[test]
+fn truncated_generic_declarations_terminate_renamed_binders() {
+    // Same shape, distinct binder names: the fix is structural, not name-keyed.
+    let source = "interface Outer<\nclass Widget<\nclass Bag<Elem, \nclass Holder{\n     handle<\nfunction make<\n";
+    let (parser, root) = parse_source(source);
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    assert!(!source_file.statements.nodes.is_empty());
+    assert!(!parser.get_diagnostics().is_empty());
+}
+
+#[test]
+fn truncated_class_method_type_parameters_terminate() {
+    // A class method whose type-parameter list and `(` never arrive before the
+    // stop token. Covers EOF, a following newline, and a closing `}`.
+    for source in [
+        "class A{f<",
+        "class A {\n    f<\n",
+        "class A {\n    f<\n}\n",
+    ] {
+        let (parser, root) = parse_source(source);
+        let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+        assert!(
+            !source_file.statements.nodes.is_empty(),
+            "class with a truncated method should recover a class statement: {source:?}"
+        );
+    }
+}
+
+#[test]
+fn truncated_object_literal_method_type_parameters_terminate() {
+    // The same `(`-recovery path is shared by object-literal members.
+    let (parser, root) = parse_source("const o = { f<");
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    assert!(!source_file.statements.nodes.is_empty());
+    assert!(!parser.get_diagnostics().is_empty());
+}

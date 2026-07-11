@@ -1252,10 +1252,16 @@ impl ParserState {
     /// (`;` or `,`). Callers should skip their own body lookup in this case to
     /// avoid emitting a redundant `'{' expected.` past the actual terminator.
     pub(crate) fn recover_from_missing_method_open_paren(&mut self) -> bool {
+        // `EndOfFileToken` must terminate the scan: a malformed member whose
+        // body/`(` never arrives (e.g. `class A { f<` truncated at EOF) leaves
+        // no `{`/`;`/`,`/`}` ahead, and `next_token` idles on EOF, so omitting
+        // it here spins forever. tsc's member `parseList` treats EOF as a list
+        // terminator; mirror that so recovery always makes progress.
         while !(self.is_token(SyntaxKind::OpenBraceToken)
             || self.is_token(SyntaxKind::SemicolonToken)
             || self.is_token(SyntaxKind::CommaToken)
-            || self.is_token(SyntaxKind::CloseBraceToken))
+            || self.is_token(SyntaxKind::CloseBraceToken)
+            || self.is_token(SyntaxKind::EndOfFileToken))
         {
             self.next_token();
         }
