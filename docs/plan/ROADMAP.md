@@ -94,9 +94,9 @@ active campaigns.
   test out of the shard failure set.
 - Output-surgery audit stays at zero unallowlisted calls and zero allowlist
   entries.
-- CheckerContext field-count guard is ratcheted at `252` fields after adding
-  `type_position_resolution_cache` (a per-file memo of type-position identifier
-  resolution; #13987). Future work should reduce this through capability
+- CheckerContext field-count guard is ratcheted at `254` fields after adding
+  `optional_chain_marker_only_nodes` (per-node optional-chain marker positions
+  for tsc's optional-type-marker semantics; #15691). Future work should reduce this through capability
   extraction rather than silently adding checker-global state.
 
 ## How To Pick Work
