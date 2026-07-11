@@ -321,3 +321,70 @@ const exact: 1e21 = rust;
         "the Rust Display spelling must widen to number, not the literal"
     );
 }
+
+// === Salvaged witnesses from superseded #15675 (tsc-verified 2026-07-11) ===
+
+/// tsc: a numeric-declared property is addressable by its canonical
+/// `Number::toString` string name (`{ 1e21: string }` has key `"1e+21"`).
+#[test]
+fn indexed_access_type_with_canonical_string_key_resolves() {
+    assert!(
+        no_errors(
+            r#"
+type Rec = { 1e21: string };
+type Val = Rec["1e+21"];
+const v: Val = "ok";
+"#
+        ),
+        "Rec[\"1e+21\"] must resolve the property declared as `1e21`"
+    );
+}
+
+/// Negative control: the raw source spelling is NOT the property's name;
+/// tsc reports TS2339 for `Rec["1e21"]`.
+#[test]
+fn indexed_access_type_rejects_source_spelling_string_key() {
+    assert!(
+        codes(
+            r#"
+type Rec = { 1e21: string };
+type Val = Rec["1e21"];
+"#
+        )
+        .contains(&2339),
+        "source spelling \"1e21\" must miss the canonical \"1e+21\" property"
+    );
+}
+
+/// tsc: boolean and bigint template captures coerce like their literal
+/// grammar — `is:${B}` captures `true`; `${G}n` captures `7n`.
+#[test]
+fn call_inference_coerces_boolean_and_bigint_captures() {
+    assert!(
+        no_errors(
+            r#"
+declare function flag<B extends boolean>(s: `is:${B}`): B;
+const yes: true = flag("is:true");
+declare function big<G extends bigint>(s: `${G}n`): G;
+const g: 7n = big("7n");
+"#
+        ),
+        "boolean/bigint template captures must infer their literal types"
+    );
+}
+
+/// tsc: enum member values flow through template literal types via the same
+/// `Number::toString` owner (`Scale.Big = 1e21` → `"1e+21"`).
+#[test]
+fn template_over_enum_member_with_exotic_value() {
+    assert!(
+        no_errors(
+            r#"
+enum Scale { Big = 1e21 }
+type S = `${Scale.Big}`;
+const s: S = "1e+21";
+"#
+        ),
+        "`${{Scale.Big}}` must evaluate through Number::toString"
+    );
+}
