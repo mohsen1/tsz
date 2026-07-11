@@ -340,6 +340,16 @@ pub(crate) struct InferenceContext<'a> {
     /// when source and target are the same type parameter, which tsz's
     /// placeholder rename would otherwise miss.
     pub(crate) original_type_param_for_var: FxHashMap<Atom, InferenceVar>,
+    /// Inference variables whose candidates come from a tuple packed out of
+    /// trailing rest arguments (tsc's `getSpreadArgumentType` output), keyed
+    /// by root to the literal-preservation mode of the call site. Candidate
+    /// resolution widens such a variable's tuple result per element against
+    /// its declared constraint instead of blanket literal-widening the whole
+    /// tuple. Keying by variable (not tuple `TypeId`) keeps the mark across
+    /// walker slicing and partial re-widening, and cannot collide with an
+    /// identical tuple inferred for an unrelated variable.
+    pub(crate) spread_rest_var_modes:
+        FxHashMap<InferenceVar, crate::inference::spread_rest_literals::SpreadRestLiteralMode>,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -377,6 +387,7 @@ impl<'a> InferenceContext<'a> {
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
+            spread_rest_var_modes: FxHashMap::default(),
         }
     }
 
@@ -403,6 +414,7 @@ impl<'a> InferenceContext<'a> {
             in_readonly_source_context: false,
             implied_arities: FxHashMap::default(),
             original_type_param_for_var: FxHashMap::default(),
+            spread_rest_var_modes: FxHashMap::default(),
         }
     }
 
@@ -426,6 +438,29 @@ impl<'a> InferenceContext<'a> {
     pub fn mark_top_level_in_return_type_unfixed(&mut self, var: InferenceVar) {
         let root = self.table.find(var);
         self.top_level_in_return_type_unfixed.insert(root);
+    }
+
+    /// Record that `var` is inferred from a tuple packed out of trailing
+    /// rest arguments, so candidate resolution widens its literal elements
+    /// per the declared constraint (tsc's `getSpreadArgumentType` rule)
+    /// instead of blanket-widening the whole tuple.
+    pub fn mark_spread_rest_var(
+        &mut self,
+        var: InferenceVar,
+        mode: crate::inference::spread_rest_literals::SpreadRestLiteralMode,
+    ) {
+        let root = self.table.find(var);
+        self.spread_rest_var_modes.insert(root, mode);
+    }
+
+    /// The spread-rest literal mode recorded for `var`, if its candidates
+    /// come from a packed rest-argument tuple.
+    pub fn spread_rest_mode_of(
+        &mut self,
+        var: InferenceVar,
+    ) -> Option<crate::inference::spread_rest_literals::SpreadRestLiteralMode> {
+        let root = self.table.find(var);
+        self.spread_rest_var_modes.get(&root).copied()
     }
 
     /// Create a fresh inference variable

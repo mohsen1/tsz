@@ -476,32 +476,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         infer_subst,
                     )
                 } else {
-                    let constraint_preserves_literals = if let Some(constraint) = tp.constraint {
-                        let instantiated_constraint = instantiate_call_type(
+                    let instantiated_constraint = tp.constraint.map(|constraint| {
+                        instantiate_call_type(
                             self.interner,
                             constraint,
                             substitution,
                             actual_this_type,
-                        );
-                        let resolver = self
-                            .checker
-                            .type_resolver()
-                            .unwrap_or_else(|| self.interner.as_type_resolver());
-                        type_implies_literals_deep(self.interner, instantiated_constraint)
-                            || constraint_is_primitive_type_with_resolver(
-                                self.interner,
-                                resolver,
-                                instantiated_constraint,
-                            )
-                            || constraint_contains_primitive_constrained_type_param(
-                                self.interner,
-                                resolver,
-                                instantiated_constraint,
-                                0,
-                            )
-                    } else {
-                        false
-                    };
+                        )
+                    });
+                    let constraint_preserves_literals =
+                        if let Some(instantiated_constraint) = instantiated_constraint {
+                            let resolver = self
+                                .checker
+                                .type_resolver()
+                                .unwrap_or_else(|| self.interner.as_type_resolver());
+                            type_implies_literals_deep(self.interner, instantiated_constraint)
+                                || constraint_is_primitive_type_with_resolver(
+                                    self.interner,
+                                    resolver,
+                                    instantiated_constraint,
+                                )
+                                || constraint_contains_primitive_constrained_type_param(
+                                    self.interner,
+                                    resolver,
+                                    instantiated_constraint,
+                                    0,
+                                )
+                        } else {
+                            false
+                        };
                     if !tp.is_const && !contra_only && !constraint_preserves_literals {
                         // Widen fresh inference results from expressions when the type
                         // parameter does NOT have a primitive literal-preserving constraint.
@@ -567,6 +570,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     widening::widen_literal_type(db, ty)
                                 }
                             }
+                        } else if matches!(
+                            self.interner.lookup(ty),
+                            Some(crate::types::TypeData::Tuple(_))
+                        ) && let Some(literal_mode) = infer_ctx.spread_rest_mode_of(var)
+                            && !infer_ctx.has_type_annotation_candidates(var)
+                        {
+                            // A tuple packed from trailing rest arguments widens
+                            // per element against the rest type parameter's
+                            // declared constraint (tsc's `getSpreadArgumentType`):
+                            // `f<T extends string[]>(...args: T)` keeps
+                            // `["a", "b"]` while `T extends any[]` widens to
+                            // `[string, string]`.
+                            crate::inference::spread_rest_literals::widen_spread_rest_tuple(
+                                self.interner.as_type_database(),
+                                ty,
+                                instantiated_constraint,
+                                literal_mode,
+                            )
                         } else if self.inference_type_contains_fresh_object_or_array(ty)
                             && !infer_ctx.has_type_annotation_candidates(var)
                         {

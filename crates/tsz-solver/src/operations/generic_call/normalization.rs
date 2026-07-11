@@ -434,6 +434,94 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         false
     }
 
+    /// Mark the inference variable a packed rest-argument tuple constrains
+    /// with its literal-preservation mode (tsc's `getSpreadArgumentType`).
+    ///
+    /// Marks nothing — leaving the previous blanket widening in force — when
+    /// the packed tuple carries no literal element or the rest type parameter
+    /// has no declared constraint, so the per-element gate could never
+    /// preserve anything anyway. Otherwise the mode is `ContextuallyFixed`
+    /// when the call has an outer contextual type and the rest type parameter
+    /// occurs at top level of the return type: tsc then fixes the parameter
+    /// before packing the arguments, the per-index contextual type `T[i]`
+    /// instantiates to a concrete type, and bare primitive constraint
+    /// elements (`string`, `number`, …) no longer preserve literal arguments.
+    /// Without that early fixing `T[i]` stays instantiable and its base
+    /// constraint preserves matching literal kinds (`Unfixed`).
+    pub(super) fn mark_spread_rest_literal_mode(
+        &mut self,
+        infer_ctx: &mut InferenceContext,
+        func: &FunctionShape,
+        rest_target_type: TypeId,
+        packed_tuple: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        type_param_vars: &[crate::inference::infer::InferenceVar],
+    ) {
+        use crate::inference::spread_rest_literals::SpreadRestLiteralMode;
+        let has_literal_element = match self.interner.lookup(packed_tuple) {
+            Some(TypeData::Tuple(elems_id)) => {
+                self.interner.tuple_list(elems_id).iter().any(|elem| {
+                    !elem.rest
+                        && crate::inference::spread_rest_literals::literal_primitive_of(
+                            self.interner.as_type_database(),
+                            elem.type_id,
+                        )
+                        .is_some()
+                })
+            }
+            _ => false,
+        };
+        if !has_literal_element {
+            return;
+        }
+        let Some(var) = self.spread_rest_infer_var(rest_target_type, var_map) else {
+            return;
+        };
+        let Some(tp) = func
+            .type_params
+            .iter()
+            .zip(type_param_vars.iter())
+            .find_map(|(tp, &candidate)| (candidate == var).then_some(tp))
+        else {
+            return;
+        };
+        if tp.constraint.is_none() {
+            return;
+        }
+        let mode = if self.contextual_type.is_some()
+            && self.type_param_at_top_level_through_aliases(func.return_type, tp.name)
+        {
+            SpreadRestLiteralMode::ContextuallyFixed
+        } else {
+            SpreadRestLiteralMode::Unfixed
+        };
+        infer_ctx.mark_spread_rest_var(var, mode);
+    }
+
+    /// The inference variable a spread-built rest tuple is constrained
+    /// against: the rest parameter's bare type-parameter placeholder, or the
+    /// single variadic inference-variable element of a tuple-typed rest
+    /// parameter (`...args: [number, ...T]`). The target arrives already
+    /// readonly-unwrapped from `rest_tuple_inference_target`.
+    fn spread_rest_infer_var(
+        &self,
+        rest_target_type: TypeId,
+        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+    ) -> Option<crate::inference::infer::InferenceVar> {
+        if let Some(&var) = var_map.get(&rest_target_type) {
+            return Some(var);
+        }
+        if let Some(TypeData::Tuple(elems_id)) = self.interner.lookup(rest_target_type) {
+            return self
+                .interner
+                .tuple_list(elems_id)
+                .iter()
+                .find(|elem| elem.rest && var_map.contains_key(&elem.type_id))
+                .map(|elem| var_map[&elem.type_id]);
+        }
+        None
+    }
+
     fn type_contains_conditional(&self, ty: TypeId) -> bool {
         crate::visitor::collect_all_types(self.interner.as_type_database(), ty)
             .into_iter()
@@ -1044,6 +1132,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Process rest tuple in Round 1
         if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+            self.mark_spread_rest_literal_mode(
+                &mut infer_ctx,
+                func,
+                target_type,
+                tuple_type,
+                &var_map,
+                &type_param_vars,
+            );
             self.constrain_types(
                 &mut infer_ctx,
                 &var_map,
