@@ -297,6 +297,53 @@ class StandaloneCorpusTest(unittest.TestCase):
         self.assertNotEqual(core_worktree.returncode, 0)
         self.assertIn("Migrated legacy TypeScript module gitdir", result.stdout)
 
+    def test_legacy_worktree_config_gitdir_is_migrated_into_the_checkout(self) -> None:
+        self.reset()
+        run(["git", "init", "--quiet"], cwd=self.checkout)
+        corpus = self.checkout / "TypeScript"
+        legacy_gitdir = self.checkout / ".git/modules/TypeScript"
+        legacy_gitdir.parent.mkdir(parents=True)
+        shutil.move(str(corpus / ".git"), legacy_gitdir)
+        run(
+            [
+                "git",
+                "config",
+                "--file",
+                str(legacy_gitdir / "config"),
+                "extensions.worktreeConfig",
+                "true",
+            ],
+            cwd=self.checkout,
+        )
+        run(
+            [
+                "git",
+                "config",
+                "--file",
+                str(legacy_gitdir / "config.worktree"),
+                "core.worktree",
+                "../../../TypeScript",
+            ],
+            cwd=self.checkout,
+        )
+        (corpus / ".git").write_text(
+            "gitdir: ../.git/modules/TypeScript\n", encoding="utf-8"
+        )
+        self.assertEqual(self.corpus_head(), self.pinned_sha)
+
+        result = self.reset()
+
+        self.assertTrue((corpus / ".git").is_dir())
+        self.assertFalse(legacy_gitdir.exists())
+        self.assertEqual(self.corpus_head(), self.pinned_sha)
+        core_worktree = run(
+            ["git", "config", "--get", "core.worktree"],
+            cwd=corpus,
+            check=False,
+        )
+        self.assertNotEqual(core_worktree.returncode, 0)
+        self.assertIn("Migrated legacy TypeScript module gitdir", result.stdout)
+
     def test_unowned_gitfile_is_refused_without_mutation(self) -> None:
         self.reset()
         run(["git", "init", "--quiet"], cwd=self.checkout)

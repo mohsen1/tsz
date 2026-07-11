@@ -179,9 +179,10 @@ migrate_legacy_module_gitdir() {
         return 1
     fi
 
-    local backup_link legacy_core_worktree
+    local backup_link legacy_core_worktree legacy_worktree_core_worktree
     backup_link="$CORPUS_PATH/.git.legacy-link.$$"
     legacy_core_worktree="$(git config --file "$actual_git_dir/config" --get core.worktree 2>/dev/null || true)"
+    legacy_worktree_core_worktree="$(git config --file "$actual_git_dir/config.worktree" --get core.worktree 2>/dev/null || true)"
     if [ -e "$backup_link" ]; then
         echo "ERROR: Legacy gitdir migration backup already exists: $backup_link" >&2
         return 1
@@ -194,6 +195,9 @@ migrate_legacy_module_gitdir() {
         return 1
     fi
     git config --file "$CORPUS_PATH/.git/config" --unset-all core.worktree >/dev/null 2>&1 || true
+    if [ -f "$CORPUS_PATH/.git/config.worktree" ]; then
+        git config --file "$CORPUS_PATH/.git/config.worktree" --unset-all core.worktree >/dev/null 2>&1 || true
+    fi
 
     local migrated_git_dir migrated_top
     migrated_git_dir="$(git -C "$CORPUS_PATH" rev-parse --absolute-git-dir 2>/dev/null || true)"
@@ -202,6 +206,9 @@ migrate_legacy_module_gitdir() {
         || [ "$(cd "$migrated_top" 2>/dev/null && pwd -P || true)" != "$(cd "$CORPUS_PATH" && pwd -P)" ]; then
         if [ -n "$legacy_core_worktree" ]; then
             git config --file "$CORPUS_PATH/.git/config" core.worktree "$legacy_core_worktree" || true
+        fi
+        if [ -n "$legacy_worktree_core_worktree" ]; then
+            git config --file "$CORPUS_PATH/.git/config.worktree" core.worktree "$legacy_worktree_core_worktree" || true
         fi
         if mv "$CORPUS_PATH/.git" "$actual_git_dir" && mv "$backup_link" "$CORPUS_PATH/.git"; then
             echo "ERROR: Legacy TypeScript gitdir migration failed validation and was rolled back." >&2
