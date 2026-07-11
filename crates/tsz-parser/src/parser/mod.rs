@@ -222,6 +222,10 @@ mod state_type_tests;
 mod state_declaration_tests;
 
 #[cfg(test)]
+#[path = "../../tests/declaration_node_end_tests.rs"]
+mod declaration_node_end_tests;
+
+#[cfg(test)]
 #[path = "../../tests/decorator_tests.rs"]
 mod decorator_tests;
 

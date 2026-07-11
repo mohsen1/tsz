@@ -97,7 +97,7 @@ impl ParserState {
 
         self.context_flags = method_saved_flags;
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_method_decl(
             syntax_kind_ext::METHOD_DECLARATION,
             start_pos,

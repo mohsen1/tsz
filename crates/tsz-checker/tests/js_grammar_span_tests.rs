@@ -220,6 +220,11 @@ fn js_bodyless_accessor_reports_ts8017_for_full_declaration() {
         source.find(declaration).unwrap() as u32,
         "{diagnostics:#?}"
     );
+    assert_eq!(
+        ts8017[0].length,
+        declaration.len() as u32,
+        "{diagnostics:#?}"
+    );
     assert!(diagnostics.iter().all(|diag| diag.code != 8010));
 }
 
