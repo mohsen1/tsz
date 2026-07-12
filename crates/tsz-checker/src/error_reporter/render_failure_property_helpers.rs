@@ -15,9 +15,9 @@ impl<'a> CheckerState<'a> {
         property_name: tsz_common::interner::Atom,
         target: TypeId,
     ) -> String {
-        if let Some(display) = self.enum_mapped_property_name_for_display(property_name, target) {
-            return display;
-        }
+        // tsc 7.0.2 renders enum-derived mapped keys as the bare literal
+        // value ('0', 'sa'), never as a qualified '[E.A]'; only symbol keys
+        // keep their bracketed display.
         if let Some(display) = self.symbol_keyed_property_name_for_display(property_name, target) {
             return display;
         }

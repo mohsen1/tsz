@@ -1407,11 +1407,20 @@ impl<'a> CheckerState<'a> {
                         .rest_parameter_relation_outcome(init_type, readonly_any_array)
                         .related
                     {
-                        self.error_at_node(
-                            param_idx,
-                            "A rest parameter must be of an array type.",
-                            diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                        );
+                        // Anchor at the parameter start (the `...` token) like
+                        // the annotated branches; error_at_node would
+                        // normalize to the name node.
+                        if let Some(pn) = self.ctx.arena.get(param_idx)
+                            && let Some(name_node) = self.ctx.arena.get(param.name)
+                        {
+                            let length = name_node.end.saturating_sub(pn.pos);
+                            self.error_at_position(
+                                pn.pos,
+                                length,
+                                "A rest parameter must be of an array type.",
+                                diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                            );
+                        }
                     }
                 }
             }

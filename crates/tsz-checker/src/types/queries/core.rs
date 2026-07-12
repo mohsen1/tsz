@@ -1682,12 +1682,13 @@ impl<'a> CheckerState<'a> {
         Some(self.get_syntactic_class_name_or_anonymous(class_idx))
     }
 
-    /// Return the class's syntactic name, or `"(anonymous)"` if the class
-    /// expression has no name. Unlike `get_bound_class_name_from_decl`, this
-    /// does NOT fall back to an enclosing `VariableDeclaration` name — tsc
-    /// uses this stricter form for TS18013 messages.
+    /// Return the class's name for TS18013-style messages: the syntactic
+    /// name, else the enclosing `VariableDeclaration` binding name (tsc
+    /// names `const C = class {…}` as 'C' via the class symbol), else the
+    /// exact tsc placeholder `"(Anonymous class)"`.
     fn get_syntactic_class_name_or_anonymous(&self, class_idx: NodeIndex) -> String {
-        self.ctx
+        let syntactic = self
+            .ctx
             .arena
             .get(class_idx)
             .and_then(|node| self.ctx.arena.get_class(node))
@@ -1697,8 +1698,24 @@ impl<'a> CheckerState<'a> {
                     .get(class.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
                     .map(|ident| ident.escaped_text.clone())
-            })
-            .unwrap_or_else(|| "(anonymous)".to_string())
+            });
+        if let Some(name) = syntactic {
+            return name;
+        }
+        if let Some(ext) = self.ctx.arena.get_extended(class_idx)
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
+            && let Some(name) = self
+                .ctx
+                .arena
+                .get(var_decl.name)
+                .and_then(|n| self.ctx.arena.get_identifier(n))
+                .map(|ident| ident.escaped_text.clone())
+        {
+            return name;
+        }
+        "(Anonymous class)".to_string()
     }
 
     pub(crate) fn get_private_identifier_declaring_class_name(
