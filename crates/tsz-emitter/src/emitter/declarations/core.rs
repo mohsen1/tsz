@@ -108,12 +108,18 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        // Name
-        if let Some(name) = function_name.as_deref() {
+        // Name. A real source name is emitted as a node so the source-map
+        // writer records its mapping segment and names-array entry; only
+        // synthesized names (`default_1`, the ES5 new.target `_a` capture)
+        // are written as raw text.
+        if func.name.is_some() {
             self.write_space();
             if let Some(name_node) = self.arena.get(func.name) {
                 self.skip_comments_in_range(node.pos, name_node.pos);
             }
+            self.emit_decl_name(func.name);
+        } else if let Some(name) = function_name.as_deref() {
+            self.write_space();
             self.write(name);
         } else {
             // Space before ( for anonymous functions: `function ()` not `function()`

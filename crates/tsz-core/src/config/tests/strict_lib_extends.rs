@@ -453,7 +453,10 @@ fn test_ts5090_paths_substitutions_require_base_url() {
 }
 
 #[test]
-fn test_ts5090_paths_substitutions_suppressed_when_base_url_present() {
+fn test_ts5090_paths_substitutions_reported_even_when_base_url_present() {
+    // tsc 7.0.2 validates every `paths` substitution regardless of `baseUrl`
+    // (which separately gets the TS5102 removed-option error): each value that
+    // is neither relative nor rooted gets its own TS5090.
     let source = r#"{
   "compilerOptions": {
 "baseUrl": ".",
@@ -464,9 +467,30 @@ fn test_ts5090_paths_substitutions_suppressed_when_base_url_present() {
 }"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        !codes.contains(&5090),
-        "baseUrl should suppress TS5090 for non-relative substitutions, got: {codes:?}"
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 5090).count(),
+        2,
+        "each non-relative, non-rooted substitution gets TS5090 despite baseUrl, got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_ts5090_skips_rooted_substitutions() {
+    // Rooted substitutions (POSIX, drive-letter, UNC) are legal per tsc 7.0.2's
+    // relative-or-rooted rule; only the bare-name value gets TS5090.
+    let source = r#"{
+  "compilerOptions": {
+"paths": {
+  "@lib/*": ["/abs/*", "c:/win/*", "plain/*"]
+}
+  }
+}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 5090).count(),
+        1,
+        "rooted substitutions are exempt from TS5090, got: {codes:?}"
     );
 }
 

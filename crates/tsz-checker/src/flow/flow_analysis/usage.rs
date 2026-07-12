@@ -120,7 +120,8 @@ impl<'a> CheckerState<'a> {
                 if evolved_type != TypeId::NEVER && evolved_type != TypeId::ERROR {
                     narrowed_type = evolved_type;
                 }
-            } else if self.is_same_function_scope_as_declaration(idx, sym_id)
+            } else if self.ctx.strict_null_checks()
+                && self.is_same_function_scope_as_declaration(idx, sym_id)
                 && !self.is_ambient_var_declaration(sym_id)
                 && !self.is_in_assignment_target_position(idx)
             {
@@ -132,6 +133,9 @@ impl<'a> CheckerState<'a> {
                 // ("'p' is possibly 'undefined'") when `p` is used in comparisons.
                 //
                 // Guards:
+                // - strictNullChecks only: with it off, tsc's convertAutoToAny
+                //   resolves unassigned auto reads to `any` (no operand errors,
+                //   e.g. `for (let x; x < 1;)` is clean)
                 // - Same function scope: cross-scope captures get TS7005/TS7034 instead
                 // - Not ambient: `declare var` has no runtime initialization
                 // - Not assignment target: destructuring/for-of targets are written, not read

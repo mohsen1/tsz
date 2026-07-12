@@ -1,25 +1,25 @@
-//! TS2556 must not fire for a spread whose argument *value* is typed `any`.
+//! TS2556 for spreads whose argument *value* is typed `any`.
 //!
-//! Structural rule: spreading a value whose type is exactly `any` (or the error
-//! type) contributes an unknown number of `any` arguments. `any` is assignable
-//! both to a rest parameter and to a tuple of whatever arity the callee needs,
-//! so `tsc` accepts `f(...anyValue)` against *any* parameter list — no TS2556
-//! ("A spread argument must either have a tuple type or be passed to a rest
-//! parameter") and no arity diagnostic. This is distinct from an `any[]` (or any
-//! other opaque, non-tuple array) spread, whose definite array-ness gives it an
-//! indeterminate length that still overflows a non-rest parameter, where TS2556
-//! is correct.
+//! Structural rule (tsc 7.0.2 and 6.0.3 agree): the spread-position arity rule
+//! is type-independent. A spread whose type is not a tuple — a scalar `any`
+//! included — is legal only where the parameter list accepts a variable number
+//! of arguments: at or after `minArgumentCount`, flowing into a rest parameter
+//! or trailing optionals. `f(...anyValue)` against required, non-rest
+//! parameters gets exactly one TS2556 ("A spread argument must either have a
+//! tuple type or be passed to a rest parameter") and no TS2554/TS2555 arity
+//! diagnostic; `f(...anyValue)` where every remaining parameter is optional or
+//! rest is clean.
 //!
-//! Owner layer: the spread-argument collector
-//! (`call_checker::candidate_collection`) short-circuits a scalar-`any`/`error`
-//! spread before the array/iterable landing-position checks that emit TS2556.
+//! Owner layer: the shared spread-position predicate
+//! (`call_checker::non_tuple_spread_signature`) classifies scalar `any`/error
+//! spreads as non-tuple spreads; the argument collector still contributes a
+//! single `any` argument so no separate arity error stacks on top.
 //!
-//! Witness: jotai `freezeAtom` (#14746). A callback contextually typed by a
-//! cross-module generic `Setter` degrades to an `any`-typed rest parameter when
-//! the `Function.prototype.call` instantiation crosses the module boundary;
-//! spreading it into `set(...)` then wrongly tripped TS2556. The structural rule
-//! (scalar-`any` spread) is exercised directly below with binder names varied so
-//! nothing keys on `any`, the identifier `set`, or a file name.
+//! History: #15067 exempted scalar-`any` spreads from TS2556 entirely on the
+//! premise that tsc accepts them against any parameter list. Both pinned
+//! oracles disprove that premise; the real jotai #14746 false positive was
+//! fixed by contextual rest-tuple recovery (#15045), which the cross-module
+//! witness below still covers.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
@@ -28,9 +28,9 @@ use tsz_checker::test_utils::{
 use tsz_common::diagnostics::Diagnostic;
 
 const TS2556: u32 = 2556;
-// Arity diagnostics that must also stay silent: a scalar-`any` spread satisfies
-// any arity, so neither "expected N arguments" (TS2554) nor "expected at least
-// N" (TS2555) may appear.
+// A scalar-`any` spread must produce TS2556 *alone* at illegal positions: the
+// spread still relaxes the visible-argument count, so no "expected N
+// arguments" (TS2554) / "expected at least N" (TS2555) may stack on top.
 const TS2554: u32 = 2554;
 const TS2555: u32 = 2555;
 
@@ -42,58 +42,58 @@ fn spread_codes(diags: &[Diagnostic]) -> Vec<u32> {
         .collect()
 }
 
+fn assert_single_ts2556(diags: &[Diagnostic], what: &str) {
+    assert_eq!(
+        spread_codes(diags),
+        vec![TS2556],
+        "{what} must emit exactly one TS2556 and no arity diagnostic: {diags:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
-// Positive: spreading a scalar `any` value is clean against any callee shape.
+// Scalar `any` spread over required, non-rest parameters: TS2556, nothing else.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn scalar_any_spread_into_fixed_arity_function_is_clean() {
-    // The callee has two required, non-rest parameters and *fewer* are visibly
-    // provided; the `any` spread must satisfy both arity and TS2556.
+fn scalar_any_spread_into_fixed_arity_function_emits_ts2556() {
     let src = r#"
         declare const payload: any;
         function consume(first: number, second: string): void {}
         consume(...payload);
     "#;
     let diags = check_source_diagnostics(src);
-    assert!(
-        spread_codes(&diags).is_empty(),
-        "scalar `any` spread into a fixed-arity callee must be clean: {diags:?}"
-    );
+    assert_single_ts2556(&diags, "scalar `any` spread into a fixed-arity callee");
 }
 
 #[test]
-fn scalar_any_spread_into_many_required_params_is_clean() {
-    // Even when the callee declares many required parameters, an `any` spread is
-    // treated as supplying an unknown count — no TS2554.
+fn scalar_any_spread_into_many_required_params_emits_ts2556() {
     let src = r#"
         declare const blob: any;
         function widen(a: number, b: number, c: number, d: number): void {}
         widen(...blob);
     "#;
     let diags = check_source_diagnostics(src);
-    assert!(
-        spread_codes(&diags).is_empty(),
-        "scalar `any` spread into a many-required-param callee must be clean: {diags:?}"
+    assert_single_ts2556(
+        &diags,
+        "scalar `any` spread into a many-required-param callee",
     );
 }
 
 #[test]
-fn scalar_any_spread_with_leading_fixed_arg_is_clean() {
+fn scalar_any_spread_with_leading_fixed_arg_emits_ts2556() {
+    // The spread sits at index 1 while `minArgumentCount` is 2, so the
+    // position is still fixed — TS2556 fires despite the leading argument.
     let src = r#"
         declare const rest: any;
         function lead(head: number, tail: string): void {}
         lead(1, ...rest);
     "#;
     let diags = check_source_diagnostics(src);
-    assert!(
-        spread_codes(&diags).is_empty(),
-        "leading fixed arg then scalar `any` spread must be clean: {diags:?}"
-    );
+    assert_single_ts2556(&diags, "leading fixed arg then scalar `any` spread");
 }
 
 #[test]
-fn scalar_any_spread_into_constructor_is_clean() {
+fn scalar_any_spread_into_constructor_emits_ts2556() {
     let src = r#"
         declare const args: any;
         class Widget {
@@ -102,30 +102,24 @@ fn scalar_any_spread_into_constructor_is_clean() {
         new Widget(...args);
     "#;
     let diags = check_source_diagnostics(src);
-    assert!(
-        spread_codes(&diags).is_empty(),
-        "scalar `any` spread into a constructor must be clean: {diags:?}"
-    );
+    assert_single_ts2556(&diags, "scalar `any` spread into a constructor");
 }
 
 #[test]
-fn scalar_any_spread_into_method_is_clean() {
+fn scalar_any_spread_into_method_emits_ts2556() {
     let src = r#"
         declare const data: any;
         declare const sink: { absorb(only: number): void };
         sink.absorb(...data);
     "#;
     let diags = check_source_diagnostics(src);
-    assert!(
-        spread_codes(&diags).is_empty(),
-        "scalar `any` spread into a method call must be clean: {diags:?}"
-    );
+    assert_single_ts2556(&diags, "scalar `any` spread into a method call");
 }
 
 #[test]
-fn scalar_any_spread_into_overload_set_without_rest_is_clean() {
-    // No overload has a rest parameter; the spread still must not trip TS2556,
-    // because the `any` value can satisfy either fixed-arity overload.
+fn scalar_any_spread_into_overload_set_without_rest_emits_ts2556() {
+    // Every overload requires a first argument, so index 0 is a fixed
+    // position in each; tsc reports the plain TS2556, not an overload error.
     let src = r#"
         declare const params: any;
         function pick(a: number): void;
@@ -134,17 +128,59 @@ fn scalar_any_spread_into_overload_set_without_rest_is_clean() {
         pick(...params);
     "#;
     let diags = check_source_diagnostics(src);
+    assert_single_ts2556(&diags, "scalar `any` spread into a no-rest overload set");
+}
+
+// ---------------------------------------------------------------------------
+// Legal positions: rest parameters and all-optional tails accept a non-tuple
+// spread, so a scalar `any` spread is clean there.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scalar_any_spread_into_rest_param_is_clean() {
+    let src = r#"
+        declare const feed: any;
+        function collect(...entries: number[]): void {}
+        collect(...feed);
+    "#;
+    let diags = check_source_diagnostics(src);
     assert!(
         spread_codes(&diags).is_empty(),
-        "scalar `any` spread into a no-rest overload set must be clean: {diags:?}"
+        "scalar `any` spread into a rest parameter must be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn scalar_any_spread_after_required_args_into_rest_is_clean() {
+    let src = r#"
+        declare const tail: any;
+        function fixedThenRest(head: number, ...extra: string[]): void {}
+        fixedThenRest(1, ...tail);
+    "#;
+    let diags = check_source_diagnostics(src);
+    assert!(
+        spread_codes(&diags).is_empty(),
+        "scalar `any` spread past the required prefix into a rest parameter must be clean: {diags:?}"
+    );
+}
+
+#[test]
+fn scalar_any_spread_into_all_optional_params_is_clean() {
+    let src = r#"
+        declare const maybe: any;
+        function optionalOnly(a?: number, b?: string): void {}
+        optionalOnly(...maybe);
+    "#;
+    let diags = check_source_diagnostics(src);
+    assert!(
+        spread_codes(&diags).is_empty(),
+        "scalar `any` spread into an all-optional parameter list must be clean: {diags:?}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Negative controls: the exemption is specific to a *scalar* `any`/`error`
-// value. An opaque (non-tuple) array spread into a non-rest parameter still has
-// an indeterminate length and must keep TS2556 — including an `any[]` spread, so
-// the rule is not "anything involving `any` is exempt".
+// Array spreads at fixed positions keep TS2556 too (the rule is not `any`
+// specific in either direction).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -164,8 +200,6 @@ fn any_array_spread_into_non_rest_still_emits_ts2556() {
 
 #[test]
 fn typed_array_spread_into_non_rest_still_emits_ts2556() {
-    // The same with a concretely typed array (binder names varied) so the
-    // negative control is not keyed on `any`.
     let src = r#"
         declare const values: string[];
         function gather(alpha: number): void {}
@@ -180,10 +214,10 @@ fn typed_array_spread_into_non_rest_still_emits_ts2556() {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-module witness (#14746): the jotai `freezeAtom` shape, where the
-// callback contextually typed by an imported generic `Setter` degrades its rest
-// parameter to `any` across the module boundary. The whole project must be clean
-// exactly as `tsc` reports.
+// Cross-module witness (#14746): the jotai `freezeAtom` shape. The callback's
+// rest parameter is recovered as a contextual rest tuple (#15045), so the
+// spread has a tuple type and the project stays clean — without the scalar-any
+// exemption.
 // ---------------------------------------------------------------------------
 
 fn check_project(files: &[(&str, &str)], entry: &str) -> Vec<Diagnostic> {

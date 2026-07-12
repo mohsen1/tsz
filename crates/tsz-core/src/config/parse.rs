@@ -1053,7 +1053,6 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TS5063/TS5066: Validate paths substitution values.
         // TS5063: value should be an array (not string/number/etc.)
         // TS5066: array shouldn't be empty
-        let has_base_url = compiler_opts.contains_key("baseUrl");
         if let Some(serde_json::Value::Object(paths_obj)) = compiler_opts.get_mut("paths") {
             let mut bad_patterns: Vec<String> = Vec::new();
             for (pattern, value) in paths_obj.iter() {
@@ -1090,12 +1089,14 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         // TS5064: Substitution elements must be strings
                         for (idx, elem) in arr.iter().enumerate() {
                             if let Some(substitution) = elem.as_str() {
-                                if !has_base_url
-                                    && !substitution.is_empty()
-                                    && !is_relative_path_mapping_substitution(substitution)
+                                if !is_relative_path_mapping_substitution(substitution)
+                                    && !is_rooted_path_mapping_substitution(substitution)
                                 {
-                                    // Without baseUrl, TypeScript rejects non-relative path
-                                    // substitutions up front instead of silently ignoring them.
+                                    // tsc 7.0.2 rejects every substitution that is neither
+                                    // relative nor rooted (empty string included), regardless
+                                    // of `baseUrl` — a present `baseUrl` separately gets the
+                                    // TS5102 removed-option error but no longer legitimizes
+                                    // non-relative substitutions.
                                     let elem_pos = {
                                         let arr_start = stripped[value_start as usize..]
                                             .find('[')

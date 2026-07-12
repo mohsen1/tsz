@@ -770,6 +770,19 @@ const fn is_relative_path_mapping_substitution(specifier: &str) -> bool {
     )
 }
 
+/// Matches TypeScript's `isRootedDiskPath` for `paths` substitution validation:
+/// a POSIX root (`/...`), a UNC/backslash root (`\...`), or a drive-letter root
+/// (`c:`, `c:/...`, `c:\...`).
+const fn is_rooted_path_mapping_substitution(specifier: &str) -> bool {
+    match specifier.as_bytes() {
+        [b'/' | b'\\', ..] => true,
+        [drive, b':', rest @ ..] => {
+            drive.is_ascii_alphabetic() && matches!(rest, [] | [b'/' | b'\\', ..])
+        }
+        _ => false,
+    }
+}
+
 /// Return the expected JSON value type for a compiler option.
 /// Returns "" for unknown/unvalidated options.
 fn compiler_option_expected_type(key: &str) -> &'static str {

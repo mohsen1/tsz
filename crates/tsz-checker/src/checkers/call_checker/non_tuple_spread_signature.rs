@@ -49,17 +49,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let spread_type = self.normalized_spread_argument_type(spread_data.expression);
-            // A scalar `any`/`error` spread is assignable to any rest or fixed
-            // parameter and can never overflow the parameter list, so it is
-            // never a rejectable non-tuple spread. This mirrors the collector
-            // early-out in `collect_call_argument_types_with_context`; keeping
-            // the exemption in this shared overload predicate ensures the
-            // single-signature and overload-resolution paths agree (the value
-            // occupies one positional slot here).
-            if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
-                effective_index += 1;
-                continue;
-            }
             // A variadic-tuple type-parameter spread stays a single unit (see argument
             // collection and the type-parameter spread branch below); do not
             // advance by its constraint's tuple element count.
@@ -93,9 +82,17 @@ impl<'a> CheckerState<'a> {
                 effective_index += 1;
                 continue;
             }
+            // tsc's rule is type-independent (`hasCorrectArity`): any spread
+            // whose type is not a tuple — scalar `any`/`error` included — is
+            // legal only at a position the parameter list accepts a variable
+            // number of arguments (at/after minArgumentCount, into a rest
+            // parameter or trailing optionals). tsc 7.0.2 and 6.0.3 both
+            // report TS2556 for `f(...anyVal)` against fixed parameters.
             let is_non_tuple_spread = array_element_type_for_type(self.ctx.types, spread_type)
                 .is_some()
-                || self.is_iterable_type(spread_type);
+                || self.is_iterable_type(spread_type)
+                || spread_type == TypeId::ANY
+                || spread_type == TypeId::ERROR;
             if is_non_tuple_spread && !ctx.allows_non_tuple_spread_position(effective_index) {
                 return Some(arg_idx);
             }

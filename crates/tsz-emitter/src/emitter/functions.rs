@@ -74,15 +74,17 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        // Name (if any)
-        if let Some(name) = function_name.as_deref() {
+        // Source names emit as nodes (source-map segment + names entry); synthesized names stay raw text.
+        if func.name.is_some() {
+            self.write_space();
+            self.emit_decl_name(func.name);
+        } else if let Some(name) = function_name.as_deref() {
             self.write_space();
             self.write(name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
         }
-
         // Parameters (without types for JavaScript)
         // Map opening `(` to its source position
         let open_paren_pos = {

@@ -14,6 +14,7 @@ use tsz_solver::{PropertyInfo, TypeId};
 
 pub(super) struct ObjectLiteralAccessorContext<'b> {
     pub(super) elem_idx: NodeIndex,
+    pub(super) obj_elements: &'b [NodeIndex],
     pub(super) obj_getter_names: &'b FxHashSet<String>,
     pub(super) contextual_type: Option<TypeId>,
     pub(super) marker_this_type: Option<TypeId>,
@@ -44,6 +45,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let ObjectLiteralAccessorContext {
             elem_idx,
+            obj_elements,
             obj_getter_names,
             contextual_type,
             marker_this_type,
@@ -311,6 +313,33 @@ impl<'a> CheckerState<'a> {
                                 "An object literal cannot have multiple get/set accessors with the same name.",
                                 diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_GET_SET_ACCESSORS_WITH_THE_SAME_NAME,
                             );
+                    // tsc additionally reports TS2300 at every accessor of the
+                    // clashing kind — the first included, which is only known to
+                    // clash once its repeat appears. Flag the prior when the
+                    // current element is the first repeat, then one per further
+                    // repeat, so each clashing accessor is reported exactly once.
+                    // Complementary accessors stay clean (get/get + set: only
+                    // the getters are duplicates).
+                    let prior_nodes = self.prior_same_kind_accessor_name_nodes(
+                        obj_elements,
+                        elem_idx,
+                        &name,
+                        is_getter,
+                    );
+                    let message =
+                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
+                    if let [first] = prior_nodes.as_slice() {
+                        self.error_at_node(
+                            *first,
+                            &message,
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
+                    self.error_at_node(
+                        accessor.name,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
                 } else {
                     let message = format_message(
                                 diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
@@ -499,5 +528,41 @@ impl<'a> CheckerState<'a> {
             );
         }
         true
+    }
+
+    /// Name nodes of earlier same-kind accessors with the same property name
+    /// in the enclosing object literal. Used to retroactively flag the first
+    /// clashing accessor with TS2300 once its repeat is discovered.
+    fn prior_same_kind_accessor_name_nodes(
+        &self,
+        obj_elements: &[NodeIndex],
+        elem_idx: NodeIndex,
+        name: &str,
+        is_getter: bool,
+    ) -> Vec<NodeIndex> {
+        let kind = if is_getter {
+            syntax_kind_ext::GET_ACCESSOR
+        } else {
+            syntax_kind_ext::SET_ACCESSOR
+        };
+        let mut nodes = Vec::new();
+        for &sib_idx in obj_elements {
+            if sib_idx == elem_idx {
+                break;
+            }
+            let Some(sib_node) = self.ctx.arena.get(sib_idx) else {
+                continue;
+            };
+            if sib_node.kind != kind {
+                continue;
+            }
+            let Some(sib_accessor) = self.ctx.arena.get_accessor(sib_node) else {
+                continue;
+            };
+            if self.get_property_name(sib_accessor.name).as_deref() == Some(name) {
+                nodes.push(sib_accessor.name);
+            }
+        }
+        nodes
     }
 }

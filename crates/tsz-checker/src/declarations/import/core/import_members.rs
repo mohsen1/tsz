@@ -257,13 +257,15 @@ impl<'a> CheckerState<'a> {
             );
 
         // TS2497: Module with `export =` targeting a non-module/non-variable symbol
-        // can only be referenced via default import. Applies to namespace imports
-        // (`import * as X`) and named imports (`import { X }`), regardless of
-        // esModuleInterop / allowSyntheticDefaultImports.
-        // Even with esModuleInterop enabled, namespace/named imports on `export =`
-        // targeting a class/function/interface are invalid — the user must use a
-        // default import (`import X from "mod"`) instead.
-        if (has_namespace_import || has_non_default_named_imports)
+        // can only be referenced via default import. Only fires when synthetic
+        // default imports are unavailable: tsc 7.0.2 keeps esModuleInterop /
+        // allowSyntheticDefaultImports permanently on (`=false` is a TS5108
+        // removed-option error) and gives namespace/named imports over `export =`
+        // the synthetic `{ default: T }` shape instead of erroring, so the 7.0.2
+        // corpus contains no TS2497 at all. The branch stays for explicit
+        // interop-off configs until removed-option (TS5108) modeling lands.
+        if !self.ctx.allow_synthetic_default_imports()
+            && (has_namespace_import || has_non_default_named_imports)
             && !clause.is_type_only
             && let Some(ref table) = exports_table
             && table.has("export=")

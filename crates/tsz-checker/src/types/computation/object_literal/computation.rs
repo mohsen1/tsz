@@ -1885,6 +1885,7 @@ impl<'a> CheckerState<'a> {
             else if self.process_object_literal_accessor_element(
                 ObjectLiteralAccessorContext {
                     elem_idx,
+                    obj_elements: &obj.elements.nodes,
                     obj_getter_names: &obj_getter_names,
                     contextual_type,
                     marker_this_type,
