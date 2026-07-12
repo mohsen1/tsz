@@ -195,6 +195,9 @@ fn emit_tslib_helper_diagnostics(
 ) -> Vec<Diagnostic> {
     let mut result = Vec::new();
     let tslib_exports = program.module_exports.get(tslib_key);
+    // Program-wide once-per-helper accumulator (tsc's
+    // requestedExternalEmitHelpers): first requesting site reports.
+    let mut reported_helpers: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
     for file in &program.files {
         if file.file_name == tslib_key || is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
@@ -218,6 +221,7 @@ fn emit_tslib_helper_diagnostics(
                         helper_parameter_count_for_symbol(program, sym_id).unwrap_or(usize::MAX);
                     if let Some(required_parameter_count) = helper.required_parameter_count
                         && actual_parameter_count < required_parameter_count
+                        && reported_helpers.insert(helper.name)
                     {
                         let message = tsz_common::diagnostics::format_message(
                             tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
@@ -237,16 +241,18 @@ fn emit_tslib_helper_diagnostics(
                     }
                 }
                 None => {
-                    result.push(Diagnostic::error(
-                        file.file_name.clone(),
-                        helper.start,
-                        helper.length,
-                        format!(
-                            "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
-                            helper.name
-                        ),
-                        2343,
-                    ));
+                    if reported_helpers.insert(helper.name) {
+                        result.push(Diagnostic::error(
+                            file.file_name.clone(),
+                            helper.start,
+                            helper.length,
+                            format!(
+                                "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
+                                helper.name
+                            ),
+                            2343,
+                        ));
+                    }
                 }
             }
         }
@@ -289,6 +295,10 @@ fn emit_tslib_helper_diagnostics_from_counts(
     file_is_esm_map: &rustc_hash::FxHashMap<String, bool>,
 ) -> Vec<Diagnostic> {
     let mut result = Vec::new();
+    // tsc's checkExternalEmitHelpers accumulates requested helpers program-wide
+    // (requestedExternalEmitHelpers): each missing/incompatible helper is
+    // reported ONCE at its first requesting site in program order.
+    let mut reported_helpers: rustc_hash::FxHashSet<&str> = rustc_hash::FxHashSet::default();
     for file in &program.files {
         if is_ts_declaration_file(Path::new(&file.file_name)) {
             continue;
@@ -309,6 +319,7 @@ fn emit_tslib_helper_diagnostics_from_counts(
                 Some(&actual_parameter_count) => {
                     if let Some(required_parameter_count) = helper.required_parameter_count
                         && actual_parameter_count < required_parameter_count
+                        && reported_helpers.insert(helper.name)
                     {
                         let message = tsz_common::diagnostics::format_message(
                             tsz_common::diagnostics::diagnostic_messages::THIS_SYNTAX_REQUIRES_AN_IMPORTED_HELPER_NAMED_WITH_PARAMETERS_WHICH_IS_NOT_COMPA,
@@ -328,16 +339,18 @@ fn emit_tslib_helper_diagnostics_from_counts(
                     }
                 }
                 None => {
-                    result.push(Diagnostic::error(
-                        file.file_name.clone(),
-                        helper.start,
-                        helper.length,
-                        format!(
-                            "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
-                            helper.name
-                        ),
-                        2343,
-                    ));
+                    if reported_helpers.insert(helper.name) {
+                        result.push(Diagnostic::error(
+                            file.file_name.clone(),
+                            helper.start,
+                            helper.length,
+                            format!(
+                                "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
+                                helper.name
+                            ),
+                            2343,
+                        ));
+                    }
                 }
             }
         }
