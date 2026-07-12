@@ -98,6 +98,37 @@ impl ModuleResolver {
                 return Some(resolved);
             }
 
+            // A relative specifier naming a TS implementation extension
+            // (`./tsx.ts`, `./plain.tsx`, `./mts1.mts`) resolves like tsc's
+            // allowImportingTsExtensions probing: when the exact file is
+            // missing, strip the extension and try the mode candidate list
+            // ('./tsx.ts' -> tsx.tsx, './dts.ts' -> dts.d.ts, './js1.ts' ->
+            // js1.js under allowJs). `.mts`/`.cts` specifiers stay within
+            // their module-format pair.
+            let ts_impl_fallback: Option<&[&str]> = match extension {
+                "ts" | "tsx" => Some(self.extension_candidates_for_package_type(package_type)),
+                "mts" => Some(if self.allow_js {
+                    &["d.mts", "mjs"]
+                } else {
+                    &["d.mts"]
+                }),
+                "cts" => Some(if self.allow_js {
+                    &["d.cts", "cjs"]
+                } else {
+                    &["d.cts"]
+                }),
+                _ => None,
+            };
+            if let Some(fallback_extensions) = ts_impl_fallback {
+                for ext in fallback_extensions {
+                    if let Some(resolved) =
+                        try_file_with_suffixes_and_extension(&base, ext, suffixes)
+                    {
+                        return Some(resolved);
+                    }
+                }
+            }
+
             return None;
         }
 
