@@ -1,10 +1,12 @@
 use tsz_parser::parser::node::NodeArena;
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
+    // `Path::file_name` splits only on the platform separator, so a
+    // Windows-style path (`C:\libs\lib.dom.d.ts`) is not split on Unix and
+    // the whole string fails the `lib.` prefix test. tsc's fileExtensionIs
+    // path handling is separator-agnostic; take the basename after EITHER
+    // separator.
+    let basename = file_name.rsplit(['/', '\\']).next().unwrap_or(file_name);
 
     if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
         return true;
