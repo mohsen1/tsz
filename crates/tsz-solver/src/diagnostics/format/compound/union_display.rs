@@ -173,16 +173,47 @@ impl<'a> TypeFormatter<'a> {
             .map(|&member| self.stable_order_type_name(member, def_store))
             .collect();
 
+        // tsc 7 sorts template-literal union members by their template text
+        // ('ftp://…' < 'http://…' < 'https://…'); same-rank members without a
+        // key keep their tier ordering below.
+        let template_keys: Vec<Option<String>> = members
+            .iter()
+            .map(|&m| self.template_literal_sort_key(m))
+            .collect();
+
         let mut order: Vec<usize> = (0..members.len()).collect();
         order.sort_by(|&i, &j| {
             ranks[i]
                 .cmp(&ranks[j])
                 .then_with(|| self.compare_union_member_literal_values(members[i], members[j]))
+                .then_with(|| match (&template_keys[i], &template_keys[j]) {
+                    (Some(a), Some(b)) => a.cmp(b),
+                    _ => std::cmp::Ordering::Equal,
+                })
                 .then_with(|| Self::compare_union_member_names(ranks[i], &names[i], &names[j]))
                 .then_with(|| positions[i].cmp(&positions[j]))
         });
 
         order.into_iter().map(|i| members[i]).collect()
+    }
+
+    /// Textual sort key for a template-literal union member: the rendered
+    /// template shape with `${` placeholders, matching tsc 7's display sort
+    /// by template text.
+    fn template_literal_sort_key(&self, type_id: TypeId) -> Option<String> {
+        let resolved = self.resolve_union_member_for_rank(type_id);
+        let Some(TypeData::TemplateLiteral(list_id)) = self.interner.lookup(resolved) else {
+            return None;
+        };
+        let spans = self.interner.template_list(list_id);
+        let mut key = String::new();
+        for span in spans.iter() {
+            match span {
+                TemplateSpan::Text(atom) => key.push_str(&self.interner.resolve_atom_ref(*atom)),
+                TemplateSpan::Type(_) => key.push_str("${"),
+            }
+        }
+        Some(key)
     }
 
     /// TypeScript 7 `TypeFlags` rank for a union member, computed on the member's
@@ -240,7 +271,11 @@ impl<'a> TypeFormatter<'a> {
             TypeId::BIGINT => Some(128),
             TypeId::BOOLEAN => Some(256),
             TypeId::SYMBOL => Some(512),
-            TypeId::OBJECT => Some(1 << 20),
+            // The non-primitive `object` sorts after primitives/literals/enums
+            // but BEFORE type parameters and the undefined/null tail
+            // (oracle: '"lit" | object', 'string | object', 'object | U',
+            // 'object | undefined').
+            TypeId::OBJECT => Some(1 << 16),
             _ => None,
         }
     }

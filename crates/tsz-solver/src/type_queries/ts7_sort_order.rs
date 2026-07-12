@@ -72,7 +72,11 @@ pub const fn ts7_primitive_rank(id: TypeId) -> Option<u32> {
         TypeId::BIGINT => Some(128),
         TypeId::BOOLEAN => Some(256),
         TypeId::SYMBOL => Some(512),
-        TypeId::OBJECT => Some(1 << 20),
+        // The non-primitive `object` sorts after primitives/literals/enums but
+        // BEFORE type parameters and the undefined/null tail (oracle:
+        // '"lit" | object', 'string | object', 'object | U',
+        // 'object | undefined').
+        TypeId::OBJECT => Some(1 << 16),
         _ => None,
     }
 }
