@@ -56,7 +56,10 @@ const e: boolean = strMap[null as any];
 }
 
 #[test]
-fn non_nuia_read_with_any_index_keeps_any_and_does_not_emit_ts2322() {
+fn non_nuia_read_with_any_index_resolves_index_signature_and_emits_ts2322() {
+    // tsc 7.0.2 resolves an any-typed index through applicable index infos in
+    // ALL modes (findApplicableIndexInfo), so the access is `boolean` and the
+    // string annotation mismatches — oracle-verified.
     let source = r#"
 declare const strMap: { [s: string]: boolean };
 const e: string = strMap[null as any];
@@ -64,8 +67,8 @@ const e: string = strMap[null as any];
     let diags = diags_for_strict(source);
     let codes = diagnostic_codes(&diags);
     assert!(
-        !codes.contains(&2322),
-        "Non-NUIA value access with any-typed index must keep the any fallback. Got: {codes:?}",
+        codes.contains(&2322),
+        "Any-typed index resolves through the string index signature (boolean -> string mismatch). Got: {codes:?}",
     );
 }
 
