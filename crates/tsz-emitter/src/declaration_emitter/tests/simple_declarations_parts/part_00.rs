@@ -878,7 +878,7 @@ exports.apply = 1;
 "#,
     );
 
-    let expected = "export const apply: typeof a | \"ok\" | 1 | undefined;\nexport { a as apply };\ndeclare function a(): void;\n";
+    let expected = "export const apply: \"ok\" | 1 | typeof a | undefined;\nexport { a as apply };\ndeclare function a(): void;\n";
     assert_eq!(
         output, expected,
         "Expected CJS alias/value export to match tsc declaration grouping"

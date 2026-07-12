@@ -323,7 +323,7 @@ hResult = h("bar");
         r#"declare let g: (x: "foo") => "foo";"#,
         r#"declare let gResult: "foo";"#,
         r#"declare let h: (x: "foo" | "bar") => "foo" | "bar";"#,
-        r#"declare let hResult: "foo" | "bar";"#,
+        r#"declare let hResult: "bar" | "foo";"#,
     ] {
         assert!(
             output.contains(expected),

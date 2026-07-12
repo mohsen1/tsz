@@ -478,22 +478,22 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
     );
 
     assert!(
-        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
-        "Expected `||` over literal-typed identifiers to preserve the source union: {output}"
+        output.contains("declare const stringOrNumber: \"number\" | \"string\";"),
+        "Expected `||` over literal-typed identifiers to order the union by TypeScript 7 rank: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
-        "Expected `||` over literal-typed identifiers to include the right operand: {output}"
+        output.contains("declare const stringOrBoolean: \"boolean\" | \"string\";"),
+        "Expected `||` over literal-typed identifiers to include the right operand in rank order: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
-        "Expected `||` over literal-typed identifiers to preserve numeric and boolean arms: {output}"
+        output.contains("declare const booleanOrNumber: \"boolean\" | \"number\";"),
+        "Expected `||` over literal-typed identifiers to order numeric and boolean arms by rank: {output}"
     );
     assert!(
         output.contains(
-            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+            "declare const stringOrBooleanOrNumber: \"boolean\" | \"number\" | \"string\";"
         ),
-        "Expected chained `||` over literal-typed identifiers to preserve all source arms: {output}"
+        "Expected chained `||` over literal-typed identifiers to order all arms by TypeScript 7 rank: {output}"
     );
 }
 
@@ -524,7 +524,7 @@ const value = maybe || fallback;
     );
 
     assert!(
-        output.contains("declare const value: \"value\" | \"fallback\";"),
+        output.contains("declare const value: \"fallback\" | \"value\";"),
         "Expected `||` declaration inference to keep fallback only when the left side can be falsy: {output}"
     );
 }
@@ -567,12 +567,12 @@ export const booleanOrString = b || "fallback";
         "Expected broad string left operand to cover string literal fallback: {output}"
     );
     assert!(
-        output.contains("export declare const numberOrString: number | string;"),
-        "Expected broad number left operand to keep an uncovered string fallback: {output}"
+        output.contains("export declare const numberOrString: string | number;"),
+        "Expected broad number left operand to keep an uncovered string fallback in TypeScript 7 rank order: {output}"
     );
     assert!(
-        output.contains("export declare const booleanOrString: true | string;"),
-        "Expected broad boolean left operand to narrow to true and keep fallback: {output}"
+        output.contains("export declare const booleanOrString: string | true;"),
+        "Expected broad boolean left operand to narrow to true and keep fallback in TypeScript 7 rank order: {output}"
     );
 }
 
@@ -663,8 +663,8 @@ const value = maybe ?? fallback;
     );
 
     assert!(
-        output.contains("declare const value: \"value\" | \"fallback\";"),
-        "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+        output.contains("declare const value: \"fallback\" | \"value\";"),
+        "Expected `??` declaration inference to remove nullish left arms and keep fallback in TypeScript 7 rank order: {output}"
     );
 }
 

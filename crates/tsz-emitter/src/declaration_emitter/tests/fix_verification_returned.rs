@@ -25,10 +25,10 @@ const inferredStringOrBooleanOrNumber = inferredStringOrBoolean || inferredNumbe
     );
 
     for expected in [
-        r#"declare const explicitStringOrNumber: "string" | "number";"#,
-        r#"declare const explicitStringOrBoolean: "string" | "boolean";"#,
-        r#"declare const explicitBooleanOrNumber: "number" | "boolean";"#,
-        r#"declare const explicitStringOrBooleanOrNumber: "string" | "number" | "boolean";"#,
+        r#"declare const explicitStringOrNumber: "number" | "string";"#,
+        r#"declare const explicitStringOrBoolean: "boolean" | "string";"#,
+        r#"declare const explicitBooleanOrNumber: "boolean" | "number";"#,
+        r#"declare const explicitStringOrBooleanOrNumber: "boolean" | "number" | "string";"#,
         // Inferred const literals are widened intentionally in short-circuit operand
         // position (matching the tsc DTS surface for mutable bindings built from them).
         "declare const inferredStringOrNumber: string;",
