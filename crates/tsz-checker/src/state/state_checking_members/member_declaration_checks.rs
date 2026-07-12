@@ -892,6 +892,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1015/TS1016 also run for method signatures of interfaces and
+        // type literals (tsc runs parameter grammar for every function-like
+        // signature).
+        if node.kind == syntax_kind_ext::METHOD_SIGNATURE
+            && let Some(sig) = self.ctx.arena.get_signature(node)
+            && let Some(params) = &sig.parameters
+        {
+            self.check_parameter_ordering(params, Some(member_idx));
+        }
+
         // Check call signatures and construct signatures for parameter properties
         if node.kind == syntax_kind_ext::CALL_SIGNATURE
             || node.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE
@@ -906,6 +916,10 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_properties(&params.nodes);
                     // TS2371: Parameter initializers not allowed in call/construct signatures
                     self.check_non_impl_parameter_initializers(&params.nodes, false, false);
+                    // TS1015/TS1016: parameter grammar runs for every
+                    // function-like signature, call/construct signatures of
+                    // interfaces and type literals included.
+                    self.check_parameter_ordering(params, Some(member_idx));
                     for (pi, &param_idx) in params.nodes.iter().enumerate() {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
