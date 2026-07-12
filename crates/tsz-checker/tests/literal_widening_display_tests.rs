@@ -178,7 +178,7 @@ take(fn);
         msgs,
         vec![(
             2559_u32,
-            "Type '(() => { a: number; }) & { a: number; }' has no properties in common with \
+            "Type '(() => { a: number; }) & { a: 1; }' has no properties in common with \
              type '{ opt?: string | undefined; }'."
                 .to_string()
         )],
@@ -221,7 +221,7 @@ take(fn);
         msgs,
         vec![(
             2559_u32,
-            "Type '(() => { a: number; }) & { a: 1; }' has no properties in common with \
+            "Type '(() => { a: number; }) & { a: number; }' has no properties in common with \
              type '{ opt?: string | undefined; }'."
                 .to_string()
         )],
