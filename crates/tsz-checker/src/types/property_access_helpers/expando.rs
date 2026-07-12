@@ -1427,6 +1427,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(file_idx) = self.expando_root_js_file_idx(object_expr_idx) {
+            // A nested chain re-discovered only by this source scan (the binder
+            // never recorded it) is a valid expando member only when its
+            // immediate base link is itself a declared expando. Without this the
+            // scan would accept the very write it is inspecting — e.g.
+            // `chrome.devtools.inspectedWindow = {}` where `chrome.devtools` is a
+            // `{}`-typed `Object.defineProperty` member. `prototype` chains keep
+            // their dedicated handling.
+            if !self.nested_expando_base_link_is_declared(object_expr_idx) {
+                return false;
+            }
             return self.js_file_has_expando_assignment_for_keys(
                 file_idx,
                 &self.expando_read_root_keys(object_expr_idx),
@@ -1435,6 +1445,53 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Whether a nested expando base chain (`a.b` in `a.b.c = e`) is itself a
+    /// declared expando member. A single-identifier base has no intermediate
+    /// link and is vacuously valid. `prototype` links are exempt — `prototype`
+    /// is a built-in member carried by the prototype-expando paths, not by
+    /// assignment records.
+    fn nested_expando_base_link_is_declared(&self, object_expr_idx: NodeIndex) -> bool {
+        let Some(object_node) = self.ctx.arena.get(object_expr_idx) else {
+            return true;
+        };
+        let (base_expr, member_name) = match object_node.kind {
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let Some(access) = self.ctx.arena.get_access_expr(object_node) else {
+                    return true;
+                };
+                let Some(member) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(access.name_or_argument)
+                    .map(|ident| ident.escaped_text.clone())
+                else {
+                    return true;
+                };
+                (access.expression, member)
+            }
+            syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let Some(access) = self.ctx.arena.get_access_expr(object_node) else {
+                    return true;
+                };
+                let Some(member) = static_element_access_key_text_in_arena(
+                    self.ctx.arena,
+                    access.name_or_argument,
+                ) else {
+                    return true;
+                };
+                (access.expression, member)
+            }
+            // Single-identifier base: no intermediate link to validate.
+            _ => return true,
+        };
+
+        if member_name == "prototype" {
+            return true;
+        }
+
+        self.is_expando_property_read(base_expr, &member_name)
     }
 
     pub(in crate::types_domain) fn expando_property_read_type(
