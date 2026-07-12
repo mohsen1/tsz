@@ -1529,14 +1529,14 @@ fn union_application_uses_typescript_7_visible_name_order() {
     assert_eq!(result, "Container<Item> | Item");
 }
 
-/// Regression: a union mixing a named type (tier 1, has source position) with
-/// a literal type (tier 2, no source position) should display the named type
-/// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not
-/// what tsc renders; tsc displays `Refrigerator | "foo"`.
+/// Regression: a union mixing a named type with a string literal renders the
+/// literal first under TypeScript 7's `TypeFlags` order — string literals rank
+/// (`1 << 10`) below object-like named types (`1 << 20`). Oracle-verified
+/// against typescript@7.0.2, which prints `"foo" | Refrigerator`.
 ///
 /// Source: `stringLiteralsWithEqualityChecks03` (and 04).
 #[test]
-fn union_named_type_renders_before_string_literal() {
+fn union_string_literal_renders_before_named_type() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1560,15 +1560,17 @@ fn union_named_type_renders_before_string_literal() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
     assert_eq!(
-        result, "Refrigerator | \"foo\"",
-        "Named type (tier 1) must render before a literal (tier 2) regardless of source order"
+        result, "\"foo\" | Refrigerator",
+        "TypeScript 7 ranks string literals below object-like named types"
     );
 }
 
-/// Sibling test: multiple named types stay sorted by source position, and any
-/// number of trailing literals retain their relative declaration order.
+/// Sibling test: string literals (rank `1 << 10`) render before object-like
+/// named types (rank `1 << 20`); within each rank, literals sort by value and
+/// named types alphabetically. Oracle-verified against typescript@7.0.2, which
+/// prints `"x" | "y" | Alpha | Beta`.
 #[test]
-fn union_multiple_named_types_sorted_then_literals_in_source_order() {
+fn union_literals_render_before_sorted_named_types() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1593,9 +1595,9 @@ fn union_multiple_named_types_sorted_then_literals_in_source_order() {
 
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
-    // Named types come first, sorted by span (Alpha at 10 < Beta at 30).
-    // Literals follow in the order they appeared in the input.
-    assert_eq!(result, "Alpha | Beta | \"x\" | \"y\"");
+    // Literals rank below named types, sorted by value ("x" < "y"); the named
+    // interfaces follow, alphabetized (Alpha < Beta).
+    assert_eq!(result, "\"x\" | \"y\" | Alpha | Beta");
 }
 
 /// Regression: tsc renders the eight `typeof` result string literals in
