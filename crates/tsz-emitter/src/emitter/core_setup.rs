@@ -362,6 +362,7 @@ impl<'a> Printer<'a> {
             preallocated_temp_names: VecDeque::new(),
             preallocated_hoisted_temp_names: VecDeque::new(),
             reserved_nested_temp_names: FxHashSet::default(),
+            pending_object_rest_param_temps: Vec::new(),
             file_level_class_temp_reservation_plan: Vec::new(),
             file_level_class_temp_reservations: FxHashMap::default(),
             completed_file_level_class_temp_reservations: FxHashSet::default(),

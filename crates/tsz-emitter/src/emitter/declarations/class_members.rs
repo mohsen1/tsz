@@ -212,11 +212,16 @@ impl<'a> Printer<'a> {
         else {
             return false;
         };
+        // When no return type parsed into the method node (`x()?: number` with
+        // the `?` left unconsumed) the illegal `?` sits at the node's exclusive
+        // `end`, so scan the raw source just past the `)` rather than stopping
+        // at `search_end`. Only inline space is skipped, so a later member's `?`
+        // on another line is never mistaken for this one.
         let mut cursor = search_start + close_paren_offset + 1;
-        while cursor < search_end && bytes[cursor].is_ascii_whitespace() {
+        while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
             cursor += 1;
         }
-        cursor < search_end && bytes[cursor] == b'?'
+        cursor < bytes.len() && bytes[cursor] == b'?'
     }
 
     pub(in crate::emitter) fn emit_method_declaration(&mut self, node: &Node) {

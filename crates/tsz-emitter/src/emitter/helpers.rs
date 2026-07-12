@@ -864,6 +864,13 @@ impl<'a> Printer<'a> {
         });
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
+        // Reserve the enclosing parameter list's object-rest temps in this fresh
+        // body scope so a hoisted body temp (optional-chaining, nullish) skips
+        // the parameter temp name (`_a`) rather than colliding with it. The
+        // reservation lives only in this scope and is dropped by `pop_temp_scope`.
+        for name in std::mem::take(&mut self.pending_object_rest_param_temps) {
+            self.generated_temp_names.insert(name);
+        }
     }
 
     /// Restore the previous temp naming state when leaving a function scope.

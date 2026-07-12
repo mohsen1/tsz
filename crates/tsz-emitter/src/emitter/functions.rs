@@ -637,6 +637,7 @@ impl<'a> Printer<'a> {
 
         // Clear any previous pending prologue entries
         self.pending_param_prologue.clear();
+        self.pending_object_rest_param_temps.clear();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
@@ -963,6 +964,10 @@ impl<'a> Printer<'a> {
             }
         }
         self.namespace_exported_names = prev_namespace_exported_names;
+        // Hand the allocated object-rest parameter temps to the body's fresh
+        // temp scope (see `push_temp_scope`) so a hoisted body temp does not
+        // reuse the parameter temp name.
+        self.pending_object_rest_param_temps = object_rest_temp_names;
 
         // NOTE: Do NOT emit trailing comments here. Comments after the last
         // parameter (e.g., `p3:any // OK`) appear on the same source line but

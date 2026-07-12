@@ -744,6 +744,13 @@ pub struct Printer<'a> {
     /// Temp names that must not be reused by nested temp scopes.
     pub(crate) reserved_nested_temp_names: FxHashSet<String>,
 
+    /// Object-rest parameter temp names (`_a` for `function f({ a, ...r })`)
+    /// allocated while emitting the parameter list, to be reserved in the
+    /// function body's fresh temp scope so a body temp (optional-chaining,
+    /// nullish) does not collide with the parameter temp. Populated by
+    /// `emit_function_parameters_js` and consumed by the next `push_temp_scope`.
+    pub(crate) pending_object_rest_param_temps: Vec<String>,
+
     /// Source-file class static temp reservations, in top-level statement order.
     pub(crate) file_level_class_temp_reservation_plan: Vec<(NodeIndex, usize)>,
 
