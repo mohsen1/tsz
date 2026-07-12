@@ -2,6 +2,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 
 // =============================================================================
@@ -279,6 +280,43 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Whether `idx` is the source-first `super(...)` call inside its
+    /// enclosing constructor (tsc's `findFirstSuperCall` anchor).
+    fn is_first_super_call_in_constructor(&self, idx: NodeIndex) -> bool {
+        let Some(ctor_idx) = self.enclosing_constructor_node(idx) else {
+            return true;
+        };
+        let Some(my_pos) = self.ctx.arena.get(idx).map(|n| n.pos) else {
+            return true;
+        };
+        let mut stack = vec![ctor_idx];
+        let mut first_pos = u32::MAX;
+        while let Some(cur) = stack.pop() {
+            if let Some(node) = self.ctx.arena.get(cur) {
+                if node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
+                    && let Some(call) = self.ctx.arena.get_call_expr(node)
+                    && self
+                        .ctx
+                        .arena
+                        .get(call.expression)
+                        .is_some_and(|e| e.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16)
+                {
+                    first_pos = first_pos.min(node.pos);
+                }
+                // Nested functions/classes get their own super analysis.
+                if cur != ctor_idx
+                    && (node.is_function_expression_or_arrow()
+                        || node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
+                        || node.kind == tsz_parser::parser::syntax_kind_ext::FUNCTION_DECLARATION)
+                {
+                    continue;
+                }
+            }
+            stack.extend(self.ctx.arena.get_children(cur));
+        }
+        first_pos == u32::MAX || my_pos <= first_pos
     }
 
     fn is_super_call_root_level_statement_in_constructor(&self, idx: NodeIndex) -> bool {
@@ -974,8 +1012,14 @@ impl<'a> CheckerState<'a> {
             let diagnostic_node = self.enclosing_constructor_node(idx).unwrap_or(idx);
 
             if !self.is_super_call_root_level_statement_in_constructor(idx) {
+                // tsc anchors at the FIRST super call in the body and emits
+                // exactly once per constructor
+                // (checkConstructorDeclaration: error(findFirstSuperCall(...))).
+                if !self.is_first_super_call_in_constructor(idx) {
+                    return;
+                }
                 self.error_at_node(
-                    diagnostic_node,
+                    idx,
                     diagnostic_messages::A_SUPER_CALL_MUST_BE_A_ROOT_LEVEL_STATEMENT_WITHIN_A_CONSTRUCTOR_OF_A_DERIVED_CL,
                     diagnostic_codes::A_SUPER_CALL_MUST_BE_A_ROOT_LEVEL_STATEMENT_WITHIN_A_CONSTRUCTOR_OF_A_DERIVED_CL,
                 );

@@ -59,8 +59,12 @@ impl<'a> CheckerState<'a> {
             .and_then(|n| self.ctx.arena.get_identifier(n))
             .is_some_and(|ident| ident.escaped_text == "meta");
 
+        // tsc emits the module-support diagnostic (TS1343/TS1470) for EVERY
+        // `import.<name>` meta-property, invalid names included
+        // ('import.metal' gets it alongside TS17012).
+        self.check_import_meta_module_support(idx);
+
         if is_meta {
-            self.check_import_meta_module_support(idx);
             // import.meta resolves to the global `ImportMeta` interface
             // (declared in lib.es2020.full.d.ts). Returning that type
             // enables TS2339 on unknown properties (`import.meta.blah`)

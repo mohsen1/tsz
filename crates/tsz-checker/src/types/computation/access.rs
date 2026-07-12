@@ -1281,10 +1281,11 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Under NUIA, value-level `any` indexes use the receiver index signature.
+        // Value-level `any` indexes resolve through applicable index infos in
+        // ALL modes (tsc findApplicableIndexInfo: numeric preferred, string
+        // fallback), not just under noUncheckedIndexedAccess.
         if result_type.is_none()
             && index_type == TypeId::ANY
-            && self.ctx.compiler_options.no_unchecked_indexed_access
             && let Some(any_result) = self.ctx.types.resolve_any_index_access(
                 object_type_for_access,
                 self.ctx.compiler_options.no_unchecked_indexed_access,
