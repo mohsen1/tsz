@@ -153,7 +153,7 @@ z.t = 2
 }
 
 #[test]
-fn test_jsdoc_extends_type_args_specialize_inherited_constructor() {
+fn test_jsdoc_extends_js_constructor_function_reports_ts2507_under_ts7() {
     let source = r#"
 /**
  * @template T
@@ -173,11 +173,15 @@ var errorNoArgs = new Chowder();
 var errorArgType = new Chowder(0);
 "#;
 
-    // TypeScript 7 dropped JS constructor-function inference, so `Soup` has no
-    // instance type: `class Chowder extends Soup` inherits nothing and the base
-    // constructor takes no parameters. `chowder.flavour` is therefore TS2339 and
-    // every `new Chowder(arg)` is a TS2554 arity error, matching tsc 7.
+    // TypeScript 7 dropped JS constructor-function inference, so `Soup` is a plain
+    // (generic) function and not a constructor function type: `class Chowder
+    // extends Soup` reports TS2507. With no instance type inherited, `chowder.flavour`
+    // is TS2339 and every `new Chowder(arg)` is a TS2554 arity error, matching tsc 7.
     let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2507),
+        "Expected TS2507 for a class extending a plain JS function under TypeScript 7, got: {diagnostics:?}"
+    );
     assert!(
         diagnostics
             .iter()
@@ -216,12 +220,15 @@ class Sql extends Wagon {
 "#;
 
     // TypeScript 7 dropped JS constructor-function inference: `Wagon` is an
-    // ordinary function, not a constructor, so `class Sql extends Wagon` has no
-    // base class shape to override against and the JSDoc-typed `load` method is
-    // no longer compared to a `Wagon.prototype.load` signature. tsc 7 emits no
-    // TS2416 here (it flags the non-constructor heritage instead), so the
-    // override-compatibility diagnostic must be absent.
+    // ordinary function, not a constructor, so `class Sql extends Wagon` reports
+    // TS2507. Because the base is not a valid constructor, there is no base class
+    // shape to override against, so the JSDoc-typed `load` method is not compared
+    // to `Wagon.prototype.load` and no TS2416 override diagnostic is emitted.
     let diagnostics = check_js(source);
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2507),
+        "Expected TS2507 for a class extending a plain JS function under TypeScript 7, got: {diagnostics:?}"
+    );
     assert!(
         !diagnostics.iter().any(|(code, _)| *code == 2416),
         "Expected no TS2416 override diagnostic once TS7 drops the JS constructor base, got: {diagnostics:?}"
@@ -380,7 +387,10 @@ Cp.prototype = {
 }
 
 #[test]
-fn test_js_class_can_extend_js_constructor_function() {
+fn test_js_class_cannot_extend_js_constructor_function_under_ts7() {
+    // TypeScript 7 dropped JS constructor-function inference, so a plain JS
+    // function is not a constructor function type: `class Sql extends Wagon`
+    // reports TS2507 (matching tsc 7.0.2 and the existing ESM-import behavior).
     let source = r#"
 /**
  * @constructor
@@ -401,14 +411,9 @@ class Sql extends Wagon {
 }
 "#;
     let diagnostics = check_js(source);
-    let ts2507: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2507)
-        .collect();
-    assert_eq!(
-        ts2507.len(),
-        0,
-        "Expected JS class extends JS constructor function to avoid TS2507, got: {diagnostics:?}"
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2507),
+        "Expected TS2507 for a class extending a plain JS function under TypeScript 7, got: {diagnostics:?}"
     );
 }
 

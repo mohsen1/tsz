@@ -752,7 +752,13 @@ impl<'a> CheckerState<'a> {
                                 // This ensures proper type resolution and consistent error handling.
                                 let should_check_constructor = lib_var_override.is_none()
                                     && symbol_type != TypeId::ERROR
-                                    && !self.symbol_has_js_constructor_evidence(sym_to_check)
+                                    // TypeScript 7 dropped JS constructor-function inference: a
+                                    // plain JS function used as an `extends` base no longer gains
+                                    // a synthesized construct signature, so it is not a valid
+                                    // constructor function type and must report TS2507 (matching
+                                    // the TS7009 classification at `new` sites and the existing
+                                    // ESM-import extends behavior). The former
+                                    // `!symbol_has_js_constructor_evidence` exemption is gone.
                                     // Skip for symbols with INTERFACE+VARIABLE but NOT CLASS
                                     // (built-in types like Array, Object, Promise) — the variable
                                     // side provides the constructor even though the interface type
