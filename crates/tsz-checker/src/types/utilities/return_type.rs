@@ -1507,10 +1507,7 @@ impl<'a> CheckerState<'a> {
         // Anonymous function expression / arrow: walk out through transparent
         // wrappers to the binding site and use its symbol.
         let mut current = function_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
             if parent_idx.is_none() {
                 break;
