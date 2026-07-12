@@ -170,22 +170,22 @@ var errorNoArgs = new Chowder();
 var errorArgType = new Chowder(0);
 "#;
 
+    // TypeScript 7 dropped JS constructor-function inference, so `Soup` has no
+    // instance type: `class Chowder extends Soup` inherits nothing and the base
+    // constructor takes no parameters. `chowder.flavour` is therefore TS2339 and
+    // every `new Chowder(arg)` is a TS2554 arity error, matching tsc 7.
     let diagnostics = check_js(source);
     assert!(
-        diagnostics.iter().all(|(code, _)| *code != 2339),
-        "Expected JSDoc @extends type arguments to specialize inherited instance properties, got: {diagnostics:?}"
+        diagnostics
+            .iter()
+            .any(|(code, message)| { *code == 2339 && message.contains("flavour") }),
+        "Expected TS7 to drop the inherited `flavour` property (TS2339), got: {diagnostics:?}"
     );
     assert!(
         diagnostics
             .iter()
-            .any(|(code, message)| { *code == 2554 && message.contains("Expected 1 arguments") }),
-        "Expected inherited constructor arity to require Soup's parameter, got: {diagnostics:?}"
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 2345 && message.contains("not assignable") }),
-        "Expected inherited constructor parameter type to use JSDoc @extends argument, got: {diagnostics:?}"
+            .any(|(code, message)| { *code == 2554 && message.contains("Expected 0 arguments") }),
+        "Expected TS7's parameterless synthesized constructor arity (TS2554), got: {diagnostics:?}"
     );
 }
 
@@ -212,12 +212,16 @@ class Sql extends Wagon {
 }
 "#;
 
+    // TypeScript 7 dropped JS constructor-function inference: `Wagon` is an
+    // ordinary function, not a constructor, so `class Sql extends Wagon` has no
+    // base class shape to override against and the JSDoc-typed `load` method is
+    // no longer compared to a `Wagon.prototype.load` signature. tsc 7 emits no
+    // TS2416 here (it flags the non-constructor heritage instead), so the
+    // override-compatibility diagnostic must be absent.
     let diagnostics = check_js(source);
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 2416 && message.contains("Property 'load'") }),
-        "Expected TS2416 for incompatible JSDoc-typed method override, got: {diagnostics:?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2416),
+        "Expected no TS2416 override diagnostic once TS7 drops the JS constructor base, got: {diagnostics:?}"
     );
 }
 
