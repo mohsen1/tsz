@@ -1374,12 +1374,14 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-                if self.is_js_expando_object_assignment(
-                    idx,
-                    access.expression,
-                    object_type_for_access,
-                    property_name,
-                ) && !checked_js_write_has_non_expando_global_type
+                if !commonjs_named_props_disallowed
+                    && self.is_js_expando_object_assignment(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                    )
+                    && !checked_js_write_has_non_expando_global_type
                 {
                     return TypeId::ANY;
                 }

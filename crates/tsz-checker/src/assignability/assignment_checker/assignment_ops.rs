@@ -770,7 +770,15 @@ impl<'a> CheckerState<'a> {
             // `assignmentToVoidZero1` expects TS2322 on `exports.x = void 0` once later
             // writes establish that `x` is `1`. Nested assignment chains should also
             // stay checked so each step can report the concrete mismatch.
-            if !has_explicit_jsdoc_left_type
+            //
+            // TS7: when a bare `module.exports = X` is mixed with sibling property
+            // exports (TS2309), the siblings are not declarations — resolve them as
+            // ordinary assignments so a missing member on `X` surfaces TS2339.
+            let merge_suppressed = self
+                .resolve_js_export_surface(self.ctx.current_file_idx)
+                .suppresses_expando_merge();
+            if !merge_suppressed
+                && !has_explicit_jsdoc_left_type
                 && !is_nested_assignment
                 && !rhs_is_assignment_expression
             {

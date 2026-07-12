@@ -659,15 +659,21 @@ impl<'a> CheckerState<'a> {
 
         let commonjs_named_props_disallowed = self.is_js_file()
             && self.is_current_file_commonjs_export_base(access.expression)
-            && self
-                .resolve_js_export_surface(self.ctx.current_file_idx)
-                .direct_export_type
-                .is_some_and(|direct_export_type| {
-                    !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
-                        self.ctx.types,
-                        direct_export_type,
-                    )
-                });
+            && {
+                let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
+                // TS7: `module.exports = X` mixed with sibling property exports
+                // keeps the module type as exactly `X` (the siblings are illegal,
+                // TS2309, not expando members). Resolve `module.exports.p` /
+                // `exports.p` against `X` so missing members surface TS2339
+                // instead of being answered from the sibling assignments.
+                surface.suppresses_expando_merge()
+                    || surface.direct_export_type.is_some_and(|direct_export_type| {
+                        !crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                            self.ctx.types,
+                            direct_export_type,
+                        )
+                    })
+            };
 
         let is_this_access = self.js_object_expr_is_this_or_alias(access.expression);
         let static_member_name = self
@@ -804,12 +810,16 @@ impl<'a> CheckerState<'a> {
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
         {
             let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
-            let can_add_named_props = surface.direct_export_type.is_none_or(|direct_export_type| {
-                crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
-                    self.ctx.types,
-                    direct_export_type,
-                )
-            });
+            // TS7: under merge suppression the sibling `module.exports.p = ...`
+            // writes are not exports; resolve the write target against the
+            // direct-export type so a missing member surfaces TS2339.
+            let can_add_named_props = !surface.suppresses_expando_merge()
+                && surface.direct_export_type.is_none_or(|direct_export_type| {
+                    crate::query_boundaries::js_exports::commonjs_direct_export_supports_named_props(
+                        self.ctx.types,
+                        direct_export_type,
+                    )
+                });
             if can_add_named_props {
                 if self
                     .current_file_commonjs_direct_write_rhs(idx)
@@ -838,7 +848,9 @@ impl<'a> CheckerState<'a> {
                 self.current_file_commonjs_export_member_name(access.expression)
         {
             let surface = self.resolve_js_export_surface(self.ctx.current_file_idx);
-            if let Some(base_type) = surface.lookup_named_export(&base_export_name, self.ctx.types)
+            if !surface.suppresses_expando_merge()
+                && let Some(base_type) =
+                    surface.lookup_named_export(&base_export_name, self.ctx.types)
                 && (crate::query_boundaries::common::is_object_like_type(self.ctx.types, base_type)
                     || crate::query_boundaries::common::callable_shape_for_type(
                         self.ctx.types,

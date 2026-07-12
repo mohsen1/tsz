@@ -929,13 +929,19 @@ takesNumber(mod1.bothAfter);
         "./mod1",
     );
 
+    // TS7: `module.exports = A` mixed with `module.exports.bothAfter = ...`
+    // writes is an illegal export-assignment combination; the module type is
+    // exactly `A` (whose `justExport`/`bothBefore`/`bothAfter` statics are
+    // numbers), and the string writes to `module.exports.*` are errors rather
+    // than being merged into a `number | string` union. So the require()
+    // consumer sees plain numbers and `takesNumber(...)` produces no TS2345.
     let ts2345: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2345)
         .collect();
     assert!(
-        ts2345.len() >= 2,
-        "Expected JS require() consumer to see overlapping CommonJS exports as non-number-only, got: {diagnostics:#?}"
+        ts2345.is_empty(),
+        "Expected no TS2345: the overlapping props resolve to `A`'s number statics, not a union, got: {ts2345:#?}"
     );
 }
 
@@ -965,13 +971,19 @@ takesNumber(mod1.bothAfter);
         "./mod1",
     );
 
+    // TS7: `module.exports = { justExport, bothBefore, bothAfter }` mixed with
+    // `module.exports.bothAfter = "string"` / `.justProperty = "string"` writes
+    // is an illegal export-assignment combination; the module type is exactly
+    // the object literal (number-valued props), and the later string writes are
+    // errors rather than being merged into a union. So the require() consumer
+    // sees plain numbers and `takesNumber(...)` produces no TS2345.
     let ts2345: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2345)
         .collect();
     assert!(
-        ts2345.len() >= 2,
-        "Expected object-literal CommonJS overlap to stay union-typed for JS require() consumers, got: {diagnostics:#?}"
+        ts2345.is_empty(),
+        "Expected no TS2345: the overlapping props resolve to the object literal's number values, not a union, got: {ts2345:#?}"
     );
 }
 

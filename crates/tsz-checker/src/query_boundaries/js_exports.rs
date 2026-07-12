@@ -653,6 +653,7 @@ pub(crate) fn current_file_commonjs_namespace_type(
         prototype_members: surface.prototype_members,
         has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
         has_augmented_named_exports: surface.has_augmented_named_exports || has_named_props,
+        direct_export_reads_exports: surface.direct_export_reads_exports,
     }
     .to_type_id_with_display_name(checker, Some(display_name.clone()))
     .unwrap_or_else(|| {
@@ -748,6 +749,13 @@ pub struct JsExportSurface {
     /// with `namespace_module_names` (display as `typeof import("mod")`)
     /// or left as the bare literal shape (`{ a: number; }`), matching tsc.
     pub has_augmented_named_exports: bool,
+
+    /// Whether the bare `module.exports = X` reads from the `exports`/
+    /// `module.exports` object itself (e.g. `module.exports = exports.default`).
+    /// Such self-references are circular in tsc, which resolves the module to
+    /// `any` (TS7022) and emits no member errors, so TS7 merge suppression must
+    /// not apply.
+    pub direct_export_reads_exports: bool,
 }
 
 impl JsExportSurface {
@@ -886,6 +894,7 @@ impl JsExportSurface {
             prototype_members: Vec::new(),
             has_commonjs_exports: false,
             has_augmented_named_exports: false,
+            direct_export_reads_exports: false,
         }
     }
 
@@ -919,6 +928,40 @@ impl JsExportSurface {
         self.lookup_named_export(name, types).is_some()
     }
 
+    /// TS7: a bare `module.exports = X` combined with sibling property exports
+    /// (`module.exports.p = ...` / `exports.p = ...`) is an illegal mix that
+    /// tsc reports as TS2309. In that case the module's type is exactly `X`;
+    /// the siblings are NOT folded in as expando members (so accessing them
+    /// surfaces TS2339), and the type is not tagged as a `typeof import("mod")`
+    /// namespace.
+    /// TS7: a bare `module.exports = X` combined with sibling property exports
+    /// is an illegal mix that tsc reports as TS2309. This condition drives only
+    /// the diagnostic — it holds even for the circular
+    /// `module.exports = exports.default` self-reference (which tsc still flags).
+    pub(crate) const fn has_commonjs_export_assignment_conflict(&self) -> bool {
+        self.direct_export_type.is_some() && self.has_augmented_named_exports
+    }
+
+    /// Whether the sibling property exports must NOT be folded into the direct
+    /// export's type — the module type is exactly `X`, so member accesses of the
+    /// siblings surface TS2339. This is the assignment conflict minus the
+    /// circular self-reference case, which tsc resolves to `any` (no member
+    /// errors).
+    pub(crate) const fn suppresses_expando_merge(&self) -> bool {
+        self.has_commonjs_export_assignment_conflict() && !self.direct_export_reads_exports
+    }
+
+    /// Whether the synthesized export type is namespace-like — displayed as
+    /// `typeof import("mod")` rather than the bare shape of a single
+    /// `module.exports = X`. False once TS7 merge suppression applies, since
+    /// the type is then exactly `X`.
+    pub(crate) const fn is_namespace_like(&self) -> bool {
+        !self.suppresses_expando_merge()
+            && (self.direct_export_type.is_none()
+                || self.has_augmented_named_exports
+                || !self.prototype_members.is_empty())
+    }
+
     /// Build the final TypeId for this export surface.
     /// Merges direct export type with named exports into a single type.
     pub fn to_type_id(&self, checker: &mut CheckerState<'_>) -> Option<TypeId> {
@@ -940,6 +983,10 @@ impl JsExportSurface {
         };
 
         match (self.direct_export_type, namespace_type) {
+            // TS7: keep the module type as exactly `X` when the bare
+            // `module.exports = X` is mixed with sibling property exports —
+            // the siblings are illegal (TS2309), not expando members.
+            (Some(dt), Some(_)) if self.suppresses_expando_merge() => Some(dt),
             (Some(dt), Some(ns)) => Some(
                 self.merge_named_exports_into_direct_export_type(checker, dt)
                     .unwrap_or_else(|| factory.intersection2(dt, ns)),
@@ -968,9 +1015,7 @@ impl JsExportSurface {
         // literal's own properties. A file that exports a single object
         // literal (`module.exports = { a: 0 }`) keeps the raw `{ a: number; }`
         // shape in diagnostics; tsc shows the literal, not `typeof import("mod")`.
-        let synth_is_namespace_like = self.direct_export_type.is_none()
-            || self.has_augmented_named_exports
-            || !self.prototype_members.is_empty();
+        let synth_is_namespace_like = self.is_namespace_like();
         if let Some(name) = display_name
             && synth_is_namespace_like
             && !self.named_exports.is_empty()
@@ -1030,6 +1075,95 @@ impl<'a> CheckerState<'a> {
         }
 
         last
+    }
+
+    /// The `module.exports` / `exports` target node of the file's last bare
+    /// `module.exports = X` assignment (including `var y = module.exports = X`).
+    /// Used to anchor the TS2309 diagnostic when the module also has sibling
+    /// property exports (TS7).
+    pub(crate) fn last_direct_module_export_assignment_lhs_for_file(
+        &self,
+        target_file_idx: usize,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let source_file = target_arena.source_files.first()?;
+        let mut last = None;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            let lhs = if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+            {
+                target_arena
+                    .get_expression_statement(stmt_node)
+                    .and_then(|stmt| {
+                        self.direct_commonjs_module_export_assignment_lhs(
+                            target_arena,
+                            stmt.expression,
+                        )
+                    })
+            } else if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                self.direct_commonjs_module_export_lhs_from_variable_statement(
+                    target_arena,
+                    stmt_idx,
+                )
+            } else {
+                None
+            };
+
+            if let Some(lhs) = lhs {
+                last = Some(lhs);
+            }
+        }
+
+        last
+    }
+
+    /// Whether `expr_idx` reads from the CommonJS `exports` / `module.exports`
+    /// object — a bare `exports` identifier, a `module.exports` access, or any
+    /// property/element access chain rooted at one of those (e.g.
+    /// `exports.default`, `exports["default"]`, `module.exports.foo`).
+    fn commonjs_expression_roots_at_exports(
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let idx = arena.skip_parenthesized(expr_idx);
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "exports");
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            let Some(access) = arena.get_access_expr(node) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let base = arena.skip_parenthesized(access.expression);
+                let is_module = arena
+                    .get_identifier_at(base)
+                    .is_some_and(|ident| ident.escaped_text == "module");
+                let is_exports = arena
+                    .get_identifier_at(access.name_or_argument)
+                    .is_some_and(|ident| ident.escaped_text == "exports");
+                if is_module && is_exports {
+                    return true;
+                }
+            }
+            return Self::commonjs_expression_roots_at_exports(arena, access.expression);
+        }
+
+        false
     }
 
     fn direct_module_export_object_literal_seed_props(
@@ -1291,9 +1425,7 @@ impl<'a> CheckerState<'a> {
         // A file that just does `module.exports = { … }` (no augmentation, no
         // prototype members) gets the bare literal type in diagnostics, not
         // `typeof import("mod")`.
-        let synth_is_namespace_like = surface.direct_export_type.is_none()
-            || surface.has_augmented_named_exports
-            || !surface.prototype_members.is_empty();
+        let synth_is_namespace_like = surface.is_namespace_like();
         if synth_is_namespace_like
             && let Some(specifier) = self.ctx.module_specifiers.get(&(target_file_idx as u32))
         {
@@ -1331,6 +1463,14 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_display(rhs_type)
             })
             .filter(|&rhs_type| rhs_type != TypeId::UNDEFINED);
+
+        // Record whether the bare `module.exports = X` reads from `exports`/
+        // `module.exports` itself (e.g. `module.exports = exports.default`).
+        // Such self-references are circular in tsc (resolved to `any`), so TS7
+        // merge suppression must be skipped for them.
+        surface.direct_export_reads_exports = last_direct_export.is_some_and(|(_, rhs_expr)| {
+            Self::commonjs_expression_roots_at_exports(&target_arena, rhs_expr)
+        });
 
         // 2. Seed named exports from a direct object-like export, then collect later
         // property exports (`exports.foo = ...`, `module.exports.foo = ...`) that
@@ -1429,6 +1569,36 @@ impl<'a> CheckerState<'a> {
                     self.direct_commonjs_module_export_assignment_rhs(arena, decl.initializer)
                 {
                     return Some(found_rhs);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// The `module.exports` / `exports` target node of a bare CommonJS export
+    /// assignment nested in a `var y = module.exports = X` initializer.
+    fn direct_commonjs_module_export_lhs_from_variable_statement(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        stmt_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<tsz_parser::parser::NodeIndex> {
+        let stmt_node = arena.get(stmt_idx)?;
+        let var_stmt = arena.get_variable(stmt_node)?;
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let decl_list_node = arena.get(decl_list_idx)?;
+            let decl_list = arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = arena.get(decl_idx)?;
+                let decl = arena.get_variable_declaration(decl_node)?;
+                if decl.initializer.is_none() {
+                    continue;
+                }
+                if let Some(found_lhs) =
+                    self.direct_commonjs_module_export_assignment_lhs(arena, decl.initializer)
+                {
+                    return Some(found_lhs);
                 }
             }
         }

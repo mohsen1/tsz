@@ -118,6 +118,35 @@ impl<'a> CheckerState<'a> {
             .is_none_or(|named| !named.elements.nodes.is_empty())
     }
 
+    /// TS7: emit TS2309 for a JavaScript CommonJS module that mixes a bare
+    /// `module.exports = X` export assignment with sibling property exports
+    /// (`module.exports.p = ...` / `exports.p = ...`). tsc classifies the bare
+    /// assignment as an `export=` and the siblings as other exported elements,
+    /// which is illegal. The `.ts` `export =` statement path in
+    /// [`Self::check_export_assignment`] never sees this because JS
+    /// `module.exports = X` is a binary expression, not an `EXPORT_ASSIGNMENT`
+    /// node; the surface computed by `resolve_js_export_surface` is the JS
+    /// analogue of "export assignment + other exports".
+    pub(crate) fn check_js_commonjs_export_assignment_conflict(&mut self) {
+        use crate::diagnostics::diagnostic_codes;
+
+        if !self.is_js_file() {
+            return;
+        }
+        let file_idx = self.ctx.current_file_idx;
+        let surface = self.resolve_js_export_surface(file_idx);
+        if !surface.has_commonjs_export_assignment_conflict() {
+            return;
+        }
+        if let Some(lhs) = self.last_direct_module_export_assignment_lhs_for_file(file_idx) {
+            self.error_at_node(
+                lhs,
+                "An export assignment cannot be used in a module with other exported elements.",
+                diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_MODULE_WITH_OTHER_EXPORTED_ELEMENTS,
+            );
+        }
+    }
+
     /// Check for export assignment conflicts with other exported elements.
     ///
     /// Validates that:
