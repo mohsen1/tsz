@@ -153,8 +153,8 @@ const x: Status = s;
     assert!(
         ts2322
             .message_text
-            .contains(r#""active" | "inactive" | "draft""#),
-        "Source type must display in tsc order. Got: {}",
+            .contains(r#""active" | "draft" | "inactive""#),
+        "Source type must display in tsc 7 order. Got: {}",
         ts2322.message_text
     );
     assert!(
@@ -179,13 +179,13 @@ const x: Target = s;
         .find(|d| d.code == 2322)
         .unwrap_or_else(|| panic!("Expected TS2322, got: {diags:?}"));
     assert!(
-        ts2322.message_text.contains(r#"1 | "a""#),
-        "Source type must display mixed literal union in tsc order. Got: {}",
+        ts2322.message_text.contains(r#""a" | 1"#),
+        "Source type must display mixed literal union in tsc 7 order. Got: {}",
         ts2322.message_text
     );
     assert!(
-        !ts2322.message_text.contains(r#""a" | 1"#),
-        "Source type must not preserve mixed literal declaration order. Got: {}",
+        !ts2322.message_text.contains(r#"1 | "a""#),
+        "Source type must display mixed literal union in tsc 7 order (string before number here). Got: {}",
         ts2322.message_text
     );
 }

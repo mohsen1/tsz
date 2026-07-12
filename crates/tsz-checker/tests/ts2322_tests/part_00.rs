@@ -503,7 +503,7 @@ const _oc: ObjConstAType = 2;
 }
 
 #[test]
-fn test_ts2322_type_parameter_union_display_preserves_declaration_order() {
+fn test_ts2322_type_parameter_union_display_uses_tsc7_order() {
     let diagnostics = get_all_diagnostics(
         r#"
 function diamondTop<Top>() {
@@ -525,9 +525,11 @@ function diamondTop<Top>() {
         })
         .expect("expected TS2322 diagnostic for top = middle assignment");
 
+    // TypeScript 7 orders the union by its member ranks rather than source
+    // declaration order: `Top | T | U` renders as `T | Top | U`.
     assert!(
-        message.contains("Type 'Top | T | U' is not assignable to type 'Top'."),
-        "expected declaration-order union display, got: {message}"
+        message.contains("Type 'T | Top | U' is not assignable to type 'Top'."),
+        "expected tsc 7 union display order, got: {message}"
     );
 }
 

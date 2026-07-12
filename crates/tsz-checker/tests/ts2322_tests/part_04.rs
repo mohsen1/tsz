@@ -1685,8 +1685,8 @@ let x: "red" | "green" | "blue" = c;
         .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
         .unwrap_or_else(|| panic!("expected a type mismatch diagnostic, got none"));
     assert!(
-        msg.contains("\"red\" | \"green\" | \"blue\""),
-        "plain string literal union target should use full literal union form, got: {msg}"
+        msg.contains("\"blue\" | \"green\" | \"red\""),
+        "plain string literal union target should use full literal union form in tsc 7 order, got: {msg}"
     );
 }
 

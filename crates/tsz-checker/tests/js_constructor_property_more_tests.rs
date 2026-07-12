@@ -88,9 +88,12 @@ A.prototype = {
     );
 }
 
-/// Generic constructor function with @template: instance properties get instantiated types
+/// TypeScript 7 dropped generic (`@template`) JS constructor-function inference:
+/// the function is an ordinary function, so `this` is implicitly `any` and
+/// `new Zet(1)` reports TS7009. The resulting `any` instance means `z.u = false`
+/// no longer produces TS2322.
 #[test]
-fn test_generic_constructor_function_template_instantiation() {
+fn test_generic_constructor_function_template_is_not_instantiated_under_ts7() {
     let source = r#"
 /**
  * @param {T} t
@@ -106,20 +109,20 @@ z.t = 2
 z.u = false
 "#;
     let diagnostics = check_js(source);
-    // z.u = false should produce TS2322: boolean not assignable to number
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
     assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected exactly 1 TS2322 for 'z.u = false', got: {diagnostics:?}"
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference in the generic function, got: {diagnostics:?}"
     );
-    assert!(
-        ts2322[0].1.contains("boolean"),
-        "Expected error about boolean, got: {}",
-        ts2322[0].1
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new Zet(1)` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2322),
+        0,
+        "Expected no TS2322 because the instance is `any`, got: {diagnostics:?}"
     );
 }
 
@@ -226,7 +229,7 @@ class Sql extends Wagon {
 }
 
 #[test]
-fn test_generic_constructor_function_template_self_alias_instantiation() {
+fn test_generic_constructor_function_template_self_alias_is_not_instantiated_under_ts7() {
     let source = r#"
 /**
  * @param {T} t
@@ -243,22 +246,23 @@ z.t = 2
 z.u = false
 "#;
     let diagnostics = check_js(source);
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
-    assert!(
-        ts2339.is_empty(),
-        "Expected generic self-alias constructor properties to stay visible, got: {diagnostics:?}"
+    // TypeScript 7: `var self = this` binds an implicitly-`any` `this` (TS2683),
+    // `new Zet(1)` reports TS7009, and the `any` instance keeps `z.u = false`
+    // free of TS2322 while the alias stays `any` (no TS2339).
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        1,
+        "Expected TS2683 for `var self = this`, got: {diagnostics:?}"
     );
     assert_eq!(
-        ts2322.len(),
+        count_code(&diagnostics, 7009),
         1,
-        "Expected exactly 1 TS2322 for 'z.u = false' through self-alias generic constructor, got: {diagnostics:?}"
+        "Expected TS7009 for `new Zet(1)` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2322) + count_code(&diagnostics, 2339),
+        0,
+        "Expected no TS2322/TS2339 on the `any` self-alias instance, got: {diagnostics:?}"
     );
 }
 
@@ -409,7 +413,7 @@ class Sql extends Wagon {
 }
 
 #[test]
-fn test_plain_js_function_constructor_is_constructable_and_types_this_properties() {
+fn test_plain_js_function_constructor_is_not_constructable_under_ts7() {
     let source = r#"
 function A() {
     this.unknown = null;
@@ -420,19 +424,31 @@ a.unknown = 1;
 a.empty;
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
-        .collect();
+    // TypeScript 7 dropped JS constructor-function inference: `this` is implicitly
+    // `any` (TS2683 per reference) and `new A()` lacks a construct signature
+    // (TS7009). The resulting `any` instance means later member accesses do not error.
     assert_eq!(
-        relevant.len(),
-        0,
-        "Expected plain JS function constructors to avoid TS2322/TS2683/TS7009/TS2339 on instance properties, got: {diagnostics:?}"
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference in the plain JS function, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new A()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    let instance_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339))
+        .collect();
+    assert!(
+        instance_errors.is_empty(),
+        "Expected the resulting `any` instance to avoid TS2322/TS2339, got: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_plain_js_function_constructor_initializers_widen_like_js() {
+fn test_plain_js_function_constructor_initializers_are_not_declared_under_ts7() {
     let source = r#"
 function A() {
     this.unknown = null;
@@ -445,27 +461,32 @@ a.unknowable = "ok";
 a.empty;
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2322 | 2683 | 7009 | 2339))
-        .collect();
+    // TypeScript 7 no longer synthesizes instance members from `this.x =`
+    // initializers: each `this` reference is implicitly `any` (TS2683) and
+    // `new A()` reports TS7009, leaving the `any` instance clean of TS2322/TS2339.
     assert_eq!(
-        relevant.len(),
-        0,
-        "Expected JS constructor null/undefined/[] initializers to widen for instance properties, got: {diagnostics:?}"
+        count_code(&diagnostics, 2683),
+        3,
+        "Expected TS2683 for each `this` initializer in the plain JS function, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new A()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    let instance_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| matches!(*code, 2322 | 2339))
+        .collect();
+    assert!(
+        instance_errors.is_empty(),
+        "Expected the resulting `any` instance to avoid TS2322/TS2339, got: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_plain_js_function_constructor_void_zero_initializer_does_not_declare_property() {
+fn test_plain_js_function_constructor_void_zero_initializer_is_not_constructable_under_ts7() {
     let source = r#"
-exports.j = 1;
-exports.k = void 0;
-var o = {};
-o.x = 1;
-o.y = void 0;
-o.x + o.y;
-
 function C() {
     this.p = 1;
     this.q = void 0;
@@ -474,21 +495,28 @@ var c = new C();
 c.p + c.q;
 "#;
     let diagnostics = check_js(source);
-    let q_missing: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, msg)| {
-            *code == 2339 && msg.contains("Property 'q' does not exist on type 'C'.")
-        })
-        .collect();
+    // TypeScript 7: `this.p`/`this.q` in the plain function are implicitly `any`
+    // (TS2683) and `new C()` reports TS7009, so no instance property `q` is
+    // declared and the `any` instance keeps `c.p + c.q` free of TS2339.
     assert_eq!(
-        q_missing.len(),
+        count_code(&diagnostics, 2683),
         2,
-        "Expected TS2339 for both void-zero constructor assignment and later property access, got: {diagnostics:?}"
+        "Expected TS2683 for each `this` initializer, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new C()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2339),
+        0,
+        "Expected no TS2339 on the `any` instance, got: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_plain_js_function_constructor_provisional_initializers_emit_ts7008_in_check_js() {
+fn test_plain_js_function_constructor_initializers_report_ts2683_not_ts7008_under_ts7() {
     let source = r#"
 function A() {
     this.unknown = null;
@@ -505,28 +533,18 @@ function A() {
             ..CheckerOptions::default()
         },
     );
-    let ts7008_messages: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 7008)
-        .map(|(_, msg)| msg.as_str())
-        .collect();
-    assert!(
-        ts7008_messages
-            .iter()
-            .any(|msg| msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Expected TS7008 for JS null-initialized constructor property, got: {diagnostics:?}"
+    // TypeScript 7 does not synthesize instance members, so there is no member to
+    // carry an implicit-any obligation (no TS7008). Each `this` initializer is
+    // implicitly `any` and reports TS2683 instead.
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        3,
+        "Expected TS2683 for each `this` initializer, got: {diagnostics:?}"
     );
-    assert!(
-        ts7008_messages
-            .iter()
-            .any(|msg| msg.contains("Member 'unknowable' implicitly has an 'any' type.")),
-        "Expected TS7008 for JS undefined-initialized constructor property, got: {diagnostics:?}"
-    );
-    assert!(
-        ts7008_messages
-            .iter()
-            .any(|msg| msg.contains("Member 'empty' implicitly has an 'any[]' type.")),
-        "Expected TS7008 for JS empty-array constructor property, got: {diagnostics:?}"
+    assert_eq!(
+        count_code(&diagnostics, 7008),
+        0,
+        "Expected no TS7008 because no instance member is declared under TypeScript 7, got: {diagnostics:?}"
     );
 }
 
@@ -689,7 +707,7 @@ Installer.prototype.second = function () {
 }
 
 #[test]
-fn test_js_function_constructor_with_factory_guard_is_constructable() {
+fn test_js_function_constructor_with_factory_guard_is_not_constructable_under_ts7() {
     let source = r#"
 /** @param {number} x */
 function A(x) {
@@ -702,48 +720,55 @@ var j = new A(2);
 j.x;
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339))
-        .collect();
+    // TypeScript 7: the factory guard does not rescue the plain function. Both
+    // `this` references are implicitly `any` (TS2683) and both `new A(...)`
+    // sites report TS7009; the `any` instance keeps `j.x` free of TS2339.
     assert_eq!(
-        relevant.len(),
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        2,
+        "Expected TS7009 for each `new A(...)` site, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2339),
         0,
-        "Expected JS constructor with factory guard to avoid TS2683/TS7009/TS2339, got: {diagnostics:?}"
+        "Expected no TS2339 on the `any` instance, got: {diagnostics:?}"
     );
 }
 
 #[test]
-fn test_variable_assigned_js_constructor_with_prototype_object_types_this_members() {
+fn test_variable_assigned_js_constructor_is_not_constructable_under_ts7() {
+    // TypeScript 7: a `@constructor`-tagged function-expression variable is a
+    // plain function. Its `this` references are implicitly `any` (TS2683) and
+    // `new Multimap()` reports TS7009; the `any` instance keeps `mm._map` clean.
     let source = r#"
 /** @constructor */
 var Multimap = function() {
     this._map = {};
     this._map;
 };
-Multimap.prototype = {
-    /** @param {number} n */
-    set: function(n) {
-        this._map;
-    },
-    get() {
-        this._map;
-    }
-};
 var mm = new Multimap();
 mm._map;
-mm.set(1);
-mm.get();
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2683 | 7009 | 2339 | 7006))
-        .collect();
     assert_eq!(
-        relevant.len(),
+        count_code(&diagnostics, 2683),
+        2,
+        "Expected TS2683 for each `this` reference, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new Multimap()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2339),
         0,
-        "Expected variable-assigned JS constructor with prototype object to avoid TS2683/TS7009/TS2339/TS7006, got: {diagnostics:?}"
+        "Expected no TS2339 on the `any` instance, got: {diagnostics:?}"
     );
 }
 
@@ -1109,11 +1134,10 @@ class MyClass {
     );
 }
 
-/// Prototype element-access symbol-keyed property should emit TS7053.
-/// TSC treats `Ctor.prototype[sym] = val` as "currently unsupported" late-bound
-/// assignment declarations and does NOT expose the property on the instance type.
+/// TypeScript 7: `Ctor` is a plain function, so `new Ctor()` reports TS7009 and
+/// `inst` is `any` -- element access `inst[_sym]` on `any` does not report TS7053.
 #[test]
-fn test_plain_function_constructor_prototype_symbol_key_emits_ts7053() {
+fn test_plain_function_constructor_prototype_symbol_key_is_not_constructable_under_ts7() {
     let source = r#"
 const _sym = Symbol("_sym");
 function Ctor() {}
@@ -1122,14 +1146,15 @@ const inst = new Ctor();
 inst[_sym];
 "#;
     let diagnostics = check_js(source);
-    let ts7053: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 7053)
-        .collect();
     assert_eq!(
-        ts7053.len(),
+        count_code(&diagnostics, 7009),
         1,
-        "Expected TS7053 for prototype symbol-keyed element-access, got: {diagnostics:?}"
+        "Expected TS7009 for `new Ctor()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7053),
+        0,
+        "Expected no TS7053 because `inst` is `any`, got: {diagnostics:?}"
     );
 }
 
@@ -1159,10 +1184,11 @@ bz.y = undefined;
     );
 }
 
-/// Prototype element-access expandos (F.prototype[sym] = val) should NOT suppress TS7053.
-/// TSC treats these as "currently unsupported" late-bound assignment declarations.
+/// TypeScript 7: `F` is a plain function, so `new F()` reports TS7009 and the
+/// resulting `any` instance makes prototype element-access reads (`inst[key]`)
+/// free of TS7053, for both string- and symbol-keyed expandos.
 #[test]
-fn test_prototype_element_access_expando_emits_ts7053() {
+fn test_prototype_element_access_expando_is_not_constructable_under_ts7() {
     // Test 1: string key via const variable
     let source_str = r#"
 const _str = "my-fake-sym";
@@ -1172,11 +1198,15 @@ const inst = new F();
 const _y = inst[_str];
 "#;
     let diag_str = check_js(source_str);
-    let ts7053_str: Vec<_> = diag_str.iter().filter(|(c, _)| *c == 7053).collect();
     assert_eq!(
-        ts7053_str.len(),
+        count_code(&diag_str, 7009),
         1,
-        "Expected TS7053 for prototype string-keyed element-access expando read, got: {diag_str:?}"
+        "Expected TS7009 for `new F()` under TypeScript 7, got: {diag_str:?}"
+    );
+    assert_eq!(
+        count_code(&diag_str, 7053),
+        0,
+        "Expected no TS7053 on the `any` instance for a string-keyed expando read, got: {diag_str:?}"
     );
 
     // Test 2: symbol key
@@ -1188,11 +1218,15 @@ const inst = new F();
 const _z = inst[_sym];
 "#;
     let diag_sym = check_js(source_sym);
-    let ts7053_sym: Vec<_> = diag_sym.iter().filter(|(c, _)| *c == 7053).collect();
     assert_eq!(
-        ts7053_sym.len(),
+        count_code(&diag_sym, 7009),
         1,
-        "Expected TS7053 for prototype symbol-keyed element-access expando read, got: {diag_sym:?}"
+        "Expected TS7009 for `new F()` under TypeScript 7, got: {diag_sym:?}"
+    );
+    assert_eq!(
+        count_code(&diag_sym, 7053),
+        0,
+        "Expected no TS7053 on the `any` instance for a symbol-keyed expando read, got: {diag_sym:?}"
     );
 }
 
@@ -1249,7 +1283,7 @@ Installer.prototype.loadArgMetadata = function(next) {
 }
 
 #[test]
-fn test_js_prototype_method_arrow_adds_instance_properties() {
+fn test_js_prototype_method_arrow_does_not_add_instance_properties_under_ts7() {
     let source = r#"
 function Installer() {
     this.args = 0;
@@ -1263,14 +1297,24 @@ var i = new Installer();
 i.newProperty = i.args;
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2339 | 18048 | 7009))
-        .collect();
+    // TypeScript 7: the plain function is not a constructor, so `new Installer()`
+    // reports TS7009 and no arrow-contributed instance properties exist. The
+    // constructor `this` is implicitly `any` (TS2683) and the untyped
+    // prototype-method parameters report TS7006.
     assert_eq!(
-        relevant.len(),
-        0,
-        "Expected prototype-method arrows to contribute instance properties, got: {diagnostics:?}"
+        count_code(&diagnostics, 7009),
+        1,
+        "Expected TS7009 for `new Installer()` under TypeScript 7, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        1,
+        "Expected TS2683 for the constructor `this`, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 7006),
+        2,
+        "Expected TS7006 for the untyped `next` and `args` parameters, got: {diagnostics:?}"
     );
 }
 
@@ -1369,10 +1413,11 @@ function Point(value) {
 }
 
 #[test]
-fn test_fresh_widening_initializers_still_emit_ts7008_alongside_borrowed_any() {
-    // The borrowed-any suppression must not leak into the fresh-widening cases:
-    // null / undefined / empty-array initializers still owe a TS7008, while a
-    // sibling member borrowing an implicit-any param does not.
+fn test_plain_js_function_this_initializers_report_ts2683_not_ts7008_under_ts7() {
+    // TypeScript 7 no longer synthesizes instance members from `this.x =`
+    // initializers, so none of null / undefined / empty-array / borrowed-param
+    // owe a TS7008. The implicit-any parameter still reports TS7006 and each
+    // `this` reference reports TS2683.
     let source = r#"
 function Mixed(param) {
     this.borrowed = param;
@@ -1390,15 +1435,18 @@ function Mixed(param) {
             ..CheckerOptions::default()
         },
     );
-    let ts7008 = ts_codes(&diagnostics, 7008);
-    assert!(
-        ts7008.iter().any(|m| m.contains("Member 'nulled'"))
-            && ts7008.iter().any(|m| m.contains("Member 'undef'"))
-            && ts7008.iter().any(|m| m.contains("Member 'arr'")),
-        "Expected fresh widening members to still report TS7008, got: {diagnostics:?}"
+    assert_eq!(
+        ts_codes(&diagnostics, 7006).len(),
+        1,
+        "Expected TS7006 for the implicit-any parameter, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        count_code(&diagnostics, 2683),
+        4,
+        "Expected TS2683 for each `this` initializer, got: {diagnostics:?}"
     );
     assert!(
-        ts7008.iter().all(|m| !m.contains("Member 'borrowed'")),
-        "Expected the member borrowing an implicit-any param to not report TS7008, got: {diagnostics:?}"
+        ts_codes(&diagnostics, 7008).is_empty(),
+        "Expected no TS7008 because no instance member is declared under TypeScript 7, got: {diagnostics:?}"
     );
 }

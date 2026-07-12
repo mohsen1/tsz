@@ -776,10 +776,17 @@ function toString() {
         "Expected checkJs `function toString()` to report TS2394 against the \
          lib global overload set. Actual diagnostics: {diagnostics:#?}"
     );
+    // TypeScript 7 dropped JS constructor-function inference: `this` is implicitly
+    // `any` (TS2683), so `this.yadda` no longer reports TS2339.
     assert!(
-        diagnostics.iter().any(|d| d.code == 2339),
-        "Expected checkJs `function toString()` to preserve TS2339 for an \
-         unknown `this` property. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|d| d.code == 2683),
+        "Expected checkJs `function toString()` to report TS2683 for its implicit \
+         `any` `this`. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2339),
+        "Expected no TS2339 for `this.yadda` on the implicit `any` `this` under \
+         TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1024,7 +1031,7 @@ export let shim: typeof import("./foo2") = {
 }
 
 #[test]
-fn test_define_property_prototype_descriptor_setter_is_contextualized() {
+fn test_define_property_prototype_descriptor_on_js_constructor_is_not_constructable_under_ts7() {
     let diagnostics = compile_and_get_diagnostics_named_with_lib_and_options(
         "mod1.js",
         r#"
@@ -1063,40 +1070,37 @@ m1.setonlyAccessor = 0;
         },
     );
 
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
-    let ts7006: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 7006)
-        .collect();
-    let ts2540: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2540)
-        .collect();
-    let has_rw_setter_mismatch = diagnostics.iter().any(|(code, message)| {
-        *code == 2322
-            && message.contains("string")
-            && message.contains("number")
-            && message.contains("not assignable")
-    });
-
+    // TypeScript 7 dropped JS constructor-function inference: `Person` is a plain
+    // function, so `new Person("Name")` reports TS7009 and the instance is `any`.
+    // No prototype/defineProperty members are synthesized, so none of the
+    // instance member writes are checked -- no TS2540 (readonly) and no TS2322
+    // (rw-accessor setter mismatch) fire, and the `any` instance keeps the reads
+    // free of TS2339. The descriptor object-literal setters stay contextually
+    // typed by `PropertyDescriptor`, so no TS7006 either.
     assert!(
-        ts2339.is_empty(),
-        "Expected prototype defineProperty members to appear on constructor instances. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new Person(...)` under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        ts7006.is_empty(),
-        "Expected paired descriptor setter methods to be contextually typed. Actual diagnostics: {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2339),
+        "Expected no TS2339 on the `any` instance. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        !ts2540.is_empty(),
-        "Expected readonly defineProperty descriptors to stay readonly. Actual diagnostics: {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 7006),
+        "Expected descriptor setter methods to stay contextually typed (no TS7006). Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        has_rw_setter_mismatch,
-        "Expected rwAccessors setter writes to be checked against the getter's number type. Actual diagnostics: {diagnostics:#?}"
+        !diagnostics.iter().any(|(code, _)| *code == 2540),
+        "Expected no TS2540 because no readonly descriptor members are synthesized under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("string")
+                && message.contains("number")
+                && message.contains("not assignable")
+        }),
+        "Expected no rw-accessor setter mismatch because the instance is `any` under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
