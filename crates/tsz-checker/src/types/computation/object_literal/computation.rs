@@ -1393,6 +1393,9 @@ impl<'a> CheckerState<'a> {
             }
             // Method shorthand: { foo() {} }
             else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
+                // TS1015/TS1016: parameter grammar runs for object-literal
+                // methods like any other function-like signature.
+                self.check_parameter_ordering(&method.parameters, Some(elem_idx));
                 // Always type-check computed property name expressions for methods,
                 // even when the identifier can be resolved as a literal name.
                 // E.g., `{ [e]() {} }` needs TS2304 for undeclared `e`.
