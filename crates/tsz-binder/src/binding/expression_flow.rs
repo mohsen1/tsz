@@ -778,6 +778,30 @@ impl BinderState {
             || is_js_class_root)
             && !is_prototype_element_access
         {
+            // A NESTED object chain (`a.b.…x.p = e`, `obj_key` has a dot)
+            // declares an expando in a TS file only when the chain's ROOT is
+            // itself a callable expando-host — i.e. carries FUNCTION. A bare
+            // namespace/value-module root declares nothing even though the
+            // deeper member is function-typed: `declare namespace app { function
+            // foo(): void }` with `app.foo.bar = e` is TS2339 at the write and
+            // at every later read, whereas a function-merged root
+            // (`function app(){}; namespace app { export function foo(){} }`)
+            // stays a valid host. Symmetrically a member that is itself an
+            // expando cannot carry a further expando (`foo.bar = {}; foo.bar.baz
+            // = e` is TS2339 on `baz`). JS files keep the permissive model.
+            if !is_js_like_source && obj_key.contains('.') {
+                if (symbol.flags & symbol_flags::FUNCTION) == 0 {
+                    return;
+                }
+                if let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
+                    && self
+                        .expando_properties
+                        .get(parent_key)
+                        .is_some_and(|members| members.contains(member_name))
+                {
+                    return;
+                }
+            }
             // Nearest function-like/module container, `NONE` for the source
             // file itself (blocks and loop/if heads are transparent).
             fn nearest_expando_container(arena: &NodeArena, start: NodeIndex) -> NodeIndex {

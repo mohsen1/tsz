@@ -1028,9 +1028,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Namespace member fallback: allow expando assignment for function-typed
-        // members accessed through namespace/value-module chains (e.g., `app.foo.bar = ...`).
-        // Binder tracks these expandos by chain key, so reads can observe them later.
+        // Namespace-member fallback (checked JS only): under the permissive JS
+        // model a namespace/value-module chain whose target member is
+        // function-typed hosts expando writes like `app.foo.bar = ...`, and the
+        // binder tracks them by chain key so reads observe them later. In TS
+        // files this is never a valid expando declaration — the primary symbol
+        // path above, with its same-container gate, is authoritative, so
+        // `app.foo.bar = e` against a namespace-declared function stays TS2339.
+        // The binder mirrors the split, declining to record TS nested chains.
         fn root_identifier(
             arena: &tsz_parser::parser::node::NodeArena,
             idx: NodeIndex,
@@ -1046,7 +1051,8 @@ impl<'a> CheckerState<'a> {
             None
         }
 
-        if object_type_is_function
+        if self.is_js_file()
+            && object_type_is_function
             && let Some(root_name) = root_identifier(self.ctx.arena, object_expr_idx)
             && let Some(root_sym) = self.ctx.binder.file_locals.get(&root_name)
             && let Some(root_symbol) = self.ctx.binder.get_symbol(root_sym)
