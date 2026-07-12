@@ -613,15 +613,15 @@ impl<'a> TypeLowering<'a> {
                 })
         };
 
-        // Process declarations in reverse order: TypeScript's interface merging
-        // rule puts later declarations' members first for overload resolution.
+        // Process declarations in FORWARD (lib-load / source) order: TypeScript 7
+        // preserves declaration order for merged-interface overload sets, so an
+        // earlier declaration's overloads render before a later declaration's
+        // (e.g. Array.toLocaleString renders the es5 `(): string` overload before
+        // the es2015.core `(locales, options): string` overload).
         let num_declarations = declarations.len();
-        for (rev_i, (decl_idx, decl_arena)) in declarations.iter().rev().enumerate() {
+        for (forward_decl_index, (decl_idx, decl_arena)) in declarations.iter().enumerate() {
             // Set the declaration pass base so that properties from earlier
             // (forward) declarations get lower declaration_order values.
-            // rev_i=0 processes the last declaration (forward index = num-1),
-            // rev_i=num-1 processes the first declaration (forward index = 0).
-            let forward_decl_index = num_declarations - 1 - rev_i;
             parts.set_declaration_pass(forward_decl_index);
 
             // Merged lib declarations share NodeIndex values across arenas. Even when the
@@ -1864,13 +1864,12 @@ impl<'a> TypeLowering<'a> {
         let saved_type_param_scopes = self.type_param_scopes.borrow().clone();
         *self.type_param_scopes.borrow_mut() = Vec::new();
 
-        // Process declarations in reverse order: TypeScript's interface merging
-        // rule puts later declarations' members first for overload resolution.
-        // E.g., PromiseConstructor from es2015.iterable (earlier) and es2015.promise
-        // (later) — the tuple overload from es2015.promise should be tried first.
-        let num_declarations = declarations.len();
-        for (rev_i, &decl_idx) in declarations.iter().rev().enumerate() {
-            let forward_decl_index = num_declarations - 1 - rev_i;
+        // Process declarations in FORWARD (source) order: TypeScript 7 preserves
+        // declaration order for merged-interface overload sets, so an earlier
+        // interface declaration's overloads render before a later one's. This
+        // matches the multi-arena path in
+        // `lower_merged_interface_declarations_with_symbol`.
+        for (forward_decl_index, &decl_idx) in declarations.iter().enumerate() {
             parts.set_declaration_pass(forward_decl_index);
 
             let Some(node) = self.arena.get(decl_idx) else {
