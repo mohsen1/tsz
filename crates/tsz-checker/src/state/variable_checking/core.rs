@@ -343,8 +343,22 @@ impl<'a> CheckerState<'a> {
                 && let Some(parent_node) = self.ctx.arena.get(ext.parent)
             {
                 use tsz_parser::parser::node_flags;
-                let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
-                if is_const && var_decl.initializer.is_none() {
+                // TS1155's message parameter follows the declaration kind:
+                // `await using` (Const|Using), `using`, or `const`.
+                let kind_flags = u32::from(parent_node.flags);
+                let ts1155_kind = if kind_flags & node_flags::AWAIT_USING == node_flags::AWAIT_USING
+                {
+                    Some("await using")
+                } else if kind_flags & node_flags::USING != 0 {
+                    Some("using")
+                } else if kind_flags & node_flags::CONST != 0 {
+                    Some("const")
+                } else {
+                    None
+                };
+                if let Some(kind_name) = ts1155_kind
+                    && var_decl.initializer.is_none()
+                {
                     // Skip for destructuring patterns - they get TS1182 from the parser
                     let is_binding_pattern =
                         if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
@@ -369,7 +383,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.error(
                             node.pos,
                             node.end - node.pos,
-                            "'const' declarations must be initialized.".to_string(),
+                            format!("'{kind_name}' declarations must be initialized."),
                             1155,
                         );
                     }

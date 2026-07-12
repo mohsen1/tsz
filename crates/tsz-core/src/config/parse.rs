@@ -416,9 +416,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         "nodenext" => "NodeNext",
                         _ => &mod_normalized,
                     };
+                    // There is no node18/node20 moduleResolution: the required
+                    // resolution arg is 'Node16' for every node1x module kind
+                    // and 'NodeNext' for nodenext.
+                    let required_resolution = match mod_normalized.as_str() {
+                        "nodenext" => "NodeNext",
+                        _ => "Node16",
+                    };
                     let msg = format_message(
                         diagnostic_messages::OPTION_MODULERESOLUTION_MUST_BE_SET_TO_OR_LEFT_UNSPECIFIED_WHEN_OPTION_MODULE_IS,
-                        &[mod_display, mod_display],
+                        &[required_resolution, mod_display],
                     );
                     diagnostics.push(Diagnostic::error(
                         file_path,
