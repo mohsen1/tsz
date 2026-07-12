@@ -407,15 +407,10 @@ impl<'a> CheckerState<'a> {
         // TS2300: Check for duplicate export assignments
         // TypeScript emits TS2300 on ALL export assignments if there are 2+
         // tsc points the error at the expression (e.g., `x` in `export = x;`),
-        // not at the `export` keyword.
-        // Skip in ambient declarations - they describe external module shapes, not
-        // actual conflicting runtime exports.
+        // not at the `export` keyword. Ambient contexts included: tsc 7.0.2
+        // reports each `export =` inside `declare module` bodies too.
         if export_assignment_indices.len() > 1 {
             for &export_idx in &export_assignment_indices {
-                // Skip ambient declarations
-                if self.is_ambient_declaration(export_idx) {
-                    continue;
-                }
                 let error_node = self
                     .ctx
                     .arena
@@ -439,7 +434,6 @@ impl<'a> CheckerState<'a> {
             && export_assignment_indices.len() == 1
             && !is_preserve
         {
-            self.check_export_assignment_target_member_duplicates(statements, export_idx);
             self.error_at_node(
                 export_idx,
                 "An export assignment cannot be used in a module with other exported elements.",

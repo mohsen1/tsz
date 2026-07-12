@@ -466,15 +466,36 @@ impl<'a> CheckerState<'a> {
                     // Check if spread argument is iterable, emit TS2488 if not
                     self.check_spread_iterability(spread_type, spread_expression);
 
-                    // A scalar `any`/`error` spread contributes an unknown number
-                    // of `any` arguments that tsc accepts against any parameter
-                    // list, so neither TS2556 nor an arity diagnostic fires.
-                    // Contribute a single `any` argument and stop: it is assignable
-                    // to whatever parameter sits at this slot, and the spread
-                    // element already relaxes the minimum-arity check. (An `any[]`
-                    // spread is different: its array-ness still overflows a non-rest
-                    // parameter, so TS2556 is correct there.) See #14746.
+                    // A scalar `any`/`error` spread contributes a single `any`
+                    // argument for type-checking purposes so no TS2554/TS2555
+                    // arity error arises. Positional legality stays
+                    // type-independent (tsc's `hasCorrectArity`): landing on a
+                    // fixed, required parameter position still gets TS2556 —
+                    // tsc 7.0.2 and 6.0.3 both reject `f(...anyVal)` against
+                    // required non-rest parameters.
                     if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
+                        let at_rest_position = if let Some(callable_type) =
+                            callable_ctx.callable_type
+                        {
+                            let ctx =
+                                ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                            ctx.allows_non_tuple_spread_position(effective_index)
+                        } else {
+                            // No callable type (e.g. constructor resolution):
+                            // probe a large index — only a rest parameter
+                            // resolves it, mirroring the array-spread branch.
+                            expected_for_index(usize::MAX / 2, expanded_count).is_some()
+                        };
+                        if !at_rest_position
+                            && !self.spread_callee_infers_params_from_arguments(
+                                arg_idx,
+                                effective_index,
+                            )
+                            && !emitted_ts2556
+                        {
+                            self.error_spread_must_be_tuple_or_rest_at(arg_idx);
+                            emitted_ts2556 = true;
+                        }
                         arg_types.push(spread_type);
                         effective_index += 1;
                         continue;

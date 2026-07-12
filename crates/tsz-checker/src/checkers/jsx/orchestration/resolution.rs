@@ -205,8 +205,8 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
-            // tsc emits this unconditionally (regardless of noImplicitAny) when JSX.IntrinsicElements is absent.
-            // The word "implicitly" in the message refers to the missing JSX infrastructure, not the noImplicitAny flag.
+            // tsc 7.0.2 emits this only under effective noImplicitAny (it is an implicit-any
+            // diagnostic; `--noImplicitAny false` silences it).
             //
             // Suppression rules (matching tsc behaviour):
             // 1. ReactJsx/ReactJsxDev modes use jsxImportSource for element types; they do not rely on
@@ -220,7 +220,8 @@ impl<'a> CheckerState<'a> {
                 self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
             let recovered_adjacent_sibling =
                 self.file_has_same_line_adjacent_jsx_recovery_pattern();
-            if !suppress_for_import_source
+            if self.ctx.no_implicit_any()
+                && !suppress_for_import_source
                 && !file_has_any_parse_diag
                 && !recovered_adjacent_sibling
             {
@@ -950,7 +951,8 @@ impl<'a> CheckerState<'a> {
     /// Emit TS7026 for a JSX closing element if no `JSX.IntrinsicElements` exists.
     /// Covers the closing tag; opening tag is handled by `get_type_of_jsx_opening_element`.
     pub(crate) fn check_jsx_closing_element_for_implicit_any(&mut self, idx: NodeIndex) {
-        // TS7026 is emitted unconditionally (not gated on noImplicitAny) when JSX.IntrinsicElements is absent.
+        // TS7026 is an implicit-any diagnostic: tsc 7.0.2 emits it only under
+        // effective noImplicitAny when JSX.IntrinsicElements is absent.
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
         };
@@ -983,6 +985,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.has_parse_errors || !self.ctx.all_parse_error_positions.is_empty();
         let recovered_adjacent_sibling = self.file_has_same_line_adjacent_jsx_recovery_pattern();
         if is_intrinsic
+            && self.ctx.no_implicit_any()
             && self.get_intrinsic_elements_type().is_none()
             && !suppress_for_import_source
             && !file_has_any_parse_diag
