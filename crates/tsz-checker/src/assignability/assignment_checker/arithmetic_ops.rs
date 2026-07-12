@@ -107,6 +107,16 @@ impl<'a> CheckerState<'a> {
         let message = format!(
             "The '{op_str}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
         );
+        // tsc anchors TS2447 at the operator token.
+        if let Some((start, length)) = self.operator_token_span(node_idx, op_str) {
+            self.error_at_position(
+                start,
+                length,
+                &message,
+                diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+            );
+            return;
+        }
         self.error_at_node(
             node_idx,
             &message,
