@@ -31,6 +31,25 @@ pub(super) enum DuplicateDeclarationOrigin {
 }
 
 impl<'a> CheckerState<'a> {
+    /// TS2385 anchor: the overload's NAME token for methods, but the
+    /// declaration start including modifiers for constructors
+    /// (classConstructorOverloadsAccessibility anchors `private constructor`
+    /// at the modifier).
+    fn ts2385_anchor_span(&self, decl_idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(decl_idx)?;
+        if node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR {
+            let start = self
+                .ctx
+                .arena
+                .get_declaration_modifiers(node)
+                .and_then(|mods| mods.nodes.first().copied())
+                .and_then(|first_mod| self.ctx.arena.get(first_mod))
+                .map_or(node.pos, |mod_node| mod_node.pos);
+            return Some((start, node.end.saturating_sub(start)));
+        }
+        None
+    }
+
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
     /// Reports when variables, functions, classes, or other declarations
     /// have conflicting names within the same scope.
@@ -491,22 +510,23 @@ impl<'a> CheckerState<'a> {
                 if has_mismatch {
                     for &(decl_idx, access) in &access_infos {
                         if access != ref_access {
-                            // TSC anchors TS2385 at the start of the overload declaration
-                            // (including modifiers), not at the declaration name.
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                let start = self
-                                    .ctx
-                                    .arena
-                                    .get_declaration_modifiers(decl_node)
-                                    .and_then(|mods| mods.nodes.first().copied())
-                                    .and_then(|first_mod| self.ctx.arena.get(first_mod))
-                                    .map_or(decl_node.pos, |mod_node| mod_node.pos);
-                                let length = decl_node.end.saturating_sub(start);
+                            // tsc 7.0.2 anchors TS2385 at the overload's NAME
+                            // token for methods, but at the declaration start
+                            // (modifiers included) for constructors.
+                            if let Some((start, length)) = self.ts2385_anchor_span(decl_idx) {
                                 self.error(
                                     start,
                                     length,
                                     diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED.to_string(),
                                     diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                                );
+                            } else {
+                                let anchor =
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                                self.error_at_node_msg(
+                                    anchor,
+                                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_PUBLIC_PRIVATE_OR_PROTECTED,
+                                    &[],
                                 );
                             }
                         }

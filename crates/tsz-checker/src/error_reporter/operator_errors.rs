@@ -24,6 +24,29 @@ pub(crate) enum InvocationSignatureKind {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Span of the operator token inside a binary/compound-assignment
+    /// expression: tsc anchors TS2447 at the operator, not the whole
+    /// expression.
+    pub(crate) fn operator_token_span(
+        &self,
+        node_idx: NodeIndex,
+        op_str: &str,
+    ) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(node_idx)?;
+        let bin = self.ctx.arena.get_binary_expr(node)?;
+        let left_end = self.ctx.arena.get(bin.left)?.end;
+        let right_pos = self.ctx.arena.get(bin.right)?.pos;
+        let text = self
+            .ctx
+            .arena
+            .source_files
+            .first()?
+            .text
+            .get(left_end as usize..right_pos as usize)?;
+        let off = text.find(op_str)? as u32;
+        Some((left_end + off, op_str.len() as u32))
+    }
+
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
     pub fn error_not_constructable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
@@ -946,6 +969,19 @@ impl<'a> CheckerState<'a> {
                 } else {
                     "!=="
                 };
+                // tsc anchors TS2447 at the operator token.
+                if let Some((start, length)) = self.operator_token_span(node_idx, op) {
+                    let message = format!(
+                        "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
+                    );
+                    self.error_at_position(
+                        start,
+                        length,
+                        &message,
+                        diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+                    );
+                    return;
+                }
                 self.emit_render_request(
                     node_idx,
                     DiagnosticRenderRequest::simple_msg(
