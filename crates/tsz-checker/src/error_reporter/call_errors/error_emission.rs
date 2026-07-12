@@ -159,10 +159,35 @@ impl<'a> CheckerState<'a> {
         if self.try_elaborate_callback_body_diagnostics(idx, param_type) {
             return;
         }
-        // Run failure analysis to produce elaboration as related information,
-        // matching tsc's behavior of emitting TS2741/TS2739/TS2740 etc. as
-        // related diagnostics under the primary TS2345.
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
+
+        // tsc promotes a sole missing-required-property failure to the PRIMARY
+        // diagnostic at the argument node — TS2741 (one property), TS2739
+        // (2-5), TS2740 (more) replace the generic TS2345 head
+        // (`reportUnmatchedProperty` runs before the relation head message).
+        // The renderer owns the guard set (intersection targets,
+        // index-signature member compat, primitive/`object` sources keep the
+        // generic wording), so promote exactly when it selected the
+        // property-missing family.
+        if let Some(reason) = analysis.failure_reason.as_ref()
+            && matches!(
+                reason,
+                tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                    | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+            )
+            && self.missing_property_head_promotion_applies(arg_type, param_type)
+        {
+            let diag = self.render_failure_reason(reason, arg_type, param_type, idx, 0);
+            if matches!(
+                diag.code,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            ) {
+                self.ctx.push_diagnostic(diag);
+                return;
+            }
+        }
 
         // When the failure reason is NoCommonProperties (weak types with no
         // properties in common), tsc emits TS2559 directly instead of TS2345.

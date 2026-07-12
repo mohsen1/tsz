@@ -661,6 +661,34 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        // tsc promotes a sole missing-required-property failure to the PRIMARY
+        // diagnostic at the type-argument node — TS2741/TS2739/TS2740 replace
+        // the generic TS2344 head at the same position (constraints0:
+        // `Property 'a' is missing in type 'B' but required in type 'A'`).
+        // The renderer owns the guard set (intersections, index-signature
+        // compat, primitive sources keep the generic head), so promote exactly
+        // when it selected the property-missing family.
+        if self.missing_property_head_promotion_applies(type_arg, ready_constraint)
+            && let Some(reason) = self
+                .analyze_assignability_failure(type_arg, ready_constraint)
+                .failure_reason
+            && matches!(
+                reason,
+                tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                    | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
+            )
+        {
+            let diag = self.render_failure_reason(&reason, type_arg, display_constraint, idx, 0);
+            if matches!(
+                diag.code,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            ) {
+                self.ctx.push_diagnostic(diag);
+                return;
+            }
+        }
         self.error_at_node_msg(
             idx,
             diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,

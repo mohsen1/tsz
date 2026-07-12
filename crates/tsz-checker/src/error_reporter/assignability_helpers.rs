@@ -1295,4 +1295,128 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             ));
     }
+    /// Whether a top-level missing-property failure may be PROMOTED to the
+    /// primary diagnostic (TS2741/TS2739/TS2740) in place of a context head
+    /// (TS2345/TS2344/TS1360). Owns the `reportUnmatchedProperty`
+    /// preconditions the renderer does not: tuple targets fail through the
+    /// arity machinery in tsc (the generic head stays — `FooIterator` vs
+    /// `[any, ...any[]]` keeps TS2345), and error-poisoned sources (e.g. a
+    /// class whose heritage failed TS2507) never elaborate their members.
+    pub(crate) fn missing_property_head_promotion_applies(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::tuple_elements(self.ctx.types, target).is_none()
+            && !crate::query_boundaries::common::contains_error_type(self.ctx.types, source)
+            && !self.source_class_heritage_chain_errored(source)
+    }
+
+    /// True when `source` is a class-instance type whose declared `extends`
+    /// chain contains a base expression that failed constructor validation
+    /// (TS2507). tsc then reduces the source through its deepest resolvable
+    /// base, so the missing-property failure lands NESTED under the generic
+    /// relation head instead of being promoted (recursiveComplicatedClasses:
+    /// `Argument of type 'TypeSymbol' is not assignable ...` with the
+    /// missing-property line as a chain entry sourced at the base class).
+    fn source_class_heritage_chain_errored(&mut self, source: TypeId) -> bool {
+        use tsz_scanner::SyntaxKind;
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(source))
+        else {
+            return false;
+        };
+        let Some((sym_id, _)) = self.ctx.def_symbol_identity(def_id) else {
+            return false;
+        };
+        let mut current = Some(sym_id);
+        for _ in 0..16 {
+            let Some(sym_id) = current.take() else {
+                return false;
+            };
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+            let mut decl_idx = symbol.value_declaration;
+            let Some(mut decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            // `value_declaration` may point at the class NAME identifier;
+            // hop to the enclosing class declaration node in that case.
+            if self.ctx.arena.get_class(decl_node).is_none()
+                && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && ext.parent.is_some()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                decl_idx = ext.parent;
+                decl_node = parent_node;
+            }
+            let Some(class) = self.ctx.arena.get_class(decl_node) else {
+                return false;
+            };
+            let _ = decl_idx;
+            let Some(clauses) = &class.heritage_clauses else {
+                return false;
+            };
+            let mut next_base = None;
+            for &clause_idx in &clauses.nodes {
+                let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+                let Some(&type_idx) = heritage.types.nodes.first() else {
+                    continue;
+                };
+                let Some(type_node) = self.ctx.arena.get(type_idx) else {
+                    continue;
+                };
+                let expr_idx = self
+                    .ctx
+                    .arena
+                    .get_expr_type_args(type_node)
+                    .map_or(type_idx, |ewta| ewta.expression);
+                // Recompute constructor validity instead of sniffing for an
+                // already-emitted TS2507: statement order means the heritage
+                // check for a class declared after the failing expression has
+                // not run yet. Only READ the node-type cache — forcing a full
+                // expression check mid-render re-enters checking with flow
+                // side effects; fall back to the base symbol's declared type,
+                // which is the same lazy path the heritage check itself uses.
+                let base_type = self
+                    .ctx
+                    .node_types
+                    .get(&expr_idx.0)
+                    .copied()
+                    .or_else(|| {
+                        self.resolve_identifier_symbol(expr_idx)
+                            .map(|sym| self.get_type_of_symbol(sym))
+                    })
+                    .unwrap_or(TypeId::ERROR);
+                if base_type != TypeId::ERROR && base_type != TypeId::ANY {
+                    let evaluated = self.evaluate_type_for_assignability(base_type);
+                    // Strict constructor check matching tsc's isConstructorType
+                    // (and the heritage TS2507 rule): only construct signatures
+                    // count — a prototype property does not (SymbolConstructor
+                    // has `prototype: Symbol` but no construct signatures).
+                    let has_construct_sigs =
+                        crate::query_boundaries::class_type::construct_signatures_for_type(
+                            self.ctx.types,
+                            evaluated,
+                        )
+                        .is_some_and(|sigs| !sigs.is_empty());
+                    if !has_construct_sigs {
+                        return true;
+                    }
+                }
+                next_base = self.resolve_identifier_symbol(expr_idx);
+            }
+            current = next_base;
+        }
+        false
+    }
 }

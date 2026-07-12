@@ -79,23 +79,24 @@ impl<'a> CheckerState<'a> {
             &[&src_str, &tgt_str],
         );
 
-        if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
-            // tsc renders a `satisfies` failure through the *same* assignability
-            // elaboration `checkSatisfiesExpression` would produce for an
-            // assignment, with the `Type_0_does_not_satisfy_the_expected_type_1`
-            // head message layered on top. The only question is whether that head
-            // *replaces* `base_diag`'s top message or *wraps* it:
-            //
-            // * The generic "Type X is not assignable to type Y" (TS2322) says
-            //   nothing the satisfies head doesn't already say, so the head
-            //   replaces it in place and the deeper chain is preserved untouched.
-            // * Every other top-level code carries a *specific* failure the head
-            //   does not convey (e.g. TS2741 "Property 'c' is missing ...", which
-            //   tsc reports at top level for a plain assignment). The head is
-            //   prepended and that specific message is demoted into the chain.
-            //
-            // So the discriminator is simply "is the existing top message the
-            // generic relation?" — and TS2322 is the only code that is.
+        // tsc 7.0.2 renders a `satisfies` failure through the *same*
+        // assignability elaboration a plain assignment would build, and the
+        // property-missing family stays the TOP-LEVEL diagnostic — verified:
+        // `{} satisfies I1` gets TS2739/TS2741 at the `satisfies` keyword with
+        // no TS1360 anywhere. Only the generic relation head is replaced by
+        // the `does not satisfy` wording (e.g. a primitive source keeps
+        // TS1360). Other specific codes (inner property TS2322, TS2353) never
+        // reach this reporter; they surface from the elaboration path.
+        let is_missing_property_head = matches!(
+            base_diag.code,
+            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        ) && self
+            .missing_property_head_promotion_applies(source, target);
+        if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE
+            && !is_missing_property_head
+        {
             let top_is_generic_relation =
                 base_diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
             if !top_is_generic_relation {
