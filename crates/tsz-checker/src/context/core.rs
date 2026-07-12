@@ -1250,6 +1250,32 @@ impl<'a> CheckerContext<'a> {
             } else {
                 binder.module_exports.as_ref()
             };
+        // tsc consults ambient `declare module "x"` names only for
+        // NON-relative specifiers: a relative import ('./x') resolves to a
+        // file and never merges an ambient module's exports, even when the
+        // ambient name equals the './'-stripped specifier. The map keys both
+        // file names and ambient names, so the relative path must guard the
+        // stripped candidate against declared ambient modules (wildcard
+        // patterns below are unaffected — './logo.svg' still matches
+        // 'declare module "*.svg"').
+        let is_relative_specifier = module_key.starts_with("./")
+            || module_key.starts_with("../")
+            || module_key.starts_with(".\\")
+            || module_key.starts_with("..\\");
+        if is_relative_specifier {
+            if let Some(table) = map.get(module_key) {
+                return Some(table);
+            }
+            if let Some(stripped) = module_key
+                .strip_prefix("./")
+                .or_else(|| module_key.strip_prefix(".\\"))
+                && !self.declared_modules_contains(binder, stripped)
+                && let Some(table) = map.get(stripped)
+            {
+                return Some(table);
+            }
+            return self.lookup_wildcard_module_exports(module_key, map);
+        }
         if let Some(table) = Self::lookup_any_file_key(module_key, map) {
             return Some(table);
         }

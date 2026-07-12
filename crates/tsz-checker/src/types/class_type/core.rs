@@ -140,8 +140,7 @@ impl<'a> CheckerState<'a> {
 
         // Merge base class members. A detected cycle/forward reference performs
         // the resolution-set cleanup inline and short-circuits the whole call.
-        if let Some(early) =
-            self.class_instance_merge_base_members(class, class_idx, walk_state, &mut builder)
+        if let Some(early) = self.class_instance_merge_base_members(class, walk_state, &mut builder)
         {
             return early;
         }
