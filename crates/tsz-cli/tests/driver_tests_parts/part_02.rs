@@ -7,12 +7,10 @@ fn compile_import_equals_const_enum_only_elides_require() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es5",
             "module": "commonjs",
             "outDir": "dist",
             "noCheck": true,
-            "noLib": true,
-            "ignoreDeprecations": "6.0"
+            "noLib": true
           },
           "files": ["m.d.ts", "main.ts"]
         }"#,
@@ -55,12 +53,10 @@ fn compile_namespace_import_const_enum_only_elides_require() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es5",
             "module": "commonjs",
             "outDir": "dist",
             "noCheck": true,
-            "noLib": true,
-            "ignoreDeprecations": "6.0"
+            "noLib": true
           },
           "files": ["m.d.ts", "main.ts"]
         }"#,
@@ -100,12 +96,10 @@ fn compile_import_equals_const_enum_keeps_require_for_runtime_member() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es5",
             "module": "commonjs",
             "outDir": "dist",
             "noCheck": true,
-            "noLib": true,
-            "ignoreDeprecations": "6.0"
+            "noLib": true
           },
           "files": ["m.d.ts", "main.ts"]
         }"#,
