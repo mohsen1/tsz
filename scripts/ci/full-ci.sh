@@ -30,7 +30,7 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # that deficit when available so corpus-total drift does not force blind
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
-TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-11019}"
 # Optional accepted-regression list for temporary conformance runways. Keep this
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.

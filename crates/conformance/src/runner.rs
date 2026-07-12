@@ -411,7 +411,7 @@ impl Runner {
                                 }
                                 TestResult::Skipped(reason) => {
                                     stats.skipped.fetch_add(1, Ordering::SeqCst);
-                                    if verbose {
+                                    if print_test || verbose {
                                         writeln!(buf, "SKIP {} ({})", rel_path, reason).ok();
                                     }
                                 }
