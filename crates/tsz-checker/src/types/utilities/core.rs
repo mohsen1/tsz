@@ -548,7 +548,18 @@ impl<'a> CheckerState<'a> {
         // over array literals (`cond ? [1, 2, 3] : [4, 5]`) to `number[]`; the
         // plain literal-widening path would keep `(1 | 2 | 3)[] | (4 | 5)[]`,
         // whose later `.push` parameter contravariantly intersects to `never`.
-        crate::query_boundaries::widening::widen_type_for_mutable_binding(self.ctx.types, type_id)
+        let widened = crate::query_boundaries::widening::widen_type_for_mutable_binding(
+            self.ctx.types,
+            type_id,
+        );
+        if self.ctx.strict_null_checks() {
+            widened
+        } else {
+            // tsc widens null/undefined to `any` in inferred positions when
+            // strictNullChecks is off (`var x = null` types as any; fresh
+            // structure maps too: `[undefined, null]` → `[any, any]`).
+            crate::query_boundaries::widening::widen_nullish_to_any_deep(self.ctx.types, widened)
+        }
     }
 
     /// Widen only enum member types to their parent enum type.

@@ -1304,3 +1304,108 @@ pub fn apply_const_assertion(
 #[cfg(test)]
 #[path = "../../tests/widening_tests.rs"]
 mod tests;
+
+/// Non-strict (`strictNullChecks: false`) widening companion: tsc maps
+/// `null`/`undefined` to `any` in every INFERRED position
+/// (`nullWideningType`/`undefinedWideningType` widen to `anyType`). Applied
+/// AFTER ordinary widening at the inferred-position seams (variable/parameter
+/// initializers, return-type-from-body contributions), it rewrites nullish
+/// leaves inside fresh structure — union members, array/tuple elements, and
+/// fresh object-literal property types — without touching annotated types
+/// (those never route through initializer widening) or the widening memo.
+pub fn widen_nullish_to_any_deep(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    widen_nullish_to_any_deep_inner(db, type_id, 0)
+}
+
+fn widen_nullish_to_any_deep_inner(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+    depth: u8,
+) -> TypeId {
+    if depth > 8 {
+        return type_id;
+    }
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return TypeId::ANY;
+    }
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            // A union with a nullish member collapses to `any` only when the
+            // nullish members are ALL it has; otherwise each member maps.
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&m| widen_nullish_to_any_deep_inner(db, m, depth + 1))
+                .collect();
+            if mapped.iter().any(|&m| m == TypeId::ANY) {
+                return TypeId::ANY;
+            }
+            if mapped.as_slice() == &members[..] {
+                type_id
+            } else {
+                db.union(mapped)
+            }
+        }
+        Some(TypeData::Array(elem)) => {
+            let mapped = widen_nullish_to_any_deep_inner(db, elem, depth + 1);
+            if mapped == elem {
+                type_id
+            } else {
+                db.array(mapped)
+            }
+        }
+        Some(TypeData::Tuple(list_id)) => {
+            let elems = db.tuple_list(list_id);
+            let mut changed = false;
+            let mapped: Vec<crate::types::TupleElement> = elems
+                .iter()
+                .map(|e| {
+                    let new_ty = widen_nullish_to_any_deep_inner(db, e.type_id, depth + 1);
+                    if new_ty != e.type_id {
+                        changed = true;
+                    }
+                    let mut ne = e.clone();
+                    ne.type_id = new_ty;
+                    ne
+                })
+                .collect();
+            if changed { db.tuple(mapped) } else { type_id }
+        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            if !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                return type_id;
+            }
+            let mut changed = false;
+            let mut new_props = Vec::with_capacity(shape.properties.len());
+            for prop in &shape.properties {
+                let mapped = widen_nullish_to_any_deep_inner(db, prop.type_id, depth + 1);
+                let mapped_write = widen_nullish_to_any_deep_inner(db, prop.write_type, depth + 1);
+                if mapped != prop.type_id || mapped_write != prop.write_type {
+                    changed = true;
+                }
+                let mut np = prop.clone();
+                np.type_id = mapped;
+                np.write_type = mapped_write;
+                new_props.push(np);
+            }
+            if !changed {
+                return type_id;
+            }
+            if shape.string_index.is_some() || shape.number_index.is_some() {
+                let mut new_shape = (*shape).clone();
+                new_shape.properties = new_props;
+                db.object_with_index(new_shape)
+            } else {
+                db.object_with_flags_and_symbol(new_props, shape.flags, shape.symbol)
+            }
+        }
+        _ => type_id,
+    }
+}

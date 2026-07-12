@@ -33,6 +33,13 @@ pub(crate) fn apply_const_assertion(db: &dyn TypeDatabase, type_id: TypeId) -> T
     tsz_solver::operations::widening::apply_const_assertion(db, type_id)
 }
 
+/// Non-strict companion: map `null`/`undefined` to `any` in inferred
+/// positions after ordinary widening (tsc's nullWideningType→anyType under
+/// `strictNullChecks: false`).
+pub(crate) fn widen_nullish_to_any_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::operations::widening::widen_nullish_to_any_deep(db, type_id)
+}
+
 /// Widen a fresh `let`/`var` initializer type, recursing into union members.
 ///
 /// Like a plain `widen_type` but also widens fresh object/array constituents

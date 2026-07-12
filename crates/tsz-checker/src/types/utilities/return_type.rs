@@ -529,7 +529,17 @@ impl<'a> CheckerState<'a> {
             // The primitive-literal widener skips `TypeData::Enum`, so a fresh
             // enum-member return (`() => E.A`) must additionally widen to its
             // parent enum. No-op for the already-widened primitive/object result.
-            return self.widen_enum_member_type(widened);
+            let widened = self.widen_enum_member_type(widened);
+            if !self.ctx.strict_null_checks() {
+                // tsc widens null/undefined return contributions to `any`
+                // under strictNullChecks: false (`return null` infers
+                // `() => any`).
+                return crate::query_boundaries::widening::widen_nullish_to_any_deep(
+                    self.ctx.types,
+                    widened,
+                );
+            }
+            return widened;
         }
         type_id
     }

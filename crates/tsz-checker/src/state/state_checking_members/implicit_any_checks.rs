@@ -760,11 +760,28 @@ impl<'a> CheckerState<'a> {
                 return;
             }
         }
-        // Check if parameter has an initializer — any initializer (including null/undefined)
-        // provides a type for the parameter. tsc infers `null` or `undefined` as the type,
-        // so these do NOT trigger TS7006.
+        // An initializer provides a type for the parameter — except a bare
+        // null/undefined initializer under `strictNullChecks: false`, which
+        // widens to `any` and stays IMPLICITLY any (tsc reports TS7006 for
+        // `function f(a = null)` non-strict; under strict the type is the
+        // literal `null`/`undefined` and no TS7006 fires).
         if param.initializer.is_some() && implicit_type_hint.is_none() {
-            return;
+            let nullish_init = !self.ctx.strict_null_checks()
+                && self
+                    .ctx
+                    .arena
+                    .get(self.ctx.arena.skip_parenthesized(param.initializer))
+                    .is_some_and(|n| {
+                        n.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+                            || self
+                                .ctx
+                                .arena
+                                .get_identifier(n)
+                                .is_some_and(|id| id.escaped_text == "undefined")
+                    });
+            if !nullish_init {
+                return;
+            }
         }
 
         let reserved_word_param = self.ctx.arena.get(param.name).and_then(|name_node| {
