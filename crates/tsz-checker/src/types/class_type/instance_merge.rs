@@ -31,18 +31,17 @@ impl CheckerState<'_> {
     pub(super) fn class_instance_merge_base_members<'b>(
         &mut self,
         class: &'b tsz_parser::parser::node::ClassData,
-        class_idx: NodeIndex,
         walk_state: &mut ClassInstanceWalkState,
         b: &mut ClassInstanceBuilder<'b>,
     ) -> Option<TypeId> {
         let current_sym = b.current_sym;
         let did_insert_into_global_set = b.did_insert_into_global_set();
         // Merge base class instance properties (derived members take precedence).
-        // In JS files, an empty @augments/@extends tag overrides the structural
-        // extends clause — tsc does not merge base-class properties in that case.
-        let skip_heritage_merge =
-            self.ctx.is_js_file() && self.has_empty_jsdoc_augments_tag(class_idx);
-        if !skip_heritage_merge && let Some(ref heritage_clauses) = class.heritage_clauses {
+        // A malformed empty `@augments`/`@extends` tag reports TS8023+TS1003
+        // but does NOT override a syntactic `extends` clause — tsc still
+        // resolves the base class, so inherited JS this-properties stay
+        // visible on the derived class.
+        if let Some(ref heritage_clauses) = class.heritage_clauses {
             for &clause_idx in &heritage_clauses.nodes {
                 let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                     continue;
