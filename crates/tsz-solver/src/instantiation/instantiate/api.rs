@@ -115,6 +115,11 @@ fn can_skip_concrete_instantiation_inner(
                     can_skip_concrete_instantiation_inner(interner, this_type, visited)
                 })
                 && can_skip_concrete_instantiation_inner(interner, shape.return_type, visited)
+                && shape.type_predicate.is_none_or(|predicate| {
+                    predicate.type_id.is_none_or(|predicate_type| {
+                        can_skip_concrete_instantiation_inner(interner, predicate_type, visited)
+                    })
+                })
         }
         TypeData::Callable(shape_id) => {
             let shape = interner.callable_shape(shape_id);
