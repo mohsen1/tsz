@@ -17,6 +17,41 @@ const fn decorator_type_is_unchecked(t: TypeId) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// tsc anchors member/parameter decorator failures (TS1239/TS1240/TS1241)
+    /// at the decorator's EXPRESSION (one column after the `@`) for
+    /// type-mismatch and extra-argument failures, but at the whole DECORATOR
+    /// (spanning the `@`) when the failure is missing required arguments —
+    /// mirroring call-expression arity anchoring (decoratorOnClassProperty6
+    /// vs 7).
+    fn decorator_expression_anchor(&self, decorator_node: NodeIndex) -> NodeIndex {
+        self.ctx
+            .arena
+            .get(decorator_node)
+            .and_then(|n| self.ctx.arena.get_decorator(n))
+            .map(|d| d.expression)
+            .filter(|e| e.is_some())
+            .unwrap_or(decorator_node)
+    }
+
+    fn decorator_failure_anchor(
+        &self,
+        decorator_node: NodeIndex,
+        resolved: TypeId,
+        provided_args: usize,
+    ) -> NodeIndex {
+        // "Too few arguments" = every declared signature demands more
+        // parameters than the decorator protocol provides at this position.
+        let too_few_args = Self::decorator_signature_param_counts(self.ctx.types, resolved)
+            .is_some_and(|counts| {
+                !counts.is_empty() && counts.iter().all(|&count| count > provided_args)
+            });
+        if too_few_args {
+            decorator_node
+        } else {
+            self.decorator_expression_anchor(decorator_node)
+        }
+    }
+
     /// TS1240 for ES class-member decorators (TC39 stage 3).
     ///
     /// The runtime calling convention for the first argument varies by member kind:
@@ -76,7 +111,7 @@ impl<'a> CheckerState<'a> {
 
         if !matches!(result, CallResult::Success(_)) {
             self.error_at_node(
-                decorator_node,
+                self.decorator_failure_anchor(decorator_node, resolved, args.len()),
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
@@ -313,11 +348,11 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
         );
 
-        let return_type = match result {
-            CallResult::Success(return_type) => Some(return_type),
+        let return_type = match &result {
+            CallResult::Success(return_type) => Some(*return_type),
             _ => {
                 self.error_at_node(
-                    decorator_node,
+                    self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_METHOD_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 );
@@ -673,7 +708,7 @@ impl<'a> CheckerState<'a> {
             CallResult::Success(return_type) => Some(return_type),
             _ => {
                 self.error_at_node(
-                    decorator_node,
+                    self.decorator_failure_anchor(decorator_node, resolved, arg_types.len()),
                     diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                     diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PROPERTY_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 );
@@ -803,7 +838,7 @@ impl<'a> CheckerState<'a> {
 
         if !matches!(result, CallResult::Success(_)) {
             self.error_at_node(
-                decorator_node,
+                self.decorator_failure_anchor(decorator_node, resolved, 3),
                 diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
                 diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
             );
