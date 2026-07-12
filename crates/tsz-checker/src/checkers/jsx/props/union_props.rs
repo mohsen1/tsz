@@ -13,17 +13,10 @@ impl<'a> CheckerState<'a> {
         display_target: &str,
         provided_attrs: &[(String, TypeId)],
     ) {
-        let mut ordered_attrs: Vec<(String, TypeId)> = Vec::with_capacity(provided_attrs.len());
-        if let Some((_, children_type)) = provided_attrs.iter().find(|(name, _)| name == "children")
-        {
-            ordered_attrs.push(("children".to_string(), *children_type));
-        }
-        ordered_attrs.extend(
-            provided_attrs
-                .iter()
-                .filter(|(name, _)| name != "children")
-                .cloned(),
-        );
+        // tsc displays explicit attributes in source order with 'children'
+        // appended last (the synthesis pipeline already pushes it last); do
+        // not reorder.
+        let ordered_attrs: Vec<(String, TypeId)> = provided_attrs.to_vec();
 
         let properties: Vec<tsz_solver::PropertyInfo> = ordered_attrs
             .iter()
