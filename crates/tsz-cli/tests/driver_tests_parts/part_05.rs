@@ -8,7 +8,6 @@ fn compile_resolves_node_modules_types_versions_cli_overrides_env_and_tsconfig()
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "6.0"
           },
@@ -72,7 +71,6 @@ fn compile_resolves_node_modules_types_versions_invalid_override_falls_back() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -95,13 +93,16 @@ fn compile_resolves_node_modules_types_versions_invalid_override_falls_back() {
           }
         }"#,
     );
+    // Discarding the invalid version falls back to the pinned compiler
+    // version (currently 7.0.2), which selects the `>=7.0` branch; the
+    // intentionally-broken v7 file is the fallback witness.
     write_file(
         &base.join("node_modules/pkg/types/v7/feature/widget.d.ts"),
-        "export const widget = 1;",
+        "export const widget = ;",
     );
     write_file(
         &base.join("node_modules/pkg/types/v6/feature/widget.d.ts"),
-        "export const widget = ;",
+        "export const widget = 1;",
     );
 
     let mut args = default_args();
@@ -111,7 +112,7 @@ fn compile_resolves_node_modules_types_versions_invalid_override_falls_back() {
     assert!(!result.diagnostics.is_empty());
     assert!(result.diagnostics.iter().any(|diag| {
         diag.file
-            .contains("node_modules/pkg/types/v6/feature/widget.d.ts")
+            .contains("node_modules/pkg/types/v7/feature/widget.d.ts")
     }));
     assert!(!base.join("dist/src/index.js").is_file());
 }
@@ -126,7 +127,6 @@ fn compile_resolves_node_modules_types_versions_invalid_env_falls_back() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -149,13 +149,16 @@ fn compile_resolves_node_modules_types_versions_invalid_env_falls_back() {
           }
         }"#,
     );
+    // Discarding the invalid version falls back to the pinned compiler
+    // version (currently 7.0.2), which selects the `>=7.0` branch; the
+    // intentionally-broken v7 file is the fallback witness.
     write_file(
         &base.join("node_modules/pkg/types/v7/feature/widget.d.ts"),
-        "export const widget = 1;",
+        "export const widget = ;",
     );
     write_file(
         &base.join("node_modules/pkg/types/v6/feature/widget.d.ts"),
-        "export const widget = ;",
+        "export const widget = 1;",
     );
 
     let args = default_args();
@@ -166,7 +169,7 @@ fn compile_resolves_node_modules_types_versions_invalid_env_falls_back() {
     assert!(!result.diagnostics.is_empty());
     assert!(result.diagnostics.iter().any(|diag| {
         diag.file
-            .contains("node_modules/pkg/types/v6/feature/widget.d.ts")
+            .contains("node_modules/pkg/types/v7/feature/widget.d.ts")
     }));
     assert!(!base.join("dist/src/index.js").is_file());
 }
@@ -181,7 +184,6 @@ fn compile_resolves_node_modules_types_versions_invalid_tsconfig_falls_back() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "not-a-version"
           },
@@ -205,13 +207,16 @@ fn compile_resolves_node_modules_types_versions_invalid_tsconfig_falls_back() {
           }
         }"#,
     );
+    // Discarding the invalid version falls back to the pinned compiler
+    // version (currently 7.0.2), which selects the `>=7.0` branch; the
+    // intentionally-broken v7 file is the fallback witness.
     write_file(
         &base.join("node_modules/pkg/types/v7/feature/widget.d.ts"),
-        "export const widget = 1;",
+        "export const widget = ;",
     );
     write_file(
         &base.join("node_modules/pkg/types/v6/feature/widget.d.ts"),
-        "export const widget = ;",
+        "export const widget = 1;",
     );
 
     let args = default_args();
@@ -222,7 +227,7 @@ fn compile_resolves_node_modules_types_versions_invalid_tsconfig_falls_back() {
     assert!(!result.diagnostics.is_empty());
     assert!(result.diagnostics.iter().any(|diag| {
         diag.file
-            .contains("node_modules/pkg/types/v6/feature/widget.d.ts")
+            .contains("node_modules/pkg/types/v7/feature/widget.d.ts")
     }));
     assert!(!base.join("dist/src/index.js").is_file());
 }
@@ -237,7 +242,6 @@ fn compile_resolves_node_modules_types_versions_falls_back_to_wildcard() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1098,7 +1102,11 @@ export { pkg };
 }
 
 #[test]
-fn system_module_source_default_import_without_allow_synthetic_flag_uses_namespace_fallback() {
+// TS7 removed both `module: system` and the `allowSyntheticDefaultImports:
+// false` opt-out (TS5108 each), so the system-module namespace-fallback
+// behavior this test used to pin is unreachable: tsc 7.0.2 stops at the
+// removed-option config errors before checking sources.
+fn system_module_with_disabled_synthetic_defaults_reports_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1109,7 +1117,6 @@ fn system_module_source_default_import_without_allow_synthetic_flag_uses_namespa
             "target": "es2015",
             "module": "system",
             "allowSyntheticDefaultImports": false,
-            "ignoreDeprecations": "6.0",
             "strict": false,
             "noEmit": true
           },
@@ -1134,16 +1141,16 @@ export const value = new Namespace.Foo();
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
+        result.diagnostics.iter().any(|d| d.code == 5108),
+        "Expected TS5108 for the removed module=System option. Actual diagnostics: {:#?}",
+        result.diagnostics
+    );
+    assert!(
         !result
             .diagnostics
             .iter()
             .any(|diag| diag.code == diagnostic_codes::MODULE_HAS_NO_DEFAULT_EXPORT),
-        "Expected module=system source default import to avoid TS1192. Actual diagnostics: {:#?}",
-        result.diagnostics
-    );
-    assert!(
-        result.diagnostics.is_empty(),
-        "Expected no diagnostics once system deprecations are silenced. Actual diagnostics: {:#?}",
+        "Expected no TS1192 alongside the removed-option config errors. Actual diagnostics: {:#?}",
         result.diagnostics
     );
 }

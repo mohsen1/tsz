@@ -250,7 +250,10 @@ function globalThisCase(x: typeof globalThis, y: Window & typeof globalThis) {
 
 #[test]
 fn resolve_json_module_not_defaulted_for_node_resolution() {
-    for (module, module_resolution) in [("commonjs", "node10"), ("node16", "node16")] {
+    // TS7 removed `moduleResolution: node10` (TS5108), so only the node16
+    // resolution family still requires an explicit `resolveJsonModule` opt-in.
+    // (The TS7 default/bundler resolution resolves `.json` imports without it.)
+    for (module, module_resolution) in [("node16", "node16")] {
         let temp = TempDir::new().expect("temp dir");
         let base = &temp.path;
 
@@ -261,8 +264,7 @@ fn resolve_json_module_not_defaulted_for_node_resolution() {
                   "compilerOptions": {{
                     "noEmit": true,
                     "module": "{module}",
-                    "moduleResolution": "{module_resolution}",
-                    "ignoreDeprecations": "6.0"
+                    "moduleResolution": "{module_resolution}"
                   }},
                   "files": ["index.ts"]
                 }}"#
@@ -295,7 +297,7 @@ const value: number = data.value;
 }
 
 #[test]
-fn compile_default_always_strict_emits_prologue_and_false_suppresses() {
+fn compile_default_always_strict_emits_prologue_and_false_reports_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
     let source = r#"function f(this: void) {
@@ -325,24 +327,22 @@ console.log(f() === undefined);
         "default emit should start with a strict prologue.\nOutput:\n{js}"
     );
 
+    // TS7 removed the `alwaysStrict: false` opt-out: tsc 7.0.2 reports
+    // TS5108 ("Option 'alwaysStrict=false' has been removed") and no longer
+    // suppresses the strict prologue.
     let false_dir = base.join("false");
     write_file(
         &false_dir.join("tsconfig.json"),
-        r#"{"compilerOptions":{"target":"esnext","alwaysStrict":false,"ignoreDeprecations":"6.0","outDir":"out"},"files":["index.ts"]}"#,
+        r#"{"compilerOptions":{"target":"esnext","alwaysStrict":false,"outDir":"out"},"files":["index.ts"]}"#,
     );
     write_file(&false_dir.join("index.ts"), source);
 
     let args = default_args();
     let result = compile(&args, &false_dir).expect("alwaysStrict false compile should succeed");
     assert!(
-        result.diagnostics.is_empty(),
-        "alwaysStrict false compile should not diagnose: {:?}",
+        result.diagnostics.iter().any(|d| d.code == 5108),
+        "explicit alwaysStrict=false must report the TS5108 removed-option error, got: {:?}",
         result.diagnostics
-    );
-    let js = fs::read_to_string(false_dir.join("out/index.js")).expect("read false output");
-    assert!(
-        !js.starts_with("\"use strict\";\n"),
-        "explicit alwaysStrict=false should suppress the strict prologue.\nOutput:\n{js}"
     );
 }
 
@@ -683,7 +683,11 @@ interface Document {
 }
 
 #[test]
-fn compile_duplicate_amd_module_name_directives_reports_ts2458() {
+// TS7 removed `module: amd` (TS5108), which makes the duplicate
+// `amd-module` directive check (TS2458) unreachable from the CLI: tsc 7.0.2
+// reports no TS2458 for these directives under any surviving module kind and
+// only reports the removed-option error for `module: amd` configs.
+fn compile_duplicate_amd_module_name_directives_reports_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -716,8 +720,13 @@ export = Foo;
 
     let result = compile(&args, base).expect("compile should succeed");
     assert!(
-        result.diagnostics.iter().any(|d| d.code == 2458),
-        "Expected TS2458 for duplicate AMD module name directives, got: {:?}",
+        result.diagnostics.iter().any(|d| d.code == 5108),
+        "Expected TS5108 for the removed module=AMD option, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !result.diagnostics.iter().any(|d| d.code == 2458),
+        "TS2458 is unreachable in TS7 (module=AMD removed), got: {:?}",
         result.diagnostics
     );
 }
@@ -1236,7 +1245,10 @@ label;
 }
 
 #[test]
-fn compile_amd_dependency_comment_name_fixture_keeps_ts2792_under_ts5107() {
+// TS7 removed `module: amd`: the TS5107 deprecation this fixture used to pin
+// became the TS5108 removed-option error, and tsc 7.0.2 stops before source
+// checking, so the missing-module diagnostics (TS2307/TS2792) never surface.
+fn compile_amd_dependency_comment_name_fixture_reports_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
 
@@ -1281,25 +1293,21 @@ import "unaliasedModule2";
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
-    assert_eq!(
-        codes.iter().filter(|&&code| code == 5107).count(),
-        1,
-        "Expected one TS5107 deprecation diagnostic, got diagnostics: {:?}",
+    assert!(
+        codes.contains(&5108),
+        "Expected TS5108 for the removed module=AMD option, got diagnostics: {:?}",
         result.diagnostics
     );
-    // tsc only emits TS5107 here (no TS2307/TS2792). Under `module: amd`
-    // without `ignoreDeprecations`, the deprecation diagnostic is the
-    // user-visible signal and tsc suppresses the secondary missing-module
-    // diagnostic. See `ts2792_emitted_for_missing_import_under_module_amd`
-    // for the inverse case where `ignoreDeprecations: 6.0` re-enables TS2792.
+    // tsc 7.0.2 only reports the removed-option config errors here: the
+    // configuration is fatal, so no missing-module diagnostics surface.
     assert!(
         !codes.contains(&2307),
-        "Did not expect TS2307 under module: amd, got diagnostics: {:?}",
+        "Did not expect TS2307 alongside the removed module=AMD error, got diagnostics: {:?}",
         result.diagnostics
     );
     assert!(
         !codes.contains(&2792),
-        "Did not expect TS2792 under module: amd without ignoreDeprecations (TS5107 is the visible signal), got diagnostics: {:?}",
+        "Did not expect TS2792 alongside the removed module=AMD error, got diagnostics: {:?}",
         result.diagnostics
     );
 }

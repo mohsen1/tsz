@@ -460,9 +460,11 @@ fn ts7016_message_quotes_specifier_and_resolved_path() {
 }
 
 // ---------------------------------------------------------------------------
-// Issue #3077: AMD/System/Classic module/resolution modes still emit TS2792
-// for unresolved value imports. The deprecation diagnostic (TS5107) those
-// modes produce is additive — not a substitute for missing-module reporting.
+// Issue #3077 pinned TS2792 for unresolved value imports under the
+// AMD/System/Classic module/resolution modes. TS7 removed those modes
+// entirely: `ignoreDeprecations` no longer applies, tsc 7.0.2 reports the
+// TS5108 removed-option error, and the fatal configuration stops source
+// checking so no missing-module diagnostics surface.
 // ---------------------------------------------------------------------------
 
 /// Compile a one-file program importing a known-missing package under the
@@ -493,7 +495,7 @@ fn run_missing_import_under_options(
 }
 
 #[test]
-fn ts2792_emitted_for_missing_import_under_module_amd() {
+fn module_amd_reports_ts5108_removed_option_instead_of_ts2792() {
     let diagnostics = run_missing_import_under_options(
         r#"{
             "ignoreDeprecations": "6.0",
@@ -505,17 +507,17 @@ fn ts2792_emitted_for_missing_import_under_module_amd() {
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2792),
-        "expected TS2792 under module: amd, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+        codes.contains(&5108),
+        "expected TS5108 for the removed module=AMD option, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
     );
     assert!(
-        !codes.contains(&5107),
-        "ignoreDeprecations: 6.0 should silence TS5107, got codes: {codes:?}"
+        !codes.contains(&2792),
+        "removed-option config errors stop source checking, so no TS2792 must surface, got codes: {codes:?}"
     );
 }
 
 #[test]
-fn ts2792_emitted_for_missing_import_under_module_system() {
+fn module_system_reports_ts5108_removed_option_instead_of_ts2792() {
     let diagnostics = run_missing_import_under_options(
         r#"{
             "ignoreDeprecations": "6.0",
@@ -527,13 +529,17 @@ fn ts2792_emitted_for_missing_import_under_module_system() {
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2792),
-        "expected TS2792 under module: system, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+        codes.contains(&5108),
+        "expected TS5108 for the removed module=System option, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !codes.contains(&2792),
+        "removed-option config errors stop source checking, so no TS2792 must surface, got codes: {codes:?}"
     );
 }
 
 #[test]
-fn ts2792_emitted_for_missing_import_under_classic_resolution() {
+fn classic_resolution_reports_ts5108_removed_option_instead_of_ts2792() {
     let diagnostics = run_missing_import_under_options(
         r#"{
             "ignoreDeprecations": "6.0",
@@ -546,8 +552,12 @@ fn ts2792_emitted_for_missing_import_under_classic_resolution() {
     );
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2792),
-        "expected TS2792 under moduleResolution: classic, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+        codes.contains(&5108),
+        "expected TS5108 for the removed moduleResolution=Classic option, got codes: {codes:?}\ndiagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !codes.contains(&2792),
+        "removed-option config errors stop source checking, so no TS2792 must surface, got codes: {codes:?}"
     );
 }
 
@@ -713,10 +723,12 @@ fn ts5011_emitted_for_js_emit_only_out_dir_without_root_dir() {
     );
 }
 
-// tsc 6.0 also emits TS5011 for `outFile` bundle emit (no `outDir`/`rootDir`)
-// when the inferred common source directory is a subdirectory.
+// TS7 removed `outFile` (TS5102) and `module: amd` (TS5108): the outFile
+// bundle-emit TS5011 this test used to pin is unreachable. (tsc 7.0.2 still
+// prints TS5011 alongside the removed-option errors for this config; tsz
+// stops at the fatal config diagnostics — a documented divergence.)
 #[test]
-fn ts5011_emitted_for_out_file_without_root_dir() {
+fn out_file_reports_ts5102_removed_option() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -736,8 +748,8 @@ fn ts5011_emitted_for_out_file_without_root_dir() {
     let result = compile(&args, base).expect("compilation should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5011),
-        "Should emit TS5011 for outFile emit without rootDir, got: {codes:?}"
+        codes.contains(&5102),
+        "Should emit TS5102 for the removed outFile option, got: {codes:?}"
     );
 }
 

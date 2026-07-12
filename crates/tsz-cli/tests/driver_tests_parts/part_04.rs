@@ -486,10 +486,8 @@ fn compile_resolves_paths_mappings() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "baseUrl": ".",
-            "ignoreDeprecations": "6.0",
             "paths": {
-              "@lib/*": ["src/lib/*"]
+              "@lib/*": ["./src/lib/*"]
             }
           },
           "files": ["src/index.ts"]
@@ -509,7 +507,10 @@ fn compile_resolves_paths_mappings() {
 }
 
 #[test]
-fn cli_base_url_resolves_bare_imports() {
+// TS7 removed `baseUrl` entirely: tsc 7.0.2 reports TS5102 ("Option 'baseUrl'
+// has been removed") for the CLI flag instead of resolving bare imports
+// against it.
+fn cli_base_url_reports_ts5102_removed_option() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -524,15 +525,14 @@ value.toFixed();
 
     let mut args = default_args();
     args.base_url = Some(PathBuf::from("src"));
-    args.ignore_deprecations = Some("6.0".to_string());
     args.no_emit = true;
     args.strict = true;
     args.files = vec![PathBuf::from("main.ts")];
     let result = compile(&args, base).expect("compile should succeed");
 
     assert!(
-        result.diagnostics.is_empty(),
-        "Expected CLI --baseUrl to resolve bare import, got: {:?}",
+        result.diagnostics.iter().any(|d| d.code == 5102),
+        "CLI --baseUrl must report the TS5102 removed-option error, got: {:?}",
         result.diagnostics
     );
 }
@@ -549,8 +549,6 @@ fn compile_resolves_root_dirs_virtual_relative_imports() {
             "strict": true,
             "target": "ES2020",
             "module": "ESNext",
-            "moduleResolution": "node10",
-            "ignoreDeprecations": "6.0",
             "rootDirs": ["src", "generated"],
             "noEmit": true
           },
@@ -583,11 +581,9 @@ fn compile_paths_wildcard_priority_uses_prefix_length() {
           "compilerOptions": {
             "module": "ESNext",
             "moduleResolution": "Bundler",
-            "baseUrl": ".",
-            "ignoreDeprecations": "6.0",
             "paths": {
-              "@/*/suffix-long": ["bad/*"],
-              "@/foo/*": ["good/*"]
+              "@/*/suffix-long": ["./bad/*"],
+              "@/foo/*": ["./good/*"]
             },
             "strict": true
           },
@@ -670,7 +666,6 @@ fn compile_resolves_node_modules_types() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -716,8 +711,6 @@ fn compile_filters_keys_through_namespace_imported_package_interface() {
             "strict": true,
             "module": "commonjs",
             "target": "es2017",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true
           },
           "files": ["src/index.ts"]
@@ -1234,7 +1227,6 @@ fn compile_resolves_node_modules_types_versions() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1284,7 +1276,6 @@ fn compile_resolves_node_modules_types_versions_best_match() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1348,7 +1339,7 @@ fn compile_resolves_node_modules_types_versions_uses_first_matching_range_in_dec
     // semver range matches the active compiler version. With three matching
     // keys declared in this order — `">=6.0"`, `">=5.0 <7.0"`, `"*"` — the
     // current compiler version (defaults to the pinned target, currently
-    // 6.0.3) hits `">=6.0"` first and tsc never visits the later, tighter
+    // 7.0.2) hits `">=6.0"` first and tsc never visits the later, tighter
     // ranges. tsz used to score keys by `(constraints, min_version)` and pick
     // the "best" — which diverged from tsc by preferring `">=5.0 <7.0"`.
     let temp = TempDir::new().expect("temp dir");
@@ -1359,8 +1350,6 @@ fn compile_resolves_node_modules_types_versions_uses_first_matching_range_in_dec
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1439,12 +1428,10 @@ fn compile_resolves_node_modules_types_versions_checker_redirect_honors_version_
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "moduleResolution": "node",
             "module": "commonjs",
             "target": "es2020",
             "noEmit": true,
-            "skipLibCheck": true,
-            "ignoreDeprecations": "6.0"
+            "skipLibCheck": true
           },
           "files": ["src/index.ts"]
         }"#,
@@ -1571,7 +1558,6 @@ fn compile_resolves_node_modules_types_versions_respects_cli_version_override() 
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1625,7 +1611,6 @@ fn compile_resolves_node_modules_types_versions_respects_env_version_override() 
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1680,7 +1665,6 @@ fn compile_resolves_node_modules_types_versions_respects_tsconfig_version_overri
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "7.1"
           },
@@ -1745,7 +1729,6 @@ fn compile_resolves_node_modules_types_versions_tsconfig_extends_inherits_overri
           "extends": "./config/base.json",
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true
           },
           "files": ["src/index.ts"]
@@ -1800,7 +1783,6 @@ fn compile_resolves_node_modules_types_versions_env_overrides_tsconfig() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "6.0"
           },
@@ -1856,7 +1838,6 @@ fn compile_resolves_node_modules_types_versions_empty_env_uses_tsconfig() {
         r#"{
           "compilerOptions": {"rootDir": ".",
             "outDir": "dist",
-            "moduleResolution": "node",
             "noEmitOnError": true,
             "typesVersionsCompilerVersion": "7.1"
           },
