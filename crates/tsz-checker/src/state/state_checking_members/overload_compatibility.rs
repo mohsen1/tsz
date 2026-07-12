@@ -1183,7 +1183,6 @@ impl<'a> CheckerState<'a> {
     /// Re-emitting it here duplicates diagnostics for class methods.
     pub(crate) fn check_overload_modifier_agreement(&mut self, impl_node_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_scanner::SyntaxKind;
 
         let Some(impl_sym_id) = self.ctx.binder.get_node_symbol(impl_node_idx) else {
             return;

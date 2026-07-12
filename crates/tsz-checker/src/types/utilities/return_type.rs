@@ -1319,6 +1319,16 @@ impl<'a> CheckerState<'a> {
         // subtrees (#14530).
         let widen_expr = return_types.iter().find_map(|c| c.widen_expr);
         let union = factory.union(return_types.iter().map(|c| c.type_id).collect());
+        // tsc computes this union with `UnionReduction.Subtype`, so
+        // `if (c) return new Base(); return new Derived();` infers `Base`. The
+        // plain constructor keeps `Lazy` class refs deferred; run the
+        // class-scoped, heritage-guarded reduction with the checker resolver.
+        let union =
+            crate::query_boundaries::type_computation::core::reduce_class_subtype_union_members(
+                self.ctx.types,
+                &self.ctx,
+                union,
+            );
         if let Some(expr_idx) = widen_expr
             && crate::query_boundaries::common::is_literal_type(self.ctx.types, union)
         {

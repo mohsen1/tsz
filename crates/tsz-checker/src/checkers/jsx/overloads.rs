@@ -104,8 +104,7 @@ impl<'a> CheckerState<'a> {
 
         // Try each overload
         let has_any_attrs = !attrs_info.attrs.is_empty() || attrs_info.has_spread;
-        let mut shared_explicit_anchor_name: Option<String> = None;
-        let mut all_overload_failures_share_explicit_anchor = true;
+        let mut last_explicit_anchor_name: Option<String> = None;
         let mut considered_overload_failures: usize = 0;
 
         // When an `any`-typed spread exists, any non-0-param overload matches.
@@ -184,44 +183,38 @@ impl<'a> CheckerState<'a> {
             }
 
             considered_overload_failures += 1;
-            if let Some(overload_anchor_name) =
-                self.jsx_overload_explicit_failure_attr(&attrs_info, props_resolved)
-            {
-                if let Some(shared_name) = shared_explicit_anchor_name.as_deref() {
-                    if shared_name != overload_anchor_name.as_str() {
-                        all_overload_failures_share_explicit_anchor = false;
-                    }
-                } else {
-                    shared_explicit_anchor_name = Some(overload_anchor_name);
-                }
-            } else {
-                all_overload_failures_share_explicit_anchor = false;
-            }
+            // tsc's candidateForArgumentError is overwritten by each failing
+            // candidate, so the reported anchor follows the LAST considered
+            // overload — including clearing a previous overload's attribute
+            // anchor when the last failure has no explicit attribute (pure
+            // arity/children failures fall back to the tag name).
+            last_explicit_anchor_name =
+                self.jsx_overload_explicit_failure_attr(&attrs_info, props_resolved);
         }
 
         // No overload matched — roll back speculative diagnostics and emit TS2769.
-        // tsc often anchors at the tag name, but when every non-0-param overload
-        // fails on the same explicit attribute, anchor that attribute instead.
+        // Anchor at the failing explicit attribute of the LAST considered
+        // overload (tsc's last-candidate-wins reporting); tag name only when
+        // that failure has no explicit attribute anchor.
         snap.rollback(&mut self.ctx.speculation_state());
-        let anchor_idx =
-            if considered_overload_failures > 0 && all_overload_failures_share_explicit_anchor {
-                shared_explicit_anchor_name
-                    .as_deref()
-                    .and_then(|shared_name| {
-                        attrs_info
-                            .attrs
-                            .iter()
-                            .find(|a| {
-                                !a.from_spread
-                                    && a.name_node_idx.is_some()
-                                    && a.name.as_str() == shared_name
-                            })
-                            .and_then(|a| a.name_node_idx)
-                    })
-                    .unwrap_or(tag_name_idx)
-            } else {
-                tag_name_idx
-            };
+        let anchor_idx = if considered_overload_failures > 0 {
+            last_explicit_anchor_name
+                .as_deref()
+                .and_then(|anchor_name| {
+                    attrs_info
+                        .attrs
+                        .iter()
+                        .find(|a| {
+                            !a.from_spread
+                                && a.name_node_idx.is_some()
+                                && a.name.as_str() == anchor_name
+                        })
+                        .and_then(|a| a.name_node_idx)
+                })
+                .unwrap_or(tag_name_idx)
+        } else {
+            tag_name_idx
+        };
 
         // TS2786: skipped for React aliases (cycle-detection false positives).
         if !skip_return_check {

@@ -133,8 +133,10 @@ const _x = <F {...{x: 5, y: "2"}} Z="hi" />;
         "synthesized source-type display must include the spread's y: \"2\"; got: {synthesized:?}"
     );
 
-    // The explicit attribute Z="hi" still leads the synthesized literal —
-    // tsc emits explicit attrs (in source order) before spread-derived props.
+    // tsc 7.0.2 merges spread properties and named attributes in source
+    // order with first-occurrence slots, so the spread's props lead and the
+    // later explicit attribute Z trails: `{ x: number; y: "2"; Z: string; }`
+    // (oracle: `<F {...{x: 5, y: "2"}} Z="hi" />`).
     let z_pos = synthesized
         .find("Z: string")
         .expect("Z: string must be in the synthesized literal");
@@ -145,8 +147,8 @@ const _x = <F {...{x: 5, y: "2"}} Z="hi" />;
         .find("y: \"2\"")
         .expect("y: \"2\" must be in the synthesized literal");
     assert!(
-        z_pos < x_pos && z_pos < y_pos,
-        "Explicit attribute Z must precede spread-derived props; got: {synthesized:?}"
+        x_pos < y_pos && y_pos < z_pos,
+        "Spread-derived props must precede the later explicit attribute Z; got: {synthesized:?}"
     );
 }
 

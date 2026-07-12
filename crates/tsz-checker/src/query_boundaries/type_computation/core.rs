@@ -145,6 +145,18 @@ pub(crate) fn compute_conditional_expression_type_with_resolver<R: TypeResolver>
     )
 }
 
+/// tsc `UnionReduction.Subtype` over an already-constructed union, scoped to
+/// class-reference members with tsc's heritage-derivation guard
+/// (`isTypeDerivedFrom`): `Base | Derived` collapses to `Base` at
+/// Subtype-reduction sites while unrelated same-shape classes coexist.
+pub(crate) fn reduce_class_subtype_union_members<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    union: TypeId,
+) -> TypeId {
+    tsz_solver::operations::expression_ops::reduce_class_subtype_union_members(db, resolver, union)
+}
+
 /// Merge a single object-spread property contribution through the solver-owned
 /// AST-independent spread merge rule.
 pub(crate) fn merge_object_spread_property(
