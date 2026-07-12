@@ -562,7 +562,11 @@ impl<'a> CheckerState<'a> {
                         // `this` to its declared type (tsc `getThisTypeOfSignature`, #14843),
                         // so neither gets the synthetic push.
                         let mut pushed_prop_fn_this = false;
+                        // Gated like tsc's getContextualThisParameterType:
+                        // object-literal `this` typing needs noImplicitThis
+                        // (or a JS file); otherwise `this` is plain `any`.
                         if initializer_is_function_expression
+                            && (self.ctx.no_implicit_this() || self.is_js_file())
                             && marker_this_type.is_none()
                             && self.current_this_type().is_none()
                             && !self.function_like_has_explicit_this_parameter(prop.initializer)
@@ -1473,6 +1477,13 @@ impl<'a> CheckerState<'a> {
                             );
                             ctx_helper.get_this_type()
                         });
+                        // tsc's containing-object-literal `this` typing is
+                        // gated on `noImplicitThis || isInJSFile`
+                        // (getContextualThisParameterType): with the gate off,
+                        // `this` in an object-literal method is plain `any`.
+                        // A contextual-signature this-PARAMETER stays ungated.
+                        let object_literal_this_enabled =
+                            self.ctx.no_implicit_this() || self.is_js_file();
                         if let Some(mut method_this) = method_ctx_this {
                             if crate::query_boundaries::common::contains_type_parameters(
                                 self.ctx.types,
@@ -1485,6 +1496,8 @@ impl<'a> CheckerState<'a> {
                             }
                             self.ctx.this_type_stack.push(method_this);
                             pushed_contextual_this = true;
+                        } else if !object_literal_this_enabled {
+                            // No push: `this` resolves to `any` downstream.
                         } else if let Some(receiver_this_type) = contextual_receiver_this_type {
                             self.ctx.this_type_stack.push(receiver_this_type);
                             pushed_contextual_this = true;
