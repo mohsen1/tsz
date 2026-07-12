@@ -126,6 +126,7 @@ impl<'a> DeclarationEmitter<'a> {
             all_enum_values: FxHashMap::default(),
             local_namespace_alias_targets: FxHashMap::default(),
             local_import_equals_alias_for_target: FxHashMap::default(),
+            local_import_equals_target_for_alias: FxHashMap::default(),
         }
     }
 
@@ -274,6 +275,7 @@ impl<'a> DeclarationEmitter<'a> {
             all_enum_values: FxHashMap::default(),
             local_namespace_alias_targets: FxHashMap::default(),
             local_import_equals_alias_for_target: FxHashMap::default(),
+            local_import_equals_target_for_alias: FxHashMap::default(),
         }
     }
 
@@ -582,6 +584,8 @@ impl<'a> DeclarationEmitter<'a> {
                         .import_equals_entity_target_symbol(binder, import_eq.module_specifier)
                         .or_else(|| binder.resolve_import_symbol(alias_sym_id));
                     if let Some(target_sym_id) = resolved {
+                        self.local_import_equals_target_for_alias
+                            .insert(alias_sym_id, target_sym_id);
                         // `parent_sym_id` is the alias's enclosing namespace/module
                         // symbol (SymbolId::NONE at file/top-level scope). The alias
                         // name is only usable within that scope.

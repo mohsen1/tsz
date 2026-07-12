@@ -1564,7 +1564,7 @@ use plan::{
     display_relative_to_dir, emit_common_source_directory, find_latest_dts_file,
     implicit_common_source_directory, is_deprecation_diagnostic_code,
     is_removed_option_diagnostic_code, is_removed_option_value_diagnostic_code,
-    validate_cli_compiler_option_diagnostics,
+    ordered_direct_cli_parse_diagnostics, validate_cli_compiler_option_diagnostics,
 };
 
 #[cfg(test)]

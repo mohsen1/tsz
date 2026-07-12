@@ -3,6 +3,16 @@
 const path = require("path");
 const importFixParityOverrides = require("./import-fix-parity-overrides.cjs");
 
+const importSpecifiersFromText = (text) => {
+    const specifiers = [];
+    const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\1/g;
+    let match;
+    while ((match = pattern.exec(String(text || ""))) !== null) {
+        if (match[2]) specifiers.push(match[2]);
+    }
+    return specifiers;
+};
+
 // Patch `getCodeFixesAtPosition` and all remaining SessionClient methods.
 // Tests listed in `import-fix-parity-overrides.cjs` trust tsz over the
 // native LanguageService for import-fix and auto-import-provider parity.
@@ -18,6 +28,7 @@ module.exports = function patchSessionClientFixes(proto, ts, {
     installTypesEligibleCodes,
     installTypesFixId,
     installTypesFixAllDescription,
+    moduleSpecifierToTypesPackageName,
 }) {
     const tszPreferredFixNames = new Set([
         "addMissingNewOperator",
@@ -259,7 +270,6 @@ module.exports = function patchSessionClientFixes(proto, ts, {
         const quickImportSpecifiersFromFixes = (fixes) => {
             const specs = [];
             if (!Array.isArray(fixes)) return specs;
-            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\/1/g;
             const descPattern = /from ['"]([\S]+)['"]/ ;
             for (const fix of fixes) {
                 if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
@@ -267,11 +277,7 @@ module.exports = function patchSessionClientFixes(proto, ts, {
                     if (!change || !Array.isArray(change.textChanges)) continue;
                     for (const textChange of change.textChanges) {
                         const text = String(textChange?.newText || "");
-                        let match;
-                        while ((match = pattern.exec(text)) !== null) {
-                            if (match[2]) specs.push(match[2]);
-                        }
-                        pattern.lastIndex = 0;
+                        specs.push(...importSpecifiersFromText(text));
                     }
                 }
                 if (specs.length === 0) {
@@ -451,8 +457,9 @@ module.exports = function patchSessionClientFixes(proto, ts, {
             if (Array.isArray(nativeQuick) && nativeQuick.length > 0) {
                 const hasImportFix = nativeQuick.some(f => f && f.fixName === "import");
                 const quickSpecs = quickImportSpecifiersFromFixes(nativeQuick);
-                const hasRelativeSpecifier = quickSpecs.some(isRelativeImportSpecifier);
-                if (hasImportFix && (quickSpecs.length === 0 || hasRelativeSpecifier)) {
+                const hasOnlyRelativeSpecifiers =
+                    quickSpecs.length > 0 && quickSpecs.every(isRelativeImportSpecifier);
+                if (hasImportFix && hasOnlyRelativeSpecifiers) {
                     if (preferences) this.configure(oldPreferences || {});
                     return nativeQuick;
                 }
@@ -642,18 +649,15 @@ module.exports = function patchSessionClientFixes(proto, ts, {
         const importSpecifiersFromFixes = (fixes) => {
             const specs = new Set();
             if (!Array.isArray(fixes)) return specs;
-            const pattern = /(?:from |require\()(['"])((?:(?!\1).)*)\/1/g;
             for (const fix of fixes) {
                 if (!fix || fix.fixName !== "import" || !Array.isArray(fix.changes)) continue;
                 for (const change of fix.changes) {
                     if (!change || !Array.isArray(change.textChanges)) continue;
                     for (const textChange of change.textChanges) {
                         const text = String(textChange?.newText || "");
-                        let match;
-                        while ((match = pattern.exec(text)) !== null) {
-                            if (match[2]) specs.add(match[2]);
+                        for (const specifier of importSpecifiersFromText(text)) {
+                            specs.add(specifier);
                         }
-                        pattern.lastIndex = 0;
                     }
                 }
             }
@@ -1961,3 +1965,5 @@ module.exports = function patchSessionClientFixes(proto, ts, {
         }
     };
 };
+
+module.exports.importSpecifiersFromText = importSpecifiersFromText;

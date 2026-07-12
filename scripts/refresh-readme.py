@@ -54,6 +54,22 @@ def load_metric_json(path):
 def normalize_suite_summary(data, suite):
     summary = data.get("summary")
     if summary:
+        if suite == "conformance":
+            runnable = summary.get(
+                "runnable",
+                summary.get("total", summary.get("total_tests")),
+            )
+            unsupported = summary.get("unsupported", 0)
+            skipped = summary.get("skipped", 0)
+            candidates = summary.get("candidates")
+            return {
+                "passed": summary.get("passed"),
+                "total": runnable,
+                "runnable": runnable,
+                "candidates": candidates,
+                "unsupported": unsupported,
+                "skipped": skipped,
+            }
         return {
             "passed": summary.get("passed"),
             "total": summary.get("total", summary.get("total_tests")),
@@ -68,6 +84,17 @@ def normalize_suite_summary(data, suite):
 
     if data.get("suite") != suite:
         return None
+
+    if suite == "conformance":
+        runnable = data.get("runnable", data.get("total"))
+        return {
+            "passed": data.get("passed"),
+            "total": runnable,
+            "runnable": runnable,
+            "candidates": data.get("candidates"),
+            "unsupported": data.get("unsupported", 0),
+            "skipped": data.get("skipped", 0),
+        }
 
     return {
         "passed": data.get("passed"),
@@ -108,15 +135,41 @@ def conformance_summary_from_readme(text):
     match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", section)
     if not match:
         return None
-    return {
+    summary = {
         "passed": int(match.group(1).replace(",", "")),
         "total": int(match.group(2).replace(",", "")),
     }
+    summary["runnable"] = summary["total"]
+    partition = re.search(
+        r"Candidates:\s*([\d,]+)\s*\(([\d,]+) runnable,\s*"
+        r"([\d,]+) unsupported,\s*([\d,]+) skipped\)",
+        section,
+    )
+    if partition:
+        summary.update(
+            {
+                "candidates": int(partition.group(1).replace(",", "")),
+                "runnable": int(partition.group(2).replace(",", "")),
+                "total": int(partition.group(2).replace(",", "")),
+                "unsupported": int(partition.group(3).replace(",", "")),
+                "skipped": int(partition.group(4).replace(",", "")),
+            }
+        )
+    return summary
 
 
 def readme_suite_summary_is_ahead(candidate, readme_summary):
     if readme_summary is None:
         return False
+    candidate_domain = candidate.get("candidates")
+    readme_domain = readme_summary.get("candidates")
+    if candidate_domain is not None:
+        # An old README has no candidate-domain evidence and must not override
+        # a partition-aware artifact merely because its runnable total is larger.
+        if readme_domain is None:
+            return False
+        if readme_domain != candidate_domain:
+            return readme_domain > candidate_domain
     if readme_summary.get("total", 0) > candidate.get("total", 0):
         return True
     return (
@@ -145,22 +198,18 @@ def load_conformance(args, readme_text):
         summary = normalize_suite_summary(load_metric_json(p), "conformance")
         if summary is None:
             continue
-        passed = summary.get("passed")
-        total = summary.get("total")
-        if passed is None or total is None:
+        if summary.get("passed") is None or summary.get("total") is None:
             continue
         if explicit_path is None and p in default_paths[1:]:
-            candidate = {"passed": passed, "total": total}
-            if readme_suite_summary_is_ahead(candidate, readme_summary):
+            if readme_suite_summary_is_ahead(summary, readme_summary):
                 print(
                     "warning: preserving README conformance metrics because "
                     f"{p.relative_to(ROOT)} is behind the existing README conformance block",
                     file=sys.stderr,
                 )
-            selected = prefer_readme_suite_summary(candidate, readme_summary)
-            return selected["passed"], selected["total"]
-        return passed, total
-    return None, None
+            return prefer_readme_suite_summary(summary, readme_summary)
+        return summary
+    return None
 
 
 def normalize_emit_summary(data):
@@ -423,10 +472,20 @@ def main():
         )
 
     # Conformance
-    passed, total = load_conformance(args, original)
-    if passed is not None:
+    conformance = load_conformance(args, original)
+    if conformance is not None:
+        passed = conformance["passed"]
+        total = conformance["runnable"]
         bar = progress_bar(passed, total)
-        block = f"```\nProgress: {bar} ({passed:,}/{total:,} tests)\n```"
+        if conformance.get("candidates") is None:
+            block = f"```\nProgress: {bar} ({passed:,}/{total:,} tests)\n```"
+        else:
+            block = (
+                f"```\nProgress: {bar} ({passed:,}/{total:,} runnable tests)\n"
+                f"Candidates: {conformance['candidates']:,} "
+                f"({total:,} runnable, {conformance['unsupported']:,} unsupported, "
+                f"{conformance['skipped']:,} skipped)\n```"
+            )
         text = replace_block(text, "<!-- CONFORMANCE_START -->", "<!-- CONFORMANCE_END -->", block)
 
     # Emit

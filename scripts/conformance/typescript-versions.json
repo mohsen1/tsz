@@ -1,7 +1,7 @@
 {
-  "_comment": "Maps TypeScript submodule SHA to npm package version. Used by conformance testing to match TSC version to submodule commit.",
-  "_usage": "When you update the TypeScript submodule, find the commit date and use the corresponding nightly: npm view typescript@6.0.0-dev.YYYYMMDD",
-  "current": "050880ce59e30b356b686bd3144efe24f875ebc8",
+  "_comment": "Maps the legacy microsoft/TypeScript corpus SHA to the exact npm compiler paired with it. TypeScript 7 compiler sources live in microsoft/typescript-go; native_* records that side of the pairing.",
+  "_usage": "For TypeScript 7+, use the microsoft/typescript-go release tag and its _submodules/TypeScript SHA. Keep npm, native_tag, native_sha, and the mapping key in lockstep.",
+  "current": "4d4f005c8541e0255a9d8791205fdce326e462bc",
   "mappings": {
     "cdc205d5e6338d96b0fb54657af33d473d480a9c": {
       "npm": "6.0.0-dev.20260224",
@@ -27,10 +27,20 @@
       "npm": "6.0.3",
       "date": "2026-04-15",
       "note": "TypeScript v6.0.3 release commit."
+    },
+    "4d4f005c8541e0255a9d8791205fdce326e462bc": {
+      "npm": "7.0.2",
+      "date": "2026-07-08",
+      "native_repository": "https://github.com/microsoft/typescript-go.git",
+      "native_tag": "typescript/v7.0.2",
+      "native_sha": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+      "npm_integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
+      "lib_count": 108,
+      "note": "TypeScript 7.0.2 native release paired with its exact legacy TypeScript test-corpus submodule commit."
     }
   },
   "default": {
-    "npm": "5.9.3",
-    "note": "Fallback to latest stable when submodule SHA is not mapped"
+    "npm": "7.0.2",
+    "note": "Fallback to the pinned TypeScript 7 stable compiler when a corpus SHA is not mapped"
   }
 }

@@ -1,8 +1,9 @@
 //! Auto-generated diagnostic message data.
 //!
-//! DO NOT EDIT MANUALLY - run `node scripts/gen_diagnostics.mjs` to regenerate.
+//! DO NOT EDIT MANUALLY - run `node scripts/setup/sync-typescript-diagnostics.mjs --write` to regenerate.
 
 crate::diagnostics::table_macro::define_diagnostics! {
+    (REPORT_ERRORS_ON_UNUSED_PARAMETERS, 6135, Message, "Report errors on unused parameters."),
     (THE_MAXIMUM_DEPENDENCY_DEPTH_TO_SEARCH_UNDER_NODE_MODULES_AND_LOAD_JAVASCRIPT_FI, 6136, Message, "The maximum dependency depth to search under node_modules and load JavaScript files."),
     (CANNOT_IMPORT_TYPE_DECLARATION_FILES_CONSIDER_IMPORTING_INSTEAD_OF, 6137, Error, "Cannot import type declaration files. Consider importing '{0}' instead of '{1}'."),
     (PROPERTY_IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ, 6138, Error, "Property '{0}' is declared but its value is never read."),
@@ -153,7 +154,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (PROJECT_IS_OUT_OF_DATE_BECAUSE_OUTPUT_IS_OLDER_THAN_INPUT, 6350, Message, "Project '{0}' is out of date because output '{1}' is older than input '{2}'"),
     (PROJECT_IS_UP_TO_DATE_BECAUSE_NEWEST_INPUT_IS_OLDER_THAN_OUTPUT, 6351, Message, "Project '{0}' is up to date because newest input '{1}' is older than output '{2}'"),
     (PROJECT_IS_OUT_OF_DATE_BECAUSE_OUTPUT_FILE_DOES_NOT_EXIST, 6352, Message, "Project '{0}' is out of date because output file '{1}' does not exist"),
-    (PROJECT_IS_OUT_OF_DATE_BECAUSE_ITS_DEPENDENCY_IS_OUT_OF_DATE, 6353, Message, "Project '{0}' is out of date because its dependency '{1}' is out of date"),
+    (FAILED_TO_DELETE_FILE, 6353, Message, "Failed to delete file '{0}'."),
     (PROJECT_IS_UP_TO_DATE_WITH_D_TS_FILES_FROM_ITS_DEPENDENCIES, 6354, Message, "Project '{0}' is up to date with .d.ts files from its dependencies"),
     (PROJECTS_IN_THIS_BUILD, 6355, Message, "Projects in this build: {0}"),
     (A_NON_DRY_BUILD_WOULD_DELETE_THE_FOLLOWING_FILES, 6356, Message, "A non-dry build would delete the following files: {0}"),
@@ -193,7 +194,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (REUSING_RESOLUTION_OF_TYPE_REFERENCE_DIRECTIVE_FROM_FOUND_IN_CACHE_FROM_LOCATION_3, 6398, Message, "Reusing resolution of type reference directive '{0}' from '{1}' found in cache from location '{2}', it was not resolved."),
     (PROJECT_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_INDICATES_THAT_SOME_OF_THE_CHANGES, 6399, Message, "Project '{0}' is out of date because buildinfo file '{1}' indicates that some of the changes were not emitted"),
     (PROJECT_IS_UP_TO_DATE_BUT_NEEDS_TO_UPDATE_TIMESTAMPS_OF_OUTPUT_FILES_THAT_ARE_OL, 6400, Message, "Project '{0}' is up to date but needs to update timestamps of output files that are older than input files"),
-    (PROJECT_IS_OUT_OF_DATE_BECAUSE_THERE_WAS_ERROR_READING_FILE, 6401, Message, "Project '{0}' is out of date because there was error reading file '{1}'"),
+    (PROJECT_IS_OUT_OF_DATE_BECAUSE_CONFIG_FILE_DOES_NOT_EXIST, 6401, Message, "Project '{0}' is out of date because config file does not exist."),
     (RESOLVING_IN_MODE_WITH_CONDITIONS, 6402, Message, "Resolving in {0} mode with conditions {1}."),
     (MATCHED_CONDITION, 6403, Message, "Matched '{0}' condition '{1}'."),
     (USING_SUBPATH_WITH_TARGET, 6404, Message, "Using '{0}' subpath '{1}' with target '{2}'."),
@@ -212,8 +213,11 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (SEARCHING_ALL_ANCESTOR_NODE_MODULES_DIRECTORIES_FOR_PREFERRED_EXTENSIONS, 6417, Message, "Searching all ancestor node_modules directories for preferred extensions: {0}."),
     (SEARCHING_ALL_ANCESTOR_NODE_MODULES_DIRECTORIES_FOR_FALLBACK_EXTENSIONS, 6418, Message, "Searching all ancestor node_modules directories for fallback extensions: {0}."),
     (PROJECT_IS_OUT_OF_DATE_BECAUSE_BUILDINFO_FILE_INDICATES_THAT_PROGRAM_NEEDS_TO_RE, 6419, Message, "Project '{0}' is out of date because buildinfo file '{1}' indicates that program needs to report errors."),
-    (PROJECT_IS_OUT_OF_DATE_BECAUSE, 6420, Message, "Project '{0}' is out of date because {1}."),
+    (PROJECT_IS_OUT_OF_DATE_BECAUSE_INPUT_DOES_NOT_EXIST, 6420, Message, "Project '{0}' is out of date because input '{1}' does not exist."),
     (REWRITE_TS_TSX_MTS_AND_CTS_FILE_EXTENSIONS_IN_RELATIVE_IMPORT_PATHS_TO_THEIR_JAV, 6421, Message, "Rewrite '.ts', '.tsx', '.mts', and '.cts' file extensions in relative import paths to their JavaScript equivalent in output files."),
+    (PROJECT_IS_OUT_OF_DATE_BECAUSE_IT_HAS_ERRORS, 6423, Message, "Project '{0}' is out of date because it has errors."),
+    (MULTIPLE_MODULE_EXPORTS_ASSIGNMENTS_CANNOT_BE_SERIALIZED_FOR_DECLARATION_EMIT, 6424, Error, "Multiple 'module.exports' assignments cannot be serialized for declaration emit."),
+    (NESTED_COMMONJS_EXPORT_CONSTRUCTS_CANNOT_BE_SERIALIZED_FOR_DECLARATION_EMIT, 6425, Error, "Nested CommonJS export constructs cannot be serialized for declaration emit."),
     (THE_EXPECTED_TYPE_COMES_FROM_PROPERTY_WHICH_IS_DECLARED_HERE_ON_TYPE, 6500, Message, "The expected type comes from property '{0}' which is declared here on type '{1}'"),
     (THE_EXPECTED_TYPE_COMES_FROM_THIS_INDEX_SIGNATURE, 6501, Message, "The expected type comes from this index signature."),
     (THE_EXPECTED_TYPE_COMES_FROM_THE_RETURN_TYPE_OF_THIS_SIGNATURE, 6502, Message, "The expected type comes from the return type of this signature."),
@@ -458,7 +462,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (EXPECTED_TYPE_ARGUMENTS_PROVIDE_THESE_WITH_AN_EXTENDS_TAG_2, 8027, Error, "Expected {0}-{1} type arguments; provide these with an '@extends' tag."),
     (JSDOC_MAY_ONLY_APPEAR_IN_THE_LAST_PARAMETER_OF_A_SIGNATURE, 8028, Error, "JSDoc '...' may only appear in the last parameter of a signature."),
     (JSDOC_PARAM_TAG_HAS_NAME_BUT_THERE_IS_NO_PARAMETER_WITH_THAT_NAME_IT_WOULD_MATCH, 8029, Error, "JSDoc '@param' tag has name '{0}', but there is no parameter with that name. It would match 'arguments' if it had an array type."),
-    (THE_TYPE_OF_A_FUNCTION_DECLARATION_MUST_MATCH_THE_FUNCTIONS_SIGNATURE, 8030, Error, "The type of a function declaration must match the function's signature."),
+    (A_JSDOC_TYPE_TAG_ON_A_FUNCTION_MUST_HAVE_A_SIGNATURE_WITH_THE_CORRECT_NUMBER_OF, 8030, Error, "A JSDoc '@type' tag on a function must have a signature with the correct number of arguments."),
     (YOU_CANNOT_RENAME_A_MODULE_VIA_A_GLOBAL_IMPORT, 8031, Error, "You cannot rename a module via a global import."),
     (QUALIFIED_NAME_IS_NOT_ALLOWED_WITHOUT_A_LEADING_PARAM_OBJECT, 8032, Error, "Qualified name '{0}' is not allowed without a leading '@param {object} {1}'."),
     (A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS, 8033, Error, "A JSDoc '@typedef' comment may not contain multiple '@type' tags."),
@@ -468,6 +472,7 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (TYPE_SATISFACTION_EXPRESSIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES, 8037, Error, "Type satisfaction expressions can only be used in TypeScript files."),
     (DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF, 8038, Error, "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'."),
     (A_JSDOC_TEMPLATE_TAG_MAY_NOT_FOLLOW_A_TYPEDEF_CALLBACK_OR_OVERLOAD_TAG, 8039, Error, "A JSDoc '@template' tag may not follow a '@typedef', '@callback', or '@overload' tag"),
+    (FILE_RENAME_IS_NOT_SUPPORTED_BY_THE_EDITOR, 8040, Error, "File rename is not supported by the editor"),
     (DECLARATION_EMIT_FOR_THIS_FILE_REQUIRES_USING_PRIVATE_NAME_AN_EXPLICIT_TYPE_ANNO, 9005, Error, "Declaration emit for this file requires using private name '{0}'. An explicit type annotation may unblock declaration emit."),
     (DECLARATION_EMIT_FOR_THIS_FILE_REQUIRES_USING_PRIVATE_NAME_FROM_MODULE_AN_EXPLIC, 9006, Error, "Declaration emit for this file requires using private name '{0}' from module '{1}'. An explicit type annotation may unblock declaration emit."),
     (FUNCTION_MUST_HAVE_AN_EXPLICIT_RETURN_TYPE_ANNOTATION_WITH_ISOLATEDDECLARATIONS, 9007, Error, "Function must have an explicit return type annotation with --isolatedDeclarations."),
@@ -648,9 +653,4 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (EXTRACT_CONSTANT, 95006, Message, "Extract constant"),
     (EXTRACT_TO_IN_ENCLOSING_SCOPE, 95007, Message, "Extract to {0} in enclosing scope"),
     (EXTRACT_TO_IN_SCOPE, 95008, Message, "Extract to {0} in {1} scope"),
-    (ANNOTATE_WITH_TYPE_FROM_JSDOC, 95009, Message, "Annotate with type from JSDoc"),
-    (INFER_TYPE_OF_FROM_USAGE, 95011, Message, "Infer type of '{0}' from usage"),
-    (INFER_PARAMETER_TYPES_FROM_USAGE, 95012, Message, "Infer parameter types from usage"),
-    (CONVERT_TO_DEFAULT_IMPORT, 95013, Message, "Convert to default import"),
-    (INSTALL, 95014, Message, "Install '{0}'"),
 }

@@ -801,7 +801,7 @@ impl ParserState {
 
         let body = self.parse_accessor_body(&modifiers);
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_accessor(
             syntax_kind_ext::GET_ACCESSOR,
             start_pos,
@@ -1106,7 +1106,7 @@ impl ParserState {
 
         let body = self.parse_accessor_body(&modifiers);
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_accessor(
             syntax_kind_ext::SET_ACCESSOR,
             start_pos,

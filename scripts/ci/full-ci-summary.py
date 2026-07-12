@@ -232,17 +232,26 @@ def fourslash_summary(metrics_dir: Path, logs_dir: Path, lines: list[str]) -> No
 def conformance_summary(metrics_dir: Path, logs_dir: Path, lines: list[str], exit_code: int) -> None:
     metrics = load_json(metrics_dir / "conformance.json") or {}
     if metrics:
+        runnable = metrics.get("runnable", metrics.get("total", 0))
+        candidates = metrics.get("candidates")
         lines.append("#### Conformance Aggregate")
         lines.append("")
         lines.append(
-            f"- Passed {code(metrics.get('passed', 0))} of {code(metrics.get('total', 0))} tests "
+            f"- Passed {code(metrics.get('passed', 0))} of {code(runnable)} runnable tests "
             f"with {code(metrics.get('workers', '?'))} workers."
         )
+        if candidates is not None:
+            lines.append(
+                f"- Candidate domain: {code(candidates)} total; "
+                f"{code(metrics.get('unsupported', 0))} unsupported; "
+                f"{code(metrics.get('skipped', 0))} skipped."
+            )
         shard_count = int(metrics.get("shard_count") or 1)
         if shard_count > 1:
             lines.append(
                 f"- Shard {code(metrics.get('shard_index', 0))} of {code(shard_count)} "
-                f"(baseline {code(metrics.get('expected_passed', 0))}/{code(metrics.get('expected_total', 0))})."
+                f"(baseline {code(metrics.get('expected_passed', 0))}/"
+                f"{code(metrics.get('expected_runnable', metrics.get('expected_total', 0)))} runnable)."
             )
         lines.append(f"- Wrapper exit: {code(metrics.get('rc', '?'))}")
         lines.append("")

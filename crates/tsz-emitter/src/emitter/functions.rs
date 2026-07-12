@@ -144,6 +144,7 @@ impl<'a> Printer<'a> {
         // outer scope don't suppress declarations inside this function, and names
         // declared inside don't leak to sibling functions at the outer scope.
         let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+        self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         // Regular functions have their own `arguments`, so turn off the rewrite flag
@@ -636,6 +637,7 @@ impl<'a> Printer<'a> {
 
         // Clear any previous pending prologue entries
         self.pending_param_prologue.clear();
+        self.pending_object_rest_param_temps.clear();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
@@ -962,6 +964,10 @@ impl<'a> Printer<'a> {
             }
         }
         self.namespace_exported_names = prev_namespace_exported_names;
+        // Hand the allocated object-rest parameter temps to the body's fresh
+        // temp scope (see `push_temp_scope`) so a hoisted body temp does not
+        // reuse the parameter temp name.
+        self.pending_object_rest_param_temps = object_rest_temp_names;
 
         // NOTE: Do NOT emit trailing comments here. Comments after the last
         // parameter (e.g., `p3:any // OK`) appear on the same source line but

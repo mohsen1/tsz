@@ -340,7 +340,7 @@ fn compile_single_source_amd_outfile_emits_bundle() {
 }
 
 #[test]
-fn compile_module_none_outfile_skips_dynamic_import_only_dependency() {
+fn compile_module_none_outfile_is_rejected_before_emit() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -365,21 +365,12 @@ fn compile_module_none_outfile_skips_dynamic_import_only_dependency() {
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(
-        result.diagnostics.iter().all(|diag| diag.code == 1323),
-        "{:?}",
-        result.diagnostics
-    );
-    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
-    assert_eq!(bundle, "\"use strict\";\nconst loaded = import(\"./dep\");");
-    assert!(
-        !bundle.contains("exports.default"),
-        "dynamic-import-only dependency should not be concatenated into module:none outFile bundle:\n{bundle}"
-    );
+    assert!(result.diagnostics.iter().any(|diag| diag.code == 6046));
+    assert!(!base.join("dist/bundle.js").exists());
 }
 
 #[test]
-fn compile_module_none_outfile_keeps_static_and_reference_dependencies() {
+fn compile_module_none_outfile_with_dependencies_is_rejected_before_emit() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -409,28 +400,12 @@ fn compile_module_none_outfile_keeps_static_and_reference_dependencies() {
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(
-        result.diagnostics.iter().all(|diag| diag.code == 1323),
-        "{:?}",
-        result.diagnostics
-    );
-    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
-    assert!(
-        bundle.contains("const referencedValue = 2;"),
-        "triple-slash referenced dependency should remain in bundle:\n{bundle}"
-    );
-    assert!(
-        bundle.contains("const rootScriptValue = 1;"),
-        "explicit script root should remain in bundle:\n{bundle}"
-    );
-    assert!(
-        !bundle.contains("dynamicValue"),
-        "external module reached only through dynamic import should not be concatenated into bundle:\n{bundle}"
-    );
+    assert!(result.diagnostics.iter().any(|diag| diag.code == 6046));
+    assert!(!base.join("dist/bundle.js").exists());
 }
 
 #[test]
-fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
+fn compile_module_none_outfile_cache_keeps_rejection_stable() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -460,11 +435,7 @@ fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
     let result = with_types_versions_env(None, || {
         compile_with_cache(&args, base, &mut cache).expect("compile should succeed")
     });
-    assert!(
-        result.diagnostics.iter().all(|diag| diag.code == 1323),
-        "{:?}",
-        result.diagnostics
-    );
+    assert!(result.diagnostics.iter().any(|diag| diag.code == 6046));
 
     write_file(&referenced_path, "const referencedValue = 4;\n");
     let result = with_types_versions_env(None, || {
@@ -476,21 +447,8 @@ fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
         )
         .expect("compile should succeed")
     });
-    assert!(
-        result.diagnostics.iter().all(|diag| diag.code == 1323),
-        "{:?}",
-        result.diagnostics
-    );
-
-    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
-    assert!(
-        bundle.contains("const referencedValue = 4;"),
-        "cached triple-slash dependency should remain eligible for module:none outFile bundling:\n{bundle}"
-    );
-    assert!(
-        !bundle.contains("dynamicValue"),
-        "dynamic-import-only dependency should stay out of cached module:none outFile bundle:\n{bundle}"
-    );
+    assert!(result.diagnostics.iter().any(|diag| diag.code == 6046));
+    assert!(!base.join("dist/bundle.js").exists());
 }
 
 #[test]

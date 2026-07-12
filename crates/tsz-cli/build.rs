@@ -60,10 +60,11 @@ fn main() {
         .join("scripts/conformance/typescript-versions.json");
 
     let version = detect_tsc_version_from_local_scripts(&manifest_dir)
-        // When local scripts/node_modules isn't installed, prefer the same PATH
-        // `tsc` binary that the CLI parity tests compare against.
-        .or_else(detect_tsc_version_from_path)
         .or_else(|| detect_tsc_version_from_versions_file(&versions_path))
+        // PATH is only a last-resort fallback when neither pinned metadata
+        // source exists; an unrelated global compiler must not change the
+        // version embedded in a clean TSZ build.
+        .or_else(detect_tsc_version_from_path)
         .unwrap_or_else(|| {
             if versions_path.exists() {
                 let content = std::fs::read_to_string(&versions_path).unwrap();
@@ -71,10 +72,10 @@ fn main() {
                 let current_sha = json["current"].as_str().unwrap().to_string();
                 json["mappings"][&current_sha]["npm"]
                     .as_str()
-                    .unwrap_or("6.0.0-dev")
+                    .unwrap_or("7.0.2")
                     .to_string()
             } else {
-                "6.0.0-dev".to_string()
+                "7.0.2".to_string()
             }
         });
 

@@ -1,5 +1,6 @@
 """Contract tests for conformance aggregate artifact handoff."""
 
+import json
 import pathlib
 import re
 import subprocess
@@ -66,6 +67,54 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         )
         self.assertIn("Using checked-in conformance shard weights.", body)
         self.assertNotIn("metrics/latest/conformance-timings.json", body)
+
+    def test_result_reader_partitions_non_runnable_candidates(self):
+        reader = self.function_body("read_conformance_results", "\nshow_log_tail() {")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            results = temp / "results.txt"
+            results.write_text(
+                "\n".join(
+                    [
+                        "PASS pass.ts",
+                        "FAIL fail.ts",
+                        "XFAIL xfail.ts (accepted)",
+                        "CRASH crash.ts",
+                        "⏱️ TIMEOUT timeout.ts",
+                        "UNSUPPORTED unsupported.ts (typescript-7-unsupported-configuration)",
+                        "SKIP skipped.ts",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            script = temp / "read.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+{reader}
+
+read_conformance_results "$1"
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script), str(results)],
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1 7 5 1 1")
+
+    def test_shard_plan_reads_explicit_candidate_partition(self):
+        body = self.function_body("conformance_shard_plan", "\nrun_conformance() {")
+        self.assertIn(".candidates // .total", body)
+        self.assertIn(".runnable // .total", body)
+        self.assertIn(".unsupported // 0", body)
+        self.assertIn(".skipped // 0", body)
 
     def test_aggregate_uses_artifact_failure_lists_only(self):
         aggregate = self.function_body(
@@ -316,6 +365,173 @@ run_conformance_aggregate
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Conformance aggregate: 10/10 across 2/2 shards", result.stdout)
         self.assertIn("Conformance expected aggregate: 0/10", result.stdout)
+
+    def test_aggregate_tracks_candidate_partition_and_runnable_pass_rate(self):
+        aggregate = self.function_body(
+            "run_conformance_aggregate",
+            "\n# Download shard failure lists",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / "ci-metrics").mkdir()
+            (temp / "scripts" / "conformance").mkdir(parents=True)
+            (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
+                '{"summary":{"passed":0,"total_tests":4}}\n',
+                encoding="utf-8",
+            )
+            shard_rows = [
+                {
+                    "passed": 2,
+                    "total": 2,
+                    "candidates": 4,
+                    "runnable": 2,
+                    "unsupported": 1,
+                    "skipped": 1,
+                    "expected_passed": 0,
+                    "expected_total": 2,
+                    "expected_candidates": 4,
+                    "expected_runnable": 2,
+                    "expected_unsupported": 1,
+                    "expected_skipped": 1,
+                },
+                {
+                    "passed": 1,
+                    "total": 2,
+                    "candidates": 3,
+                    "runnable": 2,
+                    "unsupported": 1,
+                    "skipped": 0,
+                    "expected_passed": 0,
+                    "expected_total": 2,
+                    "expected_candidates": 3,
+                    "expected_runnable": 2,
+                    "expected_unsupported": 1,
+                    "expected_skipped": 0,
+                },
+            ]
+            for shard, row in enumerate(shard_rows):
+                shard_dir = (
+                    temp
+                    / ".conformance-shards"
+                    / f"conformance-shard-{shard}"
+                    / "ci-metrics"
+                )
+                shard_dir.mkdir(parents=True)
+                shard_dir.joinpath("conformance.json").write_text(
+                    json.dumps(row),
+                    encoding="utf-8",
+                )
+
+            script = temp / "aggregate.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+METRICS_DIR=ci-metrics
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
+_TSZ_CI_CONFORMANCE_SHARD_COUNT=2
+
+ci_section() {{ :; }}
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+cap_positive_baseline() {{ echo "$1"; }}
+publish_latest_metric() {{ :; }}
+
+{aggregate}
+
+run_conformance_aggregate
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            metrics = json.loads(
+                (temp / "ci-metrics" / "conformance.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "Conformance aggregate: 3/4 across 2/2 shards "
+            "(7 candidates; 2 unsupported; 1 skipped)",
+            result.stdout,
+        )
+        self.assertEqual(metrics["passed"], 3)
+        self.assertEqual(metrics["total"], 4)
+        self.assertEqual(metrics["candidates"], 7)
+        self.assertEqual(metrics["runnable"], 4)
+        self.assertEqual(metrics["unsupported"], 2)
+        self.assertEqual(metrics["skipped"], 1)
+        self.assertEqual(metrics["pass_rate"], "75.0")
+
+    def test_aggregate_reconstructs_legacy_total_with_skips(self):
+        aggregate = self.function_body(
+            "run_conformance_aggregate",
+            "\n# Download shard failure lists",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / "ci-metrics").mkdir()
+            (temp / "scripts" / "conformance").mkdir(parents=True)
+            (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
+                '{"summary":{"passed":1,"total_tests":1}}\n',
+                encoding="utf-8",
+            )
+            shard_dir = temp / ".conformance-shards" / "conformance-shard-0"
+            shard_dir.mkdir(parents=True)
+            shard_dir.joinpath("conformance.json").write_text(
+                '{"passed":1,"total":2,"skipped":1,"expected_passed":0}\n',
+                encoding="utf-8",
+            )
+            script = temp / "aggregate.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+METRICS_DIR=ci-metrics
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
+_TSZ_CI_CONFORMANCE_SHARD_COUNT=1
+
+ci_section() {{ :; }}
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+cap_positive_baseline() {{ echo "$1"; }}
+publish_latest_metric() {{ :; }}
+
+{aggregate}
+
+run_conformance_aggregate
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+            metrics = json.loads(
+                (temp / "ci-metrics" / "conformance.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(metrics["candidates"], 2)
+        self.assertEqual(metrics["runnable"], 1)
+        self.assertEqual(metrics["total"], 1)
+        self.assertEqual(metrics["skipped"], 1)
 
     def test_allowlist_accepts_all_conformance_failure_statuses(self):
         allowlist_function = self.function_body(

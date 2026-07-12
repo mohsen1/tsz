@@ -96,12 +96,8 @@ fn test_compile_no_ts18003_for_references_only_tsconfig() {
     );
 }
 
-/// TS5107 for `allowSyntheticDefaultImports=false` must NOT append the migration URL
-/// ("Visit <https://aka.ms/ts6>"). tsc 6.0.3 only chains the URL for options with an
-/// active migration target (moduleResolution, module, target). This was a regression
-/// introduced in #12292.
 #[test]
-fn test_ts5107_allow_synthetic_default_imports_false_no_migration_url() {
+fn test_ts5108_allow_synthetic_default_imports_false() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("tsconfig.json"),
@@ -114,30 +110,24 @@ fn test_ts5107_allow_synthetic_default_imports_false_no_migration_url() {
     let args =
         CliArgs::try_parse_from(["tsz", "--project", project.as_str()]).expect("project args");
     let result = compile(&args, dir.path()).expect("compile succeeds");
-    let ts5107: Vec<_> = result
+    let ts5108: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.code == 5107)
+        .filter(|d| d.code == 5108)
         .collect();
     assert!(
-        !ts5107.is_empty(),
-        "expected TS5107, got: {:?}",
+        !ts5108.is_empty(),
+        "expected TS5108, got: {:?}",
         result.diagnostics
     );
-    for d in &ts5107 {
-        assert!(
-            !d.message_text.contains("aka.ms/ts6"),
-            "TS5107 for allowSyntheticDefaultImports=false must not contain migration URL, got: {}",
-            d.message_text
-        );
-    }
+    assert_eq!(
+        ts5108[0].message_text,
+        "Option 'allowSyntheticDefaultImports=false' has been removed. Please remove it from your configuration."
+    );
 }
 
-/// TS5107 for `moduleResolution=node10` MUST append the migration URL because
-/// it has an active migration target (node16/bundler). Confirms the allowlist
-/// retains the URL for options that need it.
 #[test]
-fn test_ts5107_module_resolution_node10_has_migration_url() {
+fn test_ts5108_module_resolution_node10_uses_canonical_alias() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("tsconfig.json"),
@@ -150,19 +140,21 @@ fn test_ts5107_module_resolution_node10_has_migration_url() {
     let args =
         CliArgs::try_parse_from(["tsz", "--project", project.as_str()]).expect("project args");
     let result = compile(&args, dir.path()).expect("compile succeeds");
-    let ts5107: Vec<_> = result
+    let ts5108: Vec<_> = result
         .diagnostics
         .iter()
-        .filter(|d| d.code == 5107)
+        .filter(|d| d.code == 5108)
         .collect();
     assert!(
-        !ts5107.is_empty(),
-        "expected TS5107, got: {:?}",
+        !ts5108.is_empty(),
+        "expected TS5108, got: {:?}",
         result.diagnostics
     );
     assert!(
-        ts5107.iter().any(|d| d.message_text.contains("aka.ms/ts6")),
-        "TS5107 for moduleResolution=node10 must contain migration URL, got: {ts5107:?}"
+        ts5108
+            .iter()
+            .any(|d| d.message_text.contains("moduleResolution=node10")),
+        "TS5108 should canonicalize the node alias, got: {ts5108:?}"
     );
 }
 

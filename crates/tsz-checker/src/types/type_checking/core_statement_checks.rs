@@ -706,7 +706,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS6133: Check for unused `infer` type parameters in conditional types.
+    /// TS6196: Check for unused `infer` type parameters in conditional types.
     pub(super) fn check_unused_infer_type_params_in_conditional(
         &mut self,
         cond: &tsz_parser::parser::node::ConditionalTypeData,
@@ -724,9 +724,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                // Use the InferType node (idx) for positioning, not the identifier (tp_data.name)
-                // TSC spans the diagnostic across `infer U`, not just `U`
-                infer_params.push((ident.escaped_text.clone(), idx));
+                infer_params.push((ident.escaped_text.clone(), tp_data.name));
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
@@ -743,15 +741,11 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
             }
-            if !found {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                self.error_at_node(
-                    *name_idx,
-                    &format_message(
-                        diagnostic_messages::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
-                        &[name],
-                    ),
-                    diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ,
+            if !found && let Some(name_node) = self.ctx.arena.get(*name_idx) {
+                self.error_declared_but_never_used(
+                    name,
+                    name_node.pos,
+                    name_node.end.saturating_sub(name_node.pos),
                 );
             }
         }

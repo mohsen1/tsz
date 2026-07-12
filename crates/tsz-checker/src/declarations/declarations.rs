@@ -1439,8 +1439,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             self.ctx.error(
                 pos,
                 end - pos,
-                "'A label is not allowed here.".to_string(),
-                1344, // TS1344
+                crate::diagnostics::diagnostic_messages::A_LABEL_IS_NOT_ALLOWED_HERE.to_string(),
+                crate::diagnostics::diagnostic_codes::A_LABEL_IS_NOT_ALLOWED_HERE,
             );
         }
     }

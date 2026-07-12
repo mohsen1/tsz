@@ -623,8 +623,7 @@ tsz_write_ts_toolbelt_config() {
     "downlevelIteration": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "ignoreDeprecations": "6.0"
+    "noEmit": true
   },
   "include": ["sources/**/*.ts"],
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
@@ -850,13 +849,11 @@ tsz_write_drizzle_orm_config() {
   # use local any stubs while package-internal paths still bind source.
   tsz_write_drizzle_orm_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "drizzle-orm/src" \
-    '    "baseUrl": ".",
-    "paths": {
+    '    "paths": {
       "~/*": ["drizzle-orm/src/*"],
       "*": ["tsz-bench-external-module.d.ts"]
     },
     "allowImportingTsExtensions": true,
-    "ignoreDeprecations": "6.0",
 ' \
     ', "tsz-bench-external-named-modules.d.ts"'
 }
@@ -938,9 +935,8 @@ tsz_write_change_case_config() {
 
 tsz_write_tiny_invariant_config() {
   # tiny-invariant is zero-dependency; its `src/tiny-invariant.ts` implements
-  # the runtime invariant helper. Both tsz and tsc emit only the shared
-  # TS5101/TS2591 baseUrl/process baseline line (0 tsz-only delta), so this is
-  # a clean green row.
+  # the runtime invariant helper. Both tsz and tsc emit only the shared TS2591
+  # process baseline line (0 tsz-only delta), so this is a clean green row.
   tsz_write_basic_external_project_config "$1" "src"
 }
 
@@ -1008,14 +1004,10 @@ tsz_write_io_ts_config() {
   # `any` external-module stub so fp-ts-typed positions resolve like a bare-`any`
   # install would, matching what tsc sees instead of a spurious TS2307 wall.
   tsz_write_io_ts_external_stubs "$1"
-  # `baseUrl` is deprecated in TS 6.0 (TS5101, removed in TS 7.0); tsc 6.0.x
-  # emits the deprecation error unless `ignoreDeprecations: "6.0"` is set, so
-  # match the sibling baseUrl-setting configs (drizzle/arktype/type-graphql)
-  # and silence it here too — otherwise tsz and tsc would both report TS5101.
+  # TS7 resolves `paths` targets relative to the config directory without the
+  # removed `baseUrl` option.
   tsz_write_basic_external_project_config "$1" "src" \
-    '    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "paths": {
+    '    "paths": {
       "fp-ts/lib/*": ["tsz-bench-external-module.d.ts"]
     },
 '
@@ -1069,9 +1061,7 @@ TYPES
   # arktype imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
   tsz_write_basic_external_project_config "$1" "ark/type" \
-    '    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "paths": {
+    '    "paths": {
       "@ark/util": ["ark/util/index.ts"],
       "@ark/schema/config": ["ark/schema/config.ts"],
       "@ark/schema": ["ark/schema/index.ts"],
@@ -1101,8 +1091,8 @@ tsz_write_class_transformer_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_type_graphql_config() {
-  # type-graphql uses `@/` path aliases (baseUrl-relative imports) and depends
-  # on graphql, reflect-metadata, and other external packages. Provide path
+  # type-graphql uses `@/` path aliases and depends on graphql,
+  # reflect-metadata, and other external packages. Provide path
   # mapping plus module stubs so tsc resolves without installing the full
   # dependency graph. `useDefineForClassFields` is pinned false to match the
   # upstream tsconfig's effective behavior (it targets es2021, where the flag
@@ -1111,9 +1101,7 @@ tsz_write_type_graphql_config() {
   # extensions!` GraphQLError subclasses spuriously trip TS2612.
   tsz_write_type_graphql_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
-    '    "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
-    "useDefineForClassFields": false,
+    '    "useDefineForClassFields": false,
     "paths": {
       "@/*": ["src/*"],
       "*": ["tsz-bench-external-module.d.ts"]
@@ -1170,7 +1158,6 @@ tsz_write_nextjs_config() {
     "noEmit": true,
     "noCheck": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
     "target": "ES2020",
     "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "types": [],
@@ -1385,7 +1372,6 @@ TYPES
     "target": "es2017",
     "lib": ["ESNext"],
     "module": "commonjs",
-    "moduleResolution": "node",
     "strict": true,
     "noEmit": true,
     "types": [],
@@ -1393,8 +1379,7 @@ TYPES
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "esModuleInterop": true,
-    "skipLibCheck": true,
-    "ignoreDeprecations": "6.0"
+    "skipLibCheck": true
   },
   "include": ["solutions/**/*.ts", "type-challenges-globals.d.ts"]
 }

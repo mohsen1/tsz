@@ -499,6 +499,7 @@ impl<'a> Printer<'a> {
         self.write(") ");
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(method.body);
         let previous_new_target_capture = self
             .function_like_contains_new_target(method.body, &method.parameters.nodes)
             .then(|| self.push_new_target_capture_for_initializer("void 0".into()));

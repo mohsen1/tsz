@@ -1,6 +1,24 @@
 use super::super::core::*;
 
 #[test]
+fn invalid_labeled_declarations_use_the_canonical_ts1344_message() {
+    let diagnostics = compile_and_get_diagnostics(
+        "function outer() { normalLabel: let value = 1; } declare namespace M { ambientLabel: var y; }",
+    );
+    let ts1344 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1344)
+        .collect::<Vec<_>>();
+
+    assert_eq!(ts1344.len(), 2, "unexpected diagnostics: {diagnostics:#?}");
+    assert!(
+        ts1344
+            .iter()
+            .all(|(_, message)| message == "A label is not allowed here.")
+    );
+}
+
+#[test]
 fn test_js_property_type_annotation_suppresses_downstream_semantic_checks() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.js",

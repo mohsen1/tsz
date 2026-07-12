@@ -1,7 +1,8 @@
 //! Internationalization (i18n) support for diagnostic messages.
 //!
 //! This module provides locale-specific diagnostic messages matching TypeScript's
-//! localization. The translation files are copied from TypeScript's npm package.
+//! localization. The translation files are generated from the exact locale
+//! artifacts vendored from the pinned typescript-go release.
 //!
 //! # Supported Locales
 //!

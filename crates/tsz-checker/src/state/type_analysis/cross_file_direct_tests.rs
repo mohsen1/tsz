@@ -1461,7 +1461,7 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
 
 #[test]
 fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
-    let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
+    let lib_files = load_lib_files(&["es2015.iterable.d.ts", "es2025.iterator.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -1607,7 +1607,7 @@ fn direct_actual_lib_symbol_type_handles_plain_iterator_object_with_params() {
 
 #[test]
 fn direct_actual_lib_symbol_type_allows_iterator_without_declaration_arena_proof() {
-    let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
+    let lib_files = load_lib_files(&["es2015.iterable.d.ts", "es2025.iterator.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();

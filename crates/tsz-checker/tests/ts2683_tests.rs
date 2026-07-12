@@ -376,10 +376,11 @@ plain
 }
 
 #[test]
-fn js_constructor_function_with_this_assignments_no_ts2683() {
-    // In JS files, function declarations with `this.prop = value` are constructor
-    // functions. tsc types `this` as the constructed instance and does NOT emit
-    // TS2683 even with noImplicitThis.
+fn js_constructor_function_with_this_assignments_emits_ts2683() {
+    // TypeScript 7 dropped JS constructor-function inference: a plain function with
+    // `this.prop = value` is no longer typed as a constructed instance, so `this`
+    // is implicitly `any` (TS2683) under noImplicitThis and `new` lacks a construct
+    // signature (TS7009).
     let src = r#"
 function Instance() {
     this.i = 'simple'
@@ -389,15 +390,20 @@ var i = new Instance();
 
     let diags = get_js_diagnostics(src);
     assert!(
-        !diags.iter().any(|d| d.0 == 2683),
-        "Expected JS constructor function to suppress TS2683, got: {diags:?}"
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected implicit-any `this` (TS2683) in a plain JS function, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 7009),
+        "Expected `new` on a non-constructor function to report TS7009, got: {diags:?}"
     );
 }
 
 #[test]
-fn js_constructor_function_with_prototype_no_ts2683() {
-    // Constructor function with both `this.prop` assignments and prototype methods
-    // should not emit TS2683.
+fn js_constructor_function_with_prototype_emits_ts2683() {
+    // A plain function with `this.prop` assignments and prototype methods is not a
+    // constructor in TypeScript 7: the constructor body's `this` is implicitly
+    // `any` (TS2683) and `new` reports TS7009.
     let src = r#"
 function A() {
     this.x = 1
@@ -409,10 +415,13 @@ var a = new A()
 "#;
 
     let diags = get_js_diagnostics(src);
-    let ts2683_diags: Vec<_> = diags.iter().filter(|d| d.0 == 2683).collect();
     assert!(
-        ts2683_diags.is_empty(),
-        "Expected JS constructor with prototype method to suppress TS2683, got: {ts2683_diags:?}"
+        diags.iter().any(|d| d.0 == 2683),
+        "Expected implicit-any `this` (TS2683) in the constructor body, got: {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.0 == 7009),
+        "Expected `new` on a non-constructor function to report TS7009, got: {diags:?}"
     );
 }
 

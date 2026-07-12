@@ -4,9 +4,12 @@ const path = require("path");
 function loadTypescript() {
   const cwd = process.cwd();
   const candidates = [
+    process.env.TSZ_TYPESCRIPT_RUNTIME,
+    path.join(cwd, "TypeScript", "built", "local", "harness", "_namespaces", "ts.js"),
+    path.join(cwd, "built", "local", "harness", "_namespaces", "ts.js"),
     path.join(cwd, "TypeScript", "node_modules", "typescript"),
     "typescript",
-  ];
+  ].filter(Boolean);
   for (const candidate of candidates) {
     try {
       return require(candidate);

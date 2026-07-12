@@ -704,6 +704,13 @@ fn test_non_ambient_export_enum_still_emits_values_vs_tsc() {
 }
 
 #[test]
+fn test_enum_inside_non_ambient_namespace_emits_evaluated_values_vs_tsc() {
+    let result = emit_dts("export namespace NS { export enum D { P, Q, R } }\n");
+    let expected = "export declare namespace NS {\n    enum D {\n        P = 0,\n        Q = 1,\n        R = 2\n    }\n}\n";
+    assert_eq!(result, expected, "Mismatch with tsc");
+}
+
+#[test]
 fn test_function_overloads_vs_tsc() {
     let result = emit_dts(
         r#"

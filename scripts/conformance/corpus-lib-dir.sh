@@ -14,6 +14,11 @@
 # diagnostics locally vs in CI (e.g. tsz resolving `DateTimeFormatPart` locally
 # but not in CI). This resolver removes that ambiguity.
 #
+# TypeScript 7's wrapper package contains the CLI launcher but not the standard
+# libraries. Those live in its platform package, so directory existence alone
+# is not sufficient: every automatic or explicit candidate must contain both
+# `lib.d.ts` and `lib.es5.d.ts`.
+#
 # It prints the resolved absolute directory to stdout and exits 0, or prints an
 # actionable message to stderr and exits 1 when no pinned-version corpus lib
 # directory is present. The candidates all carry the built `lib.*.d.ts` layout
@@ -31,6 +36,13 @@
 # to prevent, so it is rejected with a clear error instead.
 
 set -u
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+lib_resolver="$script_dir/../setup/resolve-typescript-lib-dir.mjs"
+
+has_compiled_libs() {
+    [ -f "$1/lib.d.ts" ] && [ -f "$1/lib.es5.d.ts" ]
+}
 
 repo_root=""
 while [ $# -gt 0 ]; do
@@ -56,19 +68,31 @@ fi
 
 # Explicit override wins — but only if it actually points at a directory.
 if [ -n "${TSZ_LIB_DIR:-}" ]; then
-    if [ -d "$TSZ_LIB_DIR" ]; then
+    if [ -d "$TSZ_LIB_DIR" ] && has_compiled_libs "$TSZ_LIB_DIR"; then
         printf '%s\n' "$TSZ_LIB_DIR"
         exit 0
     fi
-    echo "corpus-lib-dir.sh: TSZ_LIB_DIR is set but is not a directory: $TSZ_LIB_DIR" >&2
+    echo "corpus-lib-dir.sh: TSZ_LIB_DIR does not contain compiled TypeScript libs: $TSZ_LIB_DIR" >&2
     exit 1
+fi
+
+resolver_error=""
+wrapper_package="$repo_root/scripts/node_modules/typescript/package.json"
+if [ -f "$wrapper_package" ]; then
+    resolver_output="$(node "$lib_resolver" "$wrapper_package" 2>&1)"
+    resolver_status=$?
+    if [ "$resolver_status" -eq 0 ]; then
+        printf '%s\n' "$resolver_output"
+        exit 0
+    fi
+    resolver_error="$resolver_output"
 fi
 
 for candidate in \
     "$repo_root/TypeScript/built/local" \
     "$repo_root/TypeScript/lib" \
     "$repo_root/scripts/node_modules/typescript/lib"; do
-    if [ -d "$candidate" ]; then
+    if [ -d "$candidate" ] && has_compiled_libs "$candidate"; then
         printf '%s\n' "$candidate"
         exit 0
     fi
@@ -79,9 +103,14 @@ corpus-lib-dir.sh: no pinned-version TypeScript lib directory found under
   $repo_root
 Conformance requires the built lib.*.d.ts set used to generate tsc-cache-full.json.
 Provide one of (checked in this order):
+  - scripts/node_modules/@typescript/typescript-<platform>-<arch>/lib
+      (run: cd scripts && npm install; resolved and version-checked automatically)
   - TypeScript/built/local                 (build the pinned submodule)
   - TypeScript/lib
-  - scripts/node_modules/typescript/lib    (run: cd scripts && npm install)
+  - scripts/node_modules/typescript/lib    (TypeScript 6 compatibility layout)
 or set TSZ_LIB_DIR to that directory explicitly.
 EOF
+if [ -n "$resolver_error" ]; then
+    printf 'Installed TypeScript package error:\n%s\n' "$resolver_error" >&2
+fi
 exit 1

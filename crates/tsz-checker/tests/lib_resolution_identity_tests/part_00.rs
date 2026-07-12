@@ -1069,16 +1069,20 @@ fn test_array_base_display_properties_preserve_lib_order() {
         .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
         .collect();
     let shape_props: Vec<_> =
-        tsz_solver::type_queries::get_callable_shape(checker.ctx.types, array_base)
-            .expect("expected callable Array<T> base")
+        tsz_solver::type_queries::get_object_shape(checker.ctx.types, array_base)
+            .expect("expected object-shaped Array<T> base")
             .properties
             .iter()
             .map(|prop| checker.ctx.types.resolve_atom_ref(prop.name).to_string())
             .collect();
 
     assert!(
-        display_props.starts_with(&["toString".to_string(), "toLocaleString".to_string()]),
-        "expected Array<T> display order to start with toString/toLocaleString, got display_props={display_props:?} shape_props={shape_props:?}"
+        display_props.starts_with(&[
+            "length".to_string(),
+            "toString".to_string(),
+            "toLocaleString".to_string(),
+        ]),
+        "expected Array<T> display order to start with length/toString/toLocaleString, got display_props={display_props:?} shape_props={shape_props:?}"
     );
     assert!(
         shape_props.iter().any(|name| name == "every"),
@@ -1092,12 +1096,12 @@ fn test_array_remap_symbol_type_preserves_lib_order_for_diagnostics() {
         return;
     }
 
-    let (formatted, display_props, shape_props) = inspect_symbol_with_lib(
+    let diagnostics = compile_with_lib_and_options(
         r#"
-type Exclude<T, U> = T extends U ? never : T;
-declare let src2: { [K in keyof number[] as Exclude<K, "length">]: (number[])[K] };
+type Exclude2<T, U> = T extends U ? never : T;
+declare let src2: { [K in keyof number[] as Exclude2<K, "length">]: (number[])[K] };
+const impossible: never = src2;
 "#,
-        "src2",
         CheckerOptions {
             target: ScriptTarget::ES2020,
             ..Default::default()
@@ -1105,8 +1109,12 @@ declare let src2: { [K in keyof number[] as Exclude<K, "length">]: (number[])[K]
     );
 
     assert!(
-        formatted.contains("{ [x: number]: number; toString: () => string; toLocaleString:"),
-        "expected src2 diagnostic display to start with toString/toLocaleString, got formatted={formatted:?} display_props={display_props:?} shape_props={shape_props:?}"
+        has_diagnostic_code_message(
+            &diagnostics,
+            2322,
+            "{ [x: number]: number; toString: () => string; toLocaleString:"
+        ),
+        "expected concrete Array remap to expand in the TS2322 diagnostic, got diagnostics={diagnostics:#?}"
     );
 }
 
@@ -1118,9 +1126,9 @@ fn test_array_remap_missing_property_message_preserves_lib_order() {
 
     let diagnostics = compile_with_lib_and_options(
         r#"
-type Exclude<T, U> = T extends U ? never : T;
+type Exclude2<T, U> = T extends U ? never : T;
 declare let tgt2: number[];
-declare let src2: { [K in keyof number[] as Exclude<K, "length">]: (number[])[K] };
+declare let src2: { [K in keyof number[] as Exclude2<K, "length">]: (number[])[K] };
 tgt2 = src2;
 "#,
         CheckerOptions {

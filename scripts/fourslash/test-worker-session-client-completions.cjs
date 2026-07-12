@@ -1743,5 +1743,6 @@ module.exports = function patchSessionClientCompletions(proto, ts, libFileConten
         installTypesEligibleCodes,
         installTypesFixId,
         installTypesFixAllDescription,
+        moduleSpecifierToTypesPackageName,
     };
 };

@@ -814,10 +814,11 @@ impl<'a> CheckerState<'a> {
                 .get(receiver)
                 .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
             && !self.is_this_in_nested_function_without_own_this_binding(receiver)
-            && self.current_this_type() == Some(type_id)
             && crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
                 .is_some()
             && let Some(class_idx) = self.nearest_enclosing_class(receiver)
+            && (self.current_this_type() == Some(type_id)
+                || self.this_has_contextual_owner(receiver) == Some(class_idx))
         {
             let class_name = self.get_class_name_with_type_params_from_decl(class_idx);
             return if class_name == "<anonymous>" {

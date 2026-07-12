@@ -1283,6 +1283,8 @@ impl<'a> CheckerState<'a> {
                 }
                 if self.is_js_file()
                     && self.ctx.compiler_options.check_js
+                    && skip_flow_narrowing
+                    && self.property_access_is_direct_write_target(idx)
                     && let Some(jsdoc_type) = self
                         .enclosing_expression_statement(idx)
                         .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
@@ -1372,12 +1374,14 @@ impl<'a> CheckerState<'a> {
                 {
                     return TypeId::ANY;
                 }
-                if self.is_js_expando_object_assignment(
-                    idx,
-                    access.expression,
-                    object_type_for_access,
-                    property_name,
-                ) && !checked_js_write_has_non_expando_global_type
+                if !commonjs_named_props_disallowed
+                    && self.is_js_expando_object_assignment(
+                        idx,
+                        access.expression,
+                        object_type_for_access,
+                        property_name,
+                    )
+                    && !checked_js_write_has_non_expando_global_type
                 {
                     return TypeId::ANY;
                 }
@@ -1480,9 +1484,6 @@ impl<'a> CheckerState<'a> {
                     if self.this_has_contextual_owner(access.expression).is_none() {
                         return TypeId::ANY;
                     }
-                    if self.is_jsdoc_annotated_this_member_declaration(idx) {
-                        return TypeId::ANY;
-                    }
                 }
                 if self.is_js_file()
                     && property_name == "prototype"
@@ -1572,11 +1573,9 @@ impl<'a> CheckerState<'a> {
                 // Don't emit TS2339 for private fields (starting with #) - they're handled elsewhere.
                 // Also suppress when accessibility check already emitted TS2341/TS2445
                 // (property exists but is private/protected — not truly "not found").
-                // TSC also suppresses property-not-found errors for `super.member` access:
-                // when a property is not found on the super type, TypeScript does not report
-                // TS2339. For example, `super.x()` in a static method (where `x` is an
-                // instance method) and `super.y()` in an instance method (where `y` is a
-                // static method) produce no TS2339 errors in tsc (see superAccess2.ts).
+                // A `super.member` miss is suppressed only when the name exists on
+                // the opposite side of the base class (static vs instance), as in
+                // superAccess2. A genuinely absent base member still reports TS2339.
                 // Also suppress TS2339 when base expression is a property access on an unresolved import
                 // (TS2307 was already emitted for the missing module).
                 // Suppress TS2339 when evaluating a computed property name
@@ -1593,9 +1592,20 @@ impl<'a> CheckerState<'a> {
                     &mut class_chain_summary,
                     property_name,
                 );
+                let super_member_exists_on_opposite_side = self
+                    .is_super_expression(access.expression)
+                    && resolved_class_access.is_some_and(|(class_idx, is_static_access)| {
+                        self.class_chain_member_kind_name_only(
+                            class_idx,
+                            property_name,
+                            !is_static_access,
+                            true,
+                        )
+                        .is_some()
+                    });
                 if !property_name.starts_with('#')
                     && !accessibility_error_emitted
-                    && !self.is_super_expression(access.expression)
+                    && !super_member_exists_on_opposite_side
                     && !self.is_property_access_on_unresolved_import(access.expression)
                     && !in_circular_computed_property
                     && !in_current_class_construction

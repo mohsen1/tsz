@@ -1,5 +1,4 @@
 /// <reference lib="es2018.intl" />
-
 declare namespace Intl {
     type DurationFormatLocaleMatcher = "lookup" | "best fit";
     type DurationFormatStyle = "long" | "short" | "narrow" | "digital";
@@ -15,7 +14,6 @@ declare namespace Intl {
         | "milliseconds"
         | "microseconds"
         | "nanoseconds";
-
     type DurationFormatUnitSingular =
         | "year"
         | "month"
@@ -69,7 +67,6 @@ declare namespace Intl {
         formatToParts(duration: Partial<Record<DurationFormatUnit, number>>): DurationFormatPart[];
         resolvedOptions(): ResolvedDurationFormatOptions;
     }
-
     interface ResolvedDurationFormatOptions {
         locale: UnicodeBCP47LocaleIdentifier;
         numberingSystem: string;
@@ -96,7 +93,6 @@ declare namespace Intl {
         nanosecondsDisplay: DurationFormatDisplayOption;
         fractionalDigits?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     }
-
     const DurationFormat: {
         prototype: DurationFormat;
         new (locales?: LocalesArgument, options?: DurationFormatOptions): DurationFormat;

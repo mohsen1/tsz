@@ -145,6 +145,23 @@ pub struct TestResultFail {
     pub known_failure: Option<&'static str>,
 }
 
+/// Stable reason codes for tests outside the active TypeScript oracle domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnsupportedReason {
+    /// No compiler-option configuration selected by the TypeScript 7 harness
+    /// is supported by the pinned native compiler.
+    TypeScript7Configuration,
+}
+
+impl UnsupportedReason {
+    /// Machine-stable reason code emitted in per-test output and artifacts.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::TypeScript7Configuration => "typescript-7-unsupported-configuration",
+        }
+    }
+}
+
 /// Test comparison result
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TestResult {
@@ -155,6 +172,8 @@ pub enum TestResult {
     Fail(Box<TestResultFail>),
     /// Test was skipped (@noCheck, @skip, etc.)
     Skipped(&'static str),
+    /// Test is outside the pinned oracle's supported configuration domain.
+    Unsupported(UnsupportedReason),
     /// Compiler crashed
     Crashed,
     /// Test timed out
@@ -245,6 +264,7 @@ pub struct TestStats {
     pub passed: AtomicUsize,
     pub failed: AtomicUsize,
     pub skipped: AtomicUsize,
+    pub unsupported: AtomicUsize,
     pub crashed: AtomicUsize,
     pub timeout: AtomicUsize,
     /// Failing tests that match an explicit known-debt entry.
@@ -254,11 +274,17 @@ pub struct TestStats {
 }
 
 impl TestStats {
-    /// Number of tests actually evaluated (total minus skipped)
-    pub fn evaluated(&self) -> usize {
+    /// Number of tests in the runnable oracle domain.
+    pub fn runnable(&self) -> usize {
         let total = self.total.load(Ordering::SeqCst);
         let skipped = self.skipped.load(Ordering::SeqCst);
-        total.saturating_sub(skipped)
+        let unsupported = self.unsupported.load(Ordering::SeqCst);
+        total.saturating_sub(skipped.saturating_add(unsupported))
+    }
+
+    /// Backward-compatible name for the runnable oracle denominator.
+    pub fn evaluated(&self) -> usize {
+        self.runnable()
     }
 
     pub fn pass_rate(&self) -> f64 {
@@ -338,17 +364,28 @@ mod tests {
     }
 
     #[test]
-    fn test_stats_evaluated_and_pass_rate_handle_skips_and_zero_division() {
+    fn test_stats_runnable_and_pass_rate_exclude_skips_and_unsupported() {
         let stats = TestStats::default();
+        assert_eq!(stats.runnable(), 0);
         assert_eq!(stats.evaluated(), 0);
         assert_eq!(stats.pass_rate(), 0.0);
 
         stats.total.store(10, Ordering::SeqCst);
-        stats.skipped.store(3, Ordering::SeqCst);
+        stats.skipped.store(2, Ordering::SeqCst);
+        stats.unsupported.store(1, Ordering::SeqCst);
         stats.passed.store(7, Ordering::SeqCst);
 
+        assert_eq!(stats.runnable(), 7);
         assert_eq!(stats.evaluated(), 7);
         assert_eq!(stats.pass_rate(), 100.0);
+    }
+
+    #[test]
+    fn unsupported_reason_code_is_stable() {
+        assert_eq!(
+            UnsupportedReason::TypeScript7Configuration.code(),
+            "typescript-7-unsupported-configuration"
+        );
     }
 
     #[test]

@@ -1331,7 +1331,7 @@ impl<'a> DeclarationEmitter<'a> {
         if parts.len() <= 1 {
             return None;
         }
-        Some(parts.join(" | "))
+        Some(Self::order_ts7_union_member_texts(&parts).join(" | "))
     }
 
     fn js_commonjs_export_alias_assignment_type_text(

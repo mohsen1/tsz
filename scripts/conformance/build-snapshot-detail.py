@@ -155,22 +155,30 @@ def build_aggregates(tests):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Build conformance detail snapshot")
-    parser.add_argument("input_file", help="Raw runner output file (--print-test mode)")
-    parser.add_argument("--output", "-o", required=True, help="Output JSON path")
-    args = parser.parse_args()
-
-    tests = parse_runner_output(args.input_file)
+def build_snapshot_detail(tests):
+    """Build the compact detail artifact with explicit runnable accounting."""
     aggregates = build_aggregates(tests)
 
-    total = len(tests)
-    passed = sum(1 for t in tests.values() if t["status"] == "PASS")
-    failed = total - passed
+    candidates = len(tests)
+    passed = sum(1 for result in tests.values() if result["status"] == "PASS")
+    unsupported = sum(
+        1 for result in tests.values() if result["status"] == "UNSUPPORTED"
+    )
+    skipped = sum(1 for result in tests.values() if result["status"] == "SKIP")
+    runnable = candidates - unsupported - skipped
+    failed = runnable - passed
 
-    # Build compact per-test detail: only store non-passing tests (PASS is implicit)
+    # Build compact per-test detail: only store runnable failures. PASS is
+    # implicit, while unsupported candidates are recorded separately with a
+    # stable reason so they cannot be mistaken for either failures or skips.
     fail_detail = {}
+    unsupported_detail = {}
     for path, result in sorted(tests.items()):
+        if result["status"] == "UNSUPPORTED":
+            unsupported_detail[path] = {
+                "reason": result.get("unsupported_reason", ""),
+            }
+            continue
         if result["status"] not in ("FAIL", "XFAIL"):
             continue
         expected = result.get("expected", [])
@@ -191,22 +199,47 @@ def main():
                 entry["reason"] = reason
         fail_detail[path] = entry
 
-    output = {
+    return {
         "summary": {
-            "total": total,
+            "candidates": candidates,
+            # `total` remains the backward-compatible pass denominator.
+            "total": runnable,
+            "runnable": runnable,
             "passed": passed,
             "failed": failed,
-            "known_failures": sum(1 for t in tests.values() if t["status"] == "XFAIL"),
+            "unsupported": unsupported,
+            "skipped": skipped,
+            "known_failures": sum(
+                1 for result in tests.values() if result["status"] == "XFAIL"
+            ),
         },
         "aggregates": aggregates,
         "failures": fail_detail,
+        "unsupported": unsupported_detail,
     }
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Build conformance detail snapshot")
+    parser.add_argument("input_file", help="Raw runner output file (--print-test mode)")
+    parser.add_argument("--output", "-o", required=True, help="Output JSON path")
+    args = parser.parse_args()
+
+    tests = parse_runner_output(args.input_file)
+    output = build_snapshot_detail(tests)
 
     with open(args.output, "w") as f:
         json.dump(output, f, separators=(",", ":"))
 
     size_kb = len(json.dumps(output, separators=(",", ":"))) / 1024
-    print(f"Detail snapshot: {total} tests, {passed} passed, {failed} failed ({size_kb:.0f} KB)")
+    summary = output["summary"]
+    print(
+        "Detail snapshot: "
+        f"{summary['candidates']} candidates, {summary['runnable']} runnable, "
+        f"{summary['passed']} passed, {summary['failed']} failed, "
+        f"{summary['unsupported']} unsupported, {summary['skipped']} skipped "
+        f"({size_kb:.0f} KB)"
+    )
 
 
 if __name__ == "__main__":

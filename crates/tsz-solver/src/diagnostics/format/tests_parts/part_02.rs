@@ -1456,7 +1456,7 @@ fn union_array_inherits_element_source_position() {
 }
 
 #[test]
-fn union_array_of_intrinsic_stays_after_primitive_builtin() {
+fn union_array_of_intrinsic_uses_typescript_7_flag_order() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1476,21 +1476,19 @@ fn union_array_of_intrinsic_stays_after_primitive_builtin() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     // `ReactChild = string` is a primitive-bodied alias, so it renders as
     // `string` (tsc attaches no `aliasSymbol` to the shared intrinsic). The
-    // point of this test is the union member ordering: the array of an
-    // intrinsic element type must not inherit `any`'s low builtin key, so it
-    // stays after the `boolean` primitive rather than sorting to the front.
+    // point of this test is TypeScript 7 stable ordering: `string` and
+    // `boolean` use their primitive TypeFlags positions, while `any[]` is an
+    // object and follows both.
     assert_eq!(
         fmt.format(union_id),
-        "boolean | any[] | string",
-        "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
+        "string | boolean | any[]",
+        "Arrays of intrinsic element types should use their object-type ordering"
     );
 }
 
-/// Regression: `Application(Container, [T])` should use the MAX position of
-/// the base and its arguments. This keeps generic instantiations sorted with
-/// the user-defined element type rather than with a built-in / lib base.
+/// TypeScript 7 compares visible generic base names before source positions.
 #[test]
-fn union_application_uses_max_arg_position() {
+fn union_application_uses_typescript_7_visible_name_order() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1528,19 +1526,17 @@ fn union_application_uses_max_arg_position() {
 
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
-    // `Container<Item>` inherits Item's position via the MAX rule, so the
-    // union preserves source order.
-    assert_eq!(result, "Item | Container<Item>");
+    assert_eq!(result, "Container<Item> | Item");
 }
 
-/// Regression: a union mixing a named type (tier 1, has source position) with
-/// a literal type (tier 2, no source position) should display the named type
-/// first, matching tsc. Source order alone — `"foo" | Refrigerator` — is not
-/// what tsc renders; tsc displays `Refrigerator | "foo"`.
+/// Regression: a union mixing a named type with a string literal renders the
+/// literal first under TypeScript 7's `TypeFlags` order — string literals rank
+/// (`1 << 10`) below object-like named types (`1 << 20`). Oracle-verified
+/// against typescript@7.0.2, which prints `"foo" | Refrigerator`.
 ///
 /// Source: `stringLiteralsWithEqualityChecks03` (and 04).
 #[test]
-fn union_named_type_renders_before_string_literal() {
+fn union_string_literal_renders_before_named_type() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1564,15 +1560,17 @@ fn union_named_type_renders_before_string_literal() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
     assert_eq!(
-        result, "Refrigerator | \"foo\"",
-        "Named type (tier 1) must render before a literal (tier 2) regardless of source order"
+        result, "\"foo\" | Refrigerator",
+        "TypeScript 7 ranks string literals below object-like named types"
     );
 }
 
-/// Sibling test: multiple named types stay sorted by source position, and any
-/// number of trailing literals retain their relative declaration order.
+/// Sibling test: string literals (rank `1 << 10`) render before object-like
+/// named types (rank `1 << 20`); within each rank, literals sort by value and
+/// named types alphabetically. Oracle-verified against typescript@7.0.2, which
+/// prints `"x" | "y" | Alpha | Beta`.
 #[test]
-fn union_multiple_named_types_sorted_then_literals_in_source_order() {
+fn union_literals_render_before_sorted_named_types() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1597,9 +1595,9 @@ fn union_multiple_named_types_sorted_then_literals_in_source_order() {
 
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     let result = fmt.format(union_id);
-    // Named types come first, sorted by span (Alpha at 10 < Beta at 30).
-    // Literals follow in the order they appeared in the input.
-    assert_eq!(result, "Alpha | Beta | \"x\" | \"y\"");
+    // Literals rank below named types, sorted by value ("x" < "y"); the named
+    // interfaces follow, alphabetized (Alpha < Beta).
+    assert_eq!(result, "\"x\" | \"y\" | Alpha | Beta");
 }
 
 /// Regression: tsc renders the eight `typeof` result string literals in

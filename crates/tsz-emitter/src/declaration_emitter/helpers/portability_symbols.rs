@@ -934,8 +934,11 @@ impl<'a> DeclarationEmitter<'a> {
                 break;
             }
 
-            let Some(next) = binder
-                .resolve_import_symbol(current)
+            let Some(next) = self
+                .local_import_equals_target_for_alias
+                .get(&current)
+                .copied()
+                .or_else(|| binder.resolve_import_symbol(current))
                 .filter(|resolved| *resolved != current)
                 .or_else(|| self.resolve_import_symbol_from_module_exports(current, binder))
             else {

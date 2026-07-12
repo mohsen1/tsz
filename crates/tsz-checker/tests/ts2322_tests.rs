@@ -34,7 +34,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
         "esnext.d.ts",
     ])
 }

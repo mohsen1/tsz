@@ -16,10 +16,23 @@ ConformanceSnapshot = check_snapshot_regression.ConformanceSnapshot
 compare_snapshots = check_snapshot_regression.compare_snapshots
 
 
-def snapshot(passed, failures, categories=None, total=100):
+def snapshot(
+    passed,
+    failures,
+    categories=None,
+    total=100,
+    candidates=None,
+    unsupported=0,
+    skipped=0,
+):
     return ConformanceSnapshot(
         passed=passed,
         total=total,
+        candidates=(
+            candidates if candidates is not None else total + unsupported + skipped
+        ),
+        unsupported=unsupported,
+        skipped=skipped,
         failures=failures,
         categories=categories or {},
     )
@@ -117,6 +130,42 @@ class CheckSnapshotRegressionTests(unittest.TestCase):
 
         self.assertEqual(comparison.category_delta["wrong_code"], -2)
         self.assertEqual(comparison.category_delta["fingerprint_only"], 4)
+
+    def test_unsupported_candidates_are_outside_runnable_denominator(self):
+        comparison = compare_snapshots(
+            snapshot(1, {}, total=2, candidates=2),
+            snapshot(1, {}, total=1, candidates=2, unsupported=1),
+        )
+
+        self.assertEqual(comparison.head.runnable, 1)
+        self.assertEqual(comparison.head.candidates, 2)
+        self.assertEqual(comparison.head.unsupported, 1)
+        self.assertEqual(comparison.pass_delta, 0)
+        self.assertFalse(comparison.has_blocking_regression())
+
+    def test_new_summary_accounting_prefers_explicit_runnable(self):
+        accounting = check_snapshot_regression._summary_accounting(
+            {
+                "summary": {
+                    "candidates": 12,
+                    "runnable": 9,
+                    "total_tests": 12,
+                    "unsupported": 2,
+                    "skipped": 1,
+                }
+            },
+            {},
+        )
+
+        self.assertEqual(accounting, (12, 9, 2, 1))
+
+    def test_legacy_summary_uses_detail_total_as_candidate_count(self):
+        accounting = check_snapshot_regression._summary_accounting(
+            {"summary": {"total_tests": 9}},
+            {"summary": {"total": 10, "skipped": 1}},
+        )
+
+        self.assertEqual(accounting, (10, 9, 0, 1))
 
 
 if __name__ == "__main__":

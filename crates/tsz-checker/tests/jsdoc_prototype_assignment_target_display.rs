@@ -133,29 +133,25 @@ a.first = 10
         true,
     );
 
+    // The static chained assignment `A.s = A.t = function g(m) { ... this.x }`
+    // binds `this` to `typeof A`, so `this.x` reports TS2339 against `typeof A`.
     assert!(
         diags.iter().any(|(code, message)| {
             *code == 2339 && message == "Property 'x' does not exist on type 'typeof A'."
         }),
         "static chained assignment should type `this` as typeof A; got: {diags:?}"
     );
+    // TypeScript 7: `new A()` is `any` (TS7009), so the `a.y(...)`/`a.z(...)`
+    // instance calls are unchecked — no `'z' does not exist` diagnostic.
     assert!(
         !diags.iter().any(|(code, message)| {
             *code == 2339 && message == "Property 'z' does not exist on type 'A'."
         }),
-        "prototype chained assignment should declare both prototype targets; got: {diags:?}"
+        "instance method calls on an `any` receiver must not report missing members; got: {diags:?}"
     );
     assert!(
-        diags
-            .iter()
-            .filter(|(code, message)| {
-                *code == 2345
-                    && message
-                        == "Argument of type 'string' is not assignable to parameter of type 'number'."
-            })
-            .count()
-            >= 2,
-        "prototype chained callable targets should preserve the JSDoc parameter type; got: {diags:?}"
+        diags.iter().any(|(code, _)| *code == 7009),
+        "expected TS7009 for `new A()` on a non-constructor function; got: {diags:?}"
     );
 }
 

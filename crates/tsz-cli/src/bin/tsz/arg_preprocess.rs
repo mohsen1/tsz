@@ -87,11 +87,13 @@ pub(super) fn preprocess_args(args: Vec<OsString>) -> PreprocessOutcome {
     }
 
     let build_remapped = remap_build_mode_flags(expanded);
-    let normalized = normalize_bool_values_and_deduplicate(build_remapped);
+    let mut normalized = normalize_bool_values_and_deduplicate(build_remapped);
 
     if let Some(exit) = build_position_rejection(&normalized) {
         return PreprocessOutcome::EarlyExit(exit);
     }
+
+    append_direct_cli_option_order(&mut normalized);
 
     PreprocessOutcome::Continue(normalized)
 }
@@ -400,6 +402,82 @@ fn normalize_bool_values_and_deduplicate(args: Vec<OsString>) -> Vec<OsString> {
         .collect()
 }
 
+/// Append a hidden, repeated side-channel that preserves the final argv order
+/// of options whose diagnostics are produced by the shared config parser.
+///
+/// The side-channel carries option identities only. Diagnostic construction
+/// remains structural in the driver, and no rendered message text is parsed.
+fn append_direct_cli_option_order(args: &mut Vec<OsString>) {
+    const MARKER_PREFIX: &str = "--__direct-cli-option-order=";
+
+    // Do not allow an externally supplied hidden marker to influence order.
+    args.retain(|arg| !arg.to_string_lossy().starts_with(MARKER_PREFIX));
+
+    let mut ordered = Vec::new();
+    for index in 1..args.len() {
+        let Some(name) = direct_cli_diagnostic_option_at(args, index) else {
+            continue;
+        };
+
+        // Duplicate compiler options have last-occurrence semantics. Move an
+        // existing entry rather than emitting the same diagnostic twice.
+        if let Some(previous) = ordered.iter().position(|candidate| *candidate == name) {
+            ordered.remove(previous);
+        }
+        ordered.push(name);
+    }
+
+    args.extend(
+        ordered
+            .into_iter()
+            .map(|name| OsString::from(format!("{MARKER_PREFIX}{name}"))),
+    );
+}
+
+fn direct_cli_diagnostic_option_at(args: &[OsString], index: usize) -> Option<&'static str> {
+    let arg = args[index].to_string_lossy();
+
+    if let Some(name) = arg.strip_prefix("--__explicitly-disabled-bool-flag=") {
+        return dropped_bool_option_name(name);
+    }
+
+    let (flag, inline_value) = arg
+        .split_once('=')
+        .map_or((arg.as_ref(), None), |(flag, value)| (flag, Some(value)));
+    let value_equals = |expected: &str| {
+        inline_value.map_or_else(
+            || {
+                args.get(index + 1)
+                    .is_some_and(|value| value.to_string_lossy().eq_ignore_ascii_case(expected))
+            },
+            |value| value.eq_ignore_ascii_case(expected),
+        )
+    };
+
+    match flag {
+        "--target" | "-t" if value_equals("es3") => Some("target"),
+        "--module" | "-m" if value_equals("none") => Some("module"),
+        "--paths" if !value_equals("null") => Some("paths"),
+        "--plugins" if !value_equals("null") => Some("plugins"),
+        "--charset" => Some("charset"),
+        "--importsNotUsedAsValues" => Some("importsNotUsedAsValues"),
+        "--out" => Some("out"),
+        _ => flag.strip_prefix("--").and_then(dropped_bool_option_name),
+    }
+}
+
+fn dropped_bool_option_name(name: &str) -> Option<&'static str> {
+    match name {
+        "keyofStringsOnly" => Some("keyofStringsOnly"),
+        "noImplicitUseStrict" => Some("noImplicitUseStrict"),
+        "noStrictGenericChecks" => Some("noStrictGenericChecks"),
+        "preserveValueImports" => Some("preserveValueImports"),
+        "suppressExcessPropertyErrors" => Some("suppressExcessPropertyErrors"),
+        "suppressImplicitAnyIndexErrors" => Some("suppressImplicitAnyIndexErrors"),
+        _ => None,
+    }
+}
+
 fn push_option_bool_arg(
     final_result: &mut Vec<OsString>,
     skip_positions: &mut Vec<bool>,
@@ -433,6 +511,7 @@ fn canonicalize_long_flag(flag: &str) -> Option<&'static str> {
         "perfcountersjson" => Some("--perf-counters-json"),
         "tracedependencies" => Some("--traceDependencies"),
         "__explicitlydisabledboolflag" => Some("--__explicitly-disabled-bool-flag"),
+        "__directclioptionorder" => Some("--__direct-cli-option-order"),
         _ => None,
     }
 }
@@ -607,6 +686,7 @@ const VALUED_FLAGS: &[&str] = &[
     "--importsNotUsedAsValues",
     "--out",
     "--typesVersions",
+    "--__direct-cli-option-order",
 ];
 
 fn is_valued_flag(flag: &str) -> bool {

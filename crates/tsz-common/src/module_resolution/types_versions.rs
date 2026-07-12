@@ -33,9 +33,9 @@ pub struct SemVer {
 /// NOTE: Keep this in sync with the TypeScript version this compiler targets
 /// (`scripts/conformance/typescript-versions.json`).
 pub const DEFAULT_COMPILER_VERSION: SemVer = SemVer {
-    major: 6,
+    major: 7,
     minor: 0,
-    patch: 3,
+    patch: 2,
 };
 
 /// Parse a `major[.minor[.patch]]` version, ignoring any `-pre`/`+build`

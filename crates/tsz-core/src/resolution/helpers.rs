@@ -817,9 +817,9 @@ mod tests {
         assert_eq!(
             types_versions_compiler_version(None),
             SemVer {
-                major: 6,
+                major: 7,
                 minor: 0,
-                patch: 3,
+                patch: 2,
             }
         );
     }

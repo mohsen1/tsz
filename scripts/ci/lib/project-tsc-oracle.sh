@@ -64,12 +64,15 @@ function parse(line,   loc, before, a, code) {
 }
 '
 
-# Resolve a tsc binary for the oracle. Prefers the vendored TypeScript submodule
-# (always present, no install needed), then the scripts/ and top-level
-# node_modules tsc shims. TSZ_PROJECT_TSC_ORACLE_BIN overrides for tests; when
-# it names a tsc.js it is run via node, when it names an executable it is run
-# directly. Emits the command words (one per line) so callers run it as an
-# array; emits nothing when no oracle is available.
+# Resolve the exact pinned npm tsc for the oracle. The legacy TypeScript corpus
+# submodule does not contain the TypeScript 7 native compiler, and arbitrary
+# top-level node_modules shims may point at a different release. The shared
+# scripts installation is prepared by ensure-pinned-typescript.sh; verify both
+# package metadata and the compiler's reported version before accepting it.
+# TSZ_PROJECT_TSC_ORACLE_BIN remains an explicit test override: when it names a
+# tsc.js it is run via node, and when it names an executable it is run directly.
+# Emits the command words (one per line) so callers run it as an array; emits
+# nothing when the exact pinned compiler is unavailable.
 tsz_project_oracle_tsc_command() {
   if [[ -n "${TSZ_PROJECT_TSC_ORACLE_BIN+x}" ]]; then
     local override="$TSZ_PROJECT_TSC_ORACLE_BIN"
@@ -80,18 +83,25 @@ tsz_project_oracle_tsc_command() {
     fi
     return 0
   fi
-  if [[ -f "${ROOT_DIR:-.}/typescript/lib/tsc.js" ]]; then
-    printf 'node\n%s\n' "${ROOT_DIR:-.}/typescript/lib/tsc.js"
-    return 0
-  fi
-  if [[ -x scripts/node_modules/.bin/tsc ]]; then
-    printf '%s\n' "scripts/node_modules/.bin/tsc"
-    return 0
-  fi
-  if [[ -x node_modules/.bin/tsc ]]; then
-    printf '%s\n' "node_modules/.bin/tsc"
-    return 0
-  fi
+
+  command -v node >/dev/null 2>&1 || return 0
+
+  local root="${ROOT_DIR:-.}"
+  local versions_file="$root/scripts/conformance/typescript-versions.json"
+  local package_json="$root/scripts/node_modules/typescript/package.json"
+  local tsc_js="$root/scripts/node_modules/typescript/lib/tsc.js"
+  [[ -f "$versions_file" && -f "$package_json" && -f "$tsc_js" ]] || return 0
+
+  local pinned_version="" installed_version="" reported_version=""
+  pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); const current = cfg.current || ''; const mapped = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapped || fallback || '');" "$versions_file" 2>/dev/null)" || return 0
+  installed_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version || '');" "$package_json" 2>/dev/null)" || return 0
+  [[ -n "$pinned_version" && "$installed_version" == "$pinned_version" ]] || return 0
+
+  reported_version="$(node "$tsc_js" --version 2>/dev/null)" || return 0
+  reported_version="${reported_version#Version }"
+  [[ "$reported_version" == "$pinned_version" ]] || return 0
+
+  printf 'node\n%s\n' "$tsc_js"
 }
 
 # Emit the canonical identity key (basename<TAB>line<TAB>col<TAB>code) for every

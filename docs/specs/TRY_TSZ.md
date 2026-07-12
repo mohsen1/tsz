@@ -9,8 +9,8 @@ The user runs:
 npx try-tsz
 ```
 
-The tool finds the relevant `tsconfig.json`, runs a TypeScript `tsc` oracle at
-version `6.0.3` or newer and the latest published `tsz` in a no-emit check,
+The tool finds the relevant `tsconfig.json`, runs a TypeScript 7 oracle at
+version `7.0.2` or newer and the latest published `tsz` in a no-emit check,
 compares the complete diagnostic result, reports speed, and guides the user
 through an interactive, local-only bug-report flow when `tsz` differs.
 
@@ -23,7 +23,7 @@ This is not switch/migration messaging. The user-facing promise is:
 
 - Audience: any project that uses `tsc` for type checking or emit.
 - MVP scope: type-check parity only, always run both compilers with `--noEmit`.
-- Compatibility bar: `tsz` matches TypeScript `tsc` `6.0.3` or newer exactly
+- Compatibility bar: `tsz` matches TypeScript `tsc` `7.0.2` or newer exactly
   for exit status and diagnostics.
 - Diagnostic comparison: compare file, line, column/span when available, code,
   message text, and order.
@@ -113,10 +113,10 @@ interactive mismatch flow.
 
 Use a Rust-native CLI packaged for npm rather than a WASM-first CLI.
 
-Reasoning: `try-tsz` must spawn `tsc`, invoke `tsz`, inspect the filesystem,
-write local reports, optionally call `gh`, and open URLs. Native Rust maps to
-that job cleanly. WASM remains useful for browser/library surfaces, but it adds
-friction for process orchestration.
+Reasoning: `try-tsz` must run the Node-based TypeScript oracle helper, invoke
+`tsz`, inspect the filesystem, write local reports, optionally call `gh`, and
+open URLs. Native Rust maps to that job cleanly. WASM remains useful for
+browser/library surfaces, but it adds friction for process orchestration.
 
 Repository layout:
 
@@ -132,12 +132,15 @@ Repository layout:
 
 Compiler invocation:
 
-- Use a TypeScript `6.0.3` or newer oracle. The npm `try-tsz` package provides
-  that oracle dependency; if a non-npm/local build cannot find it, a project
-  TypeScript install at `6.0.3` or newer may be used.
-- Invoke `tsc --pretty false --noEmit -p <config>`.
-- Invoke the packaged latest `tsz` binary as `tsz --pretty false --noEmit -p
-  <config>`.
+- Use a TypeScript `7.0.2` or newer oracle. The npm `try-tsz` package pins
+  TypeScript `7.0.2`; if a non-npm/local build cannot find the packaged oracle,
+  a project TypeScript install at `7.0.2` or newer may be used.
+- Collect the `tsc --pretty false --noEmit -p <config>` equivalent through
+  TypeScript 7's `typescript/unstable/sync` API. The root `typescript` export
+  supplies the version only; it no longer exposes the stable compiler API used
+  by TypeScript 6 and earlier.
+- Invoke the packaged latest `tsz` binary as an isolated worker with
+  `tsz --pretty false --noEmit -p <config>`.
 - Measure total wall-clock time for each compiler from process spawn through
   exit.
 - Capture stdout, stderr, exit code, signal/termination state, and timeout.
@@ -146,15 +149,33 @@ Compiler invocation:
 
 Structured diagnostics:
 
-- Prefer adding a stable machine-readable diagnostic output mode to `tsz` for
-  `try-tsz` rather than parsing `tsz` text forever.
-- For `tsc`, use a small Node helper with TypeScript `6.0.3` or newer to parse
-  the config and collect pre-emit diagnostics as structured JSON. This avoids
-  brittle text parsing and keeps the oracle aligned with the `tsz` compatibility
-  target.
+- Keep `tsz` diagnostics machine-readable rather than parsing rendered text.
+- The Node oracle helper dynamically imports `typescript/unstable/sync`, opens
+  the selected config with `API.updateSnapshot({ openProjects: [config] })`,
+  runs binding, and collects config, syntactic, program, global, semantic, and
+  (when applicable) declaration diagnostics from the resulting project. It
+  always disposes the snapshot and closes the API session.
+- TypeScript 7 reports source offsets in UTF-16 code units. The helper converts
+  them to UTF-8 byte offsets before Rust compares them with `tsz` diagnostics.
 - Compare the structured `tsc` diagnostics to structured `tsz` diagnostics.
 - Include the raw command output in `.try-tsz/raw/` only when the user chooses
   to generate a report.
+
+No-write JSONC overlay:
+
+- Read the root `tsconfig` as JSONC with comments and trailing commas enabled.
+- Refuse ambiguous or unsafe shapes: duplicate `compilerOptions`, duplicate
+  `compilerOptions.noEmit`, a non-object `compilerOptions`, or a non-boolean
+  `noEmit`.
+- If `noEmit` is not already `true`, use `jsonc-parser` to create an in-memory
+  edit that sets `compilerOptions.noEmit` to `true` while preserving the
+  config's indentation, newline style, comments, and unrelated fields.
+- Expose that edited text only through the sync API's virtual `readFile`
+  callback for the root config. Returning `undefined` for every other path
+  delegates to the real filesystem. The original config, source tree,
+  lockfiles, dependency directories, and build-info files are not written.
+- Map any config diagnostic span through the inverse edit before reporting its
+  original line, column, and byte range.
 
 ## Report And Privacy
 

@@ -7,5 +7,5 @@ interface RegExpStringIterator<T> extends IteratorObject<T, BuiltinIteratorRetur
     [Symbol.iterator](): RegExpStringIterator<T>;
 }
 interface RegExp {
-    [Symbol.matchAll](str: string): RegExpStringIterator<RegExpMatchArray>;
+    [Symbol.matchAll](str: string): RegExpStringIterator<RegExpExecArray>;
 }

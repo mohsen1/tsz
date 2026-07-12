@@ -940,10 +940,17 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn preferred_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        // The asserted-type path copies a user-written `as` annotation verbatim,
+        // so its member order is preserved. Every other branch reconstructs an
+        // inferred type from source and must adopt TypeScript 7's union rank.
         if let Some(asserted_type_text) = self.explicit_asserted_type_text(expr_idx) {
             return Some(asserted_type_text);
         }
+        self.preferred_expression_type_text_reconstructed(expr_idx)
+            .map(|type_text| Self::reorder_ts7_unions_in_text(&type_text))
+    }
 
+    fn preferred_expression_type_text_reconstructed(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
         let expr_node = self.arena.get(expr_idx)?;
 

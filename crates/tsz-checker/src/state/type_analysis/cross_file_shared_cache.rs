@@ -257,7 +257,7 @@ mod tests {
         let lib_files = load_lib_files(&[
             "es2015.iterable.d.ts",
             "es2020.symbol.wellknown.d.ts",
-            "esnext.iterator.d.ts",
+            "es2025.iterator.d.ts",
         ]);
         let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
         let root = parser.parse_source_file();

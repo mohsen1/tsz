@@ -500,6 +500,32 @@ project_tsconfig_stats() {
 # type-level libraries but catches infinite loops.
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-60}"
 
+typescript_tool_entry_path() {
+    printf '%s/node_modules/typescript/bin/tsc\n' "$1"
+}
+
+typescript_version_is_exact() {
+    [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+}
+
+typescript_tool_entry_is_valid() {
+    local tool_dir="$1"
+    local expected_version="$2"
+    local package_json="$tool_dir/node_modules/typescript/package.json"
+    local entry
+    entry="$(typescript_tool_entry_path "$tool_dir")"
+    [[ -n "$expected_version" && -f "$package_json" && -x "$entry" ]] || return 1
+
+    local installed_version=""
+    installed_version="$(node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(pkg.version || '');" "$package_json" 2>/dev/null)" || return 1
+    [[ "$installed_version" == "$expected_version" ]] || return 1
+
+    local reported_version=""
+    reported_version="$("$entry" --version 2>/dev/null)" || return 1
+    reported_version="${reported_version#Version }"
+    [[ "$reported_version" == "$expected_version" ]]
+}
+
 ensure_tsgo() {
     # Honor explicit TSGO override when provided by caller.
     if [ -n "$TSGO" ]; then
@@ -516,6 +542,15 @@ ensure_tsgo() {
         exit 1
     fi
 
+    local expected_version=""
+    if [[ "$TSGO_NPM_SPEC" == typescript@* ]]; then
+        expected_version="${TSGO_NPM_SPEC#typescript@}"
+    fi
+    if ! typescript_version_is_exact "$expected_version"; then
+        echo -e "${RED}✗ TSGO_NPM_SPEC must name an exact typescript package version: $TSGO_NPM_SPEC${NC}"
+        exit 1
+    fi
+
     mkdir -p "$TSGO_TOOL_DIR"
     local spec_file="$TSGO_TOOL_DIR/.tsgo-spec"
     local installed_spec=""
@@ -523,12 +558,14 @@ ensure_tsgo() {
         installed_spec="$(cat "$spec_file")"
     fi
 
-    if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
+    if ! typescript_tool_entry_is_valid "$TSGO_TOOL_DIR" "$expected_version" \
+        || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
         echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
         if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSGO_TOOL_DIR" \
             --no-audit \
             --no-fund \
+            --include=optional \
             --loglevel=error \
             "$TSGO_NPM_SPEC" >/dev/null; then
             echo -e "${RED}✗ tsgo install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
@@ -538,8 +575,8 @@ ensure_tsgo() {
         printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
     fi
 
-    if [ ! -x "$TSGO_LOCAL_BIN" ]; then
-        echo -e "${RED}✗ tsgo install failed: binary not found at $TSGO_LOCAL_BIN${NC}"
+    if ! typescript_tool_entry_is_valid "$TSGO_TOOL_DIR" "$expected_version"; then
+        echo -e "${RED}✗ tsgo install failed validation: expected TypeScript $expected_version at $TSGO_LOCAL_BIN${NC}"
         exit 1
     fi
 
@@ -580,6 +617,10 @@ ensure_tsc() {
         echo "  Set TSC_NPM_SPEC or update scripts/conformance/typescript-versions.json."
         exit 1
     fi
+    if ! typescript_version_is_exact "$resolved_spec"; then
+        echo -e "${RED}✗ TSC_NPM_SPEC must be an exact TypeScript version: $resolved_spec${NC}"
+        exit 1
+    fi
 
     mkdir -p "$TSC_TOOL_DIR"
     local spec_file="$TSC_TOOL_DIR/.tsc-spec"
@@ -588,12 +629,14 @@ ensure_tsc() {
         installed_spec="$(cat "$spec_file")"
     fi
 
-    if [ ! -x "$TSC_LOCAL_BIN" ] || [ "$installed_spec" != "$resolved_spec" ]; then
+    if ! typescript_tool_entry_is_valid "$TSC_TOOL_DIR" "$resolved_spec" \
+        || [ "$installed_spec" != "$resolved_spec" ]; then
         echo -e "${CYAN}Installing tsc locally (${resolved_spec})...${NC}"
         if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSC_TOOL_DIR" \
             --no-audit \
             --no-fund \
+            --include=optional \
             --loglevel=error \
             "typescript@${resolved_spec}" >/dev/null; then
             echo -e "${RED}✗ tsc install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
@@ -603,8 +646,8 @@ ensure_tsc() {
         printf '%s\n' "$resolved_spec" > "$spec_file"
     fi
 
-    if [ ! -x "$TSC_LOCAL_BIN" ]; then
-        echo -e "${RED}✗ tsc install failed: binary not found at $TSC_LOCAL_BIN${NC}"
+    if ! typescript_tool_entry_is_valid "$TSC_TOOL_DIR" "$resolved_spec"; then
+        echo -e "${RED}✗ tsc install failed validation: expected TypeScript $resolved_spec at $TSC_LOCAL_BIN${NC}"
         exit 1
     fi
 

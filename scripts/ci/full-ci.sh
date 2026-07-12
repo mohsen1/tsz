@@ -4,6 +4,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 source scripts/ci/suite-metadata.sh
+# shellcheck source=scripts/ci/lib/typescript-corpus.sh
+source scripts/ci/lib/typescript-corpus.sh
 
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-1}"
@@ -28,13 +30,16 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # that deficit when available so corpus-total drift does not force blind
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
-TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-11019}"
 # Optional accepted-regression list for temporary conformance runways. Keep this
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.
 TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
-TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-13526}"
-TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
+# Calibrated to the TypeScript 7 corpus (submodule SHA 4d4f005c): 11563 JS- and
+# 1390 DTS-eligible baselines. The prior 13526/1486 values were TypeScript 6-era
+# corpus totals and no longer describe the pinned corpus.
+TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-11563}"
+TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1372}"
 
 cap_positive_baseline() {
   local baseline="$1"
@@ -80,8 +85,6 @@ fi
 if [[ "$LOG_DIR" != /* ]]; then
   LOG_DIR="$ROOT_DIR/$LOG_DIR"
 fi
-SYNTHETIC_GIT_CHECKOUT=0
-
 mkdir -p "$METRICS_DIR" "$LOG_DIR"
 
 ci_section() {
@@ -304,7 +307,6 @@ ensure_source_git_context() {
     return 0
   fi
 
-  SYNTHETIC_GIT_CHECKOUT=1
   git init
   git config user.email "ci@tsz.local"
   git config user.name "TSZ CI"
@@ -313,45 +315,9 @@ ensure_source_git_context() {
   git commit -q -m "ci source snapshot"
 }
 
-init_typescript_submodule() {
-  ci_section "Init TypeScript submodule"
-  local ref_file="$ROOT_DIR/scripts/ci/typescript-submodule-ref"
-  local expected_ref
-  expected_ref="$(tr -d '[:space:]' < "$ref_file")"
-
-  if [[ -f TypeScript/.tsz-cache-ref ]]; then
-    local cached_ref
-    cached_ref="$(tr -d '[:space:]' < TypeScript/.tsz-cache-ref)"
-    if [[ "$cached_ref" == "$expected_ref" && -f TypeScript/src/lib/es5.d.ts ]]; then
-      echo "Using cached TypeScript source tree at ${cached_ref}"
-      return 0
-    fi
-    echo "Discarding stale TypeScript cache: ${cached_ref} != ${expected_ref}" >&2
-    rm -rf TypeScript
-  fi
-
-  if [[ "$SYNTHETIC_GIT_CHECKOUT" -eq 0 ]] && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    local gitlink_ref
-    gitlink_ref="$(git ls-tree HEAD TypeScript | awk '{print $3}')"
-    if [[ -z "$gitlink_ref" ]]; then
-      rm -rf TypeScript
-      git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
-      git -C TypeScript fetch --depth 1 origin "$expected_ref"
-      git -C TypeScript checkout --detach FETCH_HEAD
-    elif [[ "$gitlink_ref" != "$expected_ref" ]]; then
-      echo "error: scripts/ci/typescript-submodule-ref is stale: ${expected_ref} != ${gitlink_ref}" >&2
-      return 1
-    else
-      git submodule update --init --depth 1 -- TypeScript
-    fi
-  else
-    rm -rf TypeScript
-    git clone --filter=blob:none https://github.com/microsoft/TypeScript.git TypeScript
-    git -C TypeScript fetch --depth 1 origin "$expected_ref"
-    git -C TypeScript checkout --detach FETCH_HEAD
-  fi
-
-  test -f TypeScript/src/lib/es5.d.ts
+init_typescript_corpus() {
+  ci_section "Init TypeScript corpus"
+  materialize_typescript_corpus
 }
 
 run_lint() {
@@ -374,6 +340,8 @@ run_lint() {
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-measure-protocol.mjs || return $?
   node scripts/bench/test-measure-tsz.mjs || return $?
+  node scripts/bench/test-typescript-tool-resolution.mjs || return $?
+  node scripts/setup/test-resolve-typescript-lib-dir.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
   node scripts/bench/test-check-latest-freshness.mjs || return $?
   node scripts/bench/test-bench-readiness-banner.mjs || return $?
@@ -389,6 +357,7 @@ run_lint() {
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-project-compile-guard-fingerprint.mjs || return $?
   node scripts/ci/test-project-compile-guard-rss-sentinel.mjs || return $?
+  node scripts/ci/test-project-tsc-oracle.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-gate-path-classifier.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
@@ -412,17 +381,28 @@ run_lint() {
   python3 scripts/lib/check-sh-portability.py || return $?
   python3 scripts/lib/test_check_sh_portability.py || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/ci/test_typescript_corpus_init.py || return $?
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
+  python3 scripts/ci/test_full_ci_summary.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
   # Known-failures baseline contract + gate-wiring tests (#15646). The
   # command list lives in one script shared with the ci.yml cheap-guards
   # step so the two tiers cannot drift.
   scripts/ci/check-unit-gate-contracts.sh || return $?
   python3 scripts/ci/test_refresh_readme.py || return $?
+  python3 scripts/conformance/validate-cache-domain.py || return $?
+  python3 scripts/conformance/test_validate_cache_domain.py || return $?
+  python3 scripts/conformance/test_corpus_coverage.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
+  python3 scripts/conformance/test_build_snapshot_detail.py || return $?
   python3 scripts/conformance/test_check_accepted_regression_growth.py || return $?
+  python3 scripts/conformance/test_check_snapshot_regression.py || return $?
+  python3 scripts/conformance/test_conformance_cache_version_gate.py || return $?
   python3 scripts/conformance/test_corpus_lib_dir.py || return $?
+  python3 scripts/conformance/test_link_regression_issues.py || return $?
+  python3 scripts/conformance/test_snapshot_accounting.py || return $?
   python3 scripts/conformance/lib/test_accepted_regressions.py || return $?
+  python3 scripts/conformance/lib/test_results.py || return $?
   python3 scripts/emit/test_query_emit_families.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
@@ -659,13 +639,10 @@ build_wasm_all() {
 
 prep_node_artifacts() {
   ci_section "Prep Node harnesses"
+  ./scripts/setup/ensure-pinned-typescript.sh scripts
   (
     cd scripts
-    if [[ ! -x node_modules/.bin/tsc ]]; then
-      npm install --silent --include=dev
-    else
-      echo "Using cached scripts/node_modules"
-    fi
+    echo "Using pinned scripts/node_modules"
     cd emit
     npx tsc -p tsconfig.json
   )
@@ -1100,12 +1077,11 @@ run_common_setup() {
   timed ensure_host_tools ensure_host_tools "$suite"
   timed ensure_source_git_context ensure_source_git_context
   if suite_needs_typescript_source "$suite"; then
-    timed init_typescript_submodule init_typescript_submodule
+    timed init_typescript_corpus init_typescript_corpus
   else
-    # Skipping the submodule init avoids downloading ~50 MB of source and
-    # avoids the gitlink-vs-ref-file staleness check that's only relevant
-    # when the tree is actually used.
-    echo "info: skipping init_typescript_submodule (suite '$suite' does not need TS source)"
+    # Skipping corpus initialization avoids downloading source for suites that
+    # do not consume the TypeScript test tree.
+    echo "info: skipping init_typescript_corpus (suite '$suite' does not need TS source)"
   fi
   if suite_needs_group "$suite" rust_compile; then
     if [[ "${TSZ_CI_DISABLE_SCCACHE:-0}" == "1" ]]; then

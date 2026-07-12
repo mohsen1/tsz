@@ -800,6 +800,17 @@ impl<'a> CheckerState<'a> {
             (comment_pos, 0)
         };
 
+        // A name that resolves to a value (function, variable, …) but not a type
+        // is a "value used as a type" error (TS2749), not a missing name (TS2304).
+        if self.jsdoc_name_refers_to_value_only(name) {
+            let code = diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
+            let template = tsz_common::diagnostics::get_message_template(code)
+                .unwrap_or("'{0}' refers to a value, but is being used as a type here. Did you mean 'typeof {0}'?");
+            let message = crate::diagnostics::format_message(template, &[name]);
+            self.error_at_position(start, length, &message, code);
+            return;
+        }
+
         // Try spelling suggestions (e.g. "sting" → "string") to emit TS2552
         // instead of plain TS2304, matching tsc behavior.
         if self

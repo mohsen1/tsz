@@ -45,6 +45,7 @@ pub mod mapped_display_order;
 pub mod predicate_narrowing;
 pub mod shape_queries;
 pub mod traversal;
+pub mod ts7_sort_order;
 
 // Re-export shared predicates from visitor_predicates to avoid duplication.
 // These are the canonical implementations; type_queries re-exports them so

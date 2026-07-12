@@ -256,7 +256,13 @@ impl<'a> CheckerState<'a> {
         // are already on the Callable itself
         let array_instance_type =
             array_type_for_params.or_else(|| self.resolve_lib_type_by_name("Array"));
-        let array_display_type = array_instance_type;
+        // The semantic base above keeps the per-lib intersection needed for
+        // generic identity. For diagnostics, prefer the merged declaration
+        // view so property order follows the single source-facing Array
+        // declaration stream across lib files.
+        let array_display_type = self
+            .resolve_lib_type_by_name("Array")
+            .or(array_instance_type);
 
         // PropertyAccessEvaluator runs through multiple database backends
         // (query cache, interner, binder-backed resolver). Register Array<T>
@@ -267,7 +273,7 @@ impl<'a> CheckerState<'a> {
                 .register_array_base_type(ty, array_type_params.clone());
             if let Some(display_ty) = array_display_type {
                 self.ctx.types.register_array_display_base_type(display_ty);
-                let display_props = crate::query_boundaries::common::callable_shape_for_type(
+                let mut display_props = crate::query_boundaries::common::callable_shape_for_type(
                     self.ctx.types,
                     display_ty,
                 )
@@ -281,6 +287,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
                 if !display_props.is_empty() {
+                    crate::query_boundaries::diagnostics::normalize_display_property_order(
+                        &mut display_props,
+                    );
                     for prop in &display_props {
                         let name = self.ctx.types.resolve_atom_ref(prop.name);
                         if name.starts_with("[Symbol.") {

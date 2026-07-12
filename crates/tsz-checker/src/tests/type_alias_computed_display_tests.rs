@@ -324,7 +324,7 @@ const w: Wrapper = { field: 0 };
 "#,
     );
     assert!(
-        msg.contains("\"id\" | \"name\" | \"createdAt\"") && !msg.contains("ColumnNames"),
+        msg.contains("\"createdAt\" | \"id\" | \"name\"") && !msg.contains("ColumnNames"),
         "expected renamed `keyof {{ ... }}` alias to render as the key union, got: {msg}"
     );
 }
@@ -338,7 +338,7 @@ const x: keyof { zebra: 1; quartz: 2 } = 0;
 "#,
     );
     assert!(
-        msg.contains("\"zebra\" | \"quartz\"") && !msg.contains("keyof {"),
+        msg.contains("\"quartz\" | \"zebra\"") && !msg.contains("keyof {"),
         "expected inline `keyof {{ ... }}` to render as the key union, got: {msg}"
     );
 }

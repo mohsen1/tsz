@@ -590,6 +590,7 @@ impl<'a> Printer<'a> {
             let needs_param_prologue = param_transforms.has_transforms();
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
+            self.prepare_logical_assignment_value_temps(func.body);
 
             if is_block {
                 // Check if it's a simple single-return block
@@ -857,6 +858,7 @@ impl<'a> Printer<'a> {
 
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
         let previous_new_target_capture = needs_new_target_capture.then(|| {
             self.push_new_target_capture_for_initializer(
                 self.ordinary_function_new_target_initializer(function_name.as_deref()),
@@ -923,6 +925,7 @@ impl<'a> Printer<'a> {
         self.write_space();
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
         let previous_new_target_capture = needs_new_target_capture.then(|| {
             self.push_new_target_capture_for_initializer(
                 self.ordinary_function_new_target_initializer(function_name.as_deref()),

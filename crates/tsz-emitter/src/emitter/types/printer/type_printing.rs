@@ -6,6 +6,8 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
 use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
+pub(crate) use tsz_solver::type_queries::ts7_sort_order;
+pub(crate) use tsz_solver::types::LiteralValue as SolverLiteralValue;
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 

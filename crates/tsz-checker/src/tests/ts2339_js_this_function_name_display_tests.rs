@@ -1,35 +1,31 @@
-//! Regression tests for TS2339 receiver display when `this` references inside
-//! a JS function declaration that has expando-style property assignments.
+//! Regression tests for `this` references inside a JS function declaration that
+//! has expando-style property assignments.
 //!
 //! In JS files, an expando-pattern function like:
 //!
 //! ```js
 //! function toString() {
-//!     this.yadda            // <-- TS2339
+//!     this.yadda
 //!     this.someValue = "";
 //! }
 //! ```
 //!
-//! creates `this`-typed properties. tsc's TS2339 message displays the
-//! receiver as the function's name (`'toString'`), not as the inferred
-//! expando object shape (`'{ someValue: string; }'`). Source:
-//! `compiler/inexistentPropertyInsideToStringType.ts`. See also
-//! `crates/tsz-checker/src/error_reporter/properties.rs` —
-//! `js_constructor_receiver_display_for_node` now falls back to the
-//! enclosing function's name when no prototype-owner expression is found.
+//! is not a constructor in TypeScript 7: the old JS constructor-function
+//! inference was dropped, so `this` is implicitly `any` (TS2683 under
+//! noImplicitThis) and unknown-property reads on it are `any` — no TS2339 and
+//! therefore no receiver-name display to compute.
 
 use crate::test_utils::check_js_source_diagnostics;
 
-fn ts2339_messages_for_js(source: &str) -> Vec<String> {
+fn codes_for_js(source: &str) -> Vec<u32> {
     check_js_source_diagnostics(source)
         .into_iter()
-        .filter(|d| d.code == 2339)
-        .map(|d| d.message_text)
+        .map(|d| d.code)
         .collect()
 }
 
-/// Property access on `this.yadda` inside a JS expando-pattern function
-/// reports the function's name as the receiver type.
+/// Property access on `this.yadda` inside a plain JS function no longer reports
+/// TS2339: `this` is implicitly `any` (TS2683) in TypeScript 7.
 #[test]
 fn ts2339_displays_function_name_for_this_in_js_expando_function() {
     let source = "\
@@ -38,21 +34,19 @@ function toString() {
     this.someValue = \"\";
 }
 ";
-    let messages = ts2339_messages_for_js(source);
-    assert_eq!(messages.len(), 1, "Expected one TS2339, got: {messages:?}");
-    let msg = &messages[0];
+    let codes = codes_for_js(source);
     assert!(
-        msg.contains("'toString'"),
-        "TS2339 message must name the function as the receiver type. Got: {msg:?}"
+        !codes.contains(&2339),
+        "Expected no TS2339 for `this.yadda` (implicit-any `this`), got: {codes:?}"
     );
     assert!(
-        !msg.contains("someValue"),
-        "TS2339 message must not expose the inferred expando shape. Got: {msg:?}"
+        codes.contains(&2683),
+        "Expected implicit-any `this` (TS2683), got: {codes:?}"
     );
 }
 
-/// Anti-hardcoding cover: same shape with a different (non-builtin) function
-/// name proves the helper isn't matching one specific name.
+/// Anti-hardcoding cover: a different (non-builtin) function name proves the
+/// behavior is not name-specific.
 #[test]
 fn ts2339_displays_function_name_for_this_in_js_expando_function_renamed() {
     let source = "\
@@ -61,11 +55,13 @@ function widgetSetup() {
     this.title = \"hello\";
 }
 ";
-    let messages = ts2339_messages_for_js(source);
-    assert_eq!(messages.len(), 1, "Expected one TS2339, got: {messages:?}");
-    let msg = &messages[0];
+    let codes = codes_for_js(source);
     assert!(
-        msg.contains("'widgetSetup'"),
-        "Renamed variant: TS2339 must use the new function name as the receiver. Got: {msg:?}"
+        !codes.contains(&2339),
+        "Expected no TS2339 for `this.unknownProp` (implicit-any `this`), got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2683),
+        "Expected implicit-any `this` (TS2683), got: {codes:?}"
     );
 }

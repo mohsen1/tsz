@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/microsoft/typescript-go.git",
+  "commit": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+  "tag": "typescript/v7.0.2",
+  "typescriptVersion": "7.0.2",
+  "legacyDiagnosticMessages": {
+    "corpusCommit": "4d4f005c8541e0255a9d8791205fdce326e462bc",
+    "source": "TypeScript/src/compiler/diagnosticMessages.json",
+    "size": 299060,
+    "sha256": "21a229f8ce2636dda83a3579e26b8621c8767521dde2e9a67384cca2f4855905",
+    "entries": 2130
+  },
+  "extraDiagnosticMessages": {
+    "source": "internal/diagnostics/extraDiagnosticMessages.json",
+    "size": 3788,
+    "sha256": "403d549f4a612c3a634e4bcd076441823ac683c7732e10182daedbba5f295248",
+    "entries": 33
+  },
+  "locales": [
+    {
+      "locale": "cs",
+      "source": "internal/diagnostics/loc/cs-CZ.json.gz",
+      "output": "crates/tsz-cli/src/locales/cs.json",
+      "compressedSize": 84411,
+      "compressedSha256": "571547e5a47c7098239b78f7cb3c39ce460aa6797acc0b4f9255669b70a5424d",
+      "uncompressedSize": 312446,
+      "uncompressedSha256": "186b59387c107ff7a3b5cec0c3402c706066e4641ca27d8398a4f77baa791f8c",
+      "entries": 2119
+    },
+    {
+      "locale": "de",
+      "source": "internal/diagnostics/loc/de-DE.json.gz",
+      "output": "crates/tsz-cli/src/locales/de.json",
+      "compressedSize": 85430,
+      "compressedSha256": "c13491abf596bb478a5e8279b6bea8c125b2370901b6d3236d291e2cf08d8906",
+      "uncompressedSize": 335730,
+      "uncompressedSha256": "301e0a66d5ce62118b3b47b5702669cc5d98537735c43ad5494b0dea5e9836a0",
+      "entries": 2115
+    },
+    {
+      "locale": "es",
+      "source": "internal/diagnostics/loc/es-ES.json.gz",
+      "output": "crates/tsz-cli/src/locales/es.json",
+      "compressedSize": 82347,
+      "compressedSha256": "6178830bedcb4f4d2b4b545f4ab92b08d935efd6722ce00b08647c37ca52c69b",
+      "uncompressedSize": 332134,
+      "uncompressedSha256": "71adb2f28d6be4a9ef10416b5cf63bda26da420d727f31de63247ea663077b42",
+      "entries": 2119
+    },
+    {
+      "locale": "fr",
+      "source": "internal/diagnostics/loc/fr-FR.json.gz",
+      "output": "crates/tsz-cli/src/locales/fr.json",
+      "compressedSize": 84026,
+      "compressedSha256": "aa7557af788d444ec75fe6811cbf57d6159d2d365deda57cd7ea1b2854668e15",
+      "uncompressedSize": 338170,
+      "uncompressedSha256": "b523eccf68c5d6ea2cde3a4bd5e44d90c9ade8f06a345a460b45ee333418ba9c",
+      "entries": 2119
+    },
+    {
+      "locale": "it",
+      "source": "internal/diagnostics/loc/it-IT.json.gz",
+      "output": "crates/tsz-cli/src/locales/it.json",
+      "compressedSize": 80430,
+      "compressedSha256": "51612e02697f7dca713b30c23b02c875a1fcc4c829dcb63a53e95092dda6ffec",
+      "uncompressedSize": 330631,
+      "uncompressedSha256": "52c9997880218b86be6ee21fc04d232126a1778304e8ab8af97383cb42bf3319",
+      "entries": 2115
+    },
+    {
+      "locale": "ja",
+      "source": "internal/diagnostics/loc/ja-JP.json.gz",
+      "output": "crates/tsz-cli/src/locales/ja.json",
+      "compressedSize": 86259,
+      "compressedSha256": "b580569d30014dbb61a04c4814ad75e472ad9ec7a7b0c346b899c4322abec187",
+      "uncompressedSize": 373532,
+      "uncompressedSha256": "8143653d1057c76e8a6ca587be7b02de9dea50bdcbfa5cd4d46cb3acb6349325",
+      "entries": 2119
+    },
+    {
+      "locale": "ko",
+      "source": "internal/diagnostics/loc/ko-KR.json.gz",
+      "output": "crates/tsz-cli/src/locales/ko.json",
+      "compressedSize": 82419,
+      "compressedSha256": "900f6a830055fd764eeda80105ac3fc77c5eefd1a8851f37d42e9f338db6fa4a",
+      "uncompressedSize": 338094,
+      "uncompressedSha256": "a7b803ccc99ca6cea14aa022140a3d97caa227c80210e905a9af1134afd28f3d",
+      "entries": 2119
+    },
+    {
+      "locale": "pl",
+      "source": "internal/diagnostics/loc/pl-PL.json.gz",
+      "output": "crates/tsz-cli/src/locales/pl.json",
+      "compressedSize": 86450,
+      "compressedSha256": "412c1dd58d495daad9c53f0bda7166ed0f40392035c2d70680537d4271fb6c6c",
+      "uncompressedSize": 334153,
+      "uncompressedSha256": "719d0bf37f8f5e3e7e6196ec8d17a625d024f580b6c6c5b1a9829eef7e1fda8a",
+      "entries": 2119
+    },
+    {
+      "locale": "pt-br",
+      "source": "internal/diagnostics/loc/pt-BR.json.gz",
+      "output": "crates/tsz-cli/src/locales/pt-br.json",
+      "compressedSize": 80983,
+      "compressedSha256": "8269fca3e002fdc9dc006d6ca41c7a2439dcb5f37c9f2d960606a0152ab00032",
+      "uncompressedSize": 322629,
+      "uncompressedSha256": "cde3d9d76eb2333b21e45ade2fd988759841a85d0b0327a66265ee66c9723b74",
+      "entries": 2119
+    },
+    {
+      "locale": "ru",
+      "source": "internal/diagnostics/loc/ru-RU.json.gz",
+      "output": "crates/tsz-cli/src/locales/ru.json",
+      "compressedSize": 95711,
+      "compressedSha256": "93114bfd8b5bc79da5771b4081a2048d59ff45d0c5663b362417995ed43a9439",
+      "uncompressedSize": 434583,
+      "uncompressedSha256": "6f89ec84949f1942299967e694f19b8439cb0a54822ba1341000dec827486351",
+      "entries": 2115
+    },
+    {
+      "locale": "tr",
+      "source": "internal/diagnostics/loc/tr-TR.json.gz",
+      "output": "crates/tsz-cli/src/locales/tr.json",
+      "compressedSize": 82010,
+      "compressedSha256": "5e482df7be6c71d906928c8200dafbeee95fe088d60520581328d81c227fb851",
+      "uncompressedSize": 322773,
+      "uncompressedSha256": "8d0f0dcf0eba7a2f1f17409850641dbd6760183e80e583bfb1a5e9b8da8aa425",
+      "entries": 2119
+    },
+    {
+      "locale": "zh-cn",
+      "source": "internal/diagnostics/loc/zh-CN.json.gz",
+      "output": "crates/tsz-cli/src/locales/zh-cn.json",
+      "compressedSize": 81885,
+      "compressedSha256": "555e38a7ffd0c23876c207649b00b6d634a4110a48e96dcda31b9c22d120672d",
+      "uncompressedSize": 287951,
+      "uncompressedSha256": "7c28007a371705b3aa7d341ac6b58673a5d09cf483b5147c3cfc0b67ef5d54a3",
+      "entries": 2119
+    },
+    {
+      "locale": "zh-tw",
+      "source": "internal/diagnostics/loc/zh-TW.json.gz",
+      "output": "crates/tsz-cli/src/locales/zh-tw.json",
+      "compressedSize": 81640,
+      "compressedSha256": "3559c822ce5c298691a5e379f06018960c1e3b737474556eb45bc907905ddfb9",
+      "uncompressedSize": 283786,
+      "uncompressedSha256": "6046b28cc2bfd5ca3b9680f73292812b0379258bfd4ebaa0b71297da2857f190",
+      "entries": 2115
+    }
+  ]
+}

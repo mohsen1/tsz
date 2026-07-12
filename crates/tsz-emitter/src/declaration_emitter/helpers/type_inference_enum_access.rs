@@ -44,16 +44,22 @@ impl<'a> DeclarationEmitter<'a> {
         let base_name = self.get_identifier_text(access.expression)?;
 
         if let Some(binder) = self.binder
-            && let Some(symbol_id) = binder.get_node_symbol(access.expression)
+            && let Some(symbol_id) = binder
+                .get_node_symbol(access.expression)
+                .or_else(|| self.entity_access_chain_symbol(access.expression))
         {
             // The binder resolved the base, so trust it and skip the source-file
             // scan below: only an enum *object* symbol names enum members, and
             // any other resolution (including a local that shadows a same-named
             // top-level enum) means this is not an enum access.
-            let is_enum = binder.symbols.get(symbol_id).is_some_and(|symbol| {
-                symbol.flags & tsz_binder::symbol_flags::ENUM != 0
-                    && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
-            });
+            let resolved_symbol_id = self.resolve_portability_symbol(symbol_id, binder);
+            let is_enum = binder
+                .symbols
+                .get(resolved_symbol_id)
+                .is_some_and(|symbol| {
+                    symbol.flags & tsz_binder::symbol_flags::ENUM != 0
+                        && symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER == 0
+                });
             return is_enum.then_some(expr_idx);
         }
 
@@ -175,13 +181,18 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(binder) = self.binder else {
             return false;
         };
-        let Some(sym_id) = self.access_reference_symbol(expr_idx) else {
-            return false;
-        };
-        binder
-            .symbols
-            .get(sym_id)
-            .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0)
+        [
+            self.value_reference_symbol(expr_idx),
+            self.entity_access_chain_symbol(expr_idx),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|sym_id| {
+            binder
+                .symbols
+                .get(sym_id)
+                .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::ENUM_MEMBER != 0)
+        })
     }
 
     /// Resolve a value reference or namespace-qualified property-access chain

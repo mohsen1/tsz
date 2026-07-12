@@ -584,11 +584,15 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    pub(crate) fn direct_commonjs_module_export_assignment_rhs(
+    /// Match a bare CommonJS export assignment `module.exports = <rhs>` or
+    /// `exports = <rhs>` and return `(lhs, rhs)`, where `lhs` is the
+    /// `module.exports` / `exports` target node (used for TS2309 positioning)
+    /// and `rhs` is the assigned expression.
+    fn commonjs_module_export_assignment_parts(
         &self,
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
-    ) -> Option<NodeIndex> {
+    ) -> Option<(NodeIndex, NodeIndex)> {
         let expr_idx = arena.skip_parenthesized(expr_idx);
         let expr_node = arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
@@ -606,7 +610,7 @@ impl<'a> CheckerState<'a> {
                 .get_identifier(left_node)
                 .is_some_and(|ident| ident.escaped_text == "exports")
         {
-            return Some(binary.right);
+            return Some((left_idx, binary.right));
         }
 
         if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -624,7 +628,40 @@ impl<'a> CheckerState<'a> {
                     .get_identifier_at(left_access.name_or_argument)
                     .filter(|ident| ident.escaped_text == "exports")
             })?;
-        Some(binary.right)
+        Some((left_idx, binary.right))
+    }
+
+    pub(crate) fn direct_commonjs_module_export_assignment_rhs(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        self.commonjs_module_export_assignment_parts(arena, expr_idx)
+            .map(|(_, rhs)| rhs)
+    }
+
+    /// The `module.exports` / `exports` target node of a bare CommonJS export
+    /// assignment, used to anchor the TS2309 diagnostic (TS7). For a chained
+    /// assignment such as `exports = module.exports = C`, the `module.exports`
+    /// node is preferred over the bare `exports` node, matching tsc's anchor.
+    pub(crate) fn direct_commonjs_module_export_assignment_lhs(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut fallback: Option<NodeIndex> = None;
+        let mut current = expr_idx;
+        while let Some((lhs, rhs)) = self.commonjs_module_export_assignment_parts(arena, current) {
+            let is_module_exports = arena
+                .get(arena.skip_parenthesized(lhs))
+                .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION);
+            if is_module_exports {
+                return Some(lhs);
+            }
+            fallback.get_or_insert(lhs);
+            current = rhs;
+        }
+        fallback
     }
 
     /// Extract the body statements of an IIFE (Immediately Invoked Function Expression).

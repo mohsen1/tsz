@@ -338,17 +338,7 @@ const x: Result = 42;
 
 /// Load lib files including ES2015 sub-libs (proxy, reflect, collection, etc.)
 fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Search paths for the lib directory
-    let lib_dirs = [
-        manifest_dir.join("scripts/conformance/node_modules/typescript/lib"),
-        manifest_dir.join("scripts/emit/node_modules/typescript/lib"),
-        manifest_dir.join("../TypeScript/node_modules/typescript/lib"),
-        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib"),
-        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib"),
-    ];
-
-    let lib_names = [
+    load_compiled_lib_files(&[
         "lib.es5.d.ts",
         "lib.es2015.core.d.ts",
         "lib.es2015.collection.d.ts",
@@ -360,25 +350,7 @@ fn load_lib_files_with_es2015_sublibs() -> Vec<Arc<LibFile>> {
         "lib.es2015.symbol.d.ts",
         "lib.es2015.symbol.wellknown.d.ts",
         "lib.es2025.iterator.d.ts",
-    ];
-
-    let mut lib_files = Vec::new();
-    let mut seen_files = FxHashSet::default();
-    for lib_name in &lib_names {
-        for lib_dir in &lib_dirs {
-            let lib_path = lib_dir.join(lib_name);
-            if lib_path.exists()
-                && let Ok(content) = std::fs::read_to_string(&lib_path)
-            {
-                if seen_files.insert((*lib_name).to_string()) {
-                    let lib_file = LibFile::from_source((*lib_name).to_string(), content);
-                    lib_files.push(Arc::new(lib_file));
-                }
-                break;
-            }
-        }
-    }
-    lib_files
+    ])
 }
 
 fn compile_with_es2015_sublibs(source: &str) -> Vec<(u32, String)> {
@@ -440,7 +412,7 @@ fn compile_with_esnext_iterator_libs(source: &str) -> Vec<(u32, String)> {
         "es2015.generator.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
     ]);
     if lib_files.is_empty() {
         return Vec::new();
@@ -473,7 +445,7 @@ fn compile_multi_file_with_esnext_iterator_libs(
         "es2015.generator.d.ts",
         "es2015.symbol.d.ts",
         "es2015.symbol.wellknown.d.ts",
-        "esnext.iterator.d.ts",
+        "es2025.iterator.d.ts",
     ]);
     if lib_files.is_empty() {
         return Vec::new();
@@ -647,8 +619,8 @@ const iter3 = iter2.flatMap(() => g1);
 
     let ts2416_count = diagnostic_count(&diagnostics, 2416);
     assert_eq!(
-        ts2416_count, 2,
-        "Expected two TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
+        ts2416_count, 3,
+        "Expected three TS2416 Iterator.next diagnostics. Got: {diagnostics:#?}"
     );
     assert!(
         has_diagnostic_code(&diagnostics, 2345),
@@ -662,9 +634,9 @@ const iter3 = iter2.flatMap(() => g1);
         has_diagnostic_code_message(
             &diagnostics,
             2322,
-            "Iterator<string, unknown, undefined> | Iterable<string, unknown, undefined>"
+            "Iterable<string, unknown, undefined> | Iterator<string, unknown, undefined>"
         ),
-        "Expected flatMap callback target union to keep tsc's Iterator-before-Iterable order. Got: {diagnostics:#?}"
+        "Expected flatMap callback target union to use TypeScript 7's Iterable-before-Iterator order. Got: {diagnostics:#?}"
     );
     assert!(
         has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
@@ -751,10 +723,10 @@ const iter3 = iter2.flatMap(() => g1);
     );
     assert!(
         union_order_messages.iter().all(|(_, message)| {
-            message.find("Iterator<").unwrap_or(usize::MAX)
-                < message.find("Iterable<").unwrap_or(usize::MAX)
+            message.find("Iterable<").unwrap_or(usize::MAX)
+                < message.find("Iterator<").unwrap_or(usize::MAX)
         }),
-        "Expected ESNext iterator target unions to keep tsc's Iterator-before-Iterable order. Got: {union_order_messages:#?}"
+        "Expected ESNext iterator target unions to use TypeScript 7's Iterable-before-Iterator order. Got: {union_order_messages:#?}"
     );
 }
 

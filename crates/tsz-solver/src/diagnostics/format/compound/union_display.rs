@@ -128,38 +128,192 @@ impl<'a> TypeFormatter<'a> {
         self.format_ordered_union_members(members.to_vec())
     }
 
-    /// Order union members for display by source position: named/built-in
-    /// members (tier 0/1) sorted by source position first, then anonymous
-    /// members (tier 2 — literals, anonymous objects) in their existing
-    /// relative order. The interner stores union members in `DefId`-allocation
-    /// order, which does not match source declaration order; this restores it.
-    /// Shared by [`Self::format_union`] and the union-keyed index-signature split
-    /// so both render members in the same order.
+    /// Order union members for display in TypeScript 7's diagnostic order.
+    ///
+    /// TS7's formatter sorts union members by their resolved `TypeFlags` rank
+    /// (`any` < `unknown` < `void` < `string` < `number` < `bigint` < `boolean`
+    /// < `symbol`, then literals < unique symbols < enums < type parameters <
+    /// object-like types < the complex type operators), matching the emitter
+    /// printer's [`print_union`](TypePrinter) sort. Ties within a rank fall back
+    /// to:
+    /// - literal value (string atoms alphabetically, numbers numerically,
+    ///   `false` before `true`);
+    /// - the visible type name alphabetically for named members — except enum
+    ///   members, which keep declaration order so `Mode.On | Mode.Idle` follows
+    ///   the source enum, not the alphabetized member names;
+    /// - the source position, which keeps anonymous objects and same-name
+    ///   members stable relative to the interner's storage order.
+    ///
+    /// A `type Alias = <primitive>` reference resolves to its underlying type
+    /// before ranking, so `Foo | Id` (with `type Id = number`) renders as
+    /// `number | Foo`, exactly like tsc. Shared by [`Self::format_union`] and the
+    /// union-keyed index-signature split so both render members identically.
     pub(super) fn order_union_members_by_source(&mut self, members: Vec<TypeId>) -> Vec<TypeId> {
         let Some(def_store) = self.def_store else {
             return members;
         };
-        let positions: Vec<_> = members
+        let ranks: Vec<u32> = members
             .iter()
-            .map(|&m| self.get_source_position_for_type(m, def_store))
+            .map(|&m| self.ts7_union_member_rank(m))
+            .collect();
+        let positions: Vec<(u32, u32, u32)> = members
+            .iter()
+            .map(|&m| {
+                let pos = self.get_source_position_for_type(m, def_store);
+                // Tier 2 (anonymous objects, literals without a source span)
+                // preserve their incoming interner order instead of sorting by
+                // the property-count sentinel: tsc orders these by type creation
+                // order, which the interner's `ShapeId` order approximates and
+                // `store_union_origin` corrects when the two disagree.
+                if pos.0 >= 2 { (2, 0, 0) } else { pos }
+            })
+            .collect();
+        let names: Vec<Option<String>> = members
+            .iter()
+            .map(|&member| self.stable_order_type_name(member, def_store))
             .collect();
 
-        let mut named: Vec<(TypeId, (u32, u32, u32))> = Vec::new();
-        let mut anonymous: Vec<TypeId> = Vec::new();
-        for (&id, &pos) in members.iter().zip(&positions) {
-            if pos.0 < 2 {
-                named.push((id, pos));
-            } else {
-                anonymous.push(id);
+        let mut order: Vec<usize> = (0..members.len()).collect();
+        order.sort_by(|&i, &j| {
+            ranks[i]
+                .cmp(&ranks[j])
+                .then_with(|| self.compare_union_member_literal_values(members[i], members[j]))
+                .then_with(|| Self::compare_union_member_names(ranks[i], &names[i], &names[j]))
+                .then_with(|| positions[i].cmp(&positions[j]))
+        });
+
+        order.into_iter().map(|i| members[i]).collect()
+    }
+
+    /// TypeScript 7 `TypeFlags` rank for a union member, computed on the member's
+    /// resolved form so primitive-bodied aliases sort with their primitive.
+    fn ts7_union_member_rank(&self, type_id: TypeId) -> u32 {
+        let resolved = self.resolve_union_member_for_rank(type_id);
+        if let Some(rank) = Self::union_member_primitive_rank(resolved) {
+            return rank;
+        }
+        match self.interner.lookup(resolved) {
+            Some(TypeData::Literal(literal)) => match literal {
+                LiteralValue::String(_) => 1 << 10,
+                LiteralValue::Number(_) => 1 << 11,
+                LiteralValue::BigInt(_) => 1 << 12,
+                LiteralValue::Boolean(_) => 1 << 13,
+            },
+            Some(TypeData::UniqueSymbol(_)) => 1 << 14,
+            Some(TypeData::Enum(_, _)) => 1 << 15,
+            Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_)) => {
+                1 << 19
+            }
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Function(_)
+                | TypeData::Callable(_)
+                | TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Mapped(_)
+                | TypeData::ReadonlyType(_),
+            ) => 1 << 20,
+            Some(TypeData::KeyOf(_)) => 1 << 21,
+            Some(TypeData::TemplateLiteral(_)) => 1 << 22,
+            Some(TypeData::StringIntrinsic { .. }) => 1 << 23,
+            Some(TypeData::Substitution { .. }) => 1 << 24,
+            Some(TypeData::IndexAccess(_, _)) => 1 << 25,
+            Some(TypeData::Conditional(_)) => 1 << 26,
+            Some(TypeData::Union(_)) => 1 << 27,
+            Some(TypeData::Intersection(_)) => 1 << 28,
+            _ => u32::MAX,
+        }
+    }
+
+    /// Primitive `TypeFlags` ranks that mirror tsc's ascending `TypeFlags` bit
+    /// values for the intrinsic types that can appear in a union display.
+    const fn union_member_primitive_rank(id: TypeId) -> Option<u32> {
+        match id {
+            TypeId::ANY => Some(1),
+            TypeId::UNKNOWN => Some(2),
+            TypeId::VOID => Some(16),
+            TypeId::STRING => Some(32),
+            TypeId::NUMBER => Some(64),
+            TypeId::BIGINT => Some(128),
+            TypeId::BOOLEAN => Some(256),
+            TypeId::SYMBOL => Some(512),
+            TypeId::OBJECT => Some(1 << 20),
+            _ => None,
+        }
+    }
+
+    /// Follow non-generic alias (`Lazy`) and `Substitution` indirections to the
+    /// underlying type used for ranking. Bounded to avoid cycles.
+    fn resolve_union_member_for_rank(&self, type_id: TypeId) -> TypeId {
+        let Some(def_store) = self.def_store else {
+            return type_id;
+        };
+        let mut current = type_id;
+        for _ in 0..16 {
+            match self.interner.lookup(current) {
+                Some(TypeData::Lazy(def_id)) => match def_store.get(def_id).and_then(|def| def.body)
+                {
+                    Some(body) if body != current => current = body,
+                    _ => return current,
+                },
+                Some(TypeData::Substitution { base_type, .. }) if base_type != current => {
+                    current = base_type;
+                }
+                _ => return current,
             }
         }
-        named.sort_by_key(|&(_, pos)| pos);
+        current
+    }
 
-        named
-            .into_iter()
-            .map(|(id, _)| id)
-            .chain(anonymous)
-            .collect()
+    /// Compare two union members that share a rank by their literal value, when
+    /// both resolve to a literal of the same kind.
+    fn compare_union_member_literal_values(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (
+            self.union_member_literal_value(a),
+            self.union_member_literal_value(b),
+        ) {
+            (Some(LiteralValue::String(left)), Some(LiteralValue::String(right))) => self
+                .interner
+                .resolve_atom_ref(left)
+                .cmp(&self.interner.resolve_atom_ref(right)),
+            (Some(LiteralValue::Number(left)), Some(LiteralValue::Number(right))) => {
+                left.0.total_cmp(&right.0)
+            }
+            (Some(LiteralValue::Boolean(left)), Some(LiteralValue::Boolean(right))) => {
+                left.cmp(&right)
+            }
+            _ => Ordering::Equal,
+        }
+    }
+
+    fn union_member_literal_value(&self, type_id: TypeId) -> Option<LiteralValue> {
+        match self.interner.lookup(self.resolve_union_member_for_rank(type_id)) {
+            Some(TypeData::Literal(value)) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Name tie-break within a rank. Enum members (rank `1 << 15`) keep their
+    /// declaration order instead of alphabetizing the member names.
+    fn compare_union_member_names(
+        rank: u32,
+        a: &Option<String>,
+        b: &Option<String>,
+    ) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        if rank == 1 << 15 {
+            return Ordering::Equal;
+        }
+        match (a, b) {
+            (Some(left), Some(right)) => left.cmp(right),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        }
     }
 
     fn format_ordered_union_members(&mut self, mut ordered: Vec<TypeId>) -> String {

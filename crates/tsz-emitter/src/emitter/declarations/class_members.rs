@@ -212,11 +212,16 @@ impl<'a> Printer<'a> {
         else {
             return false;
         };
+        // When no return type parsed into the method node (`x()?: number` with
+        // the `?` left unconsumed) the illegal `?` sits at the node's exclusive
+        // `end`, so scan the raw source just past the `)` rather than stopping
+        // at `search_end`. Only inline space is skipped, so a later member's `?`
+        // on another line is never mistaken for this one.
         let mut cursor = search_start + close_paren_offset + 1;
-        while cursor < search_end && bytes[cursor].is_ascii_whitespace() {
+        while cursor < bytes.len() && (bytes[cursor] == b' ' || bytes[cursor] == b'\t') {
             cursor += 1;
         }
-        cursor < search_end && bytes[cursor] == b'?'
+        cursor < bytes.len() && bytes[cursor] == b'?'
     }
 
     pub(in crate::emitter) fn emit_method_declaration(&mut self, node: &Node) {
@@ -446,6 +451,7 @@ impl<'a> Printer<'a> {
                     self.preallocate_assignment_temps(temp_count);
                 }
             }
+            self.prepare_logical_assignment_value_temps(method.body);
             self.ctx.flags.in_generator = has_generator_asterisk;
             self.emit(method.body);
             self.declared_namespace_names = prev_declared;
@@ -1001,6 +1007,7 @@ impl<'a> Printer<'a> {
                 self.preallocate_assignment_temps(temp_count);
             }
         }
+        self.prepare_logical_assignment_value_temps(ctor.body);
         let auto_accessor_inits = std::mem::take(&mut self.pending_auto_accessor_inits);
         self.emit_constructor_body_with_prologue(
             ctor.body,
@@ -1385,12 +1392,15 @@ impl<'a> Printer<'a> {
 
         // Insert any hoisted temps created during statement emit (e.g., `_a` from
         // `??`/`??=` lowering). Assignment-target temps and logical-assignment
-        // value temps are declared in one `var` in allocation order, matching
-        // `insert_function_body_hoisted_temps_at` and `tsc`.
+        // value temps are inserted at the same anchor (value temps end up on the
+        // first line, matching `insert_function_body_hoisted_temps_at`).
         let hoisted_indent = self
             .writer
             .indent_string_at(hoisted_var_anchor.indent_level);
-        self.insert_constructor_hoisted_var_line(&hoisted_var_anchor, &hoisted_indent);
+        let assignment_temps = std::mem::take(&mut self.hoisted_assignment_temps);
+        self.insert_hoisted_var_line(&assignment_temps, &hoisted_var_anchor, &hoisted_indent);
+        let value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
+        self.insert_hoisted_var_line(&value_temps, &hoisted_var_anchor, &hoisted_indent);
 
         self.decrease_indent();
         self.write("}");
@@ -1868,6 +1878,7 @@ impl<'a> Printer<'a> {
             self.push_temp_scope();
             // Save/restore declared_namespace_names for accessor body isolation.
             let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+            self.prepare_logical_assignment_value_temps(body);
             self.write(" ");
             self.emit(body);
             self.declared_namespace_names = prev_declared;

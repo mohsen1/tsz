@@ -1777,10 +1777,13 @@ new test.K().add;
         "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
     );
+    // TypeScript 7 dropped JS constructor-function inference, so the property is
+    // no longer constructable: `new test.K()` reports an implicit-any diagnostic
+    // (TS7009 in tsz; tsc reports the self-reference TS7022).
     assert!(
-        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        diagnostics.iter().any(|d| matches!(d.code, 7009 | 7022)),
         "JS lazy constructor initialization `X.Y = X.Y || function() {{}}` \
-         should keep the property constructable, got: {diagnostics:?}"
+         should report an implicit-any `new` diagnostic, got: {diagnostics:?}"
     );
 }
 
@@ -1812,10 +1815,13 @@ new test.K();
         "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
          should be treated as a declaration and not produce TS2322, got: {diagnostics:?}"
     );
+    // TypeScript 7 dropped JS constructor-function inference, so the property is
+    // no longer constructable: `new test.K()` reports an implicit-any diagnostic
+    // (TS7009 in tsz; tsc reports the self-reference TS7022).
     assert!(
-        diagnostics.iter().all(|d| d.code != 2351 && d.code != 7009),
+        diagnostics.iter().any(|d| matches!(d.code, 7009 | 7022)),
         "JS lazy constructor initialization `X.Y = X.Y ?? function() {{}}` \
-         should keep the property constructable, got: {diagnostics:?}"
+         should report an implicit-any `new` diagnostic, got: {diagnostics:?}"
     );
 }
 

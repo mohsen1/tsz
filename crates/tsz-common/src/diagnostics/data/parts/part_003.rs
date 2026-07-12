@@ -1,8 +1,13 @@
 //! Auto-generated diagnostic message data.
 //!
-//! DO NOT EDIT MANUALLY - run `node scripts/gen_diagnostics.mjs` to regenerate.
+//! DO NOT EDIT MANUALLY - run `node scripts/setup/sync-typescript-diagnostics.mjs --write` to regenerate.
 
 crate::diagnostics::table_macro::define_diagnostics! {
+    (ANNOTATE_WITH_TYPE_FROM_JSDOC, 95009, Message, "Annotate with type from JSDoc"),
+    (INFER_TYPE_OF_FROM_USAGE, 95011, Message, "Infer type of '{0}' from usage"),
+    (INFER_PARAMETER_TYPES_FROM_USAGE, 95012, Message, "Infer parameter types from usage"),
+    (CONVERT_TO_DEFAULT_IMPORT, 95013, Message, "Convert to default import"),
+    (INSTALL, 95014, Message, "Install '{0}'"),
     (REPLACE_IMPORT_WITH, 95015, Message, "Replace import with '{0}'."),
     (USE_SYNTHETIC_DEFAULT_MEMBER, 95016, Message, "Use synthetic 'default' member."),
     (CONVERT_TO_ES_MODULE, 95017, Message, "Convert to ES module"),
@@ -183,4 +188,23 @@ crate::diagnostics::table_macro::define_diagnostics! {
     (WRAP_ALL_INVALID_DECORATOR_EXPRESSIONS_IN_PARENTHESES, 95195, Message, "Wrap all invalid decorator expressions in parentheses"),
     (ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE, 95196, Message, "Add 'resolution-mode' import attribute"),
     (ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE_TO_ALL_TYPE_ONLY_IMPORTS_THAT_NEED_IT, 95197, Message, "Add 'resolution-mode' import attribute to all type-only imports that need it"),
+    (DO_NOT_PRINT_DIAGNOSTICS, 100000, Message, "Do not print diagnostics."),
+    (RUN_IN_SINGLE_THREADED_MODE, 100001, Message, "Run in single threaded mode."),
+    (GENERATE_PPROF_CPU_MEMORY_PROFILES_TO_THE_GIVEN_DIRECTORY, 100002, Message, "Generate pprof CPU/memory profiles to the given directory."),
+    (SET_THE_NUMBER_OF_CHECKERS_PER_PROJECT, 100003, Message, "Set the number of checkers per project."),
+    (D_4_UNLESS_SINGLETHREADED_IS_PASSED, 100004, Message, "4, unless --singleThreaded is passed."),
+    (REFERENCES, 100005, Message, "{0} references"),
+    (D_1_REFERENCE, 100006, Message, "1 reference"),
+    (IMPLEMENTATIONS, 100007, Message, "{0} implementations"),
+    (D_1_IMPLEMENTATION, 100008, Message, "1 implementation"),
+    (SET_THE_NUMBER_OF_PROJECTS_TO_BUILD_CONCURRENTLY, 100009, Message, "Set the number of projects to build concurrently."),
+    (DEDUPLICATE_PACKAGES_WITH_THE_SAME_NAME_AND_VERSION, 100011, Message, "Deduplicate packages with the same name and version."),
+    (LOADING, 100012, Message, "Loading"),
+    (INSTALLING_TYPES_FOR, 100013, Message, "Installing types for '{0}'"),
+    (PROJECT, 100014, Message, "Project '{0}'"),
+    (FIX_ALL, 100015, Message, "Fix All"),
+    (ORGANIZE_IMPORTS, 100016, Message, "Organize Imports"),
+    (REMOVE_UNUSED_IMPORTS, 100017, Message, "Remove Unused Imports"),
+    (SORT_IMPORTS, 100018, Message, "Sort Imports"),
+    (JSDOC_COMMENT, 100019, Message, "JSDoc comment"),
 }

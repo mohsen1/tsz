@@ -504,6 +504,34 @@ class C {
 }
 
 #[test]
+fn test_internal_import_equals_enum_member_widens_to_visible_alias() {
+    let output = emit_dts_with_binding(
+        r#"
+export namespace Source {
+    export enum Choice { A, B }
+}
+export namespace Api {
+    export import Alias = Source.Choice;
+    export let value = Alias.A;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export import Alias = Source.Choice;"),
+        "Expected the internal import-equals alias to remain visible: {output}"
+    );
+    assert!(
+        output.contains("let value: Alias;"),
+        "Expected the mutable enum member to widen to its visible alias: {output}"
+    );
+    assert!(
+        !output.contains("value: typeof Alias"),
+        "Did not expect the enum object value surface: {output}"
+    );
+}
+
+#[test]
 fn test_class_property_initializer_same_name_enum_uses_typeof_enum() {
     let source = r#"
 enum Hello {
@@ -1804,4 +1832,3 @@ bar.default = 42;
         "Expected reserved-word alias emission for default: {output}"
     );
 }
-

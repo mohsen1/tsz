@@ -223,6 +223,7 @@ pub fn parse_test_file(content: &str) -> TestDirectives {
     let mut current_content: Vec<&str> = Vec::new();
 
     let record_option = |directives: &mut TestDirectives, key: String, value: &str| {
+        let value = value.strip_suffix(';').unwrap_or(value).trim_end();
         if !directives.options.contains_key(&key) {
             directives.option_order.push(key.clone());
         }

@@ -204,6 +204,7 @@ pub(crate) struct TempScopeState {
     pub(crate) preallocated_temp_names: VecDeque<String>,
     pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
+    pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
     pub(crate) hoisted_assignment_temps: Vec<String>,
     pub(crate) block_scoped_private_temps: Vec<String>,
@@ -668,11 +669,13 @@ pub struct Printer<'a> {
     /// TypeScript keeps this sequence file-scoped for ES2015+ class emit.
     pub(crate) next_auto_accessor_name_index: u32,
 
-    /// Temp names for logical-assignment (`??=`) read-cache values. Tracked as a
-    /// distinct bucket only so a value temp minted inside a nested function body
-    /// is declared in that body; at emission the bucket is merged, in allocation
-    /// order, into the single hoisted `var` alongside the reference temps.
+    /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
+    /// These are emitted on a separate declaration list before reference temps.
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
+
+    /// Temp names for assignment target values that must be reserved before references.
+    /// These are used by `make_unique_name_hoisted_value`.
+    pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
 
     /// Temp names for assignment target values that must be reserved before references.
     /// These are used by `make_unique_name_hoisted_assignment`.
@@ -740,6 +743,13 @@ pub struct Printer<'a> {
 
     /// Temp names that must not be reused by nested temp scopes.
     pub(crate) reserved_nested_temp_names: FxHashSet<String>,
+
+    /// Object-rest parameter temp names (`_a` for `function f({ a, ...r })`)
+    /// allocated while emitting the parameter list, to be reserved in the
+    /// function body's fresh temp scope so a body temp (optional-chaining,
+    /// nullish) does not collide with the parameter temp. Populated by
+    /// `emit_function_parameters_js` and consumed by the next `push_temp_scope`.
+    pub(crate) pending_object_rest_param_temps: Vec<String>,
 
     /// Source-file class static temp reservations, in top-level statement order.
     pub(crate) file_level_class_temp_reservation_plan: Vec<(NodeIndex, usize)>,

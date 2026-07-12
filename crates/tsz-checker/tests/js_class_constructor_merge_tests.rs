@@ -61,7 +61,12 @@ fn check_project(files: &[(&str, &str)]) -> Vec<(String, Vec<u32>)> {
 }
 
 #[test]
-fn checked_js_constructor_var_merges_with_class_without_false_duplicates_or_new_errors() {
+fn checked_js_constructor_var_is_not_constructable_when_merged_with_class_under_ts7() {
+    // TypeScript 7 dropped JS constructor-function inference: `var SomeClass =
+    // function () {}` is a plain function, so `new SomeClass()` reports TS7009.
+    // (tsc 7.0.2 additionally reports TS2300 in both files and TS2339 for
+    // `SomeClass.prop`, because the value no longer merges with the class -- tsz
+    // does not yet surface those declaration-merge duplicates.)
     let diagnostics = check_project(&[
         (
             "file1.js",
@@ -82,18 +87,15 @@ SomeClass.prop = 0;
         ),
     ]);
 
-    let mut offenders = Vec::new();
-    for (file_name, codes) in &diagnostics {
-        for &code in codes {
-            if code == 2300 || code == 2339 || code == 7009 {
-                offenders.push((file_name.clone(), code));
-            }
-        }
-    }
+    let file1_codes = diagnostics
+        .iter()
+        .find(|(file_name, _)| file_name == "file1.js")
+        .map(|(_, codes)| codes.as_slice())
+        .expect("file1.js diagnostics");
 
     assert!(
-        offenders.is_empty(),
-        "Expected no TS2300/TS2339/TS7009 for checked-JS constructor/class merge, got: {diagnostics:#?}"
+        file1_codes.contains(&7009),
+        "Expected TS7009 for `new SomeClass()` under TypeScript 7, got: {diagnostics:#?}"
     );
 }
 

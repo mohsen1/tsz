@@ -13,5 +13,10 @@ See the Apache Version 2.0 License for specific language governing permissions
 and limitations under the License.
 ***************************************************************************** */
 
-import ts = require("./typescript.js");
-export = ts;
+
+/// <reference lib="es2025" />
+/// <reference lib="dom" />
+/// <reference lib="webworker.importscripts" />
+/// <reference lib="scripthost" />
+/// <reference lib="dom.iterable" />
+/// <reference lib="dom.asynciterable" />

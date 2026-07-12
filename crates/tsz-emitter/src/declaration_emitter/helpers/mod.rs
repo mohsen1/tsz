@@ -287,6 +287,7 @@ mod type_inference_source_callables;
 mod type_inference_source_object_args;
 mod type_inference_source_text;
 mod type_inference_truncation_expansion;
+mod type_inference_ts7_union_order;
 mod type_inference_type_annotations;
 mod type_inference_type_nodes;
 mod type_literal_accessor_names;

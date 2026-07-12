@@ -1811,6 +1811,21 @@ mod tests {
     use super::Server;
 
     #[test]
+    fn native_worker_prefers_the_built_pinned_harness_runtime() {
+        let script = include_str!("native_ts_worker.js");
+        let built_runtime = script
+            .find("built\", \"local\", \"harness\", \"_namespaces\", \"ts.js")
+            .expect("worker should probe the built pinned harness runtime");
+        let bootstrap_runtime = script
+            .find("TypeScript\", \"node_modules\", \"typescript")
+            .expect("worker should retain the bootstrap runtime as a fallback");
+        assert!(
+            built_runtime < bootstrap_runtime,
+            "the corpus bootstrap compiler must not shadow the pinned built language service"
+        );
+    }
+
+    #[test]
     fn import_statement_context_span_accepts_export_specifier_lines() {
         let source = "const foo = 1;\nexport { foo as \"__<alias>\" };\n";
         let anchor = source

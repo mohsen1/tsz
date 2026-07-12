@@ -5,6 +5,8 @@
 //  - Reuse of cached per-file line counts when (mtime, size) are unchanged.
 //  - Cache invalidation on file modification, file removal, and file
 //    replacement (size-preserving rewrite).
+//  - TS7 unstable-sync config parsing, including directory-watch capture and
+//    no build-info writes for incremental projects.
 //  - The shell fallback `sum_ts_stats` in bench-vs-tsgo.sh (single-pass
 //    traversal).
 //  - File-name filters (TypeScript-family extensions, node_modules/.next
@@ -444,7 +446,13 @@ assert.notEqual(
       tsconfig,
       JSON.stringify(
         {
-          compilerOptions: { target: "es2017", noEmit: true, skipLibCheck: true, types: [] },
+          compilerOptions: {
+            target: "es2017",
+            noEmit: true,
+            incremental: true,
+            skipLibCheck: true,
+            types: [],
+          },
           include: ["src/**/*.ts"],
         },
         null,
@@ -461,11 +469,11 @@ assert.notEqual(
       env,
     });
     if (first.status !== 0) {
-      // The TypeScript package is required by the script path; tests in this
+      // The TS7 unstable sync API is required by the script path; tests in this
       // workspace install it via the bench tooling, but if it is genuinely
       // absent we degrade to a warning instead of failing the whole suite.
-      if (/Unable to load the TypeScript package/i.test(first.stderr || "")) {
-        console.error("[skip] project-file-stats.mjs: TypeScript package unavailable");
+      if (/Unable to load the TypeScript 7 unstable sync API/i.test(first.stderr || "")) {
+        console.error("[skip] project-file-stats.mjs: TypeScript 7 sync API unavailable");
       } else {
         throw new Error(`project-file-stats.mjs failed: ${first.stderr}`);
       }
@@ -486,6 +494,18 @@ assert.notEqual(
       assert.ok(fs.existsSync(cacheFile), "cache file must be written");
       const cache = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
       assert.equal(Object.keys(cache.entries).length, 2);
+      assert.ok(
+        cache.fileList.watch.some(
+          ({ dir: watchedDir, recursive }) =>
+            watchedDir === srcDir && recursive === false,
+        ),
+        "TS7 config parsing records the enumerated source directory as an exact watch point",
+      );
+      assert.equal(
+        fs.existsSync(path.join(dir, "tsconfig.tsbuildinfo")),
+        false,
+        "config discovery must not write build info for an incremental project",
+      );
 
       // Second invocation must produce identical output and reuse the cache.
       const second = spawnSync(process.execPath, [scriptPath, tsconfig], {
@@ -494,6 +514,27 @@ assert.notEqual(
       });
       assert.equal(second.status, 0);
       assert.equal(second.stdout, first.stdout, "stats must be stable across runs");
+
+      // Adding a source changes the enumerated directory's mtime, so the next
+      // process must ask TS7 to refresh the project file list.
+      const beforeSrcMtime = statFileEntry(srcDir).mtimeNs;
+      let addedFile;
+      let addedCounter = 0;
+      do {
+        addedFile = writeFile(srcDir, `added-${addedCounter++}.ts`, "delta\n");
+      } while (statFileEntry(srcDir).mtimeNs === beforeSrcMtime);
+      const third = spawnSync(process.execPath, [scriptPath, tsconfig], {
+        encoding: "utf8",
+        env,
+      });
+      assert.equal(third.status, 0, third.stderr);
+      const [thirdLines, , thirdFiles] = third.stdout
+        .trim()
+        .split(/\s+/)
+        .map((value) => Number.parseInt(value, 10));
+      assert.equal(thirdFiles, 3, "a newly enumerated TS file invalidates the cached file list");
+      assert.equal(thirdLines, 4);
+      assert.ok(fs.existsSync(addedFile));
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

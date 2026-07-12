@@ -113,8 +113,8 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
   fi
 fi
 
-# ── 2. TypeScript submodule ─────────────────────────────────────────────────
-step "TypeScript submodule"
+# ── 2. TypeScript corpus ────────────────────────────────────────────────────
+step "TypeScript corpus"
 
 # Worktree fast-path: share a populated TypeScript checkout via symlink to
 # avoid materialising a duplicate ~250–500 MB checkout per worktree. No-op in
@@ -161,17 +161,10 @@ elif [ "$IS_WORKTREE" = true ] \
   fi
 fi
 
-# Fast-path: submodule is checked out (or symlinked) and has a HEAD
-TS_SHA=$(cd TypeScript 2>/dev/null && git rev-parse --short HEAD 2>/dev/null || true)
-if [ "$FORCE" = false ] && [ -n "$TS_SHA" ]; then
-  skip "Already initialised (TypeScript@$TS_SHA)."
-else
-  if [ -f "$SCRIPT_DIR/reset-ts-submodule.sh" ]; then
-    bash "$SCRIPT_DIR/reset-ts-submodule.sh"
-  else
-    git submodule update --init --depth 1 -- TypeScript
-  fi
-fi
+# The historical reset script now owns a standalone shallow/filtered checkout.
+# Calling it on every setup is cheap when already pinned and also catches dirty
+# or stale corpora instead of silently accepting any TypeScript HEAD.
+bash "$SCRIPT_DIR/reset-ts-submodule.sh" --sparse
 
 # ── 3. npm dependencies ─────────────────────────────────────────────────────
 step "npm dependencies"

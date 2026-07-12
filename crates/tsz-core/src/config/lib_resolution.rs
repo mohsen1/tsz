@@ -356,39 +356,106 @@ fn lib_dir_from_cwd() -> Option<PathBuf> {
 }
 
 fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
-    let candidates = [
+    lib_dir_from_root_for_platform(root, env::consts::OS, env::consts::ARCH)
+}
+
+fn npm_platform_suffix(os: &str, arch: &str) -> Option<String> {
+    let platform = match os {
+        "darwin" | "macos" => "darwin",
+        "linux" => "linux",
+        "win32" | "windows" => "win32",
+        _ => return None,
+    };
+    let architecture = match arch {
+        "aarch64" | "arm64" => "arm64",
+        "amd64" | "x86_64" | "x64" => "x64",
+        _ => return None,
+    };
+    Some(format!("{platform}-{architecture}"))
+}
+
+fn has_standard_libs(candidate: &Path) -> bool {
+    let compiled = candidate.join("lib.es5.d.ts").is_file()
+        && (candidate.join("lib.d.ts").is_file() || candidate.join("lib.es5.full.d.ts").is_file());
+    let source = candidate.join("es5.d.ts").is_file()
+        && (candidate.join("es5.full.d.ts").is_file() || candidate.join("dom.d.ts").is_file());
+    compiled || source
+}
+
+fn push_npm_typescript_candidates(
+    candidates: &mut Vec<PathBuf>,
+    node_modules: PathBuf,
+    platform_suffix: Option<&str>,
+) {
+    if let Some(suffix) = platform_suffix {
+        candidates.push(
+            node_modules
+                .join("@typescript")
+                .join(format!("typescript-{suffix}"))
+                .join("lib"),
+        );
+    }
+    candidates.push(node_modules.join("typescript").join("lib"));
+}
+
+fn lib_dir_from_root_for_platform(root: &Path, os: &str, arch: &str) -> Option<PathBuf> {
+    let platform_suffix = npm_platform_suffix(os, arch);
+    let mut candidates = vec![
         // Built/compiled libs from tsc build output (highest priority)
         root.join("TypeScript").join("built").join("local"),
         root.join("TypeScript").join("lib"),
-        // npm-installed TypeScript libs (self-contained, matching tsc's shipped format).
-        // Prefer these over TypeScript/src/lib which has source-format files with
-        // cross-module /// <reference lib> directives that pull in ES2015+ content
-        // even for ES5 targets (e.g., dom.generated.d.ts references es2015.symbol.d.ts).
-        root.join("node_modules").join("typescript").join("lib"),
-        root.join("scripts")
-            .join("node_modules")
-            .join("typescript")
-            .join("lib"),
-        root.join("scripts")
-            .join("emit")
-            .join("node_modules")
-            .join("typescript")
-            .join("lib"),
-        // Bundled lib snapshot committed with tsz for standalone and test environments.
+    ];
+
+    // TypeScript 7 keeps compiled standard libraries beside its native binary
+    // in a platform package. The wrapper's own `lib/` contains only launchers,
+    // so probe the exact host package first and validate file sentinels below.
+    if let Some(suffix) = platform_suffix.as_deref() {
+        candidates.push(
+            root.join("TypeScript")
+                .join("built")
+                .join("npm")
+                .join(format!("typescript-{suffix}"))
+                .join("lib"),
+        );
+    }
+    push_npm_typescript_candidates(
+        &mut candidates,
+        root.join("node_modules"),
+        platform_suffix.as_deref(),
+    );
+    push_npm_typescript_candidates(
+        &mut candidates,
+        root.join("scripts").join("node_modules"),
+        platform_suffix.as_deref(),
+    );
+    push_npm_typescript_candidates(
+        &mut candidates,
+        root.join("scripts").join("emit").join("node_modules"),
+        platform_suffix.as_deref(),
+    );
+
+    // Bundled lib snapshot committed with tsz for standalone and test environments.
+    candidates.extend([
         root.join("crates")
             .join("tsz-website")
             .join("src")
             .join("lib"),
         root.join("TypeScript").join("src").join("lib"),
         root.join("TypeScript")
-            .join("node_modules")
-            .join("typescript")
+            .join("_submodules")
+            .join("TypeScript")
+            .join("src")
             .join("lib"),
-        root.join("tests").join("lib"),
-    ];
+    ]);
+    push_npm_typescript_candidates(
+        &mut candidates,
+        root.join("TypeScript").join("node_modules"),
+        platform_suffix.as_deref(),
+    );
+    candidates.push(root.join("tests").join("lib"));
 
     for candidate in candidates {
-        if candidate.is_dir() {
+        if candidate.is_dir() && has_standard_libs(&candidate) {
             return Some(canonicalize_or_owned(&candidate));
         }
     }
@@ -748,6 +815,27 @@ fn canonicalize_or_owned(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_root(label: &str) -> PathBuf {
+        let unique = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let root = env::temp_dir().join(format!(
+            "tsz-lib-resolution-{label}-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp root");
+        root
+    }
+
+    fn write_compiled_lib_markers(dir: &Path) {
+        std::fs::create_dir_all(dir).expect("create lib dir");
+        std::fs::write(dir.join("lib.d.ts"), "/// <reference lib=\"es5\" />\n")
+            .expect("write lib.d.ts");
+        std::fs::write(dir.join("lib.es5.d.ts"), "interface Array<T> {}\n")
+            .expect("write lib.es5.d.ts");
+    }
 
     #[test]
     fn explicit_lib_aliases_map_es6_es7_only() {
@@ -787,6 +875,51 @@ mod tests {
             assert_ne!(alias, target, "alias {alias} must not map to itself");
             assert!(!target.is_empty());
         }
+    }
+
+    #[test]
+    fn npm_platform_suffix_maps_supported_hosts() {
+        assert_eq!(
+            npm_platform_suffix("macos", "aarch64").as_deref(),
+            Some("darwin-arm64")
+        );
+        assert_eq!(
+            npm_platform_suffix("darwin", "x64").as_deref(),
+            Some("darwin-x64")
+        );
+        assert_eq!(
+            npm_platform_suffix("linux", "x86_64").as_deref(),
+            Some("linux-x64")
+        );
+        assert_eq!(
+            npm_platform_suffix("windows", "arm64").as_deref(),
+            Some("win32-arm64")
+        );
+        assert_eq!(npm_platform_suffix("plan9", "x64"), None);
+    }
+
+    #[test]
+    fn skips_launcher_only_wrapper_and_selects_platform_libs() {
+        let root = temp_root("platform");
+        std::fs::create_dir_all(root.join("scripts/node_modules/typescript/lib"))
+            .expect("create launcher-only wrapper lib");
+        let expected = root.join("scripts/node_modules/@typescript/typescript-darwin-arm64/lib");
+        write_compiled_lib_markers(&expected);
+
+        let resolved = lib_dir_from_root_for_platform(&root, "macos", "aarch64")
+            .expect("platform libs should resolve");
+        assert_eq!(resolved, canonicalize_or_owned(&expected));
+        std::fs::remove_dir_all(root).expect("remove temp root");
+    }
+
+    #[test]
+    fn launcher_only_wrapper_is_not_a_lib_directory() {
+        let root = temp_root("launcher-only");
+        std::fs::create_dir_all(root.join("scripts/node_modules/typescript/lib"))
+            .expect("create launcher-only wrapper lib");
+
+        assert!(lib_dir_from_root_for_platform(&root, "linux", "x64").is_none());
+        std::fs::remove_dir_all(root).expect("remove temp root");
     }
 
     #[test]

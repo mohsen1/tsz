@@ -345,6 +345,11 @@ pub struct DeclarationEmitter<'a> {
     /// symbol equals the recorded target and the current emit position is within
     /// that scope, we emit the alias name instead of the expanded qualified path.
     pub(super) local_import_equals_alias_for_target: FxHashMap<SymbolId, Vec<(String, SymbolId)>>,
+    /// Forward edge for internal `import Alias = Q.R.S` declarations. This is
+    /// the semantic counterpart of `local_import_equals_alias_for_target` and
+    /// lets declaration inference classify the resolved target while retaining
+    /// the visible alias spelling.
+    pub(super) local_import_equals_target_for_alias: FxHashMap<SymbolId, SymbolId>,
 }
 
 pub(super) struct SourceMapState {

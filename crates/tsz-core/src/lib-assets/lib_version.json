@@ -1,6 +1,10 @@
 {
-  "npm_version": "6.0.3",
-  "source": "submodule",
-  "generated_at": "2026-04-17T00:00:00.000Z",
-  "lib_count": 103
+  "npm_version": "7.0.2",
+  "native_repository": "https://github.com/microsoft/typescript-go.git",
+  "native_tag": "typescript/v7.0.2",
+  "native_sha": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+  "corpus_sha": "4d4f005c8541e0255a9d8791205fdce326e462bc",
+  "source_package": "@typescript/typescript-darwin-arm64@7.0.2",
+  "generated_at": "2026-07-08T00:00:00.000Z",
+  "lib_count": 108
 }

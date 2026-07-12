@@ -84,6 +84,7 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
         let prev_declared = std::mem::take(&mut self.declared_namespace_names);
+        self.prepare_logical_assignment_value_temps(def.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = def.is_generator;
         self.emit(def.body);
@@ -159,6 +160,7 @@ impl<'a> Printer<'a> {
         self.push_temp_scope();
         let prev_declared = std::mem::take(&mut self.declared_namespace_names);
         if let Some(body) = def.body {
+            self.prepare_logical_assignment_value_temps(body);
             self.emit_single_line_block(body);
         } else {
             self.write("{ }");

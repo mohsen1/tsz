@@ -408,7 +408,14 @@ pub fn get_tsz_version() -> String {
 /// Get the TypeScript version this is compatible with
 #[wasm_bindgen(js_name = getTypeScriptVersion)]
 pub fn get_typescript_version() -> String {
-    "5.3.0".to_string()
+    let metadata: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tsz-core/src/lib-assets/lib_version.json"
+    ))
+    .expect("embedded TypeScript lib version metadata must be valid JSON");
+    metadata["npm_version"]
+        .as_str()
+        .expect("embedded TypeScript lib version metadata must contain npm_version")
+        .to_string()
 }
 
 // ============================================================================

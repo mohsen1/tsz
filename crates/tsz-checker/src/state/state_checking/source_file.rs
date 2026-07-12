@@ -564,6 +564,8 @@ impl CheckerState<'_> {
 
         // Check for export assignment with other exports (2309)
         self.check_export_assignment(&sf.statements.nodes);
+        // TS7: JS `module.exports = X` mixed with sibling property exports (2309)
+        self.check_js_commonjs_export_assignment_conflict();
         self.check_import_alias_duplicates(&sf.statements.nodes);
         self.check_import_declaration_duplicate_bindings(&sf.statements.nodes);
 

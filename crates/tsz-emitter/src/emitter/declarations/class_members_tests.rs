@@ -336,6 +336,34 @@ fn bodyless_optional_class_methods_emit_empty_bodies_for_recovery() {
 }
 
 #[test]
+fn class_body_empty_statements_after_members_with_bodies_are_preserved() {
+    // TypeScript 7 keeps a `;` that directly follows a class member with a body
+    // as an empty class element in JS output. The parser consumes that token via
+    // parse_optional, so the emitter reconstructs it from source. A member's own
+    // body terminator (`}`) must not gain a spurious `;`.
+    let output = emit_ts_with_options(
+        "class C {\n    foo() { };\n    get g() { return 1; };\n    bar() { }\n}\n",
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("foo() { }\n    ;"),
+        "Standalone `;` after a method with a body should be preserved.\nOutput: {output}"
+    );
+    assert!(
+        output.contains("get g() { return 1; }\n    ;"),
+        "Standalone `;` after an accessor with a body should be preserved.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("bar() { }\n    ;"),
+        "A member with a body but no following `;` must not gain one.\nOutput: {output}"
+    );
+}
+
+#[test]
 fn object_literal_accessor_empty_body_has_space_braces() {
     let source = "export const t = {\n    set setter(v) {},\n};";
     let output = emit_ts(source);

@@ -1,3 +1,7 @@
+use super::SolverLiteralValue as LiteralValue;
+use super::ts7_sort_order::{
+    Ts7SortNameSource, ts7_sort_literal, ts7_sort_name_source, ts7_union_sort_rank,
+};
 use super::{TypeId, TypePrinter, TypeSubstitution, instantiate_type_cached, visitor};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
@@ -21,7 +25,7 @@ impl<'a> TypePrinter<'a> {
         }
 
         // Split members into real types vs nullish tail. tsc's type printer
-        // emits the nullish members (`null`, `undefined`, `void`) at the end
+        // emits the nullable members (`null`, `undefined`) at the end
         // of the union, in that canonical order — e.g. optional parameter
         // annotations render as `(X | undefined)[]`, not `(undefined | X)[]`.
         // Our solver stores unions in the order they were built, which for
@@ -31,66 +35,80 @@ impl<'a> TypePrinter<'a> {
         let mut real: Vec<TypeId> = Vec::with_capacity(types.len());
         let mut has_null = false;
         let mut has_undefined = false;
-        let mut has_void = false;
         for &type_id in types.iter() {
-            // When strictNullChecks is off, filter null/undefined/void from unions
-            if !self.strict_null_checks
-                && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID)
-            {
+            // When strictNullChecks is off, filter null/undefined from unions.
+            // `void` is not nullable in TypeScript 7's formatter and remains in
+            // its canonical TypeFlags position.
+            if !self.strict_null_checks && matches!(type_id, TypeId::NULL | TypeId::UNDEFINED) {
                 continue;
             }
             match type_id {
                 TypeId::NULL => has_null = true,
                 TypeId::UNDEFINED => has_undefined = true,
-                TypeId::VOID => has_void = true,
                 _ => real.push(type_id),
             }
         }
 
         // tsc's compareTypes orders union members by `getSortOrderFlags`,
         // which for primitives returns `TypeFlags` directly. Give primitive
-        // intrinsics a stable, tsc-matching order (`any` < `unknown` < `string`
-        // < `number` < `boolean` < `bigint` < `symbol`/`object`) so an inferred
+        // intrinsics their TypeScript 7 flag order (`any` < `unknown` < `void`
+        // < `string` < `number` < `bigint` < `boolean` < `symbol`/`object`) so an inferred
         // `number | string` prints as `string | number`. Non-primitive members
         // keep their original relative order because a sort comparator that
         // returns "equal" for them is stable.
-        const fn primitive_rank(id: TypeId) -> Option<u32> {
-            // Mirrors tsc's TypeFlags bit values in ascending order.
-            match id {
-                TypeId::ANY => Some(1),
-                TypeId::UNKNOWN => Some(2),
-                TypeId::STRING => Some(4),
-                TypeId::NUMBER => Some(8),
-                TypeId::BOOLEAN => Some(16),
-                TypeId::BIGINT => Some(64),
-                TypeId::SYMBOL => Some(4096),
-                TypeId::OBJECT => Some(33_554_432),
-                _ => None,
-            }
-        }
         real.sort_by(|a, b| {
-            // Keep non-primitive members in their original relative order; only
-            // the known primitives get sorted among themselves. For a mixed
-            // union like `MyAlias | string | number`, this reorders the
-            // primitives into tsc order while leaving `MyAlias` in place.
-            match (primitive_rank(*a), primitive_rank(*b)) {
-                (Some(ra), Some(rb)) => ra.cmp(&rb),
-                _ => std::cmp::Ordering::Equal,
+            let rank_cmp = self
+                .stable_type_order_rank(*a)
+                .cmp(&self.stable_type_order_rank(*b));
+            if rank_cmp != std::cmp::Ordering::Equal {
+                return rank_cmp;
+            }
+            match (
+                self.stable_type_order_literal(*a),
+                self.stable_type_order_literal(*b),
+            ) {
+                (Some(LiteralValue::String(left)), Some(LiteralValue::String(right))) => {
+                    return self
+                        .interner
+                        .resolve_atom_ref(left)
+                        .cmp(&self.interner.resolve_atom_ref(right));
+                }
+                (Some(LiteralValue::Number(left)), Some(LiteralValue::Number(right))) => {
+                    return left.0.total_cmp(&right.0);
+                }
+                (Some(LiteralValue::Boolean(left)), Some(LiteralValue::Boolean(right))) => {
+                    return left.cmp(&right);
+                }
+                _ => {}
+            }
+            if let (Some(left), Some(right)) = (
+                self.stable_template_order_text(*a),
+                self.stable_template_order_text(*b),
+            ) {
+                let cmp = left.cmp(&right);
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp;
+                }
+            }
+            match (
+                self.stable_type_order_name(*a),
+                self.stable_type_order_name(*b),
+            ) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
             }
         });
 
-        // tsc's compareTypes orders union members by TypeFlags; for the nullish
-        // trio the flag values are Void < Undefined < Null, so the tail prints
-        // `void | undefined | null` in that order when members are present.
+        // TypeScript's formatter removes nullable members from their canonical
+        // positions, then appends `null` followed by `undefined`.
         let mut ordered = real;
-        if has_void {
-            ordered.push(TypeId::VOID);
+        if has_null {
+            ordered.push(TypeId::NULL);
         }
         if has_undefined {
             ordered.push(TypeId::UNDEFINED);
-        }
-        if has_null {
-            ordered.push(TypeId::NULL);
         }
 
         let mut parts = Vec::with_capacity(ordered.len());
@@ -130,6 +148,58 @@ impl<'a> TypePrinter<'a> {
             .map(|(_, part)| part)
             .collect::<Vec<_>>()
             .join(" | ")
+    }
+
+    fn stable_type_order_rank(&self, type_id: TypeId) -> u32 {
+        ts7_union_sort_rank(self.interner, type_id, &|def_id| {
+            self.type_cache
+                .and_then(|cache| cache.def_types.get(&def_id).copied())
+        })
+    }
+
+    fn stable_type_order_literal(&self, type_id: TypeId) -> Option<LiteralValue> {
+        ts7_sort_literal(self.interner, type_id, &|def_id| {
+            self.type_cache
+                .and_then(|cache| cache.def_types.get(&def_id).copied())
+        })
+    }
+
+    fn stable_template_order_text(&self, type_id: TypeId) -> Option<Vec<String>> {
+        let list_id = visitor::template_literal_id(self.interner, type_id)?;
+        let spans = self.interner.template_list(list_id);
+        Some(
+            spans
+                .iter()
+                .filter_map(|span| {
+                    span.as_text()
+                        .map(|atom| self.interner.resolve_atom_ref(atom).to_string())
+                })
+                .collect(),
+        )
+    }
+
+    fn stable_type_order_name(&self, type_id: TypeId) -> Option<String> {
+        match ts7_sort_name_source(self.interner, type_id)? {
+            Ts7SortNameSource::Def(def_id) => {
+                if let Some(name) = self
+                    .type_cache
+                    .and_then(|cache| cache.def_to_name.get(&def_id))
+                {
+                    return Some(name.clone());
+                }
+                let symbol = self
+                    .type_cache
+                    .and_then(|cache| cache.def_to_symbol.get(&def_id))?;
+                self.symbol_arena
+                    .and_then(|arena| arena.get(*symbol))
+                    .map(|symbol| symbol.escaped_name.to_string())
+            }
+            Ts7SortNameSource::Symbol(symbol) => self
+                .symbol_arena
+                .and_then(|arena| arena.get(symbol))
+                .map(|symbol| symbol.escaped_name.to_string()),
+            Ts7SortNameSource::Atom(atom) => Some(self.interner.resolve_atom_ref(atom).to_string()),
+        }
     }
 
     pub(crate) fn try_print_enum_member_union_as_parent(&self, types: &[TypeId]) -> Option<String> {

@@ -280,9 +280,6 @@ pub(super) fn apply_cli_overrides_with_config_options(
     if args.no_fallthrough_cases_in_switch {
         options.checker.no_fallthrough_cases_in_switch = true;
     }
-    if args.no_implicit_use_strict {
-        options.checker.no_implicit_use_strict = true;
-    }
     // tsc 6.0 defaults `esModuleInterop` to `true` unless it is explicitly set on
     // the command line or in `tsconfig.json`. The config path already applies
     // this default in `resolve_compiler_options`; mirror it here so the CLI-only
@@ -492,13 +489,6 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.lib_files = resolve_default_lib_files(options.printer.target)?;
     }
 
-    if args.suppress_excess_property_errors {
-        options.checker.suppress_excess_property_errors = true;
-    }
-    if args.suppress_implicit_any_index_errors {
-        options.checker.suppress_implicit_any_index_errors = true;
-    }
-
     // Fan out the non-strict-family implications (composite -> declaration +
     // incremental, isolatedModules/verbatimModuleSyntax -> preserveConstEnums,
     // importHelpers -> no_emit_helpers, esModuleInterop ->
@@ -608,7 +598,6 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
             "noUncheckedSideEffectImports" => {
                 options.checker.no_unchecked_side_effect_imports = false
             }
-            "noImplicitUseStrict" => options.checker.no_implicit_use_strict = false,
             "exactOptionalPropertyTypes" => options.checker.exact_optional_property_types = false,
             "erasableSyntaxOnly" => options.checker.erasable_syntax_only = false,
             "sound" => options.checker.sound_mode = false,
@@ -684,12 +673,6 @@ fn apply_explicitly_disabled_bool_flags(options: &mut ResolvedCompilerOptions, a
                 options.checker.resolve_json_module = false;
             }
             "libReplacement" => options.lib_replacement = false,
-            "suppressExcessPropertyErrors" => {
-                options.checker.suppress_excess_property_errors = false
-            }
-            "suppressImplicitAnyIndexErrors" => {
-                options.checker.suppress_implicit_any_index_errors = false
-            }
             _ => {
                 // Unknown name: leave compilation unchanged. The flag is
                 // already validated as a known bool flag in preprocess_args
@@ -744,8 +727,6 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
     args: &CliArgs,
     config: Option<&TsConfig>,
 ) -> Result<Vec<Diagnostic>> {
-    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
-
     let mut diagnostics = Vec::new();
     for key in ["paths", "plugins"] {
         let provided = match key {
@@ -754,16 +735,7 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
             _ => false,
         };
         if provided {
-            diagnostics.push(Diagnostic::error(
-                String::new(),
-                0,
-                0,
-                format_message(
-                    diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
-                    &[key],
-                ),
-                diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
-            ));
+            diagnostics.push(cli_config_only_option_diagnostic(key));
         }
     }
 
@@ -809,6 +781,13 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
             "allowSyntheticDefaultImports".to_string(),
             allow_synthetic_default_imports.into(),
         );
+    }
+    if args
+        .explicitly_disabled_bool_flags
+        .iter()
+        .any(|name| name == "esModuleInterop")
+    {
+        compiler_options.insert("esModuleInterop".to_string(), false.into());
     }
     if let Some(ignore_deprecations) =
         effective_ignore_deprecations_for_cli_validation(args, config)
@@ -908,31 +887,62 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
             ),
         );
     }
-    if args.downlevel_iteration {
-        compiler_options.insert("downlevelIteration".to_string(), true.into());
+    if args.downlevel_iteration
+        || args
+            .explicitly_disabled_bool_flags
+            .iter()
+            .any(|name| name == "downlevelIteration")
+    {
+        compiler_options.insert(
+            "downlevelIteration".to_string(),
+            args.downlevel_iteration.into(),
+        );
     }
 
-    // Removed compiler-option flags accepted by clap should still surface
-    // TS5102 (Option has been removed) the same way they do from a tsconfig.
-    // Synthesize the keys here so the shared `parse_tsconfig_with_diagnostics`
-    // pass below catches them via `removed_compiler_option`. See #3558.
-    if args.no_implicit_use_strict {
-        compiler_options.insert("noImplicitUseStrict".to_string(), true.into());
+    // TS7-dropped compiler-option flags remain accepted by clap so the shared
+    // config parser can produce tsc's TS5023 unknown-option diagnostic.
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|candidate| candidate == name)
+    };
+    if args.no_implicit_use_strict || explicitly_disabled("noImplicitUseStrict") {
+        compiler_options.insert(
+            "noImplicitUseStrict".to_string(),
+            args.no_implicit_use_strict.into(),
+        );
     }
-    if args.keyof_strings_only {
-        compiler_options.insert("keyofStringsOnly".to_string(), true.into());
+    if args.keyof_strings_only || explicitly_disabled("keyofStringsOnly") {
+        compiler_options.insert(
+            "keyofStringsOnly".to_string(),
+            args.keyof_strings_only.into(),
+        );
     }
-    if args.suppress_excess_property_errors {
-        compiler_options.insert("suppressExcessPropertyErrors".to_string(), true.into());
+    if args.suppress_excess_property_errors || explicitly_disabled("suppressExcessPropertyErrors") {
+        compiler_options.insert(
+            "suppressExcessPropertyErrors".to_string(),
+            args.suppress_excess_property_errors.into(),
+        );
     }
-    if args.suppress_implicit_any_index_errors {
-        compiler_options.insert("suppressImplicitAnyIndexErrors".to_string(), true.into());
+    if args.suppress_implicit_any_index_errors
+        || explicitly_disabled("suppressImplicitAnyIndexErrors")
+    {
+        compiler_options.insert(
+            "suppressImplicitAnyIndexErrors".to_string(),
+            args.suppress_implicit_any_index_errors.into(),
+        );
     }
-    if args.no_strict_generic_checks {
-        compiler_options.insert("noStrictGenericChecks".to_string(), true.into());
+    if args.no_strict_generic_checks || explicitly_disabled("noStrictGenericChecks") {
+        compiler_options.insert(
+            "noStrictGenericChecks".to_string(),
+            args.no_strict_generic_checks.into(),
+        );
     }
-    if args.preserve_value_imports {
-        compiler_options.insert("preserveValueImports".to_string(), true.into());
+    if args.preserve_value_imports || explicitly_disabled("preserveValueImports") {
+        compiler_options.insert(
+            "preserveValueImports".to_string(),
+            args.preserve_value_imports.into(),
+        );
     }
     if let Some(charset) = args.charset.as_deref() {
         compiler_options.insert("charset".to_string(), charset.to_string().into());
@@ -962,6 +972,133 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
     let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
     diagnostics.extend(parsed.diagnostics);
     Ok(diagnostics)
+}
+
+pub(super) const fn is_direct_cli_parse_diagnostic_code(code: u32) -> bool {
+    matches!(
+        code,
+        diagnostic_codes::UNKNOWN_COMPILER_OPTION
+            | diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN
+            | diagnostic_codes::ARGUMENT_FOR_OPTION_MUST_BE
+            | diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN
+    )
+}
+
+/// Build direct command-line parse diagnostics in final argv order.
+///
+/// `preprocess_args` records option identities in a hidden repeated argument.
+/// Each identity is validated independently through the existing config parser,
+/// preserving its exact diagnostic construction without inspecting messages.
+pub(super) fn ordered_direct_cli_parse_diagnostics(args: &CliArgs) -> Result<Vec<Diagnostic>> {
+    if args.direct_cli_option_order.is_empty() {
+        return Ok(validate_cli_compiler_option_diagnostics(args, None)?
+            .into_iter()
+            .filter(|diagnostic| is_direct_cli_parse_diagnostic_code(diagnostic.code))
+            .collect());
+    }
+
+    let mut diagnostics = Vec::new();
+    for key in &args.direct_cli_option_order {
+        if matches!(key.as_str(), "paths" | "plugins") {
+            let provided = match key.as_str() {
+                "paths" => cli_config_only_option_has_non_null_value(args.paths.as_ref()),
+                "plugins" => cli_config_only_option_has_non_null_value(args.plugins.as_ref()),
+                _ => false,
+            };
+            if provided {
+                diagnostics.push(cli_config_only_option_diagnostic(key));
+            }
+            continue;
+        }
+
+        let Some(value) = direct_cli_parse_option_value(args, key) else {
+            continue;
+        };
+        let mut compiler_options = serde_json::Map::new();
+        compiler_options.insert(key.clone(), value);
+        let mut root = serde_json::Map::new();
+        root.insert(
+            "compilerOptions".to_string(),
+            serde_json::Value::Object(compiler_options),
+        );
+        let source = serde_json::Value::Object(root).to_string();
+        let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
+        diagnostics.extend(
+            parsed
+                .diagnostics
+                .into_iter()
+                .filter(|diagnostic| is_direct_cli_parse_diagnostic_code(diagnostic.code)),
+        );
+    }
+    Ok(diagnostics)
+}
+
+fn cli_config_only_option_diagnostic(key: &str) -> Diagnostic {
+    use tsz::checker::diagnostics::{diagnostic_messages, format_message};
+
+    Diagnostic::error(
+        String::new(),
+        0,
+        0,
+        format_message(
+            diagnostic_messages::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+            &[key],
+        ),
+        diagnostic_codes::OPTION_CAN_ONLY_BE_SPECIFIED_IN_TSCONFIG_JSON_FILE_OR_SET_TO_NULL_ON_COMMAND_LIN,
+    )
+}
+
+fn direct_cli_parse_option_value(args: &CliArgs, key: &str) -> Option<serde_json::Value> {
+    let explicitly_disabled = |name: &str| {
+        args.explicitly_disabled_bool_flags
+            .iter()
+            .any(|candidate| candidate == name)
+    };
+    let dropped_bool = |name: &str, value: bool| {
+        (value || explicitly_disabled(name)).then(|| serde_json::Value::Bool(value))
+    };
+
+    match key {
+        "target" => args
+            .target
+            .map(|target| serde_json::Value::String(cli_target_value(target).to_string())),
+        "module" => args
+            .module
+            .map(|module| serde_json::Value::String(cli_module_value(module).to_string())),
+        "keyofStringsOnly" => dropped_bool("keyofStringsOnly", args.keyof_strings_only),
+        "noImplicitUseStrict" => dropped_bool("noImplicitUseStrict", args.no_implicit_use_strict),
+        "noStrictGenericChecks" => {
+            dropped_bool("noStrictGenericChecks", args.no_strict_generic_checks)
+        }
+        "preserveValueImports" => dropped_bool("preserveValueImports", args.preserve_value_imports),
+        "suppressExcessPropertyErrors" => dropped_bool(
+            "suppressExcessPropertyErrors",
+            args.suppress_excess_property_errors,
+        ),
+        "suppressImplicitAnyIndexErrors" => dropped_bool(
+            "suppressImplicitAnyIndexErrors",
+            args.suppress_implicit_any_index_errors,
+        ),
+        "charset" => args
+            .charset
+            .as_ref()
+            .map(|value| serde_json::Value::String(value.clone())),
+        "importsNotUsedAsValues" => args.imports_not_used_as_values.map(|value| {
+            serde_json::Value::String(
+                match value {
+                    crate::args::ImportsNotUsedAsValues::Remove => "remove",
+                    crate::args::ImportsNotUsedAsValues::Preserve => "preserve",
+                    crate::args::ImportsNotUsedAsValues::Error => "error",
+                }
+                .to_string(),
+            )
+        }),
+        "out" => args
+            .out
+            .as_ref()
+            .map(|value| serde_json::Value::String(value.to_string_lossy().into_owned())),
+        _ => None,
+    }
 }
 
 fn cli_config_only_option_has_non_null_value(values: Option<&Vec<String>>) -> bool {
@@ -1288,6 +1425,100 @@ mod tests {
     fn cli_ignore_deprecations_5_0_not_6_0() {
         let args = CliArgs::try_parse_from(["tsz", "--ignoreDeprecations", "5.0"]).unwrap();
         assert!(!cli_ignore_deprecations_silences_6_0(&args));
+    }
+
+    #[test]
+    fn cli_ts7_removed_options_use_shared_ts5102_ts5108_policy() {
+        let cases: &[(&[&str], u32, &str)] = &[
+            (&["--target", "es5"], 5108, "target=ES5"),
+            (
+                &["--moduleResolution", "node"],
+                5108,
+                "moduleResolution=node10",
+            ),
+            (&["--module", "amd"], 5108, "module=AMD"),
+            (&["--alwaysStrict", "false"], 5108, "alwaysStrict=false"),
+            (
+                &["--allowSyntheticDefaultImports", "false"],
+                5108,
+                "allowSyntheticDefaultImports=false",
+            ),
+            (
+                &["--__explicitly-disabled-bool-flag=esModuleInterop"],
+                5108,
+                "esModuleInterop=false",
+            ),
+            (&["--baseUrl", "."], 5102, "baseUrl"),
+            (&["--outFile", "bundle.js"], 5102, "outFile"),
+            (
+                &["--__explicitly-disabled-bool-flag=downlevelIteration"],
+                5102,
+                "downlevelIteration",
+            ),
+        ];
+
+        for (options, code, message_fragment) in cases {
+            let args =
+                CliArgs::try_parse_from(std::iter::once("tsz").chain(options.iter().copied()))
+                    .unwrap();
+            let diagnostics = validate_cli_compiler_option_diagnostics(&args, None).unwrap();
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code == *code && diagnostic.message_text.contains(message_fragment)
+                }),
+                "{options:?} should emit TS{code} for {message_fragment}, got {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_ts7_unparsed_legacy_enum_values_use_ts6046() {
+        for options in [["--target", "es3"], ["--module", "none"]] {
+            let args =
+                CliArgs::try_parse_from(std::iter::once("tsz").chain(options.iter().copied()))
+                    .unwrap();
+            let diagnostics = validate_cli_compiler_option_diagnostics(&args, None).unwrap();
+            assert!(
+                diagnostics.iter().any(|diagnostic| diagnostic.code == 6046),
+                "{options:?} should emit TS6046, got {diagnostics:?}"
+            );
+            assert!(
+                diagnostics.iter().all(|diagnostic| diagnostic.code != 5108),
+                "{options:?} must not emit TS5108, got {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_direct_cli_parse_diagnostics_follow_side_channel() {
+        let diagnostics_for = |order: [&str; 2]| {
+            let mut argv = vec![
+                "tsz".to_string(),
+                "--target".to_string(),
+                "es3".to_string(),
+                "--keyofStringsOnly".to_string(),
+            ];
+            argv.extend(
+                order
+                    .into_iter()
+                    .map(|name| format!("--__direct-cli-option-order={name}")),
+            );
+            let args = CliArgs::try_parse_from(argv).unwrap();
+            ordered_direct_cli_parse_diagnostics(&args)
+                .unwrap()
+                .into_iter()
+                .map(|diagnostic| diagnostic.code)
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            diagnostics_for(["target", "keyofStringsOnly"]),
+            [6046, 5023]
+        );
+        assert_eq!(
+            diagnostics_for(["keyofStringsOnly", "target"]),
+            [5023, 6046]
+        );
     }
 
     #[test]

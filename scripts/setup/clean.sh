@@ -240,11 +240,13 @@ rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
 # Keep the committed tsc-cache-full.json
 git -C "$REPO_ROOT" checkout -- scripts/conformance/tsc-cache-full.json 2>/dev/null || true
 
-# Phase 11: Reset TypeScript submodule to clean state.
+# Phase 11: Re-verify the standalone TypeScript corpus without discarding edits.
 # Skip when TypeScript is a symlink — it points at a shared checkout that this
 # worktree must not mutate (see link-ts-submodule.sh).
 if [ ! -L "$REPO_ROOT/TypeScript" ]; then
-  git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
+  "$REPO_ROOT/scripts/setup/reset-ts-submodule.sh" --sparse >/dev/null 2>&1 || {
+    echo "Preserving dirty or unavailable TypeScript corpus checkout." >&2
+  }
 fi
 
 # Phase 12: Light cargo cache prune.

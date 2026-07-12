@@ -86,6 +86,15 @@ fn parse_test_file_splits_files_and_options() {
 }
 
 #[test]
+fn parse_test_file_strips_one_harness_trailing_semicolon() {
+    let parsed = parse_test_file("// @declaration: true;\nconst x = 1;");
+    assert_eq!(
+        parsed.options.get("declaration").map(String::as_str),
+        Some("true")
+    );
+}
+
+#[test]
 fn parse_test_file_multi_file_sections() {
     let content = "// @module: esnext\n// @Filename: a.ts\nexport const a = 1;\n// @ts-check\n// @filename: dir/b.ts\nimport { a } from './a';\na;\n";
     let parsed = parse_test_file(content);

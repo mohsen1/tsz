@@ -23,13 +23,21 @@ class RefreshReadmeTests(unittest.TestCase):
     def test_ci_suite_metric_shape_normalizes_to_counts(self):
         summary = refresh_readme.normalize_suite_summary({
             "suite": "conformance",
-            "pass_rate": "100.0",
-            "passed": 12579,
-            "total": 12585,
+            "pass_rate": "90.0",
+            "passed": 9,
+            "total": 10,
+            "candidates": 12,
+            "runnable": 10,
+            "unsupported": 1,
+            "skipped": 1,
         }, "conformance")
 
-        self.assertEqual(summary["passed"], 12579)
-        self.assertEqual(summary["total"], 12585)
+        self.assertEqual(summary["passed"], 9)
+        self.assertEqual(summary["total"], 10)
+        self.assertEqual(summary["runnable"], 10)
+        self.assertEqual(summary["candidates"], 12)
+        self.assertEqual(summary["unsupported"], 1)
+        self.assertEqual(summary["skipped"], 1)
 
     def test_snapshot_suite_metric_shape_normalizes_to_counts(self):
         summary = refresh_readme.normalize_suite_summary({
@@ -122,19 +130,65 @@ Declaration: [████████████████████] 98.5
         readme_summary = refresh_readme.conformance_summary_from_readme(
             """<!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 100.0% (12,581/12,585 tests)
+Progress: [███████████████████░] 90.0% (9/10 tests)
 ```
 <!-- CONFORMANCE_END -->""",
         )
         snapshot_summary = {
-            "passed": 12582,
-            "total": 12582,
+            "passed": 8,
+            "total": 9,
         }
 
         selected = refresh_readme.prefer_readme_suite_summary(snapshot_summary, readme_summary)
 
-        self.assertEqual(selected["passed"], 12581)
-        self.assertEqual(selected["total"], 12585)
+        self.assertEqual(selected["passed"], 9)
+        self.assertEqual(selected["total"], 10)
+
+    def test_partition_aware_artifact_replaces_legacy_readme_total(self):
+        readme_summary = refresh_readme.conformance_summary_from_readme(
+            """<!-- CONFORMANCE_START -->
+```
+Progress: [████████████████████] 100.0% (10/10 tests)
+```
+<!-- CONFORMANCE_END -->""",
+        )
+        artifact_summary = {
+            "passed": 8,
+            "total": 8,
+            "runnable": 8,
+            "candidates": 10,
+            "unsupported": 1,
+            "skipped": 1,
+        }
+
+        selected = refresh_readme.prefer_readme_suite_summary(
+            artifact_summary,
+            readme_summary,
+        )
+
+        self.assertEqual(selected, artifact_summary)
+
+    def test_conformance_readme_parser_reads_candidate_partition(self):
+        summary = refresh_readme.conformance_summary_from_readme(
+            """<!-- CONFORMANCE_START -->
+```
+Progress: [████████████████████] 100.0% (8/8 runnable tests)
+Candidates: 10 (8 runnable, 1 unsupported, 1 skipped)
+```
+<!-- CONFORMANCE_END -->""",
+        )
+
+        self.assertEqual(
+            summary,
+            {
+                "passed": 8,
+                "total": 8,
+                "runnable": 8,
+                "candidates": 10,
+                "unsupported": 1,
+                "skipped": 1,
+            },
+        )
 
     def test_conformance_fallback_warns_when_preserving_readme_summary(self):
         with TemporaryDirectory() as temp_dir:
@@ -143,14 +197,14 @@ Progress: [████████████████████] 100.0% 
             snapshot_path.parent.mkdir(parents=True)
             snapshot_path.write_text(json.dumps({
                 "summary": {
-                    "passed": 12582,
-                    "total_tests": 12582,
+                    "passed": 8,
+                    "total_tests": 8,
                 },
             }))
             args = types.SimpleNamespace(conformance_metrics_json=None)
             readme_text = """<!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 100.0% (12,581/12,585 tests)
+Progress: [████████████████████] 100.0% (10/10 tests)
 ```
 <!-- CONFORMANCE_END -->"""
 
@@ -159,12 +213,12 @@ Progress: [████████████████████] 100.0% 
             try:
                 refresh_readme.ROOT = root
                 with redirect_stderr(stderr):
-                    passed, total = refresh_readme.load_conformance(args, readme_text)
+                    selected = refresh_readme.load_conformance(args, readme_text)
             finally:
                 refresh_readme.ROOT = old_root
 
-        self.assertEqual(passed, 12581)
-        self.assertEqual(total, 12585)
+        self.assertEqual(selected["passed"], 10)
+        self.assertEqual(selected["total"], 10)
         self.assertIn("preserving README conformance metrics", stderr.getvalue())
         self.assertIn("scripts/conformance/conformance-snapshot.json", stderr.getvalue())
 

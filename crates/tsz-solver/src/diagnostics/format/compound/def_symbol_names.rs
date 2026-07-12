@@ -489,6 +489,60 @@ impl<'a> TypeFormatter<'a> {
         self.get_source_position_for_type_guarded(type_id, def_store, &mut visiting)
     }
 
+    /// Structured visible type name used by TypeScript 7 stable ordering.
+    /// Alias applications order by their visible alias; ordinary applications
+    /// order by the generic base. This deliberately reads definition/symbol
+    /// metadata rather than formatted type text.
+    pub(super) fn stable_order_type_name(
+        &mut self,
+        type_id: TypeId,
+        def_store: &crate::def::DefinitionStore,
+    ) -> Option<String> {
+        let mut current = type_id;
+        let mut seen = rustc_hash::FxHashSet::default();
+        for _ in 0..16 {
+            if !seen.insert(current) {
+                return None;
+            }
+            if let Some(alias) = self
+                .interner
+                .get_display_alias(current)
+                .filter(|&alias| alias != current)
+            {
+                current = alias;
+                continue;
+            }
+            match self.interner.lookup(current)? {
+                TypeData::Application(app_id) => {
+                    current = self.interner.type_application(app_id).base;
+                }
+                TypeData::Lazy(def_id) | TypeData::Enum(def_id, _) => {
+                    let def = def_store.get(def_id)?;
+                    return Some(self.atom(def.name).to_string());
+                }
+                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                    let symbol = self.interner.object_shape(shape_id).symbol?;
+                    return self
+                        .symbol_arena
+                        .and_then(|arena| arena.get(symbol))
+                        .map(|symbol| symbol.escaped_name.to_string());
+                }
+                TypeData::Callable(shape_id) => {
+                    let symbol = self.interner.callable_shape(shape_id).symbol?;
+                    return self
+                        .symbol_arena
+                        .and_then(|arena| arena.get(symbol))
+                        .map(|symbol| symbol.escaped_name.to_string());
+                }
+                TypeData::TypeParameter(param) => {
+                    return Some(self.atom(param.name).to_string());
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
     /// Recursive worker for [`Self::get_source_position_for_type`].
     ///
     /// `visiting` holds the `TypeIds` currently on the recursion stack. When a

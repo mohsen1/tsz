@@ -755,21 +755,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TypeScript 7 only honours an explicit JSDoc `@this {T}` annotation as a
+        // contextual `this` for a JS function. A `@constructor`/`@class` tag or
+        // `this.prop =` assignments in the body no longer synthesize a receiver, so
+        // such functions get an implicitly-`any` `this` (TS2683) like any other.
         if self.is_js_file()
             && self
                 .get_jsdoc_for_function(enclosing_fn)
-                .is_some_and(|jsdoc| {
-                    Self::jsdoc_contains_tag(&jsdoc, "this")
-                        || Self::jsdoc_contains_tag(&jsdoc, "constructor")
-                })
-        {
-            return true;
-        }
-
-        if self.is_js_file()
-            && self
-                .js_constructor_body_instance_type_for_function(enclosing_fn)
-                .is_some()
+                .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "this"))
         {
             return true;
         }

@@ -249,16 +249,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 .checker
                 .find_enclosing_non_arrow_function(idx)
                 .is_some()
-            && (!self.checker.is_js_file()
-                || self
-                    .checker
-                    .is_this_in_nested_function_without_own_this_binding(idx))
         {
             // TS2683: 'this' implicitly has type 'any'
-            // In JS files, only nested regular functions with a fresh,
-            // unowned `this` binding reach this path. Constructor/prototype
-            // patterns and explicit/contextual/JSDoc-owned receivers are
-            // filtered out before this branch.
+            // Reaching this branch means `this` has no resolved owner: all
+            // owned receivers (class member, JSDoc `@this`, contextual, and
+            // the current-this-type stack that carries prototype-method
+            // receivers) are handled before this point. TypeScript 7 no longer
+            // synthesizes a `this` for plain JS constructor functions, so a
+            // top-level JS function's `this` is implicitly `any` here just like
+            // in TS files — not only nested ones.
             // Suppress if the enclosing function has an explicit `this` parameter
             // or a contextual `this` type from a parent type annotation
             if self

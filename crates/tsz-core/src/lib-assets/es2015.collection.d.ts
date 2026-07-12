@@ -15,6 +15,9 @@ and limitations under the License.
 
 
 interface Map<K, V> {
+    /**
+     * Removes all elements from the Map.
+     */
     clear(): void;
     /**
      * @returns true if an element in the Map existed and has been removed, or false if the element does not exist.
@@ -89,7 +92,9 @@ interface Set<T> {
      * Appends a new element with a specified value to the end of the Set.
      */
     add(value: T): this;
-
+    /**
+     * Removes all elements from the Set.
+     */
     clear(): void;
     /**
      * Removes a specified value from the Set.
@@ -105,7 +110,7 @@ interface Set<T> {
      */
     has(value: T): boolean;
     /**
-     * @returns the number of (unique) elements in Set.
+     * @returns the number of (unique) elements in the Set.
      */
     readonly size: number;
 }
@@ -117,8 +122,17 @@ interface SetConstructor {
 declare var Set: SetConstructor;
 
 interface ReadonlySet<T> {
+    /**
+     * Executes a provided function once per each value in the ReadonlySet object, in insertion order.
+     */
     forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: any): void;
+    /**
+     * @returns a boolean indicating whether an element with the specified value exists in the Set or not.
+     */
     has(value: T): boolean;
+    /**
+     * @returns the number of (unique) elements in the Set.
+     */
     readonly size: number;
 }
 

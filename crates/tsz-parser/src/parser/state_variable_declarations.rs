@@ -657,7 +657,7 @@ impl ParserState {
         // Restore context flags
         self.context_flags = saved_flags;
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_function(
             syntax_kind_ext::FUNCTION_DECLARATION,
             start_pos,
@@ -761,7 +761,7 @@ impl ParserState {
 
         self.context_flags = saved_flags;
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_function(
             syntax_kind_ext::FUNCTION_DECLARATION,
             start_pos,

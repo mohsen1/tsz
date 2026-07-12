@@ -1,4 +1,3 @@
-use super::super::super::helpers::temp_name_rank;
 use super::super::super::{Printer, is_valid_identifier_name};
 use super::super::top_level_using_decorated::{
     export_decorate_assignment, strip_decorate_export_prefix,
@@ -9,6 +8,17 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
+
+fn top_level_using_temp_name_rank(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('_')?;
+    if rest.len() == 1 {
+        let byte = rest.as_bytes()[0];
+        if byte.is_ascii_lowercase() {
+            return Some((byte - b'a') as u32);
+        }
+    }
+    rest.parse::<u32>().ok().map(|index| index + 26)
+}
 
 impl<'a> Printer<'a> {
     fn top_level_using_export_binding_stmt(&self, export_name: &str, local_name: &str) -> String {
@@ -461,7 +471,8 @@ impl<'a> Printer<'a> {
             .filter_map(|idx| self.file_level_class_temp_reservations.get(idx))
             .filter_map(|names| names.front().cloned())
             .collect();
-        class_expr_temps.sort_by_key(|name| temp_name_rank(name).unwrap_or(u32::MAX));
+        class_expr_temps
+            .sort_by_key(|name| top_level_using_temp_name_rank(name).unwrap_or(u32::MAX));
         for (class_idx, temp) in class_exprs
             .into_iter()
             .zip(class_expr_temps.iter().cloned())

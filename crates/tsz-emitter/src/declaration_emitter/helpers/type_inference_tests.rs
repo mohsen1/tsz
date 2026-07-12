@@ -1383,7 +1383,7 @@ export const result = concat([1, 2, 3] as const, [4, 5, 6] as const);
     let output = emit_test_dts_with_binding(source);
 
     assert!(
-        output.contains("export declare const result: (2 | 4 | 1 | 3 | 6 | 5)[];"),
+        output.contains("export declare const result: (1 | 2 | 3 | 4 | 5 | 6)[];"),
         "{output}"
     );
 }

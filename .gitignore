@@ -35,10 +35,9 @@ target-*/
 .target-*
 
 # Tests
-# The TypeScript submodule is declared in .gitmodules but the gitlink is not
-# tracked in the tree (lazy-clone convention; the pinned SHA lives in
-# scripts/ci/typescript-submodule-ref). Ignore the working-tree directory so
-# `git status` stays clean after `git submodule update --init`.
+# The TypeScript corpus is an ignored standalone checkout. The pinned SHA lives
+# in scripts/ci/typescript-submodule-ref; each TSZ checkout materializes it
+# locally or links to a verified shared checkout.
 /TypeScript/
 /TypeScript-tests
 /TypeScript-tests/

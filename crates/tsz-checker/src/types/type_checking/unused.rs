@@ -79,8 +79,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Track import declarations for TS6192.
-        // Map from import declaration NodeIndex to (total_count, unused_count).
+        // Track ES import declarations for TS6192.
+        // Map from import declaration NodeIndex to (all_binding_count,
+        // eligible_unused_count). Underscore-prefixed local bindings remain in the
+        // denominator even though they are exempt from individual TS6133 diagnostics.
         let mut import_declarations: HashMap<NodeIndex, (usize, usize)> = HashMap::new();
 
         // Track variable declarations for TS6199.
@@ -105,12 +107,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // TSC treats underscore-prefixed imports as intentionally unused,
-            // so they should not contribute to aggregate TS6192 accounting.
-            if name.starts_with('_') {
-                continue;
-            }
-
             // Get the declaration node
             let Some(decl_idx) = symbol.primary_declaration() else {
                 continue;
@@ -120,9 +116,9 @@ impl<'a> CheckerState<'a> {
             if let Some(import_decl_idx) = self.find_parent_import_declaration(decl_idx) {
                 let is_used = self.ctx.referenced_symbols.borrow().contains(&sym_id);
                 let entry = import_declarations.entry(import_decl_idx).or_insert((0, 0));
-                entry.0 += 1; // total count
-                if !is_used {
-                    entry.1 += 1; // unused count
+                entry.0 += 1; // all syntactic local bindings
+                if !is_used && !name.starts_with('_') {
+                    entry.1 += 1; // unused bindings eligible for TS6133
                 }
             }
         }
@@ -522,10 +518,13 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        // Skip underscore-prefixed namespace imports and named import specifiers.
+                        // Skip underscore-prefixed ES import bindings.
                         // TSC suppresses TS6133 for `import * as _foo from "mod"` and
-                        // `import { _foo } from "mod"` when noUnusedLocals is enabled.
-                        if is_import && name.starts_with('_') {
+                        // `import { _foo } from "mod"`, but not import-equals declarations.
+                        if is_import
+                            && name.starts_with('_')
+                            && self.find_parent_import_declaration(decl_idx).is_some()
+                        {
                             continue;
                         }
 
@@ -560,40 +559,11 @@ impl<'a> CheckerState<'a> {
                         let is_parameter_property = (flags & symbol_flags::PROPERTY) != 0
                             && decl_node.kind == syntax_kind_ext::PARAMETER;
 
-                        let report_node = if is_parameter_property {
-                            // For parameter properties, report at the parameter name
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
-                        } else if let Some(spec_name_node) =
-                            self.find_named_import_specifier_name_node(decl_idx, &name)
-                        {
-                            spec_name_node
-                        } else if is_import {
-                            // TSC anchors at import statement start when either:
-                            // - There's only one binding in the import, OR
-                            // - All bindings are unused (entire import is unused)
-                            // Otherwise, anchor at the specific binding name.
-                            if let Some(import_decl_idx) =
-                                self.find_parent_import_declaration(decl_idx)
-                            {
-                                let anchor_at_stmt = if let Some(&(total_count, unused_count)) =
-                                    import_declarations.get(&import_decl_idx)
-                                {
-                                    total_count == 1 || unused_count == total_count
-                                } else {
-                                    true
-                                };
-                                if anchor_at_stmt {
-                                    import_decl_idx
-                                } else {
-                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
-                                }
-                            } else {
-                                // Import-equals: anchor at binding name
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
-                            }
-                        } else {
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
-                        };
+                        // Individual unused declarations always report at their local binding
+                        // name. Whole-import anchoring belongs exclusively to the TS6192
+                        // aggregation path below.
+                        let report_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                         let (start, length) = if let Some(node) = self.ctx.arena.get(report_node) {
                             (node.pos, node.end.saturating_sub(node.pos))
                         } else {
@@ -716,67 +686,6 @@ impl<'a> CheckerState<'a> {
     fn find_parent_import_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         self.find_ancestor(idx, |kind| kind == syntax_kind_ext::IMPORT_DECLARATION)
-    }
-
-    /// Returns the local name node for a named import in a multi-specifier clause.
-    fn find_named_import_specifier_name_node(
-        &self,
-        idx: NodeIndex,
-        symbol_name: &str,
-    ) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let import_decl_idx = self.find_parent_import_declaration(idx)?;
-        let import_decl_node = self.ctx.arena.get(import_decl_idx)?;
-        let import_decl = self.ctx.arena.get_import_decl(import_decl_node)?;
-        let import_clause_node = self.ctx.arena.get(import_decl.import_clause)?;
-        let import_clause = self.ctx.arena.get_import_clause(import_clause_node)?;
-        if !import_clause.named_bindings.is_some() {
-            return None;
-        }
-        let named_bindings_node = self.ctx.arena.get(import_clause.named_bindings)?;
-        if named_bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
-            return None;
-        }
-
-        let named = self.ctx.arena.get_named_imports(named_bindings_node)?;
-        if named.elements.nodes.len() <= 1 {
-            return None;
-        }
-
-        for &spec_idx in &named.elements.nodes {
-            let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
-                continue;
-            };
-            if spec_node.kind != syntax_kind_ext::IMPORT_SPECIFIER {
-                continue;
-            }
-            let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
-                continue;
-            };
-            let local_name_idx = if spec.name.is_some() {
-                spec.name
-            } else {
-                spec.property_name
-            };
-            if self.get_identifier_text_from_idx(local_name_idx).as_deref() == Some(symbol_name) {
-                return Some(local_name_idx);
-            }
-        }
-
-        // Fallback for cases where declaration directly points at a specifier node.
-        let specifier_idx =
-            self.find_ancestor(idx, |kind| kind == syntax_kind_ext::IMPORT_SPECIFIER)?;
-        let specifier_node = self.ctx.arena.get(specifier_idx)?;
-        if specifier_node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
-            let spec = self.ctx.arena.get_specifier(specifier_node)?;
-            return if spec.name.is_some() {
-                Some(spec.name)
-            } else {
-                Some(spec.property_name)
-            };
-        }
-        None
     }
 
     /// Find the parent `VARIABLE_DECLARATION` node for a variable symbol's declaration.

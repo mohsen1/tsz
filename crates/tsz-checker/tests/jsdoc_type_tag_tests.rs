@@ -591,22 +591,25 @@ someFakeClass = someBase;
 someFakeClass = someDerived;
 someBase = someFakeClass;
 "#;
+    // TypeScript 7 dropped JS constructor-function inference: `SomeFakeClass` is
+    // not a constructor, so `this` is implicitly `any` (TS2683), `new
+    // SomeFakeClass()` reports TS7009, and `someFakeClass` is `any`. An `any`
+    // value assigns freely to/from the class instances, so there is no TS2322.
     let diagnostics = check_js(source);
-    let ts2322 = diagnostics
-        .iter()
-        .find(|d| d.code == 2322)
-        .unwrap_or_else(|| {
-            panic!(
-                "Expected TS2322 for assigning a checked-JS constructor instance to SomeBase, got: {:?}",
-                diagnostic_codes(&diagnostics)
-            )
-        });
     assert!(
-        ts2322
-            .message_text
-            .contains("Type 'SomeFakeClass' is not assignable to type 'SomeBase'."),
-        "TS2322 should use the constructor instance source name, got: {}",
-        ts2322.message_text
+        diagnostics.iter().all(|d| d.code != 2322),
+        "Expected no TS2322 (fake-constructor instance is `any` under TS7), got: {:?}",
+        diagnostic_codes(&diagnostics)
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 7009),
+        "Expected TS7009 for `new` on a non-constructor function, got: {:?}",
+        diagnostic_codes(&diagnostics)
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2683),
+        "Expected implicit-any `this` (TS2683) in the fake constructor, got: {:?}",
+        diagnostic_codes(&diagnostics)
     );
 }
 

@@ -1,17 +1,17 @@
 {
-  "detailFingerprint": "sha256:0972b18fe9f1f02a5b7aaf6bb834f6933abb0f6f284be419cc522f992a888437",
-  "detailResultCount": 13531,
+  "detailFingerprint": "sha256:c101b05895e32a15807622b6c09268fbe524d7bf247334f6b39dd8527996271e",
+  "detailResultCount": 11564,
   "summary": {
-    "jsTotal": 13530,
-    "jsPass": 13530,
+    "jsTotal": 11563,
+    "jsPass": 11563,
     "jsFail": 0,
     "jsSkip": 1,
     "jsTimeout": 0,
     "jsPassRate": 100,
-    "dtsTotal": 1669,
-    "dtsPass": 1669,
-    "dtsFail": 0,
-    "dtsSkip": 11862,
-    "dtsPassRate": 100
+    "dtsTotal": 1390,
+    "dtsPass": 1372,
+    "dtsFail": 18,
+    "dtsSkip": 10174,
+    "dtsPassRate": 98.7
   }
 }

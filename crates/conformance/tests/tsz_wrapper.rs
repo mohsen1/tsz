@@ -1521,6 +1521,37 @@ fn test_parse_tsz_output_does_not_synthesize_ts5110() {
 }
 
 #[test]
+fn test_parse_tsz_output_retains_nonzero_message_diagnostic() {
+    #[cfg(unix)]
+    use std::os::unix::process::ExitStatusExt;
+    #[cfg(windows)]
+    use std::os::windows::process::ExitStatusExt;
+
+    let output = std::process::Output {
+        status: {
+            #[cfg(unix)]
+            {
+                std::process::ExitStatus::from_raw(1 << 8)
+            }
+            #[cfg(windows)]
+            {
+                std::process::ExitStatus::from_raw(1)
+            }
+        },
+        stdout: b"3.ts(8,11): message TS1450: Dynamic imports can only accept a module specifier and an optional set of attributes as arguments.\n".to_vec(),
+        stderr: Vec::new(),
+    };
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_tsz_output(&output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, [1450]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 1450);
+    assert!(!result.crashed);
+}
+
+#[test]
 fn test_parse_diagnostic_fingerprints_ignores_indented_related_diagnostics() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let output = "test.ts(3,1): error TS2322: Type 'B' is not assignable to type 'A'.\n  test.ts(3,5): error TS2328: Types of parameters 'cb' and 'cb' are incompatible.";
@@ -1540,6 +1571,57 @@ fn test_parse_diagnostic_fingerprints_from_text_handles_colon_prefixed_no_pos() 
     assert_eq!(
         fp.display_key(),
         "TS5057 <unknown>:0:0 Cannot find a tsconfig.json file at the specified directory: ''."
+    );
+}
+
+#[test]
+fn test_parse_diagnostic_categories_from_native_typescript_output() {
+    let root = std::path::Path::new("/tmp/project");
+    let output = "error.ts(1,1): error TS1001: error text\n\
+warning.ts(2,2): warning TS1002: warning text\n\
+suggestion.ts(3,3): suggestion TS1003: suggestion text\n\
+message.ts(4,4): message TS1450: message text";
+
+    assert_eq!(
+        parse_error_codes_from_text(output),
+        [1001, 1002, 1003, 1450]
+    );
+    let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
+    assert_eq!(
+        fingerprints
+            .iter()
+            .map(|fingerprint| fingerprint.code)
+            .collect::<Vec<_>>(),
+        [1001, 1002, 1003, 1450]
+    );
+}
+
+#[test]
+fn test_parse_nonpositioned_native_typescript_categories() {
+    let root = std::path::Path::new("/tmp/project");
+    let output = "warning TS1001: warning text\n\
+: suggestion TS1002: suggestion text\n\
+message TS1450: message text";
+
+    assert_eq!(parse_error_codes_from_text(output), [1002]);
+    assert_eq!(
+        parse_diagnostic_fingerprints_from_text(output, root)
+            .iter()
+            .map(|fingerprint| fingerprint.code)
+            .collect::<Vec<_>>(),
+        [1001, 1002, 1450]
+    );
+}
+
+#[test]
+fn test_filter_lib_diagnostics_handles_non_error_categories() {
+    let root = std::path::Path::new("/tmp/project");
+    let output = "/other/.lib/react16.d.ts(1,1): message TS1450: helper diagnostic\n\
+/other/source.ts(2,2): message TS1450: source diagnostic";
+
+    assert_eq!(
+        filter_lib_diagnostics(output, root),
+        "/other/source.ts(2,2): message TS1450: source diagnostic"
     );
 }
 

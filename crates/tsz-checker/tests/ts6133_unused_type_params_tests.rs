@@ -1,4 +1,4 @@
-//! Tests for TS6133 unused type parameter checking.
+//! Tests for TS6196 unused type parameter checking.
 //!
 //! Verifies that type parameters are correctly detected as unused/used
 //! across interfaces, functions, classes, and type aliases when
@@ -9,16 +9,16 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 
-fn ts6133_count(diags: &[Diagnostic]) -> usize {
-    diags.iter().filter(|d| d.code == 6133).count()
+fn ts6196_count(diags: &[Diagnostic]) -> usize {
+    diags.iter().filter(|d| d.code == 6196).count()
 }
 
-fn ts6133_names(diags: &[Diagnostic]) -> Vec<String> {
+fn ts6196_names(diags: &[Diagnostic]) -> Vec<String> {
     diags
         .iter()
-        .filter(|d| d.code == 6133)
+        .filter(|d| d.code == 6196)
         .filter_map(|d| {
-            // Extract name from "'X' is declared but its value is never read."
+            // Extract name from "'X' is declared but never used."
             d.message_text
                 .strip_prefix("'")
                 .and_then(|s| s.split("'").next())
@@ -31,17 +31,17 @@ fn ts6133_names(diags: &[Diagnostic]) -> Vec<String> {
 fn test_interface_unused_type_param() {
     let diags =
         tsz_checker::test_utils::check_source_no_unused_params("interface I<T> { x: number; }");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {names:?}"
+        "Expected TS6196 for unused T, got names: {names:?}"
     );
 }
 
 #[test]
 fn test_interface_used_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params("interface I<T> { x: T; }");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
         "T should not be reported as unused, got names: {names:?}"
@@ -51,10 +51,10 @@ fn test_interface_used_type_param() {
 #[test]
 fn test_function_unused_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params("function f<T>(): void {}");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {names:?}"
+        "Expected TS6196 for unused T, got names: {names:?}"
     );
 }
 
@@ -63,7 +63,7 @@ fn test_function_used_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params(
         "function f<T>(x: T): T { return x; }",
     );
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
         "T should not be reported as unused, got names: {names:?}"
@@ -72,18 +72,122 @@ fn test_function_used_type_param() {
 
 #[test]
 fn test_all_imports_unused_emits_ts6192() {
-    let diags = tsz_checker::test_utils::check_source_no_unused_locals(
-        "import d, { Member as M } from './b';\nvoid 0;\n",
+    let source = "import d, { Member as M } from './b';\nvoid 0;\n";
+    let diags = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let unused = diags
+        .iter()
+        .filter(|d| d.code == 6133 || d.code == 6192)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1, "unexpected diagnostics: {diags:?}");
+    assert_eq!(unused[0].code, 6192, "unexpected diagnostics: {diags:?}");
+    assert_eq!(unused[0].start, 0);
+    assert_eq!(
+        unused[0].length,
+        "import d, { Member as M } from './b';".len() as u32
     );
-    let ts6192_count = diags.iter().filter(|d| d.code == 6192).count();
-    assert!(
-        ts6192_count >= 1,
-        "Expected TS6192 for fully unused import declaration, got diagnostics: {:?}",
-        diags
+}
+
+#[test]
+fn test_ts7_individual_unused_imports_anchor_at_local_binding() {
+    let cases = [
+        ("import DefaultName from './b';\nvoid 0;", "DefaultName"),
+        (
+            "import * as NamespaceName from './b';\nvoid 0;",
+            "NamespaceName",
+        ),
+        ("import { MemberName } from './b';\nvoid 0;", "MemberName"),
+        (
+            "import { Member as LocalName } from './b';\nvoid 0;",
+            "LocalName",
+        ),
+        (
+            "import type { ShapeName } from './b';\nvoid 0;",
+            "ShapeName",
+        ),
+        (
+            "import { UsedName, SpareName } from './b';\nvoid UsedName;",
+            "SpareName",
+        ),
+    ];
+
+    for (source, local_name) in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+        let unused = diagnostics
             .iter()
-            .map(|d| (d.code, d.message_text.clone()))
-            .collect::<Vec<_>>()
+            .filter(|d| d.code == 6133 || d.code == 6192)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unused.len(),
+            1,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        assert_eq!(
+            unused[0].code, 6133,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        assert_eq!(unused[0].start, source.find(local_name).unwrap() as u32);
+        assert_eq!(unused[0].length, local_name.len() as u32);
+    }
+}
+
+#[test]
+fn test_ts7_unused_import_equals_anchors_at_local_binding() {
+    let source = "import LocalModule = require('./b');\nvoid 0;";
+    let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let unused = diagnostics
+        .iter()
+        .filter(|d| d.code == 6133 || d.code == 6192)
+        .collect::<Vec<_>>();
+    assert_eq!(unused.len(), 1, "unexpected diagnostics: {diagnostics:?}");
+    assert_eq!(unused[0].code, 6133);
+    assert_eq!(unused[0].start, source.find("LocalModule").unwrap() as u32);
+    assert_eq!(unused[0].length, "LocalModule".len() as u32);
+}
+
+#[test]
+fn test_ts7_underscore_es_imports_block_whole_import_aggregation() {
+    let cases = [
+        "import { _skip, alpha, beta } from './b';\nvoid 0;",
+        "import _skip, { alpha, beta } from './b';\nvoid 0;",
+        "import type { Skip as _skip, First as alpha, Second as beta } from './b';\nvoid 0;",
+    ];
+
+    for source in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+        let unused = diagnostics
+            .iter()
+            .filter(|d| d.code == 6133 || d.code == 6192)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            unused.len(),
+            2,
+            "unexpected diagnostics for {source:?}: {diagnostics:?}"
+        );
+        for (diagnostic, local_name) in unused.iter().zip(["alpha", "beta"]) {
+            assert_eq!(
+                diagnostic.code, 6133,
+                "unexpected diagnostics: {diagnostics:?}"
+            );
+            assert_eq!(diagnostic.start, source.find(local_name).unwrap() as u32);
+            assert_eq!(diagnostic.length, local_name.len() as u32);
+        }
+    }
+}
+
+#[test]
+fn test_ts7_underscore_import_equals_is_not_exempt() {
+    let source = "import _LocalModule = require('./b');\nvoid 0;";
+    let diagnostics = tsz_checker::test_utils::check_source_no_unused_locals(source);
+    let diagnostic = diagnostics
+        .iter()
+        .find(|d| d.code == 6133)
+        .unwrap_or_else(|| panic!("expected TS6133: {diagnostics:?}"));
+    assert_eq!(
+        diagnostic.start,
+        source.find("_LocalModule").unwrap() as u32
     );
+    assert_eq!(diagnostic.length, "_LocalModule".len() as u32);
+    assert!(!diagnostics.iter().any(|d| d.code == 6192));
 }
 
 #[test]
@@ -105,17 +209,17 @@ fn test_underscore_named_imports_do_not_emit_unused_import_diagnostics() {
 #[test]
 fn test_type_alias_unused_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params("type A<T> = string;");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {names:?}"
+        "Expected TS6196 for unused T, got names: {names:?}"
     );
 }
 
 #[test]
 fn test_type_alias_used_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params("type A<T> = T[];");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
         "T should not be reported as unused, got names: {names:?}"
@@ -126,10 +230,10 @@ fn test_type_alias_used_type_param() {
 fn test_class_unused_type_param() {
     let diags =
         tsz_checker::test_utils::check_source_no_unused_params("class C<T> { x: number = 0; }");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         names.contains(&"T".to_string()),
-        "Expected TS6133 for unused T, got names: {names:?}"
+        "Expected TS6196 for unused T, got names: {names:?}"
     );
 }
 
@@ -138,7 +242,7 @@ fn test_class_used_type_param() {
     let diags = tsz_checker::test_utils::check_source_no_unused_params(
         "class C<T> { x: T | undefined = undefined; }",
     );
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
         "T should not be reported as unused, got names: {names:?}"
@@ -149,7 +253,7 @@ fn test_class_used_type_param() {
 fn test_underscore_prefixed_type_param_not_reported() {
     let diags =
         tsz_checker::test_utils::check_source_no_unused_params("interface I<_T> { x: number; }");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"_T".to_string()),
         "_T should be skipped (underscore convention), got names: {names:?}"
@@ -160,7 +264,7 @@ fn test_underscore_prefixed_type_param_not_reported() {
 fn test_multiple_type_params_partial_usage() {
     let diags =
         tsz_checker::test_utils::check_source_no_unused_params("interface I<T, U> { x: T; }");
-    let names = ts6133_names(&diags);
+    let names = ts6196_names(&diags);
     assert!(
         !names.contains(&"T".to_string()),
         "T is used, should not be reported, got names: {names:?}"
@@ -172,11 +276,171 @@ fn test_multiple_type_params_partial_usage() {
 }
 
 #[test]
+fn test_ts7_unused_type_parameter_codes_and_declaration_spans() {
+    let cases = [
+        ("function alpha<First>(): void {}", "First", "First"),
+        (
+            "interface Pair<Used, Spare extends string> { value: Used; }",
+            "Spare",
+            "Spare extends string",
+        ),
+        (
+            "type Pick<Input> = Input extends infer Output ? string : number;",
+            "Output",
+            "Output",
+        ),
+    ];
+
+    for (source, name, expected_span) in cases {
+        let diagnostics = tsz_checker::test_utils::check_source_no_unused_params(source);
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == 6196 && diagnostic.message_text.contains(name))
+            .unwrap_or_else(|| panic!("expected TS6196 for {name} in {source:?}: {diagnostics:?}"));
+        assert_eq!(
+            diagnostic.start,
+            source.find(expected_span).unwrap() as u32,
+            "unexpected start for {source:?}: {diagnostic:?}"
+        );
+        assert_eq!(
+            diagnostic.length,
+            expected_span.len() as u32,
+            "unexpected length for {source:?}: {diagnostic:?}"
+        );
+        assert_eq!(
+            diagnostic.message_text,
+            format!("'{name}' is declared but never used.")
+        );
+    }
+}
+
+#[test]
+fn test_ts7_merged_type_and_value_parameter_names_keep_distinct_codes() {
+    let source = "function useNone<T>(T: number) {}";
+    let diagnostics = tsz_checker::test_utils::check_source_no_unused_params(source);
+    let type_parameter_start = source.find("<T>").unwrap() as u32 + 1;
+    let value_parameter_start = source.find("(T:").unwrap() as u32 + 1;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == 6196 && diagnostic.start == type_parameter_start),
+        "type parameter must use TS6196: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == 6133 && diagnostic.start == value_parameter_start),
+        "value parameter must remain TS6133: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7_jsdoc_template_uses_ts6196_but_value_parameter_stays_ts6133() {
+    let source = "/** @template Shape */\nfunction build(value) { return 1; }";
+    let diagnostics = tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            no_unused_parameters: true,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    let type_parameter = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == 6196)
+        .unwrap_or_else(|| panic!("expected TS6196 for JSDoc Shape: {diagnostics:?}"));
+    assert_eq!(type_parameter.start, source.find("Shape").unwrap() as u32);
+    assert_eq!(type_parameter.length, "Shape".len() as u32);
+    let value_diagnostics = tsz_checker::test_utils::check_source_no_unused_params(
+        "function consume(value: number) {}",
+    );
+    assert!(
+        value_diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == 6133 && diagnostic.message_text.starts_with("'value'")
+        }),
+        "value parameters must remain TS6133: {value_diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7_jsdoc_class_template_tags_flatten_and_bare_members_stay_reads() {
+    let source = r#"/**
+ * @template Left
+ * @template Right,Tail
+ */
+class Envelope {
+    constructor() {
+        /** @type {Left} */
+        this.absent;
+    }
+}"#;
+    let diagnostics = tsz_checker::test_utils::check_source(
+        source,
+        "test.js",
+        CheckerOptions {
+            no_unused_parameters: true,
+            allow_js: true,
+            check_js: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 6205).count(), 1);
+    assert_eq!(diagnostics.iter().filter(|d| d.code == 6196).count(), 0);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == 2339
+                && diagnostic.message_text
+                    == "Property 'absent' does not exist on type 'Envelope<Left, Right, Tail>'."
+        }),
+        "expected the ordered generic class receiver display: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_ts7_jsdoc_template_leading_usage_and_underscore_affect_aggregation() {
+    let options = CheckerOptions {
+        no_unused_parameters: true,
+        allow_js: true,
+        check_js: true,
+        ..Default::default()
+    };
+    let used = tsz_checker::test_utils::check_source(
+        "/** @template Used,Spare\n * @param {Used} value\n */ function build(value) {}",
+        "used.js",
+        options.clone(),
+    );
+    assert!(
+        used.iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Spare'"))
+    );
+    assert!(
+        !used
+            .iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Used'"))
+    );
+    assert!(!used.iter().any(|d| d.code == 6205));
+
+    let underscore = tsz_checker::test_utils::check_source(
+        "/** @template _Kept,Spare */ function build() {}",
+        "underscore.js",
+        options,
+    );
+    assert!(
+        underscore
+            .iter()
+            .any(|d| d.code == 6196 && d.message_text.starts_with("'Spare'"))
+    );
+    assert!(!underscore.iter().any(|d| d.code == 6205));
+}
+
+#[test]
 fn test_no_unused_params_disabled_no_errors() {
     // Without noUnusedParameters, no TS6133 for type params should be emitted
     let diags = tsz_checker::test_utils::check_source_diagnostics("interface I<T> { x: number; }");
     assert_eq!(
-        ts6133_count(&diags),
+        ts6196_count(&diags),
         0,
         "No TS6133 expected when noUnusedParameters is disabled"
     );
@@ -194,7 +458,7 @@ fn test_no_unused_locals_only_no_type_param_errors() {
         },
     );
     assert_eq!(
-        ts6133_count(&diags),
+        ts6196_count(&diags),
         0,
         "No TS6133 for type params with only noUnusedLocals (not noUnusedParameters)"
     );

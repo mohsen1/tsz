@@ -15,7 +15,7 @@ import { fileURLToPath } from 'url';
 import { promisify } from 'node:util';
 import pc from 'picocolors';
 import pLimit from 'p-limit';
-import ts from 'typescript';
+import { parse as parseJsonc } from 'jsonc-parser';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler, type LinkInput } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
@@ -675,13 +675,13 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     // would resolve `es2015,es5` to es5 instead of es2015).
     const target = variant.target ? parseTarget(variant.target)
       : directives.target ? parseTarget(firstListValue(String(directives.target)))
-      : 12;  // TS6 default: ES2025 (LatestStandard)
+      : 12;  // TS7 default: ES2025 (LatestStandard)
     // Also check tsconfig.json files embedded in sourceFiles for compiler options
     const tsconfigOptions: Record<string, unknown> = {};
     for (const sf of sourceFiles) {
       if (sf.name.endsWith('tsconfig.json')) {
         try {
-          const parsed = ts.parseConfigFileTextToJson(sf.name, sf.content).config;
+          const parsed = parseJsonc(sf.content);
           if (parsed?.compilerOptions) {
             Object.assign(tsconfigOptions, parsed.compilerOptions);
           }
@@ -706,11 +706,28 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : inferDefaultModule(target);
     const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 
-    // TS6: alwaysStrict defaults to true unless explicitly set to false.
-    // Note: @strict: false does NOT affect alwaysStrict in TS6 — they are independent.
+    // TypeScript 7 no longer runs emit configurations that use the removed
+    // TS6 option wave. Those configurations have no TS7 emit baseline.
     const alwaysStrict = variant.alwaysstrict !== undefined
       ? variant.alwaysstrict === 'true'
       : directives.alwaysstrict !== false;
+    const normalizedModuleResolution = typeof moduleResolutionOption === 'string'
+      ? moduleResolutionOption.toLowerCase()
+      : '';
+    if (
+      target <= 1 ||
+      [0, 2, 3, 4].includes(module) ||
+      ['classic', 'node', 'node10'].includes(normalizedModuleResolution) ||
+      !alwaysStrict ||
+      variant.downleveliteration !== undefined ||
+      directives.downleveliteration !== undefined ||
+      variant.esmoduleinterop === 'false' ||
+      directives.esmoduleinterop === false ||
+      typeof directives.outfile === 'string' ||
+      typeof tsconfigOptions.baseUrl === 'string'
+    ) {
+      return null;
+    }
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
     const inlineSourceMap = directives.inlinesourcemap === true;
     const downlevelIteration = variant.downleveliteration !== undefined

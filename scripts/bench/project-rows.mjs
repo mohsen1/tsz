@@ -412,7 +412,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     label: "tiny-invariant",
     readme_candidates: ["README.md"],
     owner: "Tracks 1, 2",
-    family: "tiny runtime invariant assertion helper; clean green row — tsz byte-parity-clean vs tsc (both emit only the shared TS5101/TS2591 baseUrl/process baseline line, 0 tsz-only delta) on the whole-project compile",
+    family: "tiny runtime invariant assertion helper; clean green row — tsz byte-parity-clean vs tsc (both emit only the shared TS2591 process baseline line, 0 tsz-only delta) on the whole-project compile",
     fixture_dir: "tiny-invariant",
     source_dir: "src",
     repo_env: "TINY_INVARIANT_REPO",

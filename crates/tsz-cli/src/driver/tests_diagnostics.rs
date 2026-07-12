@@ -73,10 +73,9 @@ fn test_config_level_code_classification() {
     assert!(!is_config_level_code(1124)); // Digit expected (grammar)
 }
 
-/// ES5 target + grammar errors: grammar errors should be emitted,
-/// TS5107 deprecation should be suppressed.
+/// TS7 removed-option values are diagnosed before source grammar checking.
 #[test]
-fn test_es5_target_grammar_errors_suppress_deprecation() {
+fn test_es5_target_removal_stops_before_grammar_diagnostics() {
     let dir = tempfile::TempDir::new().expect("temp dir");
     let base = dir.path();
 
@@ -100,18 +99,14 @@ fn test_es5_target_grammar_errors_suppress_deprecation() {
     let result = compile(&args, base).expect("compile succeeds");
     let diagnostics = &result.diagnostics;
 
-    // Should contain TS1124 (grammar error)
-    let has_1124 = diagnostics.iter().any(|d| d.code == 1124);
+    let has_5108 = diagnostics.iter().any(|d| d.code == 5108);
     assert!(
-        has_1124,
-        "Expected TS1124 (Digit expected) for '1e+' with ES5 target"
+        has_5108,
+        "Expected TS5108 for removed target=ES5, got {diagnostics:?}"
     );
-
-    // Should NOT contain TS5107 (grammar errors suppress deprecation)
-    let has_5107 = diagnostics.iter().any(|d| d.code == 5107);
     assert!(
-        !has_5107,
-        "TS5107 should be suppressed when grammar errors are present"
+        diagnostics.iter().all(|d| d.code != 1124),
+        "TS5108 should stop before source grammar diagnostics, got {diagnostics:?}"
     );
 }
 
@@ -671,7 +666,7 @@ export default validate;
 }
 
 #[test]
-fn module_none_outfile_dynamic_import_downlevels_without_bundling_js_module() {
+fn module_none_outfile_dynamic_import_is_rejected_before_emit() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("tsconfig.json"),
@@ -692,27 +687,26 @@ fn module_none_outfile_dynamic_import_downlevels_without_bundling_js_module() {
     let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
         .expect("project args");
     let result = compile(&args, dir.path()).expect("compile succeeds");
-    let bundle_path = fs::canonicalize(dir.path())
-        .expect("canonical dir")
-        .join("a.js");
+
     assert!(
-        result.emitted_files.iter().any(|path| path == &bundle_path),
-        "expected bundle to be written, emitted: {:?}",
+        result.diagnostics.iter().any(|diag| diag.code == 6046),
+        "expected TS6046 for module=none, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().any(|diag| diag.code == 5102),
+        "expected TS5102 for outFile, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.emitted_files.is_empty() && !dir.path().join("a.js").exists(),
+        "removed compiler options must stop emit, emitted: {:?}",
         result.emitted_files
-    );
-    let bundle = fs::read_to_string(bundle_path).expect("read bundle");
-    assert!(
-        bundle.contains(r#"const foo = Promise.resolve().then(() => __importStar(require("b")));"#),
-        "module none outFile dynamic import should downlevel through require().\nOutput:\n{bundle}"
-    );
-    assert!(
-        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
-        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
     );
 }
 
 #[test]
-fn module_none_outfile_native_dynamic_import_still_skips_js_module_body() {
+fn module_none_outfile_native_dynamic_import_is_rejected_before_emit() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("tsconfig.json"),
@@ -733,16 +727,22 @@ fn module_none_outfile_native_dynamic_import_still_skips_js_module_body() {
     let project = dir.path().to_string_lossy().to_string();
     let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
         .expect("project args");
-    compile(&args, dir.path()).expect("compile succeeds");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
 
-    let bundle = fs::read_to_string(dir.path().join("a.js")).expect("read bundle");
     assert!(
-        bundle.contains(r#"const foo = import("./b");"#),
-        "native dynamic import should be preserved for ES2020.\nOutput:\n{bundle}"
+        result.diagnostics.iter().any(|diag| diag.code == 6046),
+        "expected TS6046 for module=none, got: {:?}",
+        result.diagnostics
     );
     assert!(
-        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
-        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
+        result.diagnostics.iter().any(|diag| diag.code == 5102),
+        "expected TS5102 for outFile, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.emitted_files.is_empty() && !dir.path().join("a.js").exists(),
+        "removed compiler options must stop emit, emitted: {:?}",
+        result.emitted_files
     );
 }
 

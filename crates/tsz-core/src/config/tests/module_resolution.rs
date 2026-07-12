@@ -1,7 +1,7 @@
 //! Module and module-resolution diagnostic tests
 //! (TS6046 enum options, module + resolution defaults, TS5095 / TS5070 /
 //! TS5071 / TS5098 `resolveJsonModule` and `package.json` resolution, TS5102 /
-//! TS5103 removed and deprecated options, TS5110, inherited `extends`
+//! TS5103 `ignoreDeprecations` validation, TS5110, inherited `extends`
 //! anchoring).
 //!
 //! Split from `config/mod.rs` to keep each file under the 2000-line limit
@@ -147,8 +147,7 @@ fn test_ts6046_emitted_for_invalid_module_detection_and_new_line() {
 
 #[test]
 fn test_shared_module_defaults_cover_targets_and_resolution() {
-    // tsc 6.0 `_computedOptions.module.computeValue`: every dated target tier,
-    // verified against the pinned tsc 6.0.2 via `--showConfig`.
+    // The shared computed-module table covers every dated target tier.
     assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES5, true),
         ModuleKind::CommonJS
@@ -181,8 +180,8 @@ fn test_shared_module_defaults_cover_targets_and_resolution() {
         default_module_kind_for_target(ScriptTarget::ESNext, true),
         ModuleKind::ESNext
     );
-    // tsc 6.0 folds an explicit `ES3` into `LatestStandard` before deriving the
-    // module, so it lands on `ES2022` rather than the legacy `CommonJS`.
+    // Preserve the internal fallback for an `ES3` enum after callers have
+    // already diagnosed the invalid CLI value with TS6046.
     assert_eq!(
         default_module_kind_for_target(ScriptTarget::ES3, true),
         ModuleKind::ES2022
@@ -216,12 +215,9 @@ fn test_shared_module_defaults_cover_targets_and_resolution() {
 }
 
 #[test]
-fn test_omitted_module_resolves_to_tsc6_default_es2022() {
-    // tsc 6.0 derives the default module from `LatestStandard` when `module`
-    // and `target` are both omitted, which lands on `ES2022` (not `ESNext`).
-    // Verified against the pinned tsc 6.0.2: `tsc --showConfig` omits the
-    // implied `module` line for `--target es2022`, proving the default equals
-    // the `ES2022`-derived module.
+fn test_omitted_module_resolves_to_default_es2022() {
+    // The default module derives from `LatestStandard` when `module` and
+    // `target` are both omitted, landing on `ES2022` rather than `ESNext`.
     let resolved = resolve_compiler_options(None).unwrap();
     assert_eq!(resolved.printer.module, ModuleKind::ES2022);
     assert_eq!(resolved.checker.module, ModuleKind::ES2022);
@@ -275,7 +271,7 @@ fn test_module_not_explicitly_set_defaults_from_target() {
 
 #[test]
 fn test_effective_module_resolution_defaults_to_bundler_for_es_modules() {
-    // tsc 6.0: ES module kinds default to Bundler resolution (was Classic)
+    // ES module kinds default to Bundler resolution rather than legacy Classic.
     let json = r#"{"compilerOptions":{"module":"es2015","target":"es2015"}}"#;
     let config: TsConfig = serde_json::from_str(json).unwrap();
     let resolved = resolve_compiler_options(config.compiler_options.as_ref()).unwrap();
@@ -321,84 +317,67 @@ fn test_module_not_explicitly_set_no_options() {
 }
 
 #[test]
-fn test_removed_compiler_option_lookup() {
-    assert!(removed_compiler_option("noImplicitUseStrict").is_some());
-    assert!(removed_compiler_option("keyofStringsOnly").is_some());
-    assert!(removed_compiler_option("suppressExcessPropertyErrors").is_some());
-    assert!(removed_compiler_option("suppressImplicitAnyIndexErrors").is_some());
-    assert!(removed_compiler_option("noStrictGenericChecks").is_some());
-    assert!(removed_compiler_option("charset").is_some());
-    assert!(removed_compiler_option("out").is_some());
-    assert_eq!(
-        removed_compiler_option("importsNotUsedAsValues"),
-        Some("verbatimModuleSyntax")
-    );
-    assert_eq!(
-        removed_compiler_option("preserveValueImports"),
-        Some("verbatimModuleSyntax")
-    );
-    // Non-removed options return None
-    assert!(removed_compiler_option("strict").is_none());
-    assert!(removed_compiler_option("target").is_none());
-}
-
-#[test]
-fn test_ts5102_emitted_for_removed_option() {
+fn test_ts5023_emitted_for_dropped_option() {
     let source = r#"{"compilerOptions":{"noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Expected TS5102 for removed option noImplicitUseStrict, got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 for dropped option noImplicitUseStrict, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5102_not_emitted_for_false_removed_option() {
-    // When a removed boolean option is set to false, tsc doesn't emit TS5102
+fn test_ts5023_emitted_for_false_dropped_option() {
     let source = r#"{"compilerOptions":{"noImplicitUseStrict":false}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        !codes.contains(&5102),
-        "Should NOT emit TS5102 for false-valued removed option, got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 for false-valued dropped option, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5102_emitted_for_string_removed_option() {
+fn test_ts7_dropped_option_null_is_unset() {
+    let source = r#"{"compilerOptions":{"noImplicitUseStrict":null}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    assert!(parsed.diagnostics.is_empty(), "{:?}", parsed.diagnostics);
+}
+
+#[test]
+fn test_ts5023_emitted_for_string_dropped_option() {
     let source = r#"{"compilerOptions":{"importsNotUsedAsValues":"error"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Expected TS5102 for removed option importsNotUsedAsValues, got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 for dropped option importsNotUsedAsValues, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5102_not_suppressed_with_ignore_deprecations() {
-    // In tsc 6.0, removed options (deprecated 5.0, removed 5.5) always emit TS5102
-    // because mustBeRemoved is true (removedIn 5.5 <= tsc 6.0).
-    // ignoreDeprecations only suppresses TS5101 (deprecated but not yet removed).
+fn test_ts5023_not_suppressed_with_ignore_deprecations() {
+    // TypeScript 7 treats this dropped name as an unknown option; the
+    // historical ignoreDeprecations setting does not suppress TS5023.
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.0","noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Should emit TS5102 even with ignoreDeprecations '5.0' (option is past removal), got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 even with ignoreDeprecations '5.0', got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5102_not_suppressed_with_invalid_ignore_deprecations() {
-    // Invalid ignoreDeprecations value should NOT suppress TS5102
+fn test_ts5023_not_suppressed_with_invalid_ignore_deprecations() {
+    // Invalid ignoreDeprecations reports TS5103 alongside the dropped-name TS5023.
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"7.0","noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Should emit TS5102 when ignoreDeprecations is invalid, got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 when ignoreDeprecations is invalid, got: {codes:?}"
     );
     assert!(
         codes.contains(&5103),
@@ -407,16 +386,15 @@ fn test_ts5102_not_suppressed_with_invalid_ignore_deprecations() {
 }
 
 #[test]
-fn test_ts5102_fires_with_ignore_deprecations_6_0() {
-    // "6.0" IS a valid ignoreDeprecations value in tsc 6.0.
-    // TS5102 still fires for removed 5.0-wave options (past removal deadline).
-    // TS5103 must NOT fire because "6.0" is valid.
+fn test_ts5023_fires_with_ignore_deprecations_6_0() {
+    // "6.0" remains a valid historical ignoreDeprecations value in TS7,
+    // but it does not suppress a dropped-name TS5023.
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Should emit TS5102 even with ignoreDeprecations '6.0' (option is past removal), got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 even with ignoreDeprecations '6.0', got: {codes:?}"
     );
     assert!(
         !codes.contains(&5103),
@@ -425,8 +403,7 @@ fn test_ts5102_fires_with_ignore_deprecations_6_0() {
 }
 
 #[test]
-fn test_ts5102_fires_for_all_removed_options() {
-    // Verify all removed options trigger TS5102 unconditionally
+fn test_ts5023_fires_for_all_ts7_dropped_options() {
     let removed_opts = [
         ("noImplicitUseStrict", "true"),
         ("keyofStringsOnly", "true"),
@@ -444,21 +421,20 @@ fn test_ts5102_fires_for_all_removed_options() {
         let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
-            codes.contains(&5102),
-            "Should emit TS5102 for removed option '{opt}' even with ignoreDeprecations '6.0', got: {codes:?}"
+            codes.contains(&5023),
+            "Expected TS5023 for TS7-dropped option '{opt}', got: {codes:?}"
         );
     }
 }
 
 #[test]
-fn test_ts5102_inherited_from_extends_anchors_at_child_compiler_options_key() {
+fn test_ts5023_inherited_from_extends_stays_anchored_at_base_option() {
     // Repro from `verbatimModuleSyntaxCompat3.ts`. When the extending
     // tsconfig.json uses `verbatimModuleSyntax` and the base tsconfig
-    // contains removed options (`preserveValueImports`,
-    // `importsNotUsedAsValues`), tsc anchors TS5102 at the *child's*
-    // `"compilerOptions"` key — not at `"verbatimModuleSyntax"` which
-    // tsz used to incorrectly anchor on. Reproducing requires real
-    // tempfiles because the inheritance resolution reads from disk.
+    // contains dropped options (`preserveValueImports` and
+    // `importsNotUsedAsValues`), TS7 keeps each TS5023 anchored at its
+    // declaring base option. Reproducing requires real tempfiles because
+    // inheritance resolution reads from disk.
     use tempfile::tempdir;
     let temp = tempdir().expect("create temp dir");
     let base_path = temp.path().join("tsconfig.base.json");
@@ -483,23 +459,20 @@ fn test_ts5102_inherited_from_extends_anchors_at_child_compiler_options_key() {
     std::fs::write(&child_path, child_source).expect("write child");
 
     let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load");
-    let ts5102: Vec<&Diagnostic> = parsed
+    let ts5023: Vec<&Diagnostic> = parsed
         .diagnostics
         .iter()
-        .filter(|d| d.code == 5102)
+        .filter(|d| d.code == 5023)
         .collect();
     assert!(
-        ts5102.len() >= 2,
-        "Expected at least 2 TS5102 (preserveValueImports + importsNotUsedAsValues), got: {ts5102:?}"
+        ts5023.len() >= 2,
+        "Expected two TS5023 diagnostics from the base config, got: {ts5023:?}"
     );
-    // Each TS5102 must anchor at the child's `"compilerOptions"` key.
-    let expected_start = child_source
-        .find("\"compilerOptions\"")
-        .expect("compilerOptions in child source") as u32;
-    for diag in &ts5102 {
+    let expected_base = std::fs::canonicalize(&base_path).expect("canonicalize base config");
+    for diag in &ts5023 {
         assert_eq!(
-            diag.start, expected_start,
-            "Inherited TS5102 must anchor at child's `\"compilerOptions\"` key (start={expected_start}), got: {diag:?}"
+            std::fs::canonicalize(&diag.file).expect("canonicalize diagnostic path"),
+            expected_base
         );
     }
 }
@@ -794,7 +767,7 @@ fn test_ts5102_not_emitted_for_valid_option() {
 
 #[test]
 fn test_ts5095_not_emitted_for_bundler_with_commonjs() {
-    // tsc 6.0 allows moduleResolution: bundler with module: commonjs
+    // TypeScript 7 allows moduleResolution: bundler with module: commonjs.
     let source = r#"{"compilerOptions":{"module":"commonjs","moduleResolution":"bundler"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
@@ -805,13 +778,13 @@ fn test_ts5095_not_emitted_for_bundler_with_commonjs() {
 }
 
 #[test]
-fn test_ts5095_bundler_with_none() {
+fn test_ts6046_bundler_with_none() {
     let source = r#"{"compilerOptions":{"module":"none","moduleResolution":"bundler"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5095),
-        "Expected TS5095 for bundler+none, got: {codes:?}"
+        codes.contains(&6046),
+        "Expected TS6046 for module=none, got: {codes:?}"
     );
 }
 
@@ -983,9 +956,7 @@ fn test_ts5103_not_emitted_for_valid_value() {
 
 #[test]
 fn test_ts5103_not_emitted_for_valid_6_0() {
-    // tsc 6.0 accepts both "5.0" and "6.0" as valid ignoreDeprecations values.
-    // See TypeScript/src/compiler/program.ts getIgnoreDeprecationsVersion():
-    //   if (ignoreDeprecations === "5.0" || ignoreDeprecations === "6.0") return new Version(...)
+    // TypeScript 7 accepts both historical ignoreDeprecations values.
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
@@ -996,16 +967,15 @@ fn test_ts5103_not_emitted_for_valid_6_0() {
 }
 
 #[test]
-fn test_ts5103_not_emitted_for_6_0_with_deprecated_options() {
-    // ignoreDeprecations: "6.0" silences 6.0-wave deprecation warnings.
-    // TS5102 still fires for removed 5.0-wave options (noImplicitUseStrict is removed),
-    // but TS5103 must NOT fire because "6.0" is a valid value.
+fn test_ts5103_not_emitted_for_6_0_with_dropped_options() {
+    // TypeScript 7 treats the dropped option as unknown while "6.0" remains a
+    // valid ignoreDeprecations value; it does not suppress the removal.
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5102),
-        "Should still emit TS5102 for removed option, got: {codes:?}"
+        codes.contains(&5023),
+        "Expected TS5023 for dropped option, got: {codes:?}"
     );
     assert!(
         !codes.contains(&5103),
@@ -1015,7 +985,7 @@ fn test_ts5103_not_emitted_for_6_0_with_deprecated_options() {
 
 #[test]
 fn test_ts5103_emitted_for_invalid_5_5() {
-    // tsc 6.0 only accepts "5.0" — "5.5" is not a valid ignoreDeprecations value
+    // TypeScript 7 accepts "5.0" and "6.0", but not "5.5".
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.5"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
@@ -1381,19 +1351,17 @@ fn test_ts5071_resolve_json_module_with_system_module_explicit_resolution() {
 }
 
 #[test]
-fn test_ts5071_resolve_json_module_with_none_module() {
-    // module=none without explicit moduleResolution implies classic resolution →
-    // tsc emits TS5070 (not TS5071) because the moduleResolution-based check takes precedence.
+fn test_ts6046_resolve_json_module_with_none_module() {
     let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"none"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5070),
-        "Expected TS5070 (not TS5071) for resolveJsonModule with module=none (implies classic), got: {codes:?}"
+        codes.contains(&6046),
+        "Expected TS6046 for module=none, got: {codes:?}"
     );
     assert!(
-        !codes.contains(&5071),
-        "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {codes:?}"
+        !codes.contains(&5070) && !codes.contains(&5071),
+        "Invalid module value must stop later resolveJsonModule checks, got: {codes:?}"
     );
 }
 

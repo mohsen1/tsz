@@ -1217,7 +1217,11 @@ fn test_js_commonjs_deep_module_exports_assignment_reports_ts2339_against_curren
 }
 
 #[test]
-fn test_js_commonjs_direct_exports_members_remain_visible() {
+fn test_js_commonjs_direct_exports_function_is_not_constructable_under_ts7() {
+    // TypeScript 7 dropped JS constructor-function inference: `exports.Cls =
+    // function () {}` is a plain function, so `new exports.Cls()` reports TS7009.
+    // (tsc 7.0.2 additionally reports TS2683 for the `this.x = 0` write under
+    // checkJs; tsz gates TS2683 on strict/noImplicitThis, so it is not emitted here.)
     let source = r#"
 exports.x = 0;
 {
@@ -1240,14 +1244,10 @@ exports.x;
             ..CheckerOptions::default()
         },
     );
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code != 2318)
-        .collect();
 
     assert!(
-        relevant.is_empty(),
-        "Expected direct CommonJS export member writes to stay visible. Actual diagnostics: {relevant:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new exports.Cls()` under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1403,7 +1403,11 @@ module.exports.S = _sym;
 }
 
 #[test]
-fn test_js_constructor_void_zero_assignment_does_not_create_member() {
+fn test_js_constructor_void_zero_assignment_is_not_constructable_under_ts7() {
+    // TypeScript 7 dropped JS constructor-function inference: `C` is a plain
+    // function, so `new C()` reports TS7009 and `c` is `any`. No instance member
+    // `q` is declared, so `c.q` no longer reports the old TS2339 "Property 'q'
+    // does not exist on type 'C'" (nor any TS18048).
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
         r#"
@@ -1423,20 +1427,19 @@ c.p + c.q;
         },
     );
 
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
-        .filter(|(code, _)| *code == 2339 || *code == 18048)
-        .collect();
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
     assert!(
-        relevant
-            .iter()
-            .all(|(_, message)| message.contains("Property 'q' does not exist on type 'C'.")),
-        "Expected TS2339 for missing constructor property assignment and access. Actual diagnostics: {relevant:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new C()` under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        !has_error(&relevant, 18048),
-        "Did not expect TS18048 once the void-zero constructor property is skipped. Actual diagnostics: {relevant:#?}"
+        !diagnostics
+            .iter()
+            .any(|(code, message)| *code == 2339 && message.contains("Property 'q'")),
+        "Expected no TS2339 for `q` on the `any` instance under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 18048),
+        "Did not expect TS18048 on the `any` instance. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -1581,7 +1584,10 @@ function init2(foo: DeepOptional) {
 }
 
 #[test]
-fn test_js_constructor_instance_missing_property_does_not_use_variable_typeof_display() {
+fn test_js_constructor_instance_missing_property_is_any_under_ts7() {
+    // TypeScript 7 dropped JS constructor-function inference: `new C()` reports
+    // TS7009 and `c` is `any`, so there is no missing-property diagnostic to
+    // display at all (the former "Property 'q' does not exist on type 'C'" is gone).
     let diagnostics = compile_and_get_diagnostics_named(
         "a.js",
         r#"
@@ -1601,16 +1607,13 @@ c.p + c.q;
         },
     );
 
-    let ts2339 = diagnostic_message(&diagnostics, 2339)
-        .expect("expected TS2339 for missing constructor property");
-
     assert!(
-        ts2339.contains("Property 'q' does not exist on type 'C'."),
-        "Expected constructor instance missing-property display to use C. Actual diagnostics: {diagnostics:#?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new C()` under TypeScript 7. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        !ts2339.contains("typeof c"),
-        "Did not expect constructor instance missing-property display to use typeof c. Actual diagnostics: {diagnostics:#?}"
+        diagnostic_message(&diagnostics, 2339).is_none(),
+        "Expected no TS2339 missing-property diagnostic on the `any` instance. Actual diagnostics: {diagnostics:#?}"
     );
 }
 

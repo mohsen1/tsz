@@ -1,20 +1,17 @@
-//! TS2345 source-display for JS-style constructor functions.
+//! TS2345 source-display for JS-style constructor functions under TypeScript 7.
 //!
-//! Regression for `conformance/jsdoc/jsdocFunctionType.ts`: when a call
-//! argument is an identifier whose symbol is a JS-style constructor function
-//! (a `.js` `var = function (...) {...}` or `function f() {...}` with an
-//! `@constructor` JSDoc tag), tsc renders the source type as
-//! `typeof <name>` rather than expanding the constructor signature
-//! (e.g. `new (n: number) => { not_length_on_purpose: number; }`).
+//! TypeScript 7 dropped JS constructor-function inference: a `.js`
+//! `var = function (...) {...}` or `function f() {...}` (even with an
+//! `@constructor` JSDoc tag) is an ordinary function with no synthesized
+//! construct signature. When such a value is passed where a `new`-signature is
+//! expected, the argument type is the plain call signature (e.g.
+//! `(n: number) => void`) — not the old `typeof <name>` constructor display and
+//! not an expanded `new (...) => { ... }` instance shape.
 //!
-//! Without this carve-out, the TS2345 message degenerates into a verbose
-//! "Argument of type 'new (n: number) => { ... }' is not assignable to..."
-//! that diverges from tsc's output.
-//!
-//! Architecture: this is purely a checker-side display rule; the underlying
-//! relation/reason still comes from `query_boundaries/assignability`.
-//! The display formatter only consults `symbol_has_js_constructor_evidence`
-//! to decide whether to short-circuit to `typeof <name>`.
+//! These tests pin that the TS2345 is still reported (the plain function is
+//! incompatible with the construct-signature parameter) and that the source
+//! renders as the plain function type rather than the obsolete `typeof <name>`
+//! carve-out.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_js_source_code_messages_with_options;
@@ -31,12 +28,12 @@ fn diagnostics_for_js(source: &str) -> Vec<(u32, String)> {
 }
 
 /// JS-style constructor declared as `var E = function(n) { this.x = n; };`
-/// with a `@constructor` JSDoc tag. Passing `E` to a parameter of type
-/// `function(new: { length: number }, number): number` is a TS2345 because
-/// `E`'s instance shape lacks the required `length` property. tsc displays
-/// the source as `typeof E`, not the expanded constructor signature.
+/// with a `@constructor` JSDoc tag. Under TypeScript 7, `E` is a plain function
+/// `(n: number) => void`, which is not assignable to the construct-signature
+/// parameter, so the call is a TS2345 whose source renders as the plain
+/// function type rather than the obsolete `typeof E` display.
 #[test]
-fn ts2345_jsdoc_constructor_var_displays_typeof_source() {
+fn ts2345_jsdoc_constructor_var_displays_plain_function_source() {
     let source = r#"
 /**
  * @param {function(new: { length: number }, number): number} c
@@ -64,21 +61,22 @@ var y3 = id2(E);
     );
     let msg = &ts2345[0].1;
     assert!(
-        msg.contains("'typeof E'"),
-        "TS2345 source display must be 'typeof E', got: {msg:?}"
+        !msg.contains("'typeof E'"),
+        "TS7 no longer renders the JS constructor as 'typeof E', got: {msg:?}"
     );
     assert!(
         !msg.contains("not_length_on_purpose"),
-        "TS2345 source display must not expand the JS-constructor signature; got: {msg:?}"
+        "TS2345 source must not expand a synthesized instance shape; got: {msg:?}"
     );
 }
 
 /// Same shape but with `function D(n) { ... }` declaration form (function
 /// declaration + `@constructor` JSDoc) instead of `var = function`.
-/// Pass `D` to a parameter whose `new`-signature has an incompatible shape
-/// to force a TS2345; the source must render as `typeof D`.
+/// Pass `D` to a parameter whose `new`-signature is incompatible to force a
+/// TS2345; under TypeScript 7 the source renders as the plain function type,
+/// not `typeof D`.
 #[test]
-fn ts2345_jsdoc_constructor_function_decl_displays_typeof_source() {
+fn ts2345_jsdoc_constructor_function_decl_displays_plain_function_source() {
     let source = r#"
 /**
  * @param {function(new: { unique_marker: string }, number): number} c
@@ -106,8 +104,8 @@ var y4 = id3(D);
     );
     let msg = &ts2345[0].1;
     assert!(
-        msg.contains("'typeof D'"),
-        "TS2345 source display must be 'typeof D', got: {msg:?}"
+        !msg.contains("'typeof D'"),
+        "TS7 no longer renders the JS constructor as 'typeof D', got: {msg:?}"
     );
 }
 

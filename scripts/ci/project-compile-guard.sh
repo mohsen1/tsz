@@ -625,7 +625,7 @@ write_type_challenges_solutions_config() {
   TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=1
 }
 
-type_challenges_tsc_bin() {
+type_challenges_tsc_command() {
   if [[ -n "${TYPE_CHALLENGES_ASSERTION_TSC_BIN+x}" ]]; then
     if [[ -x "$TYPE_CHALLENGES_ASSERTION_TSC_BIN" ]]; then
       printf '%s\n' "$TYPE_CHALLENGES_ASSERTION_TSC_BIN"
@@ -633,14 +633,7 @@ type_challenges_tsc_bin() {
     return 0
   fi
 
-  if [[ -x scripts/node_modules/.bin/tsc ]]; then
-    printf '%s\n' "scripts/node_modules/.bin/tsc"
-    return 0
-  fi
-  if [[ -x node_modules/.bin/tsc ]]; then
-    printf '%s\n' "node_modules/.bin/tsc"
-    return 0
-  fi
+  tsz_project_oracle_tsc_command
 }
 
 ensure_type_challenges_assertion_tsc() {
@@ -648,19 +641,17 @@ ensure_type_challenges_assertion_tsc() {
     return 0
   fi
 
-  if [[ -x scripts/node_modules/.bin/tsc || -x node_modules/.bin/tsc ]]; then
+  if [[ -n "$(tsz_project_oracle_tsc_command)" ]]; then
     return 0
   fi
 
-  if ! command -v npm >/dev/null 2>&1; then
-    echo "warn: npm not found; Type Challenges assertion classifier will report tsc unavailable" >&2
+  echo "Ensuring pinned TypeScript for Type Challenges assertion classifier"
+  if ! scripts/setup/ensure-pinned-typescript.sh scripts; then
+    echo "warn: pinned TypeScript setup failed; Type Challenges assertion classifier will report tsc unavailable" >&2
     return 0
   fi
-
-  echo "Installing scripts Node dependencies for Type Challenges assertion classifier"
-  (cd scripts && npm install --silent --include=dev)
-  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
-    echo "warn: scripts Node install did not provide tsc; Type Challenges assertion classifier will report tsc unavailable" >&2
+  if [[ -z "$(tsz_project_oracle_tsc_command)" ]]; then
+    echo "warn: pinned TypeScript command is unavailable; Type Challenges assertion classifier will report tsc unavailable" >&2
   fi
 }
 
@@ -673,9 +664,12 @@ check_type_challenges_solutions_tsc_oracle() {
 
   ensure_type_challenges_assertion_tsc
 
-  local tsc_bin
-  tsc_bin="$(type_challenges_tsc_bin)"
-  if [[ -z "$tsc_bin" ]]; then
+  local tsc_command=()
+  local tsc_word
+  while IFS= read -r tsc_word; do
+    [[ -n "$tsc_word" ]] && tsc_command+=("$tsc_word")
+  done < <(type_challenges_tsc_command)
+  if [[ "${#tsc_command[@]}" -eq 0 ]]; then
     FAILURES=$((FAILURES + 1))
     record_project_compatibility \
       "type-challenges-solutions-project" \
@@ -694,7 +688,7 @@ check_type_challenges_solutions_tsc_oracle() {
   fi
 
   local rc=0
-  run_with_timeout "$PROJECT_TIMEOUT" "$tsc_bin" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  run_with_timeout "$PROJECT_TIMEOUT" "${tsc_command[@]}" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     FAILURES=$((FAILURES + 1))
     local diagnostic_delta

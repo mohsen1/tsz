@@ -14,7 +14,7 @@
 
 use crate::context::{is_declaration_file_name, is_js_file_name};
 use crate::query_boundaries::jsdoc_construction::{
-    self as jsdoc_construct, jsdoc_function_type, jsdoc_lazy_type, jsdoc_literal_boolean_type,
+    self as jsdoc_construct, jsdoc_function_type, jsdoc_literal_boolean_type,
     jsdoc_literal_number_type, jsdoc_literal_string_type, jsdoc_object_index_type,
     jsdoc_param_info, jsdoc_readonly_type, jsdoc_type_predicate,
 };
@@ -1631,22 +1631,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if symbol.has_any_flags(symbol_flags::FUNCTION) && symbol.value_declaration.is_some() {
-            let constructor_type = self.get_type_of_symbol(sym_id);
-            if !self.ctx.class_instance_resolution_set.insert(sym_id) {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                return jsdoc_lazy_type(self.ctx.types, def_id);
-            }
-            let instance_type = self.synthesize_js_constructor_instance_type(
-                symbol.value_declaration,
-                constructor_type,
-                &[],
-            );
-            self.ctx.class_instance_resolution_set.remove(&sym_id);
-            if let Some(instance_type) = instance_type {
-                return instance_type;
-            }
-        }
+        // TypeScript 7 dropped JS constructor-function inference: a plain function
+        // symbol has no instance type, so it carries no meaning in a JSDoc type
+        // position (bare `@type {fn}`, `@param {fn}`, `import("./m").fn`, etc.).
+        // The reference is a value-used-as-type error (TS2749), surfaced by the
+        // JSDoc diagnostic path once resolution fails here. Do not synthesize an
+        // instance type from `this.prop =` assignments or prototype methods.
+        // This mirrors the value-side classification already adopted for `new`
+        // targets and `this` typing.
 
         if symbol.has_any_flags(
             symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
@@ -1680,11 +1672,43 @@ impl<'a> CheckerState<'a> {
                 return instance_type;
             }
             // Fall back to the raw value type for non-constructor variables.
+            // Note: this fallback is also load-bearing for `typeof` queries, which
+            // route through here for the variable's value type, so it must remain
+            // even though a bare variable is not a valid JSDoc type on its own.
             if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
                 return value_type;
             }
         }
 
         TypeId::ERROR
+    }
+
+    /// Returns `true` when a bare JSDoc type-position name resolves to a symbol
+    /// that has a value meaning but no type meaning. Such a reference is the
+    /// "value used as a type" error (TS2749) rather than a missing-name error
+    /// (TS2304). Under TypeScript 7 this notably covers plain JS functions,
+    /// whose dropped constructor-function inference leaves them value-only.
+    ///
+    /// Only consulted on the JSDoc diagnostic path once type resolution has
+    /// already failed, so a value-only hit is unambiguous.
+    pub(crate) fn jsdoc_name_refers_to_value_only(&mut self, name: &str) -> bool {
+        if name.is_empty() || name.contains('.') {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(name) else {
+            return false;
+        };
+        let mut visited_aliases = AliasCycleTracker::new();
+        let sym_id = self
+            .resolve_alias_symbol(sym_id, &mut visited_aliases)
+            .unwrap_or(sym_id);
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        else {
+            return false;
+        };
+        symbol.has_any_flags(symbol_flags::VALUE)
+            && !symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::MODULE)
     }
 }

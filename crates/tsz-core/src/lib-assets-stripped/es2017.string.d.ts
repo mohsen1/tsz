@@ -1,4 +1,4 @@
 interface String {
-    padStart(maxLength: number, fillString?: string): string;
-    padEnd(maxLength: number, fillString?: string): string;
+    padStart(targetLength: number, padString?: string): string;
+    padEnd(targetLength: number, padString?: string): string;
 }

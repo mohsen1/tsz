@@ -820,9 +820,6 @@ impl<'a> CheckerState<'a> {
             }
             return TypeId::ANY;
         }
-        if self.is_jsdoc_annotated_this_member_declaration(idx) {
-            return TypeId::ANY;
-        }
         let union_keys = self.get_literal_key_union_from_type(index_type);
         if result_type.is_none()
             && literal_index.is_none()

@@ -1,6 +1,8 @@
 use crate::cli::{Args, ShardStrategy};
 use crate::test_filter::{is_conformance_source_file, matches_path_filter};
-use crate::test_parser::{parse_test_file, should_skip_test};
+use crate::test_parser::{
+    parse_test_file, select_ts7_oracle_configurations, should_skip_test_at_path,
+};
 use crate::text_decode::{decode_source_text, DecodedSourceText};
 use anyhow::Context;
 use serde::Serialize;
@@ -19,7 +21,12 @@ const DEFAULT_BASELINE_PATH: &str = "scripts/conformance/conformance-baseline.tx
 pub struct ConformanceShardPlan {
     pub strategy: String,
     pub shard_count: usize,
+    pub candidates: usize,
+    /// Backward-compatible runnable denominator.
     pub total: usize,
+    pub runnable: usize,
+    pub unsupported: usize,
+    pub skipped: usize,
     pub passed: usize,
     pub weight: usize,
     pub shards: Vec<ConformanceShardPlanEntry>,
@@ -28,33 +35,64 @@ pub struct ConformanceShardPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConformanceShardPlanEntry {
     pub index: usize,
+    pub candidates: usize,
+    /// Backward-compatible runnable denominator.
     pub total: usize,
+    pub runnable: usize,
+    pub unsupported: usize,
+    pub skipped: usize,
     pub passed: usize,
     pub weight: usize,
 }
 
 #[derive(Debug, Default)]
 struct ShardAccumulator {
-    total: usize,
+    candidates: usize,
+    runnable: usize,
+    unsupported: usize,
+    skipped: usize,
     passed: usize,
     weight: f64,
 }
 
 impl ShardAccumulator {
-    fn add(&mut self, passed: bool, weight: f64) {
-        self.total += 1;
-        self.passed += usize::from(passed);
+    fn add(&mut self, disposition: PlanDisposition, passed: bool, weight: f64) {
+        self.candidates += 1;
+        match disposition {
+            PlanDisposition::Runnable => {
+                self.runnable += 1;
+                self.passed += usize::from(passed);
+            }
+            PlanDisposition::Unsupported => self.unsupported += 1,
+            PlanDisposition::Skipped => self.skipped += 1,
+        }
         self.weight += weight;
     }
 
     fn entry(&self, index: usize) -> ConformanceShardPlanEntry {
+        debug_assert_eq!(
+            self.candidates,
+            self.runnable + self.unsupported + self.skipped
+        );
+        debug_assert!(self.passed <= self.runnable);
         ConformanceShardPlanEntry {
             index,
-            total: self.total,
+            candidates: self.candidates,
+            total: self.runnable,
+            runnable: self.runnable,
+            unsupported: self.unsupported,
+            skipped: self.skipped,
             passed: self.passed,
             weight: integer_weight(self.weight),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanDisposition {
+    Runnable,
+    Unsupported,
+    Skipped,
 }
 
 pub fn build_shard_plan(args: &Args, shard_count: usize) -> anyhow::Result<ConformanceShardPlan> {
@@ -79,9 +117,9 @@ fn build_shard_plan_with_baseline(
     // (#13397, option 3). Using the identical candidate set makes the plan's
     // per-shard membership byte-identical to the runner's for a given checkout.
     //
-    // A skipped test is reported as SKIP at runtime, never as a PASS, so it
-    // contributes to a shard's `total` (matching the runner's coverage count)
-    // but never to `passed`, regardless of any stale baseline `PASS` entry.
+    // Skipped and unsupported tests retain candidate membership and weight, but
+    // contribute to neither the runnable denominator nor `passed`, regardless
+    // of any stale baseline `PASS` entry.
     let files = discover_candidate_tests(args)?;
     let test_dir = Path::new(&args.test_dir);
     let baseline_passes = load_baseline_passes(baseline_path)?;
@@ -98,8 +136,10 @@ fn build_shard_plan_with_baseline(
             for path in files {
                 let index = stable_shard_for_path(&path, test_dir, shard_count);
                 let weight = estimated_test_weight(weights.as_ref(), &path, test_dir);
-                let passed = plan_path_passes(&baseline_passes, &path, test_dir)?;
-                shards[index].add(passed, weight);
+                let disposition = plan_path_disposition(&path)?;
+                let passed = disposition == PlanDisposition::Runnable
+                    && is_baseline_pass(&baseline_passes, &path, test_dir);
+                shards[index].add(disposition, passed, weight);
             }
         }
         ShardStrategy::Weighted => {
@@ -110,14 +150,20 @@ fn build_shard_plan_with_baseline(
             {
                 for path in paths {
                     let weight = estimated_test_weight(weights.as_ref(), &path, test_dir);
-                    let passed = plan_path_passes(&baseline_passes, &path, test_dir)?;
-                    shards[index].add(passed, weight);
+                    let disposition = plan_path_disposition(&path)?;
+                    let passed = disposition == PlanDisposition::Runnable
+                        && is_baseline_pass(&baseline_passes, &path, test_dir);
+                    shards[index].add(disposition, passed, weight);
                 }
             }
         }
     }
 
-    let total = shards.iter().map(|shard| shard.total).sum();
+    let candidates = shards.iter().map(|shard| shard.candidates).sum();
+    let runnable = shards.iter().map(|shard| shard.runnable).sum();
+    let unsupported = shards.iter().map(|shard| shard.unsupported).sum();
+    let skipped = shards.iter().map(|shard| shard.skipped).sum();
+    debug_assert_eq!(candidates, runnable + unsupported + skipped);
     let passed = shards.iter().map(|shard| shard.passed).sum();
     let weight = integer_weight(shards.iter().map(|shard| shard.weight).sum());
     let shards = shards
@@ -129,7 +175,11 @@ fn build_shard_plan_with_baseline(
     Ok(ConformanceShardPlan {
         strategy: shard_strategy_name(&args.shard_strategy).to_string(),
         shard_count,
-        total,
+        candidates,
+        total: runnable,
+        runnable,
+        unsupported,
+        skipped,
         passed,
         weight,
         shards,
@@ -204,10 +254,9 @@ pub(crate) fn parse_shard_spec(spec: Option<&str>) -> anyhow::Result<Option<(usi
 // Discover the full candidate set (including tests with a `@skip` directive).
 // Both the planner (`build_shard_plan`) and the runner membership source
 // (`discover_tests`) consume this identical set so their partitions agree
-// byte-for-byte (#13397). Skip status is applied later: at plan time it zeroes
-// a test's pass contribution (`plan_path_passes`), and at run time the runner
-// reports the test as SKIP. It never removes a test from the partition, because
-// dropping members would shift the weighted bin-packing of the remaining tests.
+// byte-for-byte (#13397). Runtime disposition is applied later and never removes
+// a test from the partition, because dropping skipped or unsupported members
+// would shift the weighted bin-packing of the remaining tests.
 fn discover_candidate_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in WalkDir::new(&args.test_dir)
@@ -232,19 +281,27 @@ fn discover_candidate_tests(args: &Args) -> anyhow::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-fn has_skip_directive(path: &Path) -> anyhow::Result<bool> {
+fn plan_path_disposition(path: &Path) -> anyhow::Result<PlanDisposition> {
     let Ok(bytes) = std::fs::read(path) else {
-        return Ok(false);
+        return Ok(PlanDisposition::Runnable);
     };
     let content = match decode_source_text(&bytes) {
         DecodedSourceText::Text(content) | DecodedSourceText::TextWithOriginalBytes(content, _) => {
             content
         }
-        DecodedSourceText::Binary(_) => return Ok(false),
+        DecodedSourceText::Binary(_) => return Ok(PlanDisposition::Runnable),
     };
     let parsed = parse_test_file(&content)
         .with_context(|| format!("failed to parse test directives in {}", path.display()))?;
-    Ok(should_skip_test(&parsed.directives).is_some())
+    let Some(reason) = should_skip_test_at_path(path, &parsed.directives) else {
+        return Ok(PlanDisposition::Runnable);
+    };
+    if reason == "unsupported by TypeScript 7"
+        && select_ts7_oracle_configurations(&parsed.directives).is_err()
+    {
+        return Ok(PlanDisposition::Unsupported);
+    }
+    Ok(PlanDisposition::Skipped)
 }
 
 fn load_baseline_passes(path: &Path) -> anyhow::Result<HashSet<String>> {
@@ -262,22 +319,6 @@ fn load_baseline_passes(path: &Path) -> anyhow::Result<HashSet<String>> {
         passes.insert(path);
     }
     Ok(passes)
-}
-
-// A test counts toward a shard's planned `passed` only when the baseline
-// records it as a PASS and it is not skipped. A `@skip` test is reported as
-// SKIP at run time, never PASS, so it must not be counted as a planned pass
-// even if a stale baseline entry marks it PASS — that would let the planner's
-// expected-pass total drift above what the runner can ever report.
-fn plan_path_passes(
-    baseline_passes: &HashSet<String>,
-    path: &Path,
-    test_dir: &Path,
-) -> anyhow::Result<bool> {
-    if !is_baseline_pass(baseline_passes, path, test_dir) {
-        return Ok(false);
-    }
-    Ok(!has_skip_directive(path)?)
 }
 
 fn is_baseline_pass(baseline_passes: &HashSet<String>, path: &Path, test_dir: &Path) -> bool {
@@ -327,7 +368,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_includes_skipped_tests_but_never_counts_them_as_passed() {
+    fn plan_keeps_non_runnable_candidates_out_of_total_and_passed() {
         let temp = tempfile::tempdir().expect("tempdir");
         let cases = temp.path().join("TypeScript/tests/cases");
         write(&cases.join("compiler/pass.ts"), "let pass = 1;\n");
@@ -337,18 +378,23 @@ mod tests {
             "// @skip: tracked upstream\n",
         );
         write(
+            &cases.join("compiler/unsupported.ts"),
+            "// @target: es5\nlet unsupported = 1;\n",
+        );
+        write(
             &cases.join("compiler/lib.d.ts"),
             "declare const ignored: string;\n",
         );
         write(&cases.join("fourslash/quickInfo.ts"), "ignored\n");
         let baseline = temp.path().join("baseline.txt");
-        // skipped.ts carries a stale baseline PASS to prove the planner never
-        // counts a skipped test as passed (it is SKIP at run time).
+        // Both non-runnable rows carry stale baseline PASS entries to prove the
+        // planner never counts them as passed.
         write(
             &baseline,
             "PASS TypeScript/tests/cases/compiler/pass.ts\n\
              FAIL TypeScript/tests/cases/compiler/fail.js\n\
-             PASS TypeScript/tests/cases/compiler/skipped.ts\n",
+             PASS TypeScript/tests/cases/compiler/skipped.ts\n\
+             PASS TypeScript/tests/cases/compiler/unsupported.ts\n",
         );
 
         let args = parse_args(&[
@@ -361,21 +407,40 @@ mod tests {
         let plan = build_shard_plan_with_baseline(&args, 2, &baseline).unwrap();
 
         assert_eq!(plan.shard_count, 2);
-        // pass.ts, fail.js, and skipped.ts are all conformance candidates; the
-        // skipped test stays in the partition so the planner's membership
-        // matches the runner's `discover_tests` set (which includes skips).
-        assert_eq!(plan.total, 3);
-        // Only pass.ts counts as a planned pass; the skipped test's stale
-        // baseline PASS is ignored.
+        assert_eq!(plan.candidates, 4);
+        assert_eq!(plan.total, 2);
+        assert_eq!(plan.runnable, 2);
+        assert_eq!(plan.unsupported, 1);
+        assert_eq!(plan.skipped, 1);
+        assert_eq!(
+            plan.candidates,
+            plan.runnable + plan.unsupported + plan.skipped
+        );
+        // Only pass.ts counts as a planned pass; both stale non-runnable PASS
+        // entries are ignored.
         assert_eq!(plan.passed, 1);
         assert_eq!(
+            plan.shards
+                .iter()
+                .map(|shard| shard.candidates)
+                .sum::<usize>(),
+            4
+        );
+        assert_eq!(
             plan.shards.iter().map(|shard| shard.total).sum::<usize>(),
-            3
+            2
         );
         assert_eq!(
             plan.shards.iter().map(|shard| shard.passed).sum::<usize>(),
             1
         );
+        for shard in &plan.shards {
+            assert_eq!(shard.total, shard.runnable);
+            assert_eq!(
+                shard.candidates,
+                shard.runnable + shard.unsupported + shard.skipped
+            );
+        }
     }
 
     /// The planner's per-shard membership must equal the runner's per-shard
@@ -451,16 +516,21 @@ mod tests {
             ]);
             let members = discover_tests(&runner_args).unwrap();
             runner_total += members.len();
-            // The planner counts the same number of tests in this shard as the
-            // runner actually places there.
+            // Candidate membership remains byte-identical even though the
+            // runnable denominator excludes skips.
             assert_eq!(
-                plan.shards[shard_index].total,
+                plan.shards[shard_index].candidates,
                 members.len(),
                 "plan and runner disagree on shard {shard_index} membership count"
             );
         }
         // No test is double-counted or dropped across shards.
-        assert_eq!(runner_total, plan.total);
+        assert_eq!(runner_total, plan.candidates);
+        assert_eq!(plan.candidates, 14);
+        assert_eq!(plan.total, 12);
+        assert_eq!(plan.runnable, 12);
+        assert_eq!(plan.unsupported, 0);
+        assert_eq!(plan.skipped, 2);
     }
 
     /// Two plan builds with identical inputs must be byte-identical: the
@@ -547,7 +617,11 @@ mod tests {
         let plan = build_shard_plan_with_baseline(&args, 2, &baseline).unwrap();
 
         assert_eq!(plan.strategy, "weighted");
+        assert_eq!(plan.candidates, 3);
         assert_eq!(plan.total, 3);
+        assert_eq!(plan.runnable, 3);
+        assert_eq!(plan.unsupported, 0);
+        assert_eq!(plan.skipped, 0);
         assert_eq!(plan.passed, 3);
         assert_eq!(
             plan.shards

@@ -535,7 +535,8 @@ if (fs.existsSync(manifestPath)) {
     es5: 'es5.full', es2015: 'es6', es2016: 'es2016.full',
     es2017: 'es2017.full', es2018: 'es2018.full', es2019: 'es2019.full',
     es2020: 'es2020.full', es2021: 'es2021.full', es2022: 'es2022.full',
-    es2023: 'esnext.full', es2024: 'esnext.full', esnext: 'esnext.full',
+    es2023: 'es2023.full', es2024: 'es2024.full', es2025: 'es2025.full',
+    esnext: 'esnext.full',
   };
   const rootLib = targetLibMap[(options.target || 'es5').toLowerCase()] || 'es5.full';
 

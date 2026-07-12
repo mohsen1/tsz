@@ -566,13 +566,36 @@ module.exports.x;
 "#,
     );
 
-    let ts2339: Vec<_> = diagnostics
+    // TS7: `module.exports = new EE()` mixed with `module.exports.y = ...`
+    // expando writes is an illegal export-assignment combination (TS2309); the
+    // module type is exactly `EE`. Reads of the expando properties `x`/`y`
+    // through either the `npmlog` alias or the `module.exports` surface resolve
+    // against `EE` and surface TS2339, while `on` (a real `EE` member) stays
+    // valid on both — i.e. the alias and `module.exports` remain in sync.
+    let has_ts2309 = diagnostics.iter().any(|(code, _)| *code == 2309);
+    assert!(
+        has_ts2309,
+        "Expected TS2309 for the mixed export assignment, got: {diagnostics:#?}"
+    );
+    let on_errors: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2339)
+        .filter(|(code, message)| *code == 2339 && message.contains("'on'"))
         .collect();
     assert!(
-        ts2339.is_empty(),
-        "Expected no TS2339 for same-file reads across module.exports alias chain assignment, got: {ts2339:#?}"
+        on_errors.is_empty(),
+        "`on` is a real EE member and must resolve on both the alias and module.exports, got: {on_errors:#?}"
+    );
+    let x_errors = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'x'"))
+        .count();
+    let y_errors = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'y'"))
+        .count();
+    assert!(
+        x_errors >= 1 && y_errors >= 1,
+        "Expected TS2339 for expando props `x` and `y` that are not members of EE, got: {diagnostics:#?}"
     );
 }
 
@@ -597,14 +620,32 @@ npmlog.on;
         "./npmlog",
     );
 
-    let ts2339: Vec<_> = diagnostics
+    // TS7: `module.exports = new EE()` types the module as exactly `EE`, so the
+    // require() consumer reading `npmlog.x` (a non-EE expando write) surfaces
+    // TS2339, while `npmlog.on` (a real EE member) stays valid.
+    let x_errors: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2339)
+        .filter(|(code, message)| *code == 2339 && message.contains("'x'"))
         .collect();
     assert!(
-        ts2339.is_empty(),
-        "Expected no TS2339 for consumer reads through module.exports chain assignment alias, got: {ts2339:#?}"
+        !x_errors.is_empty(),
+        "Expected TS2339 for consumer read of expando `x` not on EE, got: {diagnostics:#?}"
     );
+    let on_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| *code == 2339 && message.contains("'on'"))
+        .collect();
+    assert!(
+        on_errors.is_empty(),
+        "`on` is a real EE member and must resolve through the alias, got: {on_errors:#?}"
+    );
+    // NOTE (tsc divergence, follow-up): with only an alias-property write
+    // (`npmlog.x = 1`) and no direct `module.exports.p =` / `exports.p =`
+    // sibling, tsc does NOT treat the alias write as an "other exported
+    // element" and emits no TS2309, whereas tsz currently does. This is a
+    // narrow over-count in the CommonJS export-conflict detection that does not
+    // appear in the conformance corpus; tracked separately from the core TS7
+    // export-assignment boundary.
 }
 
 #[test]

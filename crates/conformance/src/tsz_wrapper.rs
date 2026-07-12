@@ -492,12 +492,6 @@ pub fn prepare_test_dir_with_lib_dir(
                 map.entry("skipLibCheck".to_string())
                     .or_insert(serde_json::Value::Bool(true));
             }
-            if no_types_and_symbols {
-                map.insert(
-                    "noTypesAndSymbols".to_string(),
-                    serde_json::Value::Bool(true),
-                );
-            }
         }
         let tsconfig_content = if let Some(root_files) = harness_root_files {
             serde_json::json!({
@@ -777,11 +771,15 @@ fn parse_diagnostic_fingerprints_from_text(
     use regex::Regex;
 
     static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
             .expect("valid regex")
     });
-    static DIAG_NO_POS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(
+            r"^(:\s*)?(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):\s*(?P<message>.+)$",
+        )
+        .unwrap()
+    });
 
     let mut fingerprints = Vec::new();
     for raw_line in text.lines() {
@@ -1293,12 +1291,6 @@ fn copy_tsconfig_to_project_if_needed(
                         opts.insert(key.clone(), value.clone());
                     }
                 }
-                if no_types_and_symbols {
-                    opts.insert(
-                        "noTypesAndSymbols".to_string(),
-                        serde_json::Value::Bool(true),
-                    );
-                }
             }
         }
         std::fs::write(&target_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
@@ -1327,7 +1319,7 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
     text.lines()
         .filter(|line| {
             // Skip lines that are diagnostics from .lib/ files.
-            // Diagnostic format: <filepath>(<line>,<col>): error TS<code>: <message>
+            // Diagnostic format: <filepath>(<line>,<col>): <category> TS<code>: <message>
             // The filepath may be absolute (containing project_root) or relative.
             let trimmed = line.trim();
             if trimmed.is_empty() {
@@ -1345,7 +1337,11 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
                 return false;
             }
             // Also check /private/var variant on macOS
-            if trimmed.contains("/.lib/") && trimmed.contains("error TS") {
+            if trimmed.contains("/.lib/")
+                && ["error", "warning", "suggestion", "message"]
+                    .iter()
+                    .any(|category| trimmed.contains(&format!("{category} TS")))
+            {
                 return false;
             }
             true
@@ -1380,7 +1376,7 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
 
     static DIAG_CODE_RE: Lazy<Regex> = Lazy::new(|| {
         Regex::new(
-            r"^(?:.+\(\d+,\d+\):\s+error\s+TS(?P<code>\d+):.*|:\s*error\s+TS(?P<code2>\d+):.*|error\s+TS(?P<code3>\d+):.*)$",
+            r"^(?:.+\(\d+,\d+\):\s+(?:error|warning|suggestion|message)\s+TS(?P<code>\d+):.*|:\s*(?:error|warning|suggestion|message)\s+TS(?P<code2>\d+):.*|(?:error|warning|suggestion|message)\s+TS(?P<code3>\d+):.*)$",
         )
         .expect("valid regex")
     });

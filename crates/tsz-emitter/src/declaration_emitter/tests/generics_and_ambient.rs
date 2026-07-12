@@ -370,8 +370,8 @@ const o1 = getProps(myAny, ["foo", "bar"]);
         "Expected Pick<T, K> object argument to infer the returned object surface: {output}"
     );
     assert!(
-        output.contains("declare let x1: \"foo\" | \"bar\";"),
-        "Expected Pick<T, K> object keys to infer K as a literal-key union: {output}"
+        output.contains("declare let x1: \"bar\" | \"foo\";"),
+        "Expected Pick<T, K> object keys to infer K as a literal-key union in TypeScript 7 rank order: {output}"
     );
     assert!(
         output.contains("declare let x2: {\n    foo: number;\n    bar: string;\n};"),
@@ -384,7 +384,7 @@ const o1 = getProps(myAny, ["foo", "bar"]);
         "Expected Pick<T & U, K> to preserve the intersection return surface: {output}"
     );
     assert!(
-        output.contains("declare const o1: Pick<any, \"foo\" | \"bar\">;"),
+        output.contains("declare const o1: Pick<any, \"bar\" | \"foo\">;"),
         "Expected K[] literal argument to preserve Pick<any, literal-key-union>: {output}"
     );
 }

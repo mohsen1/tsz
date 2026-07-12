@@ -27,8 +27,16 @@ CATEGORY_KEYS = (
 class ConformanceSnapshot:
     passed: int
     total: int
+    candidates: int
+    unsupported: int
+    skipped: int
     failures: dict[str, dict[str, Any]]
     categories: dict[str, int]
+
+    @property
+    def runnable(self) -> int:
+        """Return the pass-rate denominator (`total` is the legacy alias)."""
+        return self.total
 
 
 @dataclass(frozen=True)
@@ -80,7 +88,48 @@ def _summary_passed(snapshot: dict[str, Any]) -> int:
 
 def _summary_total(snapshot: dict[str, Any]) -> int:
     summary = snapshot.get("summary", {})
-    return int(summary.get("total_tests", summary.get("total", 0)))
+    return int(
+        summary.get(
+            "runnable",
+            summary.get("total_tests", summary.get("total", 0)),
+        )
+    )
+
+
+def _summary_accounting(
+    snapshot: dict[str, Any],
+    detail: dict[str, Any],
+) -> tuple[int, int, int, int]:
+    """Return candidates, runnable, unsupported, and skipped counts.
+
+    New artifacts carry the full partition explicitly. Older snapshot
+    artifacts used `total_tests` for runnable tests while the old detail
+    artifact's `total` included skipped candidates, so use both documents when
+    reconstructing the legacy candidate count.
+    """
+    summary = snapshot.get("summary", {})
+    detail_summary = detail.get("summary", {})
+    runnable = _summary_total(snapshot)
+    if runnable == 0:
+        runnable = int(detail_summary.get("runnable", detail_summary.get("total", 0)))
+
+    unsupported = int(
+        summary.get("unsupported", detail_summary.get("unsupported", 0))
+    )
+    skipped = int(summary.get("skipped", detail_summary.get("skipped", 0)))
+
+    candidates_value = summary.get("candidates", detail_summary.get("candidates"))
+    if candidates_value is None:
+        legacy_detail_total = detail_summary.get("total")
+        if legacy_detail_total is not None and "runnable" not in detail_summary:
+            candidates = int(legacy_detail_total)
+        else:
+            candidates = runnable + unsupported + skipped
+    else:
+        candidates = int(candidates_value)
+
+    candidates = max(candidates, runnable + unsupported + skipped)
+    return candidates, runnable, unsupported, skipped
 
 
 def _categories(snapshot: dict[str, Any], detail: dict[str, Any]) -> dict[str, int]:
@@ -120,9 +169,13 @@ def load_ref(ref: str) -> ConformanceSnapshot:
     if not isinstance(failures, dict):
         raise SystemExit(f"{DETAIL_PATH} from {ref} does not contain a failures object")
 
+    candidates, runnable, unsupported, skipped = _summary_accounting(snapshot, detail)
     return ConformanceSnapshot(
         passed=_summary_passed(snapshot),
-        total=_summary_total(snapshot),
+        total=runnable,
+        candidates=candidates,
+        unsupported=unsupported,
+        skipped=skipped,
         failures=_normalize_failures(failures),
         categories=_categories(snapshot, detail),
     )
@@ -171,6 +224,13 @@ def print_report(comparison: SnapshotComparison) -> None:
     print(
         f"- passed: {comparison.base.passed}/{comparison.base.total} -> "
         f"{comparison.head.passed}/{comparison.head.total} ({comparison.pass_delta:+d})"
+    )
+    print(
+        "- accounting: "
+        f"candidates {comparison.base.candidates} -> {comparison.head.candidates}, "
+        f"runnable {comparison.base.runnable} -> {comparison.head.runnable}, "
+        f"unsupported {comparison.base.unsupported} -> {comparison.head.unsupported}, "
+        f"skipped {comparison.base.skipped} -> {comparison.head.skipped}"
     )
     _print_limited("- fixed failures", comparison.fixed_failures)
     _print_limited("- new failures", comparison.new_failures)

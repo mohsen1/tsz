@@ -22,6 +22,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.import_plan = ImportPlan::default();
         self.local_namespace_alias_targets.clear();
         self.local_import_equals_alias_for_target.clear();
+        self.local_import_equals_target_for_alias.clear();
 
         self.reset_writer();
         self.indent_level = 0;

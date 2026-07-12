@@ -2,7 +2,9 @@
 
 This document explains exactly how the TypeScript compiler (`tsc`) handles library files, targets, and global type definitions. This is the canonical reference for `tsz` to match tsc's behavior.
 
-**Verified against:** TypeScript 6.0.0-dev.20260116 (submodule commit `7f6a84673`)
+**Semantic library behavior verified against:** TypeScript
+6.0.0-dev.20260116 (submodule commit `7f6a84673`). **npm package layout and
+TSZ resolution verified against:** TypeScript 7.0.2.
 
 ## Table of Contents
 
@@ -12,13 +14,14 @@ This document explains exactly how the TypeScript compiler (`tsc`) handles libra
 4. [Explicit `--lib` Option](#explicit---lib-option)
 5. [Triple-Slash Reference Directives](#triple-slash-reference-directives)
 6. [The `--noLib` Flag](#the---nolib-flag)
-7. [Library File Structure](#library-file-structure)
-8. [tslib vs lib.d.ts](#tslib-vs-libdts)
-9. [Related Flags](#related-flags)
-10. [Virtual Host Configuration](#virtual-host-configuration-programmatic-tsc)
-11. [Conformance Testing Implications](#conformance-testing-implications)
-12. [tsz Implementation Requirements](#tsz-implementation-requirements)
-13. [Quick Reference](#quick-reference)
+7. [TypeScript 7 npm Package Layout](#typescript-7-npm-package-layout)
+8. [Library File Structure](#library-file-structure)
+9. [tslib vs lib.d.ts](#tslib-vs-libdts)
+10. [Related Flags](#related-flags)
+11. [Virtual Host Configuration](#virtual-host-configuration-programmatic-tsc)
+12. [Conformance Testing Implications](#conformance-testing-implications)
+13. [tsz Implementation Requirements](#tsz-implementation-requirements)
+14. [Quick Reference](#quick-reference)
 
 ---
 
@@ -375,6 +378,79 @@ Without these, you get TS2318: "Cannot find global type 'X'".
 
 ---
 
+## TypeScript 7 npm Package Layout
+
+TypeScript 7 splits the public JavaScript wrapper from the platform-specific
+native compiler and standard-library corpus. A normal installation looks like:
+
+```text
+node_modules/
+  typescript/                                  # platform-neutral wrapper
+    package.json
+    bin/tsc
+    lib/tsc.js                                 # native-launcher shim
+    lib/version.cjs
+    dist/api/                                  # unstable sync/async APIs
+  @typescript/
+    typescript-darwin-arm64/                   # current OS/architecture
+      package.json
+      lib/tsc                                  # native executable
+      lib/lib.d.ts
+      lib/lib.es5.d.ts
+      lib/lib.*.d.ts
+```
+
+The platform package name is
+`@typescript/typescript-${process.platform}-${process.arch}`. The wrapper lists
+every supported platform package as an optional dependency pinned to the same
+TypeScript version; npm installs only the matching package. On Windows the
+native executable has an `.exe` suffix.
+
+This changes two old assumptions:
+
+- `node_modules/typescript/lib` is no longer the standard-library directory.
+  In TypeScript 7 it contains wrapper launchers and version metadata.
+- The root `typescript` export no longer exposes the stable TypeScript 6
+  compiler API. Tooling uses explicit exports such as
+  `typescript/unstable/sync`; locating `lib.*.d.ts` is a separate operation.
+
+The wrapper's `lib/tsc.js` resolves the matching platform package and replaces
+or synchronously delegates the process to its native `lib/tsc` executable.
+Installing with optional dependencies omitted can therefore leave both the
+native compiler and standard libraries unavailable even though
+`node_modules/typescript/package.json` exists.
+
+### TSZ's library-directory resolver
+
+TSZ tooling resolves libraries from a wrapper `package.json` through
+`scripts/setup/resolve-typescript-lib-dir.mjs`. The resolver applies this order:
+
+1. Accept `typescript/lib` only when it contains both `lib.d.ts` and
+   `lib.es5.d.ts`. This preserves TypeScript 6-and-earlier compatibility.
+2. Accept the adjacent unscoped `typescript-${platform}-${arch}/lib` layout
+   produced by a local TypeScript source build.
+3. Resolve the installed
+   `@typescript/typescript-${platform}-${arch}/package.json` relative to the
+   wrapper, require its version to equal the wrapper version, and require both
+   sentinel declaration files in its `lib` directory.
+4. Otherwise fail with an actionable message to reinstall TypeScript without
+   omitting optional dependencies.
+
+For example:
+
+```sh
+node scripts/setup/resolve-typescript-lib-dir.mjs \
+  scripts/node_modules/typescript/package.json
+```
+
+The embedded-lib synchronizer and conformance corpus resolver consume this
+shared path logic. `scripts/setup/ensure-pinned-typescript.sh` additionally
+checks that the wrapper, platform package, and native `tsc --version` all match
+the pinned version. Callers must not infer the library directory from
+`require.resolve("typescript")` or from the wrapper's `lib` directory name.
+
+---
+
 ## Library File Structure
 
 ### Reference Chain Example
@@ -614,6 +690,12 @@ This is NOT the same as `--noLib`. It's used in lib files themselves to prevent 
 
 When running TSC programmatically (for tooling, cache generation, or testing), special care is required for lib loading.
 
+> **API-version note:** The `createCompilerHost` examples below describe the
+> stable compiler API shipped by TypeScript 6 and earlier. TypeScript 7's root
+> package no longer exports that API; new tooling uses an explicit unstable API
+> export. The library-graph principle still applies, but a TS7 filesystem host
+> must resolve declaration files from the platform package described above.
+
 ### The Critical Insight: Reference Chain Resolution
 
 TypeScript uses `getDefaultLibFileName()` as the **ROOT** of its library dependency graph. It only loads libs reachable via `/// <reference lib="..." />` from this file:
@@ -645,7 +727,10 @@ for (const [name, content] of libFiles.entries()) {
 }
 ```
 
-**Why?** When `compilerOptions.lib` is set, TypeScript resolves those lib files at **absolute paths** in the TypeScript installation directory (e.g., `/node_modules/typescript/lib/lib.es6.d.ts`), completely bypassing your virtual file system.
+**Why?** When `compilerOptions.lib` is set, TypeScript resolves those lib files
+at absolute paths in the resolved TypeScript library directory (for example,
+`<platform-package>/lib/lib.es6.d.ts`), completely bypassing your virtual file
+system.
 
 ### Correct Virtual Host Setup
 
@@ -683,7 +768,7 @@ A bug we encountered in the conformance cache generator:
 
 1. Test file had `@lib: es6` with `@target: es5`
 2. Code set `compilerOptions.lib = ['lib.es6.d.ts']`
-3. TSC looked for `/node_modules/typescript/lib/lib.es6.d.ts` (absolute path)
+3. TSC looked for `<resolved-lib-dir>/lib.es6.d.ts` (an absolute path)
 4. Virtual filesystem was bypassed → TS2318 "Cannot find global type 'Promise'"
 
 **The fix:**

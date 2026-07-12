@@ -58,37 +58,40 @@ fn multiple_identifier_nullish_assignments_do_not_consume_temps() {
     );
 }
 
-/// A property-access `??=` *does* capture its target into a value temp `_a`, so
-/// the following optional chain must take `_b`. This guards against the fix
+/// A property-access `??=` *does* capture its target into a value temp. Under
+/// TypeScript 7 the optional-chaining temps are numbered ahead of the
+/// logical-assignment value temps, so the trailing chain takes `_a` and the
+/// property `??=` target takes `_b`. This guards against the fix
 /// over-correcting and dropping the temp the property path genuinely needs.
 #[test]
 fn property_nullish_assignment_still_consumes_temp() {
     let source = "declare const obj: any;\nlet o: any;\no.k ??= 5;\nconst x = obj?.p?.q;\n";
     let output = emit_es2017(source);
     assert!(
-        output.contains("(_a = o.k) !== null"),
-        "property `??=` must capture its target into `_a`.\nOutput:\n{output}"
+        output.contains("(_b = o.k) !== null"),
+        "property `??=` must capture its target into `_b`.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("(_b = obj === null"),
-        "optional chain must use `_b` after a property `??=`.\nOutput:\n{output}"
+        output.contains("(_a = obj === null"),
+        "optional chain must use `_a` after a property `??=`.\nOutput:\n{output}"
     );
 }
 
 /// A bare-identifier `??=` whose RHS is a non-simple `??` coalescing still
-/// numbers correctly: the value temp consumed by the RHS `??` is `_a` and the
-/// trailing chain is `_b`.
+/// numbers correctly. Under TypeScript 7 the optional-chaining temp is numbered
+/// ahead of the RHS `??` value temp, so the trailing chain is `_a` and the RHS
+/// `??` value temp is `_b`.
 #[test]
 fn identifier_nullish_assignment_with_coalescing_rhs() {
     let source =
         "declare const obj: any;\nlet y: any, b: any;\ny ??= obj.x ?? b;\nconst x = obj?.p?.q;\n";
     let output = emit_es2017(source);
     assert!(
-        output.contains("(_a = obj.x)"),
-        "RHS `??` value temp must be `_a`.\nOutput:\n{output}"
+        output.contains("(_b = obj.x)"),
+        "RHS `??` value temp must be `_b`.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("(_b = obj === null"),
-        "optional chain must use `_b`.\nOutput:\n{output}"
+        output.contains("(_a = obj === null"),
+        "optional chain must use `_a`.\nOutput:\n{output}"
     );
 }

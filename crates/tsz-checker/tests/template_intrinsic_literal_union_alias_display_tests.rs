@@ -80,8 +80,8 @@ const bad: Caps = "z";
 "#,
     );
     assert!(
-        msg.contains(r#"Type '"z"' is not assignable to type '"Foo" | "Bar"'."#),
-        "Capitalize over a literal union must expand, got: {msg}"
+        msg.contains(r#"Type '"z"' is not assignable to type '"Bar" | "Foo"'."#),
+        "Capitalize over a literal union must expand in tsc 7 order, got: {msg}"
     );
     assert!(!msg.contains("'Caps'"), "got: {msg}");
 }

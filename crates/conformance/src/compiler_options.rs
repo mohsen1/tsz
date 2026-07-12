@@ -145,6 +145,7 @@ pub fn canonical_option_name(key_lower: &str) -> &str {
         "skiplibcheck" => "skipLibCheck",
         "sourcemap" => "sourceMap",
         "sourceroot" => "sourceRoot",
+        "stabletypeordering" => "stableTypeOrdering",
         "strict" => "strict",
         "strictbindcallapply" => "strictBindCallApply",
         "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
@@ -227,8 +228,11 @@ pub fn directives_to_tsconfig(options: &HashMap<String, String>) -> serde_json::
     if strict_explicit {
         if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
             let strict = *strict;
+            // Preserve the harness's explicit strict-family fanout, but never
+            // synthesize `alwaysStrict`. TypeScript 7 rejects an explicit
+            // `alwaysStrict: false` (TS5108); `strict` already owns that
+            // computed behavior in both compilers.
             for key in [
-                "alwaysStrict",
                 "noImplicitAny",
                 "noImplicitThis",
                 "strictNullChecks",
@@ -322,10 +326,7 @@ mod tests {
             opts.get("strictPropertyInitialization"),
             Some(&serde_json::Value::Bool(false))
         );
-        assert_eq!(
-            opts.get("alwaysStrict"),
-            Some(&serde_json::Value::Bool(false))
-        );
+        assert!(!opts.contains_key("alwaysStrict"));
     }
 
     #[test]

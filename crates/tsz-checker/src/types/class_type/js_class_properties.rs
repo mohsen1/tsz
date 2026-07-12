@@ -585,10 +585,12 @@ impl CheckerState<'_> {
             let Some((prop_name, rhs_idx, is_private, report_idx)) = self
                 .extract_this_property_assignment(stmt_idx, &this_aliases)
                 .or_else(|| {
-                    self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
-                        .map(|(prop_name, is_private, report_idx)| {
-                            (prop_name, NodeIndex::NONE, is_private, report_idx)
-                        })
+                    self.nearest_enclosing_class(stmt_idx).is_none().then(|| {
+                        self.extract_jsdoc_this_property_declaration(stmt_idx, &this_aliases)
+                            .map(|(prop_name, is_private, report_idx)| {
+                                (prop_name, NodeIndex::NONE, is_private, report_idx)
+                            })
+                    })?
                 })
             else {
                 continue;

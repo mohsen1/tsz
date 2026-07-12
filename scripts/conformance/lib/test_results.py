@@ -12,7 +12,12 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from lib.results import compute_diff, normalize_harness_path, parse_runner_output
+from lib.results import (
+    compute_diff,
+    normalize_harness_path,
+    parse_runner_output,
+    summarize_runner_output,
+)
 
 
 def _write_tmp(content):
@@ -169,6 +174,22 @@ class TestParseRunnerOutput(unittest.TestCase):
             os.unlink(tmp)
         self.assertEqual(tests["TypeScript/tests/cases/skipped.ts"]["status"], "SKIP")
 
+    def test_unsupported_line_preserves_reason(self):
+        tmp = _write_tmp(
+            "UNSUPPORTED TypeScript/tests/cases/unsupported.ts "
+            "(typescript-7-unsupported-configuration)\n"
+        )
+        try:
+            tests = parse_runner_output(tmp)
+        finally:
+            os.unlink(tmp)
+        rec = tests["TypeScript/tests/cases/unsupported.ts"]
+        self.assertEqual(rec["status"], "UNSUPPORTED")
+        self.assertEqual(
+            rec["unsupported_reason"],
+            "typescript-7-unsupported-configuration",
+        )
+
     def test_crash_line(self):
         tmp = _write_tmp("CRASH TypeScript/tests/cases/crashed.ts\n")
         try:
@@ -184,6 +205,17 @@ class TestParseRunnerOutput(unittest.TestCase):
         finally:
             os.unlink(tmp)
         self.assertEqual(tests["TypeScript/tests/cases/slow.ts"]["status"], "TIMEOUT")
+
+    def test_plain_timeout_line(self):
+        tmp = _write_tmp("TIMEOUT TypeScript/tests/cases/plain-slow.ts\n")
+        try:
+            tests = parse_runner_output(tmp)
+        finally:
+            os.unlink(tmp)
+        self.assertEqual(
+            tests["TypeScript/tests/cases/plain-slow.ts"]["status"],
+            "TIMEOUT",
+        )
 
     def test_options_line(self):
         content = (
@@ -235,6 +267,54 @@ class TestParseRunnerOutput(unittest.TestCase):
         self.assertEqual(tests["TypeScript/tests/cases/y.ts"]["status"], "PASS")
 
 
+class TestSummarizeRunnerOutput(unittest.TestCase):
+    def test_partitions_candidates_and_runnable_rows(self):
+        content = (
+            "PASS pass.ts\n"
+            "FAIL fail.ts\n"
+            "  expected: [TS2322]\n"
+            "  actual: []\n"
+            "UNSUPPORTED unsupported.ts (typescript-7-unsupported-configuration)\n"
+            "SKIP skipped.ts\n"
+            "Candidates: 4\n"
+            "Runnable: 2\n"
+            "Unsupported: 1\n"
+            "Skipped: 1\n"
+            "FINAL RESULTS: 1/2 passed (50.0%)\n"
+        )
+        tmp = _write_tmp(content)
+        try:
+            summary = summarize_runner_output(tmp)
+        finally:
+            os.unlink(tmp)
+
+        self.assertEqual(summary["candidates"], 4)
+        self.assertEqual(summary["runnable"], 2)
+        self.assertEqual(summary["unsupported"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["recorded_candidates"], 4)
+        self.assertEqual(summary["recorded_runnable"], 2)
+        self.assertTrue(summary["partition_valid"])
+
+    def test_legacy_output_derives_candidate_partition(self):
+        content = (
+            "PASS pass.ts\n"
+            "SKIP skipped.ts\n"
+            "Skipped: 1\n"
+            "FINAL RESULTS: 1/1 passed (100.0%)\n"
+        )
+        tmp = _write_tmp(content)
+        try:
+            summary = summarize_runner_output(tmp)
+        finally:
+            os.unlink(tmp)
+
+        self.assertEqual(summary["candidates"], 2)
+        self.assertEqual(summary["runnable"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertTrue(summary["partition_valid"])
+
+
 class TestAnalyzeConformancePattern(unittest.TestCase):
     """Lock the pattern used by analyze-conformance.py to filter FAIL/XFAIL records."""
 
@@ -250,10 +330,12 @@ class TestAnalyzeConformancePattern(unittest.TestCase):
             if rec["status"] in ("FAIL", "XFAIL")
         ]
 
-    def test_filters_out_pass_and_skip(self):
+    def test_filters_out_non_failure_results(self):
         content = (
             "PASS TypeScript/tests/cases/a.ts\n"
             "SKIP TypeScript/tests/cases/b.ts\n"
+            "UNSUPPORTED TypeScript/tests/cases/unsupported.ts "
+            "(typescript-7-unsupported-configuration)\n"
             "FAIL TypeScript/tests/cases/c.ts\n"
             "  expected: [TS2322]\n"
             "  actual: []\n"

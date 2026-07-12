@@ -297,7 +297,9 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind != tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT {
+            if node.kind != tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                || self.nearest_enclosing_class(idx).is_some()
+            {
                 continue;
             }
             let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) else {
@@ -1831,7 +1833,7 @@ mod tests {
     use tsz_solver::construction::TypeInterner;
 
     #[test]
-    fn resolve_jsdoc_assigned_value_type_sees_prototype_property_statement() {
+    fn resolve_jsdoc_assigned_value_type_sees_legacy_prototype_property_statement() {
         let source = r#"
 function C() { this.x = false; };
 /** @type {number} */

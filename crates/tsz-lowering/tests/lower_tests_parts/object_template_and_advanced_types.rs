@@ -793,17 +793,17 @@ fn find_interface_declarations(arena: &NodeArena, name: &str) -> Vec<NodeIndex> 
     decls
 }
 
-/// TypeScript's interface merging puts later declarations' method overloads first.
-/// This is critical for overload resolution: e.g., `PromiseConstructor`'s tuple overload
-/// from es2015.promise.d.ts (later) should be tried before the Iterable overload from
-/// es2015.iterable.d.ts (earlier).
+/// TypeScript 7 preserves declaration order for merged-interface method overloads:
+/// an earlier declaration's overload renders before a later declaration's. Verified
+/// against `tsc` 7.0.2: two `interface Foo { bar(...) }` declarations merge to
+/// `{ (x: string): string; (x: number): number; }` (first declaration first).
 #[test]
-fn test_merged_interface_method_overloads_later_first() {
+fn test_merged_interface_method_overloads_declaration_order() {
     // Two interface declarations for Foo, each with a method bar(...)
     // Declaration 1 has bar(x: string): string
     // Declaration 2 has bar(x: number): number
-    // After merging, bar's overloads should be [number->number, string->string]
-    // (later declaration first)
+    // After merging, bar's overloads should be [string->string, number->number]
+    // (declaration order preserved)
     let source = r#"
 interface Foo {
     bar(x: string): string;
@@ -828,18 +828,18 @@ interface Foo {
             let callable = interner.callable_shape(callable_shape_id);
             // bar should have 2 call signatures
             assert_eq!(callable.call_signatures.len(), 2, "Should have 2 overloads");
-            // The second declaration's overload (number->number) should be first
+            // The first declaration's overload (string->string) comes first.
             let first_sig = &callable.call_signatures[0];
             assert_eq!(
                 first_sig.return_type,
-                TypeId::NUMBER,
-                "First overload should be from later declaration (number->number)"
+                TypeId::STRING,
+                "First overload should be from earlier declaration (string->string)"
             );
             let second_sig = &callable.call_signatures[1];
             assert_eq!(
                 second_sig.return_type,
-                TypeId::STRING,
-                "Second overload should be from earlier declaration (string->string)"
+                TypeId::NUMBER,
+                "Second overload should be from later declaration (number->number)"
             );
         }
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
@@ -858,18 +858,18 @@ interface Foo {
                 TypeData::Callable(callable_shape_id) => {
                     let callable = interner.callable_shape(callable_shape_id);
                     assert_eq!(callable.call_signatures.len(), 2, "Should have 2 overloads");
-                    // Later declaration's overload should be first
+                    // Earlier declaration's overload comes first (declaration order).
                     let first_sig = &callable.call_signatures[0];
                     assert_eq!(
                         first_sig.return_type,
-                        TypeId::NUMBER,
-                        "First overload should be from later declaration (number->number)"
+                        TypeId::STRING,
+                        "First overload should be from earlier declaration (string->string)"
                     );
                     let second_sig = &callable.call_signatures[1];
                     assert_eq!(
                         second_sig.return_type,
-                        TypeId::STRING,
-                        "Second overload should be from earlier declaration (string->string)"
+                        TypeId::NUMBER,
+                        "Second overload should be from later declaration (number->number)"
                     );
                 }
                 _ => panic!("Expected Callable type for bar, got {bar_data:?}"),

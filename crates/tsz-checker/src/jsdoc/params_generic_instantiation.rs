@@ -343,6 +343,26 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
             );
             reported = true;
+        } else if resolved_type_symbol.is_none()
+            && !is_jsdoc_object_record
+            && self.jsdoc_name_refers_to_value_only(base_name)
+        {
+            // Generic-instantiation base that resolves to a value (e.g. a plain
+            // function under TypeScript 7's dropped constructor inference) is a
+            // value-used-as-type error (TS2749), reported at the base name.
+            let base_offset = type_expr[..angle_idx].rfind(base_name).unwrap_or(0);
+            let code = crate::diagnostics::diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
+            let template = tsz_common::diagnostics::get_message_template(code).unwrap_or(
+                "'{0}' refers to a value, but is being used as a type here. Did you mean 'typeof {0}'?",
+            );
+            let message = crate::diagnostics::format_message(template, &[base_name]);
+            self.error_at_position(
+                type_expr_start + base_offset as u32,
+                base_name.len() as u32,
+                &message,
+                code,
+            );
+            reported = true;
         }
 
         let mut arg_search_offset = angle_idx + 1;

@@ -1804,7 +1804,7 @@ const g3: G3 = g
 }
 
 #[test]
-fn test_compile_project_keeps_nolib_global_diagnostics_with_deprecation_errors() {
+fn test_compile_project_removed_options_stop_before_global_diagnostics() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("tsconfig.json"),
@@ -1855,27 +1855,11 @@ export const elem: HTMLElement = { field: "a" };
     let result = compile(&args, dir.path()).expect("compile succeeds");
 
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&5107), "expected TS5107, got: {codes:?}");
-    assert!(codes.contains(&5101), "expected TS5101, got: {codes:?}");
-
-    let ts2318: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2318)
-        .collect();
+    assert!(codes.contains(&5108), "expected TS5108, got: {codes:?}");
+    assert!(codes.contains(&5102), "expected TS5102, got: {codes:?}");
     assert!(
-        ts2318
-            .iter()
-            .any(|d| d.message_text.contains("CallableFunction")),
-        "expected TS2318 for CallableFunction, got: {:?}",
-        result.diagnostics
-    );
-    assert!(
-        ts2318
-            .iter()
-            .any(|d| d.message_text.contains("NewableFunction")),
-        "expected TS2318 for NewableFunction, got: {:?}",
-        result.diagnostics
+        !codes.contains(&2318),
+        "removed options should stop before global diagnostics, got: {codes:?}"
     );
 }
 
