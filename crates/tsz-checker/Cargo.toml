@@ -1469,6 +1469,10 @@ path = "tests/ts2538_tparam_resolved_to_any_tests.rs"
 name = "import_attributes_resolution_mode_tests"
 path = "tests/import_attributes_resolution_mode_tests.rs"
 [[test]]
+name = "inferred_return_error_and_self_call_tests"
+path = "tests/inferred_return_error_and_self_call_tests.rs"
+
+[[test]]
 name = "imported_companion_value_type_tests"
 path = "tests/imported_companion_value_type_tests.rs"
 [[test]]

@@ -12,8 +12,8 @@
 //! flagging downstream property accesses (TS2339). See the class-transformer
 //! `getGlobal()` false-positive cluster.
 
-use crate::context::CheckerOptions;
-use crate::test_utils::check_source;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::check_source;
 
 fn check_strict(source: &str) -> Vec<u32> {
     let options = CheckerOptions {
