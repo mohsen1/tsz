@@ -287,7 +287,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
                 if !display_props.is_empty() {
-                    tsz_solver::types::normalize_display_property_order(&mut display_props);
+                    crate::query_boundaries::diagnostics::normalize_display_property_order(
+                        &mut display_props,
+                    );
                     for prop in &display_props {
                         let name = self.ctx.types.resolve_atom_ref(prop.name);
                         if name.starts_with("[Symbol.") {

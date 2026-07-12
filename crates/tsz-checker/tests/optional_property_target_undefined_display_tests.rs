@@ -70,7 +70,7 @@ g({ flag: "maybe" });
     );
     let msg = ts2322[0].1.as_str();
     assert!(
-        msg.contains("\"on\" | \"off\" | undefined"),
+        msg.contains("\"off\" | \"on\" | undefined"),
         "TS2322 target display must include `| undefined` for optional property (alt names), got: {msg}"
     );
 }

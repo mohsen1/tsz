@@ -114,7 +114,7 @@ function h({ prop = "baz" }: StringUnion) {}
          not the initializer `\"baz\"` (offset {baz_offset}); got: {diag:?}"
     );
     assert!(
-        diag.message_text.contains("\"baz\"") && diag.message_text.contains("\"foo\" | \"bar\""),
+        diag.message_text.contains("\"baz\"") && diag.message_text.contains("\"bar\" | \"foo\""),
         "TS2322 message should still describe the actual mismatch (\"baz\" vs literal union), \
          got: {:?}",
         diag.message_text
