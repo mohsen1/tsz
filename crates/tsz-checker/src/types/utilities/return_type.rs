@@ -922,7 +922,15 @@ impl<'a> CheckerState<'a> {
         }) {
             self.ctx.preserve_literal_types = false;
         }
-        let result = self.infer_return_type_from_body_inner(body_idx, return_context);
+        // The enclosing function's own symbol, used to skip *direct* recursive
+        // self-calls (`return self(...)`) during return aggregation — matching
+        // tsc's `checkAndAggregateReturnExpressionTypes`, which drops such a
+        // return rather than folding its (circular) type into the union. This is
+        // the ONLY return form tsc omits; genuine error-typed returns (e.g.
+        // `return unresolvedName`) are kept and make the union collapse to
+        // `error`/`any`, exactly as tsc's contagious `errorType` does.
+        let self_sym = self.enclosing_function_self_symbol(function_idx);
+        let result = self.infer_return_type_from_body_inner(body_idx, return_context, self_sym);
         self.ctx.preserve_literal_types = prev_preserve_literals;
         self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
 
@@ -1148,6 +1156,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
+        self_sym: Option<tsz_binder::SymbolId>,
     ) -> TypeId {
         let factory = self.ctx.types.factory();
         if body_idx.is_none() {
@@ -1174,6 +1183,7 @@ impl<'a> CheckerState<'a> {
                     &mut return_types,
                     &mut saw_empty,
                     return_context,
+                    self_sym,
                 );
             }
         }
@@ -1275,17 +1285,15 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        // Filter out ERROR types from return type inference when there are
-        // non-ERROR alternatives. This handles recursive self-referencing functions
-        // like `const fn1 = () => { if (...) return fn1(); return 0; }`.
-        // The recursive call resolves to ERROR during type computation (circular
-        // reference), but the base case `return 0` provides a concrete `number` type.
-        // tsc filters out circular contributions and infers the return type from
-        // non-circular branches only, so `fn1` gets return type `number`.
-        let has_non_error = return_types.iter().any(|c| c.type_id != TypeId::ERROR);
-        if has_non_error {
-            return_types.retain(|c| c.type_id != TypeId::ERROR);
-        }
+        // NOTE: error-typed contributions are intentionally NOT filtered here.
+        // tsc keeps a genuine error-typed return (e.g. `return unresolvedName`,
+        // whose `errorType` carries the `Any` flag) and lets `getUnionType`
+        // collapse the whole union to `errorType`/`any`. The only return form tsc
+        // omits is a *direct* recursive self-call (`return self(...)`), which
+        // `collect_return_types_in_statement` already skips via `self_sym` — so a
+        // recursive `const fn1 = () => { if (c) return fn1(); return 0; }` still
+        // infers `number` from its base case, while `function g() { return global; }`
+        // (unresolved `global`) infers `any`, matching tsc.
 
         // Union the contributions and apply the remaining primitive-collapse
         // widen (tsc's `getWidenedType(getUnionType(...))`). Fresh object/array
@@ -1474,6 +1482,96 @@ impl<'a> CheckerState<'a> {
         return_type
     }
 
+    /// The symbol a *direct* recursive self-reference resolves to for the
+    /// function at `function_idx`. For a named function / method / accessor this
+    /// is the declaration's own symbol. For an anonymous arrow / function
+    /// expression bound to a variable (`const fn1 = () => ...`), the recursive
+    /// name `fn1` resolves to the *variable*, not the function node, so the
+    /// enclosing variable-declaration symbol is used instead (climbing through
+    /// transparent expression wrappers). Returns `None` when no stable
+    /// self-reference name exists (e.g. an arrow passed inline as an argument).
+    fn enclosing_function_self_symbol(
+        &self,
+        function_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let node = self.ctx.arena.get(function_idx)?;
+        if !matches!(
+            node.kind,
+            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
+        ) {
+            // Named function declaration / method / accessor: the node carries
+            // its own binding symbol, which the recursive call resolves to.
+            return self.ctx.binder.get_node_symbol(function_idx);
+        }
+
+        // Anonymous function expression / arrow: walk out through transparent
+        // wrappers to the binding site and use its symbol.
+        let mut current = function_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    current = parent_idx;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION | syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    return self.ctx.binder.get_node_symbol(parent_idx);
+                }
+                _ => break,
+            }
+        }
+        // Fall back to a named function expression's own symbol (e.g.
+        // `const f = function g() { return g(); }`, self-referenced via `g`).
+        self.ctx.binder.get_node_symbol(function_idx)
+    }
+
+    /// Whether `expr_idx` is a *direct* recursive call to the enclosing
+    /// function — `return self(...)` where the callee is a bare identifier that
+    /// resolves to `self_sym`. Mirrors tsc's
+    /// `checkAndAggregateReturnExpressionTypes`, which omits such a return (a
+    /// `CallExpression` whose `expression` is an `Identifier` bound to the
+    /// function's own symbol) from the aggregated return type.
+    ///
+    /// Only the *callee-is-a-bare-identifier* shape counts: a wrapped self-call
+    /// (`return [self][0]()`, `return (0, self)()`) is NOT direct, so — like tsc
+    /// — its circular type is aggregated and collapses the union to `any`.
+    fn return_expression_is_direct_self_call(
+        &self,
+        expr_idx: NodeIndex,
+        self_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let expr_idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return false;
+        };
+        let callee = call.expression;
+        let Some(callee_node) = self.ctx.arena.get(callee) else {
+            return false;
+        };
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.resolve_identifier_symbol(callee) == Some(self_sym)
+    }
+
     /// Collect return types from a statement and its nested statements.
     ///
     /// This function recursively walks through statements, collecting the types
@@ -1490,6 +1588,7 @@ impl<'a> CheckerState<'a> {
         return_types: &mut Vec<ReturnContribution>,
         saw_empty: &mut bool,
         return_context: Option<TypeId>,
+        self_sym: Option<tsz_binder::SymbolId>,
     ) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -1500,6 +1599,13 @@ impl<'a> CheckerState<'a> {
                 if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
                     if return_data.expression.is_none() {
                         *saw_empty = true;
+                    } else if self_sym.is_some_and(|sym| {
+                        self.return_expression_is_direct_self_call(return_data.expression, sym)
+                    }) {
+                        // A direct recursive self-call (`return self(...)`) is
+                        // omitted from the aggregate, mirroring tsc. Its circular
+                        // provisional type must not poison the union; the base
+                        // cases decide the inferred return type.
                     } else {
                         // Keep block-body inference mostly raw, but allow concrete
                         // contextual return types to shape literals and other
@@ -1578,6 +1684,7 @@ impl<'a> CheckerState<'a> {
                             return_types,
                             saw_empty,
                             return_context,
+                            self_sym,
                         );
                     }
                 }
@@ -1598,6 +1705,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                     if if_data.else_statement.is_some() {
                         self.collect_return_types_in_statement(
@@ -1605,6 +1713,7 @@ impl<'a> CheckerState<'a> {
                             return_types,
                             saw_empty,
                             return_context,
+                            self_sym,
                         );
                     }
                 }
@@ -1624,6 +1733,7 @@ impl<'a> CheckerState<'a> {
                                     return_types,
                                     saw_empty,
                                     return_context,
+                                    self_sym,
                                 );
                             }
                         }
@@ -1637,6 +1747,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                     if try_data.catch_clause.is_some() {
                         self.collect_return_types_in_statement(
@@ -1644,6 +1755,7 @@ impl<'a> CheckerState<'a> {
                             return_types,
                             saw_empty,
                             return_context,
+                            self_sym,
                         );
                     }
                     if try_data.finally_block.is_some() {
@@ -1652,6 +1764,7 @@ impl<'a> CheckerState<'a> {
                             return_types,
                             saw_empty,
                             return_context,
+                            self_sym,
                         );
                     }
                 }
@@ -1663,6 +1776,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                 }
             }
@@ -1675,6 +1789,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                 }
             }
@@ -1685,6 +1800,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                 }
             }
@@ -1695,6 +1811,7 @@ impl<'a> CheckerState<'a> {
                         return_types,
                         saw_empty,
                         return_context,
+                        self_sym,
                     );
                 }
             }
