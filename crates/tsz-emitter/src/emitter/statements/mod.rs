@@ -1,6 +1,7 @@
 mod async_super_capture;
 mod control_flow;
 mod core;
+mod core_prologue_comments;
 mod expression_statement_helpers;
 mod for_recovery;
 mod labeled_for_await;
