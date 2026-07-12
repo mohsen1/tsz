@@ -1062,7 +1062,12 @@ const assigned: (x: string) => string = (x) => 1;
 }
 
 #[test]
-fn speculative_overload_check_does_not_poison_successful_candidate() {
+fn overload_callback_body_error_commits_first_signature_match() {
+    // tsc 7.0.2 oracle: chooseOverload commits to the FIRST overload whose
+    // signature-level argument relation succeeds; callback-body diagnostics
+    // never disqualify it, so `s` types as `number` from the first overload
+    // and the body reports TS2339 'toUpperCase' does not exist on 'number'
+    // (NOT a silent fall-through to the string overload).
     let diags = check_source_diagnostics(
         r#"
 declare function fn(cb: (s: number) => void): void;
@@ -1071,14 +1076,16 @@ declare function fn(cb: (s: string) => void): void;
 fn(s => s.toUpperCase());
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 7006 | 2339 | 2345))
-        .collect();
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
     assert_eq!(
-        relevant.len(),
-        0,
-        "Expected speculative overload rollback to avoid poisoning the successful candidate, got: {relevant:?}"
+        ts2339.len(),
+        1,
+        "Expected exactly one TS2339 from the first overload's callback body, got: {diags:?}"
+    );
+    assert!(
+        ts2339[0].message_text.contains("'number'"),
+        "The callback parameter must type from the FIRST overload (number), got: {:?}",
+        ts2339[0].message_text
     );
 }
 

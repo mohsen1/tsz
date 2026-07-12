@@ -977,7 +977,6 @@ impl<'a> CheckerState<'a> {
         // body errors against the resolved signature; it does not treat a body error
         // as an overload mismatch. When no overload resolves cleanly we commit to
         // this candidate and surface its diagnostics instead of silently recovering.
-        let mut callback_body_only_success: Option<BestTypeMismatch> = None;
         for (idx, original_sig) in signatures.iter().enumerate() {
             // See the first-pass loop: an open-ended spread requires an effective
             // rest parameter, so fixed-arity overloads are skipped here too.
@@ -1593,20 +1592,28 @@ impl<'a> CheckerState<'a> {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
                         // A non-generic overload matched at the signature level, so its
-                        // callback body diagnostics are real. Keep the last such overload
-                        // (mirroring tsc's final-candidate choice) to commit if no other
-                        // overload resolves cleanly. Generic overloads are left to the
-                        // instantiation machinery, whose transient body errors must not leak.
+                        // callback body diagnostics are real. tsc's chooseOverload
+                        // commits to the FIRST such candidate — callback-body
+                        // diagnostics never disqualify a signature-level match, so
+                        // later overloads are not consulted (they would retype the
+                        // callback under a different parameter type and report the
+                        // wrong body errors). Generic overloads are left to the
+                        // instantiation machinery, whose transient body errors must
+                        // not leak.
                         if sig.type_params.is_empty() {
-                            callback_body_only_success =
-                                Some(self.build_callback_body_only_candidate(
-                                    args,
-                                    &overload_snap.diag,
-                                    &candidate_snap,
-                                    sig_arg_types.clone(),
-                                    return_type,
-                                    selected_type_predicate.clone(),
-                                ));
+                            let candidate = self.build_callback_body_only_candidate(
+                                args,
+                                &overload_snap.diag,
+                                &candidate_snap,
+                                sig_arg_types.clone(),
+                                return_type,
+                                selected_type_predicate.clone(),
+                            );
+                            return Some(self.commit_callback_body_only_candidate(
+                                candidate,
+                                &overload_snap,
+                                &mut original_node_types,
+                            ));
                         }
                         let nested_no_overload_diags =
                             self.callback_body_no_overload_diagnostics_since(args, &candidate_snap);
@@ -1858,18 +1865,6 @@ impl<'a> CheckerState<'a> {
             self.ctx.node_types = std::mem::take(&mut original_node_types);
             self.ctx.node_types.merge_owned(sig_node_types);
             return Some(best_type_mismatch);
-        }
-
-        // No overload resolved cleanly, but at least one matched at the signature
-        // level and failed only inside a callback body. Commit to it and surface its
-        // diagnostics instead of silently recovering (via `callback_body_failure_return`),
-        // which would hide real errors only visible under the resolved parameter type.
-        if let Some(candidate) = callback_body_only_success {
-            return Some(self.commit_callback_body_only_candidate(
-                candidate,
-                &overload_snap,
-                &mut original_node_types,
-            ));
         }
 
         // No overload matched: drop speculative diagnostics from overload argument
