@@ -689,12 +689,10 @@ fn compile_enum_with_nan_and_infinity_globals() {
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es5",
             "module": "commonjs",
             "outDir": "out",
             "noEmitOnError": false,
-            "pretty": false,
-            "ignoreDeprecations": "6.0"
+            "pretty": false
           },
           "files": ["a.ts"]
         }"#,

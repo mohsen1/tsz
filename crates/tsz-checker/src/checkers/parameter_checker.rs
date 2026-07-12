@@ -282,9 +282,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Deferred function/class evaluation does not trigger TS2373.
-        if (node.is_function_expression_or_arrow())
-            && !self.ctx.arena.is_immediately_invoked(node_idx)
+        // Deferred function/class evaluation does not trigger TS2373. An
+        // immediately-invoked GENERATOR is still deferred (calling it does
+        // not run the body), and tsc 7.0.2 also exempts async IIFEs
+        // (capturedParametersInInitializers1 foo7/foo8 are clean).
+        if node.is_function_expression_or_arrow()
+            && (!self.ctx.arena.is_immediately_invoked(node_idx)
+                || self
+                    .ctx
+                    .arena
+                    .get_function(node)
+                    .is_some_and(|func| func.asterisk_token || func.is_async))
         {
             return;
         }
@@ -304,6 +312,64 @@ impl<'a> CheckerState<'a> {
                 }
                 return;
             }
+            // ES2015+ semantics (tsc 7.0.2): the class body defers evaluation
+            // EXCEPT the regions evaluated with the class expression itself —
+            // heritage expressions, computed member names, and STATIC
+            // property initializers (oracle: `static c = x` gets TS2373;
+            // an instance `[x] = x` flags only its computed name — the
+            // instance initializer runs at construction and stays deferred,
+            // like method/accessor/constructor bodies).
+            if let Some(class) = self.ctx.arena.get_class(node) {
+                if let Some(clauses) = &class.heritage_clauses {
+                    for &clause_idx in &clauses.nodes {
+                        self.collect_parameter_forward_references_recursive(
+                            clause_idx, later_name, refs,
+                        );
+                    }
+                }
+                for &member_idx in &class.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                        continue;
+                    };
+                    for name_child in self.ctx.arena.get_children(member_idx) {
+                        if let Some(child) = self.ctx.arena.get(name_child)
+                            && child.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        {
+                            self.collect_parameter_forward_references_recursive(
+                                name_child, later_name, refs,
+                            );
+                        }
+                    }
+                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && let Some(prop) = self.ctx.arena.get_property_decl(member_node)
+                        && prop.initializer.is_some()
+                        && self
+                            .ctx
+                            .arena
+                            .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::StaticKeyword)
+                    {
+                        self.collect_parameter_forward_references_recursive(
+                            prop.initializer,
+                            later_name,
+                            refs,
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
+        // Method and accessor declarations (object literals included) defer
+        // their bodies like function expressions; only a computed member name
+        // evaluates immediately (`{[z]() { return z; }}` flags the name `z`,
+        // not the body reference).
+        if matches!(
+            node.kind,
+            k if k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+        ) {
             for child_idx in self.ctx.arena.get_children(node_idx) {
                 if let Some(child) = self.ctx.arena.get(child_idx)
                     && child.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME

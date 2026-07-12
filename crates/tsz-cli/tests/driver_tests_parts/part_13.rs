@@ -97,8 +97,6 @@ fn compile_import_equals_member_of_unresolved_namespace_suppresses_member_access
             "target": "es2015",
             "module": "commonjs",
             "strict": true,
-            "moduleResolution": "node10",
-            "ignoreDeprecations": "6.0",
             "noEmit": true
           },
           "files": ["importEqualsUnresolvedRoot.ts"]
@@ -145,8 +143,6 @@ fn compile_import_equals_unresolved_namespace_suppresses_assignment_and_deep_cas
             "target": "es2015",
             "module": "commonjs",
             "strict": true,
-            "moduleResolution": "node10",
-            "ignoreDeprecations": "6.0",
             "noEmit": true
           },
           "files": ["importEqualsRenamedRoot.ts", "importEqualsDeepRoot.ts"]
@@ -470,9 +466,7 @@ fn compile_exact_name_ambient_precedence_keeps_missing_member_diagnostics() {
             "skipLibCheck": true,
             "noEmit": true,
             "moduleResolution": "bundler",
-            "baseUrl": ".",
-            "ignoreDeprecations": "6.0",
-            "paths": { "realpkg": ["realpkg.ts"], "*": ["stub.d.ts"] }
+            "paths": { "realpkg": ["./realpkg.ts"], "*": ["./stub.d.ts"] }
           },
           "include": ["src/**/*.ts", "ambients.d.ts"]
         }"#,

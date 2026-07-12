@@ -879,22 +879,27 @@ fn compile_config_no_emit_helpers_reaches_printer() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
+    // TS7 removed `target: es5`, so the `__extends` helper this test used is
+    // no longer reachable; the CommonJS default-import interop helper
+    // (`__importDefault`) exercises the same `noEmitHelpers` printer plumbing.
     write_file(
         &base.join("tsconfig.json"),
         r#"{
           "compilerOptions": {
-            "target": "es5",
             "module": "commonjs",
             "noEmitHelpers": true,
-            "ignoreDeprecations": "6.0",
             "outDir": "dist"
           },
-          "files": ["main.ts"]
+          "files": ["main.ts", "dep.ts"]
         }"#,
     );
     write_file(
+        &base.join("dep.ts"),
+        "export default { version: \"1.0.0\" };\n",
+    );
+    write_file(
         &base.join("main.ts"),
-        "class Base {}\nclass Derived extends Base {}\nexport const value = new Derived();\n",
+        "import dep from './dep';\nexport const value = dep.version;\n",
     );
 
     let args = default_args();
@@ -907,11 +912,11 @@ fn compile_config_no_emit_helpers_reaches_printer() {
 
     let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read JS output");
     assert!(
-        js.contains("__extends(Derived, _super);"),
+        js.contains("__importDefault(require(\"./dep\"))"),
         "Expected helper call to remain: {js}"
     );
     assert!(
-        !js.contains("var __extends ="),
+        !js.contains("var __importDefault ="),
         "Expected noEmitHelpers from config to suppress helper declaration: {js}"
     );
 }
@@ -1447,8 +1452,6 @@ fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
