@@ -265,7 +265,7 @@ impl<'a> CheckerState<'a> {
                         // value. Save the expression type and validate it after the
                         // class value side has been refreshed; doing it here can see a
                         // provisional/re-entrant constructor shape and miss TS1238.
-                        experimental_class_decorators.push((decorator.expression, decorator_type));
+                        experimental_class_decorators.push((mod_idx, decorator_type));
                     } else {
                         // ES decorators: tsc anchors TS1238 at the whole decorator
                         // (including `@`) when the factory requires too many args, but
@@ -1044,14 +1044,30 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_symbol(sym_id);
         }
 
-        for (decorator_expression, decorator_type) in experimental_class_decorators {
-            // Experimental decorators: tsc anchors TS1238 at the expression (after @).
-            self.check_class_decorator_call_signature(
-                decorator_expression,
-                decorator_type,
-                stmt_idx,
-                class,
-            );
+        for (decorator_node, decorator_type) in experimental_class_decorators {
+            // tsc 7.0.2 anchors TS1238 at the decorator's EXPRESSION for bare
+            // entities (`@CtorDtor` flags col 2) but at the whole DECORATOR
+            // spanning the `@` when the expression is itself a call
+            // (`@dec()` flags col 1) — mirroring call-node arity anchoring.
+            let anchor = self
+                .ctx
+                .arena
+                .get(decorator_node)
+                .and_then(|n| self.ctx.arena.get_decorator(n))
+                .map(|d| {
+                    let expr_is_call = self
+                        .ctx
+                        .arena
+                        .get(d.expression)
+                        .is_some_and(|e| e.kind == syntax_kind_ext::CALL_EXPRESSION);
+                    if expr_is_call {
+                        decorator_node
+                    } else {
+                        d.expression
+                    }
+                })
+                .unwrap_or(decorator_node);
+            self.check_class_decorator_call_signature(anchor, decorator_type, stmt_idx, class);
         }
     }
 
