@@ -5,13 +5,23 @@ use crate::state::CheckerState;
 use crate::symbols_domain::name_text::{
     is_zero_arg_call_like_expr_in_arena, simple_computed_name_expr_text_in_arena,
 };
+use rustc_hash::FxHashMap;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId};
 
-pub(super) const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
-pub(super) const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
+/// Display-order slot base for direct object-literal members and inline
+/// object-literal spreads (`...{ ... }`). tsc lays out an object-literal type as
+/// `[identifier/expression-spread members] ++ [direct + inline-spread members]`,
+/// each group in source order, with a name occupying the slot of its last
+/// writer. The two groups are encoded as disjoint `declaration_order` ranges:
+/// identifier/expression spreads count up from `1`, direct and inline members
+/// from this base, so an ascending sort interleaves exactly as tsc prints. The
+/// base sits far above any realistic identifier-spread member count, and the
+/// final display is renumbered to `1..N`, so the raw value never reaches output.
+pub(super) const LITERAL_DISPLAY_ORDER_BASE: u32 = 1 << 20;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn contextual_type_requires_authoritative_evaluation(
@@ -26,14 +36,43 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-pub(super) fn rebase_spread_display_property_order(
+/// Stamp spread-contributed properties with fresh display-order slots drawn
+/// from a running counter, preserving their relative source order and advancing
+/// the counter past them. The caller passes the identifier-spread counter for
+/// `...expr` spreads and the direct-member counter for inline `...{ ... }`
+/// spreads, placing each group into its display range (see
+/// [`LITERAL_DISPLAY_ORDER_BASE`]).
+/// Display-order slot for a direct (non-spread) object-literal member. A member
+/// that repeats a name already written by an earlier *direct* member keeps that
+/// member's slot — tsc's property-table semantics: the last value wins, the
+/// first position is kept (`{ a: 1, b: 2, a: 3 }` prints `{ a; b }`). A member
+/// that overrides a name contributed only by a *spread* instead takes a fresh
+/// later slot, because tsc flushes the spread batch and re-adds the name at the
+/// end (`{ ...A, z, a }` prints `{ z; a }`). `name_already_written` is the
+/// membership of `name` among direct members captured *before* it was recorded.
+pub(super) fn direct_member_display_order(
+    properties: &FxHashMap<Atom, PropertyInfo>,
+    name: Atom,
+    name_already_written: bool,
+    next_order: &mut u32,
+) -> u32 {
+    if name_already_written && let Some(existing) = properties.get(&name) {
+        return existing.declaration_order;
+    }
+    let order = *next_order;
+    *next_order = next_order.saturating_add(1);
+    order
+}
+
+pub(super) fn assign_spread_display_property_order(
     props: &[PropertyInfo],
-    base: u32,
+    next_order: &mut u32,
 ) -> Vec<PropertyInfo> {
     let mut props = props.to_vec();
     props.sort_by_key(|prop| prop.declaration_order);
-    for (index, prop) in props.iter_mut().enumerate() {
-        prop.declaration_order = base.saturating_add(index as u32);
+    for prop in props.iter_mut() {
+        prop.declaration_order = *next_order;
+        *next_order = next_order.saturating_add(1);
     }
     props
 }
