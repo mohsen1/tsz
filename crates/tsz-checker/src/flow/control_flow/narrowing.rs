@@ -668,19 +668,33 @@ impl<'a> FlowAnalyzer<'a> {
             return self.resolve_symbol_to_instance_type(symbol_ref);
         }
 
-        // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
-        // resolve the function's type and extract the instance type from construct
-        // signatures or prototype property.
-        if symbol.has_any_flags(symbol_flags::FUNCTION)
-            && let Some(env) = &self.type_environment
-        {
-            let env_borrow = env.borrow();
-            if let Some(func_type) = env_borrow.get(symbol_ref)
-                && let Some(instance_type) =
-                    flow_query::instance_type_from_constructor(self.interner, func_type)
-            {
-                return Some(instance_type);
+        // For FUNCTION symbols (e.g., JS constructor functions with @constructor,
+        // or any plain function value), resolve the function's type and extract
+        // the instance type from construct signatures or prototype property.
+        if symbol.has_any_flags(symbol_flags::FUNCTION) {
+            if let Some(env) = &self.type_environment {
+                let env_borrow = env.borrow();
+                if let Some(func_type) = env_borrow.get(symbol_ref)
+                    && let Some(instance_type) =
+                        flow_query::instance_type_from_constructor(self.interner, func_type)
+                {
+                    return Some(instance_type);
+                }
             }
+
+            // tsc's `getInstanceType` falls back to the empty object type `{}`
+            // when the constructor has no `[Symbol.hasInstance]` predicate, no
+            // non-`any` `prototype` property, and no construct signature: "we use
+            // the empty object type to indicate we don't know the type of values
+            // that may be instances of the constructor type". A function used as
+            // an `instanceof` right operand is derived from the global `Function`
+            // type, so this fallback applies. For a JS `@constructor`/`this`-property
+            // function under checked JS, `this` is implicitly `any` (TS2683) so no
+            // instance members are established and the instance type is exactly
+            // `{}`; narrowing `x: any` therefore yields `{}` and later property
+            // reads report TS2339 on `{}`, matching tsc. (Class constructors are
+            // handled by the `CLASS` branch above and never reach here.)
+            return Some(flow_query::empty_object_type(self.interner));
         }
 
         // For plain VARIABLE symbols (e.g., `declare var C: CConstructor`),
