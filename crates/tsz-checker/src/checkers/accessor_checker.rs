@@ -195,13 +195,27 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
-            // Check for rest parameter (error 1053)
+            // Check for rest parameter (error 1053).
+            // tsc anchors TS1053 at the `...` token (the parameter's start),
+            // not at the parameter name.
             if param.dot_dot_dot_token {
-                self.error_at_node(
-                    param_idx,
-                    "A 'set' accessor cannot have rest parameter.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
-                );
+                // Raw parameter start: the span normalizer would re-anchor a
+                // parameter at its name, which is exactly the divergence.
+                let rest_token_anchor = self.ctx.arena.get(param_idx).map(|node| node.pos);
+                if let Some(start) = rest_token_anchor {
+                    self.error_at_position(
+                        start,
+                        3,
+                        "A 'set' accessor cannot have rest parameter.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
+                    );
+                } else {
+                    self.error_at_node(
+                        param_idx,
+                        "A 'set' accessor cannot have rest parameter.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
+                    );
+                }
             }
 
             // Check for implicit any (error 7006)

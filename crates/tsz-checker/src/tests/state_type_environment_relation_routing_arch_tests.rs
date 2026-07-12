@@ -2,7 +2,8 @@ use std::{fs, path::PathBuf};
 
 #[test]
 fn impossible_intersection_pruning_uses_subtype_outcome_boundary() {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/state/type_environment/lazy.rs");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src/state/type_environment/lazy_impossible_pruning.rs");
     let source = fs::read_to_string(&path)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
     let compact: String = source.chars().filter(|c| !c.is_whitespace()).collect();
