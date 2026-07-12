@@ -186,29 +186,22 @@ fn test_ts2345_missing_many_properties_formats_related_detail_once() {
     "#;
 
     let diagnostics = diagnostics_for_source(source);
-    let ts2345 = diagnostics
+    let ts2739 = diagnostics
         .iter()
         .find(|diag| {
-            diag.code == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            diag.code == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
         })
-        .expect("expected TS2345 for missing-properties argument mismatch");
+        .expect("expected promoted TS2739 head for missing-properties argument mismatch");
 
-    let related = ts2345
-        .related_information
-        .iter()
-        .find(|info| {
-            info.code
-                == diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
-        })
-        .expect("expected TS2740 related detail under TS2345");
-
+    // tsc 7.0.2 lists all five missing properties in the TS2739 head; the
+    // "and N more" TS2740 suffix starts above five.
     assert!(
-        related.message_text.contains("a, b, c, d, and 1 more."),
-        "Expected TS2345 related detail to format the extra-property suffix once, got: {related:?}"
+        ts2739.message_text.contains(": a, b, c, d, e"),
+        "Expected TS2739 head to list all five missing properties, got: {ts2739:?}"
     );
     assert!(
-        !related.message_text.contains("and 1 more., and 1 more."),
-        "Expected TS2345 related detail to avoid duplicating the extra-property suffix, got: {related:?}"
+        !ts2739.message_text.contains("more."),
+        "Expected TS2739 head not to append an and-N-more suffix for five properties, got: {ts2739:?}"
     );
 }
 

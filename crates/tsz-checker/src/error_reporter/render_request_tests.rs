@@ -81,25 +81,21 @@ const g = { x: 3, y: 2 };
 assertEqual(g, { x: 3 });
 "#;
     let diagnostics = check_source_diagnostics(source);
-    let ts2345 = diagnostics
+    let ts2741 = diagnostics
         .iter()
-        .find(|d| d.code == 2345)
-        .expect("expected TS2345 for missing inferred property");
-    let related = ts2345
-        .related_information
-        .iter()
-        .find(|info| info.message_text.contains("Property 'y' is missing"))
-        .expect("expected missing-property related information");
+        .find(|d| d.code == 2741)
+        .expect("expected promoted TS2741 head for missing inferred property");
     assert!(
-        related.message_text.contains("{ x: number; }")
-            && related.message_text.contains("{ x: number; y: number; }"),
-        "Expected fresh inferred object displays to be widened, got: {}",
-        related.message_text
+        ts2741.message_text.contains("Property 'y' is missing")
+            && ts2741.message_text.contains("{ x: number; }")
+            && ts2741.message_text.contains("{ x: number; y: number; }"),
+        "Expected fresh inferred object displays to be widened in the TS2741 head, got: {}",
+        ts2741.message_text
     );
     assert!(
-        !related.message_text.contains("{ x: 3"),
-        "Related info should not leak fresh literal object displays, got: {}",
-        related.message_text
+        !ts2741.message_text.contains("{ x: 3"),
+        "TS2741 head should not leak fresh literal object displays, got: {}",
+        ts2741.message_text
     );
 }
 

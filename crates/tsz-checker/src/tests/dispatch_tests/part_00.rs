@@ -480,8 +480,8 @@ type Bad = Need<typeof globalThis>;
     );
 
     assert!(
-        diags.iter().any(|diag| diag.code == 2344),
-        "Expected TS2344 for typeof globalThis missing required constraint property, got: {diags:?}"
+        diags.iter().any(|diag| diag.code == 2741),
+        "Expected TS2741 for typeof globalThis missing required constraint property, got: {diags:?}"
     );
 }
 

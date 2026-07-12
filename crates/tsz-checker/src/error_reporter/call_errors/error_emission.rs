@@ -177,7 +177,25 @@ impl<'a> CheckerState<'a> {
             )
             && self.missing_property_head_promotion_applies(arg_type, param_type)
         {
-            let diag = self.render_failure_reason(reason, arg_type, param_type, idx, 0);
+            // Render the source through the argument-context display pipeline
+            // (fresh object-literal widening included) — the same policy the
+            // TS2345 head applied to its argument string; the renderer's
+            // assignment-oriented role cannot reproduce it.
+            let source_display = Some(self.format_type_for_diagnostic_role(
+                arg_type,
+                DiagnosticTypeDisplayRole::CallArgument {
+                    parameter: param_type,
+                    argument_idx: idx,
+                },
+            ));
+            let diag = self.render_failure_reason_with_source_display(
+                reason,
+                arg_type,
+                param_type,
+                idx,
+                0,
+                source_display,
+            );
             if matches!(
                 diag.code,
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE

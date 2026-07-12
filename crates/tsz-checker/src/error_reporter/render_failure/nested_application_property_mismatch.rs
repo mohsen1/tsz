@@ -1534,6 +1534,7 @@ impl<'a> CheckerState<'a> {
                 start: diag.start,
                 length: diag.length,
                 file_name: diag.file.clone(),
+                source_display_override: None,
             };
             let element_diag = self.render_single_element_tuple_mismatch(
                 &element_ctx,

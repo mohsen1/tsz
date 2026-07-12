@@ -920,10 +920,11 @@ fn cli_only_default_import_uses_es_module_interop_default_true() {
     );
 }
 
-// The flip side: an explicit `--esModuleInterop false` must opt back out of the
-// tsc 6.0 default and keep the classic (no-helper) default-import lowering.
+// TS 7.0.2 removed `esModuleInterop=false`: the explicit CLI opt-out is now a
+// TS5108 removed-option error instead of switching back to the classic
+// (no-helper) default-import lowering.
 #[test]
-fn cli_only_explicit_es_module_interop_false_keeps_classic_default_import() {
+fn cli_only_explicit_es_module_interop_false_reports_ts5108() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -936,9 +937,6 @@ fn cli_only_explicit_es_module_interop_false_keeps_classic_default_import() {
         "import dep from './dep';\nexport const v = dep.version;\n",
     );
 
-    // `preprocess_args` (the real CLI entry point) forwards `--esModuleInterop
-    // false` into this side-channel; replicate it directly since the test builds
-    // `CliArgs` with clap's parser without the preprocessing pass.
     let mut args = parse_args(&[
         "tsz",
         "--ignoreConfig",
@@ -953,11 +951,11 @@ fn cli_only_explicit_es_module_interop_false_keeps_classic_default_import() {
     args.explicitly_disabled_bool_flags
         .push("esModuleInterop".to_string());
 
-    let _result = compile(&args, base).expect("compile should succeed");
-    let a_js = std::fs::read_to_string(base.join("out/a.js")).expect("read out/a.js");
+    let result = compile(&args, base).expect("compile should succeed");
     assert!(
-        !a_js.contains("__importDefault"),
-        "explicit --esModuleInterop false must not emit the interop helper, got:\n{a_js}"
+        result.diagnostics.iter().any(|d| d.code == 5108),
+        "explicit --esModuleInterop false must report the TS5108 removed-option error, got: {:?}",
+        result.diagnostics
     );
 }
 

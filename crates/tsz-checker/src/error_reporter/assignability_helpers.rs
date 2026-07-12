@@ -1307,8 +1307,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        crate::query_boundaries::common::tuple_elements(self.ctx.types, target).is_none()
-            && !crate::query_boundaries::common::contains_error_type(self.ctx.types, source)
+        crate::query_boundaries::diagnostics::tuple_elements(self.ctx.types, target).is_none()
+            && !crate::query_boundaries::diagnostics::contains_error_type(self.ctx.types, source)
             && !self.source_class_heritage_chain_errored(source)
     }
 
@@ -1321,8 +1321,9 @@ impl<'a> CheckerState<'a> {
     /// missing-property line as a chain entry sourced at the base class).
     fn source_class_heritage_chain_errored(&mut self, source: TypeId) -> bool {
         use tsz_scanner::SyntaxKind;
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source)
-            .or_else(|| self.ctx.definition_store.find_def_for_type(source))
+        let Some(def_id) =
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, source)
+                .or_else(|| self.ctx.definition_store.find_def_for_type(source))
         else {
             return false;
         };
