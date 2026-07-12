@@ -978,6 +978,7 @@ impl<'a> CheckerState<'a> {
         // TS1186: Check for rest elements with initializers in destructuring assignments.
         if is_destructuring {
             self.check_rest_element_initializer(left_idx);
+            self.check_rest_element_trailing_comma(left_idx);
         }
 
         // tsc suppresses TS2322 alongside TS2540 (readonly named property writes)
@@ -1662,6 +1663,84 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
                     &[],
                 );
+            }
+        }
+    }
+
+    /// TS1013: A rest element in a destructuring *assignment* target may not
+    /// be followed by a trailing comma (`([...c,] = a)`, `({...d,} = {})`).
+    ///
+    /// The parser owns the binding-pattern form (`let [...e,] = x`);
+    /// assignment targets parse as plain array/object literals — where a
+    /// trailing comma is legal expression syntax — so the pattern-context rule
+    /// is only enforceable here, and it applies at every nesting level
+    /// (`[x, [...a,]] = y` errors on the inner pattern). Anchored at the comma
+    /// token with a 1-char span, matching tsc.
+    fn check_rest_element_trailing_comma(&mut self, left_idx: NodeIndex) {
+        let Some(left_node) = self.ctx.arena.get(left_idx) else {
+            return;
+        };
+        let rest_kind = if left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            syntax_kind_ext::SPREAD_ELEMENT
+        } else if left_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            syntax_kind_ext::SPREAD_ASSIGNMENT
+        } else {
+            return;
+        };
+        let Some(lit) = self.ctx.arena.get_literal_expr(left_node) else {
+            return;
+        };
+        let elements: Vec<NodeIndex> = lit.elements.nodes.clone();
+        if lit.elements.has_trailing_comma
+            && let Some(&last_idx) = elements.last()
+            && let Some(last_node) = self.ctx.arena.get(last_idx)
+            && last_node.kind == rest_kind
+        {
+            // The trailing comma is the last `,` before the closing
+            // bracket/brace. Scan backwards from the closer: the rest
+            // element's own `end` can swallow the separator token, and the
+            // element may contain interior commas (`[...[a, b],] = x`), so
+            // `rfind` over the element-to-closer window is the only anchor
+            // that always lands on the separator.
+            let comma_pos = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|sf| sf.text.get(last_node.pos as usize..left_node.end as usize))
+                .and_then(|text| text.rfind(','))
+                .map_or(last_node.end, |off| last_node.pos + off as u32);
+            self.error_at_position(
+                comma_pos,
+                1,
+                diagnostic_messages::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+            );
+        }
+        // Recurse into nested destructuring targets: array elements, object
+        // property values, rest operands, and `= default` left sides.
+        for element_idx in elements {
+            let Some(element_node) = self.ctx.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || element_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.check_rest_element_trailing_comma(element_idx);
+            } else if element_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || element_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                if let Some(spread) = self.ctx.arena.get_spread(element_node) {
+                    self.check_rest_element_trailing_comma(spread.expression);
+                }
+            } else if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                if let Some(prop) = self.ctx.arena.get_property_assignment(element_node) {
+                    self.check_rest_element_trailing_comma(prop.initializer);
+                }
+            } else if let Some(bin) = self.ctx.arena.get_binary_expr(element_node) {
+                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                    self.check_rest_element_trailing_comma(bin.left);
+                }
             }
         }
     }

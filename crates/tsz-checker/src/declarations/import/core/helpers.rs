@@ -1,7 +1,6 @@
 //! Resolution mode helpers, module-not-found diagnostics, and export helpers.
 
 use crate::diagnostics::format_message;
-use crate::query_boundaries::capabilities::FeatureGate;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;

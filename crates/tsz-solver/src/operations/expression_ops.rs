@@ -78,7 +78,11 @@ pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
         {
             return reduced;
         }
-        return interner.union2(true_type, false_type);
+        let union = interner.union2(true_type, false_type);
+        if let Some(res) = resolver {
+            return reduce_class_subtype_union_members(interner, res, union);
+        }
+        return union;
     }
     if condition == TypeId::NEVER {
         // never ? A : B -> never (unreachable)
@@ -137,7 +141,15 @@ pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
         return reduced;
     }
 
-    interner.union2(true_type, false_type)
+    let union = interner.union2(true_type, false_type);
+    if let Some(res) = resolver {
+        // `true ? new Base() : new Derived()` — the class-scoped slice of
+        // UnionReduction.Subtype (heritage-guarded), which the broad
+        // reduction above could not take without regressing
+        // `unionTypeReduction2`.
+        return reduce_class_subtype_union_members(interner, res, union);
+    }
+    union
 }
 
 /// Drop an empty array literal branch (`Array<never>` or the empty tuple `[]`)
@@ -1026,19 +1038,31 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     // and SubtypeChecker<NoopResolver> are different types.
     if let Some(res) = resolver {
         let mut checker = SubtypeChecker::with_resolver(interner, res);
+        // tsc's removeSubtypes class guard, applied to the tournament: one
+        // class reference only counts as a subtype of another for BCT
+        // purposes when it genuinely derives from it. Without this,
+        // `[new A(), new B()]` for unrelated same-shape classes crowns one of
+        // them BCT winner where tsc keeps `(A | B)[]`.
+        let mut related = |checker: &mut SubtypeChecker<_>, source: TypeId, target: TypeId| {
+            if let (Some(src_def), Some(tgt_def)) = (
+                class_ref_def(interner, res, source),
+                class_ref_def(interner, res, target),
+            ) && !class_derives_from(interner, res, source, src_def, target, tgt_def)
+            {
+                return false;
+            }
+            checker.guard.reset();
+            checker.is_subtype_of(source, target)
+        };
         // Pass 1: Tournament to find potential best candidate
         let mut best = widened[0];
         for &candidate in &widened[1..] {
-            checker.guard.reset();
-            if checker.is_subtype_of(best, candidate) {
+            if related(&mut checker, best, candidate) {
                 best = candidate;
             }
         }
         // Pass 2: Verify the winner is supertype of all
-        let is_supertype = widened.iter().all(|&ty| {
-            checker.guard.reset();
-            checker.is_subtype_of(ty, best)
-        });
+        let is_supertype = widened.iter().all(|&ty| related(&mut checker, ty, best));
         if is_supertype {
             return best;
         }
@@ -1139,6 +1163,162 @@ fn nominal_hierarchy_for_bct<R: TypeResolver>(
     (!hierarchy.is_empty()).then_some(hierarchy)
 }
 
+/// Identify a *class reference* union member: a `Lazy` ref whose def is a
+/// class, a generic instantiation (`Application`) whose head is a class, or a
+/// materialized class instance type registered with the resolver. This is the
+/// tsz equivalent of tsc's `getObjectFlags(getTargetType(type)) & ObjectFlags.Class`
+/// test inside `removeSubtypes`.
+fn class_ref_def<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<crate::def::DefId> {
+    let lazy_class = |ty: TypeId| match interner.lookup(ty) {
+        Some(TypeData::Lazy(def_id)) => {
+            (resolver.get_def_kind(def_id) == Some(crate::def::DefKind::Class)).then_some(def_id)
+        }
+        _ => None,
+    };
+    match interner.lookup(type_id) {
+        Some(TypeData::Lazy(_)) => lazy_class(type_id),
+        Some(TypeData::Application(app_id)) => lazy_class(interner.type_application(app_id).base),
+        _ => resolver.class_def_for_instance_type(type_id),
+    }
+}
+
+/// tsc's `isTypeDerivedFrom` for two *class references*: does `source` extend
+/// `target` through its heritage chain?
+///
+/// Tries the instance-`TypeId` chain first (`get_base_type`, which covers
+/// materialized instance types and non-generic `Lazy` refs), then the `DefId`
+/// `extends` chain. The def-level hit deliberately ignores the target's type
+/// arguments — tsc's `isTypeDerivedFrom` compares against
+/// `getTargetType(target)` (argument-erased), and the strict-subtype half of
+/// the removal conjunction is what rejects `GD extends GB<string>` against a
+/// `GB<number>` sibling.
+fn class_derives_from<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    source_def: crate::def::DefId,
+    target: TypeId,
+    target_def: crate::def::DefId,
+) -> bool {
+    if nominally_extends_or_is(interner, source, target, resolver) {
+        return true;
+    }
+    let mut current = source_def;
+    for _ in 0..32 {
+        let Some(parent) = resolver.get_class_extends(current) else {
+            return false;
+        };
+        if parent == target_def {
+            return true;
+        }
+        if parent == current {
+            return false;
+        }
+        current = parent;
+    }
+    false
+}
+
+/// tsc `UnionReduction.Subtype` (checker.ts `removeSubtypes`) over an
+/// already-constructed union, for member pairs the interner's shallow engine
+/// treats as inert.
+///
+/// The default union constructor skips subtype reduction whenever a member is
+/// `TypeData::Lazy` (class instance refs stay deferred), so `Base | Derived`
+/// survives at tsc's Subtype-reduction sites (return-type-from-body unions,
+/// conditional expressions). This entry point re-runs the pairwise sweep with
+/// the resolver-backed `SubtypeChecker`, restricted to *class-reference
+/// sources*: a source member is dropped when it is a subtype of a sibling AND
+/// — when the sibling is itself a class reference — the source really derives
+/// from it (tsc's `isTypeDerivedFrom` guard), so unrelated same-shape classes
+/// coexist while `Derived extends Base` collapses to `Base`. Non-class
+/// sources (interfaces, object literals, primitives) are left untouched: the
+/// full-sweep variant historically picked the wrong constituent for
+/// structurally-related call-signature unions (`unionTypeReduction2`).
+///
+/// Plain union type annotations (`var x: Base | Derived`) never route here;
+/// only explicit Subtype-reduction call sites do — tsc's plain `getUnionType`
+/// does not subtype-reduce either.
+pub fn reduce_class_subtype_union_members<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    union: TypeId,
+) -> TypeId {
+    let Some(TypeData::Union(list_id)) = interner.lookup(union) else {
+        return union;
+    };
+    let members: Vec<TypeId> = interner.type_list(list_id).to_vec();
+    let len = members.len();
+    // Mirror tsc's removeSubtypes pairwise-iteration cap.
+    if (len as u64) * (len as u64 - 1) >= 1_000_000 {
+        return union;
+    }
+    let class_defs: Vec<Option<crate::def::DefId>> = members
+        .iter()
+        .map(|&m| class_ref_def(interner, resolver, m))
+        .collect();
+    tracing::trace!(
+        ?members,
+        ?class_defs,
+        member_data = ?members.iter().map(|&m| interner.lookup(m)).collect::<Vec<_>>(),
+        "reduce_class_subtype_union_members: entry"
+    );
+    if class_defs.iter().all(Option::is_none) {
+        return union;
+    }
+    let mut keep = vec![true; len];
+    let mut removed = false;
+    let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+    for i in 0..len {
+        if class_defs[i].is_none() {
+            continue;
+        }
+        for j in 0..len {
+            if i == j || !keep[j] {
+                continue;
+            }
+            // Class-vs-class removal requires genuine heritage derivation,
+            // not mere structural subtyping (tsc's isTypeDerivedFrom guard).
+            if let (Some(src_def), Some(tgt_def)) = (class_defs[i], class_defs[j])
+                && !class_derives_from(interner, resolver, members[i], src_def, members[j], tgt_def)
+            {
+                tracing::trace!(
+                    src = ?members[i], tgt = ?members[j], ?src_def, ?tgt_def,
+                    "reduce_class_subtype_union_members: derivation guard blocked"
+                );
+                continue;
+            }
+            checker.guard.reset();
+            let subtype = checker.is_subtype_of(members[i], members[j]);
+            tracing::trace!(
+                src = ?members[i], tgt = ?members[j],
+                src_data = ?interner.lookup(members[i]), tgt_data = ?interner.lookup(members[j]),
+                src_class = ?class_defs[i], tgt_class = ?class_defs[j], subtype,
+                "reduce_class_subtype_union_members: pair"
+            );
+            if subtype {
+                keep[i] = false;
+                removed = true;
+                break;
+            }
+        }
+    }
+    if !removed {
+        return union;
+    }
+    let kept: Vec<TypeId> = members
+        .iter()
+        .zip(keep.iter())
+        .filter(|&(_, &k)| k)
+        .map(|(&t, _)| t)
+        .collect();
+    interner.union(kept)
+}
+
 fn nominally_extends_or_is<R: TypeResolver>(
     interner: &dyn TypeDatabase,
     source: TypeId,
@@ -1218,6 +1398,10 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
 
     let result: Arc<[TypeId]> = if let Some(res) = resolver {
         let mut keep = vec![true; len];
+        let class_defs: Vec<Option<crate::def::DefId>> = types
+            .iter()
+            .map(|&t| class_ref_def(interner, res, t))
+            .collect();
         let mut checker = SubtypeChecker::with_resolver(interner, res);
         for i in 0..len {
             if !keep[i] {
@@ -1225,6 +1409,16 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
             }
             for j in 0..len {
                 if i == j || !keep[j] {
+                    continue;
+                }
+                // tsc's removeSubtypes class guard: when BOTH sides are class
+                // references, structural subtyping alone must not drop a
+                // member — removal additionally requires heritage derivation
+                // (isTypeDerivedFrom), so unrelated same-shape classes keep
+                // producing `(A | B)[]` from `[new A(), new B()]`.
+                if let (Some(src_def), Some(tgt_def)) = (class_defs[i], class_defs[j])
+                    && !class_derives_from(interner, res, types[i], src_def, types[j], tgt_def)
+                {
                     continue;
                 }
                 checker.guard.reset();

@@ -30,6 +30,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
         let mut properties = Vec::new();
+        let mut has_trailing_comma = false;
         while !self.is_token(SyntaxKind::CloseBraceToken) {
             if !self.is_object_literal_element_start()
                 && !self.is_token(SyntaxKind::SemicolonToken)
@@ -53,7 +54,16 @@ impl ParserState {
                 break;
             }
 
-            if !self.parse_optional(SyntaxKind::CommaToken) {
+            if self.parse_optional(SyntaxKind::CommaToken) {
+                // A separator followed directly by the closer is a trailing
+                // comma; the checker needs this for the TS1013 rest-element
+                // rule on destructuring assignment targets (`({...d,} = x)`).
+                if self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    has_trailing_comma = true;
+                }
+            } else {
                 if self.suppress_object_literal_comma_once && self.is_property_start() {
                     self.suppress_object_literal_comma_once = false;
                     continue;
@@ -112,7 +122,11 @@ impl ParserState {
             start_pos,
             end_pos,
             LiteralExprData {
-                elements: Self::make_node_list(properties),
+                elements: {
+                    let mut list = Self::make_node_list(properties);
+                    list.has_trailing_comma = has_trailing_comma;
+                    list
+                },
                 multi_line: false,
             },
         )

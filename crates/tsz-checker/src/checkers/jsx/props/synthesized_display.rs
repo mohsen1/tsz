@@ -32,11 +32,11 @@ impl<'a> CheckerState<'a> {
         format!("{display_name}: {type_str}")
     }
 
-    /// Walks the attributes once and produces a formatted object-type string with
-    /// explicit (non-spread) attrs first (in source order), then spread-derived
-    /// props that aren't shadowed by an explicit attr (in spread source order).
-    /// This matches tsc's display for elements like `<X {...{p: v}} q />` where
-    /// the printed source type is `{ q: true; p: v; }`.
+    /// Walks the attributes once and produces a formatted object-type string
+    /// merging spread properties and named attributes in source order with
+    /// first-occurrence slots: `<X {...{p: v}} q />` prints `{ p: v; q: true; }`,
+    /// and a duplicate name keeps its first slot while taking the last writer's
+    /// type (tsc 7.0.2 overwrite semantics).
     pub(super) fn format_jsx_attrs_synthesized_source_for_excess(
         &mut self,
         attributes_idx: NodeIndex,
@@ -46,8 +46,7 @@ impl<'a> CheckerState<'a> {
         let attrs_node = self.ctx.arena.get(attributes_idx)?;
         let attrs = self.ctx.arena.get_jsx_attributes(attrs_node)?;
 
-        let mut explicit: Vec<(String, TypeId)> = Vec::new();
-        let mut spread_props: Vec<(String, TypeId)> = Vec::new();
+        let mut props: Vec<(String, TypeId)> = Vec::new();
 
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -74,10 +73,10 @@ impl<'a> CheckerState<'a> {
                     self.compute_jsx_attr_value_type_without_context(attr_data.initializer)
                 };
 
-                if let Some(existing) = explicit.iter_mut().find(|(n, _)| n == &attr_name) {
+                if let Some(existing) = props.iter_mut().find(|(n, _)| n == &attr_name) {
                     existing.1 = attr_value_type;
                 } else {
-                    explicit.push((attr_name, attr_value_type));
+                    props.push((attr_name, attr_value_type));
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
@@ -106,36 +105,24 @@ impl<'a> CheckerState<'a> {
                         if name == "key" || name == "ref" {
                             continue;
                         }
-                        if let Some(existing) = spread_props.iter_mut().find(|(n, _)| *n == name) {
+                        if let Some(existing) = props.iter_mut().find(|(n, _)| *n == name) {
                             existing.1 = prop.type_id;
                         } else {
-                            spread_props.push((name, prop.type_id));
+                            props.push((name, prop.type_id));
                         }
                     }
                 }
             }
         }
 
-        if explicit.is_empty() && spread_props.is_empty() {
+        if props.is_empty() {
             return None;
         }
 
-        let explicit_names: rustc_hash::FxHashSet<String> =
-            explicit.iter().map(|(n, _)| n.clone()).collect();
-        let mut fragments: Vec<String> = Vec::with_capacity(explicit.len() + spread_props.len());
-        for (name, type_id) in &explicit {
-            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
-        }
-        for (name, type_id) in &spread_props {
-            if explicit_names.contains(name) {
-                continue;
-            }
-            fragments.push(self.format_jsx_synthesized_prop_fragment(name, *type_id));
-        }
-
-        if fragments.is_empty() {
-            return None;
-        }
+        let fragments: Vec<String> = props
+            .iter()
+            .map(|(name, type_id)| self.format_jsx_synthesized_prop_fragment(name, *type_id))
+            .collect();
         Some(format!("{{ {}; }}", fragments.join("; ")))
     }
 
