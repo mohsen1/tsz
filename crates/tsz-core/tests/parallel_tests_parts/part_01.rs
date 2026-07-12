@@ -1494,17 +1494,12 @@ class D {
         .map(|diag| diag.message_text.as_str())
         .collect();
 
+    // tsc 7.0.2: TS2717 fires only between PROPERTY declarations ('c');
+    // method/property mixes ('a', 'b') get 2x TS2300 each and no TS2717.
     assert_eq!(
         ts2717_messages.len(),
-        2,
-        "Expected TS2717 for 'a' and 'c' only. Diagnostics: {:#?}",
-        file.diagnostics
-    );
-    assert!(
-        ts2717_messages
-            .iter()
-            .any(|msg| msg.contains("Property 'a' must be of type '() => number'")),
-        "Expected method-vs-property TS2717 for 'a'. Diagnostics: {:#?}",
+        1,
+        "Expected TS2717 for 'c' only. Diagnostics: {:#?}",
         file.diagnostics
     );
     assert!(
@@ -1512,6 +1507,16 @@ class D {
             .iter()
             .any(|msg| msg.contains("Property 'c' must be of type 'number'")),
         "Expected property-vs-property TS2717 for 'c'. Diagnostics: {:#?}",
+        file.diagnostics
+    );
+    let ts2300_count = file
+        .diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2300)
+        .count();
+    assert_eq!(
+        ts2300_count, 6,
+        "Expected TS2300 at every duplicate declaration (2 per name). Diagnostics: {:#?}",
         file.diagnostics
     );
 }

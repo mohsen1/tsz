@@ -375,16 +375,20 @@ fn enum_member_vs_namespace_nonexported_local_no_error() {
     assert_eq!(count_ts2300(&diagnostics), 0);
 }
 
-/// Test that method followed by property emits TS2300 only on the property.
+/// Method followed by property: tsc 7.0.2 reports TS2300 at BOTH
+/// declarations (the binder flags every conflicting declaration site).
 #[test]
 fn method_followed_by_property() {
     let diagnostics = verify_errors(
         "class C { x() {} x: any; }",
-        &[(1, 18, "Duplicate identifier 'x'.")],
+        &[
+            (1, 11, "Duplicate identifier 'x'."),
+            (1, 18, "Duplicate identifier 'x'."),
+        ],
     );
 
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
-    assert_eq!(ts2300_errors.len(), 1);
+    assert_eq!(ts2300_errors.len(), 2);
 }
 
 /// Test that property followed by method emits TS2300 on BOTH declarations.

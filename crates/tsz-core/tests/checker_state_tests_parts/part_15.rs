@@ -287,11 +287,12 @@ class DuplicateProperties {
 
     println!("All diagnostics: {:?}", checker.ctx.diagnostics);
 
-    // tsc emits TS2300 only on the second property (TS2717 is also emitted but not yet implemented)
+    // tsc 7.0.2 reports TS2300 at BOTH declarations (the binder flags every
+    // conflicting declaration site).
     assert_eq!(
         codes.iter().filter(|&&c| c == 2300).count(),
-        1,
-        "Expected 1 TS2300 error for duplicate class members (on second property), got: {codes:?}"
+        2,
+        "Expected TS2300 at both duplicate class member declarations, got: {codes:?}"
     );
 }
 
