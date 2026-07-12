@@ -1376,6 +1376,9 @@ path = "tests/ts2344_infer_conditional_constraint.rs"
 name = "ts2344_generic_ref_scoped_param_concrete_constraint"
 path = "tests/ts2344_generic_ref_scoped_param_concrete_constraint.rs"
 [[test]]
+name = "ts2344_consumed_lib_delegate_gate_tests"
+path = "tests/ts2344_consumed_lib_delegate_gate_tests.rs"
+[[test]]
 name = "ts2344_any_key_mapped_constraint_tests"
 path = "tests/ts2344_any_key_mapped_constraint_tests.rs"
 [[test]]

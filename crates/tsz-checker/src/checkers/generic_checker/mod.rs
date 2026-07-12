@@ -859,6 +859,23 @@ impl<'a> CheckerState<'a> {
         type_args_list: &tsz_parser::parser::NodeList,
         type_ref_idx: NodeIndex,
     ) -> bool {
+        // TS2344 type-argument constraint validation belongs to a file's own
+        // check pass, not to consumption-time type resolution. When a type
+        // reference is lowered inside a transient cross-arena delegate checker
+        // (`delegate_for_arena`, e.g. `AliasResolution` lowering a consumed
+        // `.d.ts` alias body), that delegate has `diagnostics_discarded` set and
+        // every diagnostic it produces is dropped at `push_diagnostic`. Running
+        // the validation there is therefore pure waste — it emits nothing — yet
+        // it is the walk that re-enters the mutually generic React alias family
+        // (`ReactElement`/`JSXElementConstructor`/`Component`) and drives a
+        // super-linear blowup on faithful lib fixtures. Skipping it is
+        // behaviour-neutral (the discarded diagnostics never existed) and matches
+        // `tsc`, which validates such references only while checking the file
+        // that owns them: a `.d.ts` checked as a program root runs in the
+        // primary (non-discarding) checker and still reports TS2344.
+        if self.ctx.diagnostics_discarded {
+            return false;
+        }
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
         let syntax_base_name = self
