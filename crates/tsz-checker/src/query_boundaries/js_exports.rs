@@ -1455,6 +1455,20 @@ impl<'a> CheckerState<'a> {
         // 1. Collect direct `module.exports = X` assignment
         surface.direct_export_type = last_direct_export
             .map(|(_, rhs_expr)| {
+                // `module.exports = require('./y')` re-exports another module:
+                // tsc checks every `module.exports.<name>` member write
+                // (before or after it) against the required module's
+                // typeof-import type — TS2339 on 'typeof import("y")' — not
+                // against an expando-extensible `any`. Scoped to the current
+                // file: `build_typeof_import_namespace_type` resolves the
+                // specifier relative to `ctx.current_file_idx`.
+                if target_file_idx == self.ctx.current_file_idx
+                    && let Some(specifier) = self.get_require_module_specifier(rhs_expr)
+                    && let Some(namespace_type) =
+                        self.build_typeof_import_namespace_type(&specifier, None)
+                {
+                    return namespace_type;
+                }
                 let expando_root = target_arena
                     .get_identifier_at(rhs_expr)
                     .map(|ident| ident.escaped_text.as_str());
