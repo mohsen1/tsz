@@ -180,15 +180,42 @@ impl<'a> FlowAnalyzer<'a> {
                 trace!("Matched: both are 'super'");
                 return true;
             }
-            // `import.meta` and `new.target` have no symbol backing; match two
-            // `import` meta-property roots so narrowing can flow through
-            // `import.meta.foo` chains. Two distinct ImportKeyword nodes within
-            // the same file always refer to the same `import.meta`.
+            // `import.meta` has no symbol backing; match two `import`
+            // meta-property roots so narrowing can flow through `import.meta.foo`
+            // chains. Two distinct ImportKeyword nodes within the same file
+            // always refer to the same `import.meta`. (tsz parses `import.meta`
+            // as a PROPERTY_ACCESS over this ImportKeyword root, whereas
+            // `new.target` is a single META_PROPERTY node handled just below.)
             if node_a.kind == SyntaxKind::ImportKeyword as u16
                 && node_b.kind == SyntaxKind::ImportKeyword as u16
             {
                 trace!("Matched: both are 'import' meta-property root");
                 return true;
+            }
+            // `new.target` is a symbol-less meta-property root parsed as a single
+            // META_PROPERTY node (a keyword token plus the `target` name). Two
+            // such nodes denote the same `new.target` when their keyword token
+            // and name agree, mirroring tsc's `isMatchingReference` MetaProperty
+            // case, so narrowing can flow through `new.target.<prop>` chains.
+            if node_a.kind == syntax_kind_ext::META_PROPERTY
+                && node_b.kind == syntax_kind_ext::META_PROPERTY
+                && let (Some(access_a), Some(access_b)) = (
+                    self.arena.get_access_expr(node_a),
+                    self.arena.get_access_expr(node_b),
+                )
+            {
+                let keyword_a = self.arena.get(access_a.expression).map(|n| n.kind);
+                let keyword_b = self.arena.get(access_b.expression).map(|n| n.kind);
+                let name_a = self.arena.get_identifier_at(access_a.name_or_argument);
+                let name_b = self.arena.get_identifier_at(access_b.name_or_argument);
+                let names_match = match (name_a, name_b) {
+                    (Some(a), Some(b)) => a.escaped_text == b.escaped_text,
+                    _ => false,
+                };
+                if keyword_a == keyword_b && names_match {
+                    trace!("Matched: both are the same 'new.target' meta-property root");
+                    return true;
+                }
             }
         }
 

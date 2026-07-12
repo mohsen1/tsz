@@ -1506,6 +1506,49 @@ impl<'a> CheckerState<'a> {
         root_name: &str,
         property_name: &str,
     ) -> TypeId {
+        // Resolve the declared type from assignments in the current file by
+        // walking its statements. Unlike the cross-file reader below, this walk
+        // is not gated to `.js` files, so a TS-file expando such as
+        // `function F(): void {} F.p = 1` types `p` as `number` (matching tsc)
+        // instead of `any`. The resolved RHS type is widened for display exactly
+        // as tsc's `getWidenedType` widens a special-property assignment
+        // (`1` -> `number`, fresh `{ foo: 1 }` -> `{ foo: number; }`), while a
+        // non-fresh `as const` literal is preserved.
+        let expected_key = format!("{root_name}.{property_name}");
+        let recursion_key = format!("declared:{}:{expected_key}", self.ctx.current_file_idx);
+        if self
+            .ctx
+            .expando_property_resolution_set
+            .insert(recursion_key.clone())
+        {
+            let mut best_match: Option<(u32, TypeId)> = None;
+            if let Some(source_file) = self
+                .ctx
+                .arena
+                .source_files
+                .get(self.ctx.current_file_idx)
+                .or_else(|| self.ctx.arena.source_files.first())
+            {
+                for &stmt_idx in &source_file.statements.nodes {
+                    self.collect_expando_property_assignment_type(
+                        stmt_idx,
+                        &expected_key,
+                        u32::MAX,
+                        &mut best_match,
+                    );
+                }
+            }
+            self.ctx
+                .expando_property_resolution_set
+                .remove(&recursion_key);
+            if let Some((_, ty)) = best_match {
+                return crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                    self.ctx.types,
+                    ty,
+                );
+            }
+        }
+
         let preferred_file_idx = self.ctx.resolve_symbol_file_index(sym_id).or_else(|| {
             let arena = self
                 .ctx
@@ -1523,6 +1566,60 @@ impl<'a> CheckerState<'a> {
             preferred_file_idx,
         )
         .unwrap_or(TypeId::ANY)
+    }
+
+    /// First same-file assignment source position for each expando property of
+    /// `root_name`, keyed by the property's simple name. tsc lists expando
+    /// members in source order; the binder records them in an unordered set, so
+    /// this recovers a deterministic ordering key. Only file/block-scope
+    /// assignments are visited (mirroring `collect_expando_property_assignment_type`),
+    /// so nested-function assignments — which stay `TS2339` — never contribute.
+    pub(crate) fn expando_property_source_positions(
+        &self,
+        root_name: &str,
+    ) -> rustc_hash::FxHashMap<String, u32> {
+        let mut positions = rustc_hash::FxHashMap::default();
+        let Some(source_file) = self
+            .ctx
+            .arena
+            .source_files
+            .get(self.ctx.current_file_idx)
+            .or_else(|| self.ctx.arena.source_files.first())
+        else {
+            return positions;
+        };
+        let prefix = format!("{root_name}.");
+        for &stmt_idx in &source_file.statements.nodes {
+            self.collect_expando_property_positions(stmt_idx, &prefix, &mut positions);
+        }
+        positions
+    }
+
+    fn collect_expando_property_positions(
+        &self,
+        idx: NodeIndex,
+        prefix: &str,
+        positions: &mut rustc_hash::FxHashMap<String, u32>,
+    ) {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+        if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && let Some(key) =
+                Self::expando_assignment_access_key_in_arena(self.ctx.arena, binary.left)
+            && let Some(prop) = key.strip_prefix(prefix)
+            && !prop.contains('.')
+        {
+            positions.entry(prop.to_string()).or_insert(node.pos);
+        }
+        for child_idx in self.ctx.arena.get_children(idx) {
+            self.collect_expando_property_positions(child_idx, prefix, positions);
+        }
     }
 
     pub(in crate::types_domain) fn prior_js_this_property_assignment_type(

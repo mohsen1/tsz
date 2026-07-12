@@ -404,15 +404,71 @@ impl<'a> TypeFormatter<'a> {
                 (Err(_), Err(_)) => std::cmp::Ordering::Equal,
             }
         });
+        let mut prop_parts = Vec::with_capacity(sorted_props.len());
         for prop in sorted_props {
-            parts.push(self.format_property(prop));
+            prop_parts.push(self.format_property(prop));
         }
 
-        if parts.is_empty() {
+        if parts.is_empty() && prop_parts.is_empty() {
             return "{}".to_string();
         }
 
-        format!("{{ {}; }}", parts.join("; "))
+        Self::render_callable_member_list(parts, prop_parts)
+    }
+
+    /// Join a callable's signature parts and property parts into `{ ...; }`
+    /// form, truncating a long property list exactly as tsc does: keep a head
+    /// prefix, insert `... N more ...`, then always show the final property.
+    /// Signatures (call/construct/index) are never elided.
+    ///
+    /// tsc truncates when its `approximateLength` counter passes
+    /// `defaultMaximumTruncationLength` (160), checked at the start of each
+    /// property. `HEAD_BUDGET` is a character proxy for that counter measured
+    /// over rendered member spellings; the crossover lands near 200 characters,
+    /// reproducing both `{ p1..p17; ... 6 more ...; p24 }` (24 short members)
+    /// and the expando-function witness `{ (): void; …10 props…; ... 12 more
+    /// ...; fromForInBodyNested: number; }`.
+    fn render_callable_member_list(sig_parts: Vec<String>, prop_parts: Vec<String>) -> String {
+        const HEAD_BUDGET: usize = 200;
+
+        let total_props = prop_parts.len();
+        // Signatures are always shown; seed the running length with them so the
+        // property budget accounts for the space they occupy, as tsc's
+        // `approximateLength` does.
+        let mut cum = 0usize;
+        for (i, part) in sig_parts.iter().enumerate() {
+            cum += if i == 0 { part.len() } else { part.len() + 2 };
+        }
+
+        let leading = sig_parts.len();
+        let mut head_props = 0usize;
+        for (i, part) in prop_parts.iter().enumerate() {
+            // tsc checks the running length at the START of each property, so a
+            // property that pushes the head just past the budget is still shown;
+            // truncation begins at the following property. Only truncate when at
+            // least two properties besides the preserved tail remain unshown
+            // (tsc's `i + 2 < properties.length`).
+            if cum > HEAD_BUDGET && i + 2 < total_props {
+                break;
+            }
+            cum += if leading == 0 && i == 0 {
+                part.len()
+            } else {
+                part.len() + 2
+            };
+            head_props += 1;
+        }
+
+        let mut out = sig_parts;
+        if head_props < total_props {
+            out.extend(prop_parts[..head_props].iter().cloned());
+            let omitted = total_props - head_props - 1;
+            out.push(format!("... {omitted} more ..."));
+            out.push(prop_parts[total_props - 1].clone());
+        } else {
+            out.extend(prop_parts);
+        }
+        format!("{{ {}; }}", out.join("; "))
     }
 
     fn format_call_signature(

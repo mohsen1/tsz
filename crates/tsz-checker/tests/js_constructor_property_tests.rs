@@ -814,7 +814,10 @@ new test.K().add;
 }
 
 #[test]
-fn test_ts_expando_reads_remain_any_typed() {
+fn test_ts_expando_reads_type_from_assignment() {
+    // tsc 7.0.2 oracle: a TS-file expando property types from its assignment
+    // RHS (widened), so `fn.answer = 1` makes `fn.answer: number` and the
+    // string annotation errors with TS2322 — reads do NOT stay `any`.
     let source = r#"
 function fn() {}
 fn.answer = 1;
@@ -830,8 +833,8 @@ let text: string = fn.answer;
 
     assert_eq!(
         ts2322.len(),
-        0,
-        "Expected TypeScript expando reads to stay any-typed, got: {diagnostics:?}"
+        1,
+        "Expected the expando read to type as number (TS2322 vs string), got: {diagnostics:?}"
     );
 }
 

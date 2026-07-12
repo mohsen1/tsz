@@ -942,6 +942,19 @@ impl<'a> CheckerState<'a> {
             return base_type;
         }
 
+        // tsc lists expando members in source (assignment) order. Recover a
+        // deterministic order from each property's first same-file assignment
+        // position; cross-file properties with no recorded local position sort
+        // last, by name, so the ordering stays stable regardless of set hashing.
+        let positions = self.expando_property_source_positions(root_name);
+        let mut ordered_props: Vec<String> = expando_props.into_iter().collect();
+        ordered_props.sort_by(|a, b| match (positions.get(a), positions.get(b)) {
+            (Some(pa), Some(pb)) => pa.cmp(pb).then_with(|| a.cmp(b)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.cmp(b),
+        });
+
         let Some((callable_shape, mut property_count)) =
             query::callable_shape_for_expando_base(self.ctx.types, base_type, sym_id)
         else {
@@ -958,7 +971,7 @@ impl<'a> CheckerState<'a> {
         let mut new_props = Vec::new();
         let mut seen: FxHashSet<tsz_common::interner::Atom> = FxHashSet::default();
 
-        for prop_name in expando_props {
+        for prop_name in ordered_props {
             let prop_atom = self.ctx.types.intern_string(&prop_name);
             if existing.contains(&prop_atom) || !seen.insert(prop_atom) {
                 continue;
