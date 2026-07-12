@@ -35,8 +35,11 @@ TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.
 TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
-TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-13526}"
-TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
+# Calibrated to the TypeScript 7 corpus (submodule SHA 4d4f005c): 11563 JS- and
+# 1390 DTS-eligible baselines. The prior 13526/1486 values were TypeScript 6-era
+# corpus totals and no longer describe the pinned corpus.
+TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-11562}"
+TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1367}"
 
 cap_positive_baseline() {
   local baseline="$1"
