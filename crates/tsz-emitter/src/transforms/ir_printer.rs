@@ -684,7 +684,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                if self.generator_wrapper_hug_allowed(*body_source_range)
+                    && self.try_emit_plain_generator_wrapper(parameters, body)
+                {
                     return;
                 }
                 let has_defaults = parameters.iter().any(|p| p.default_value.is_some());
@@ -1089,7 +1091,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                if self.try_emit_plain_generator_wrapper(parameters, body) {
+                if self.generator_wrapper_hug_allowed(*body_source_range)
+                    && self.try_emit_plain_generator_wrapper(parameters, body)
+                {
                     if !self.remove_comments
                         && !self.suppress_function_trailing_extraction
                         && let Some(comment) = self.extract_trailing_comment_from_function(node)

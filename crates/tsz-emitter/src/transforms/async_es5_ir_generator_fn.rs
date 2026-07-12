@@ -114,12 +114,16 @@ impl AsyncES5Transformer<'_> {
         }
         body.push(generator_body);
         self.generator_mode = false;
+        // Record the ORIGINAL body's source span: tsc hugs the rewritten
+        // `{ return __generator(...) }` wrapper only when the source body was
+        // single-line, and reproduces a multi-line layout otherwise.
+        let body_source_range = self.arena.get(body_idx).map(|n| (n.pos, n.end));
         if let Some(func_name) = name {
             IRNode::FunctionDecl {
                 name: func_name.into(),
                 parameters: ir_params,
                 body,
-                body_source_range: None,
+                body_source_range,
                 leading_comment: None,
             }
         } else {
@@ -128,7 +132,7 @@ impl AsyncES5Transformer<'_> {
                 parameters: ir_params,
                 body,
                 is_expression_body: false,
-                body_source_range: None,
+                body_source_range,
             }
         }
     }
