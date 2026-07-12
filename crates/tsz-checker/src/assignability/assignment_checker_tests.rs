@@ -836,12 +836,12 @@ let foo: Record<E, any> = {};
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741 for missing enum mapped key");
     assert!(
-        diag.message_text.contains("Property '[E.A]' is missing"),
-        "TS2741 should render the enum member key, got: {diag:?}"
+        diag.message_text.contains("Property '0' is missing"),
+        "TS2741 renders the bare literal key (tsc 7.0.2), got: {diag:?}"
     );
     assert!(
-        !diag.message_text.contains("Property '0' is missing"),
-        "TS2741 should not render the erased numeric key, got: {diag:?}"
+        !diag.message_text.contains("Property '[E.A]' is missing"),
+        "TS2741 must not qualify the key as an enum member reference, got: {diag:?}"
     );
 }
 

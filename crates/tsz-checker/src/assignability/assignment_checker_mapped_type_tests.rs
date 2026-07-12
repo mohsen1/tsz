@@ -176,8 +176,8 @@ const bad: M = { a: 1 };
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741");
     assert!(
-        diag.message_text.contains("Property '[E.B]' is missing"),
-        "single missing key from a string-enum mapped type renders as `[E.B]`, got: {diag:?}"
+        diag.message_text.contains("Property 'b' is missing"),
+        "single missing key from a string-enum mapped type renders as the bare literal `b` (tsc 7.0.2), got: {diag:?}"
     );
 }
 
@@ -197,11 +197,11 @@ const bad: M = { 0: 1 };
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741");
     assert!(
-        diag.message_text.contains("Property '[E.B]' is missing"),
-        "numeric-enum mapped key renders as `[E.B]`, got: {diag:?}"
+        diag.message_text.contains("Property '1' is missing"),
+        "numeric-enum mapped key renders as the bare literal `1` (tsc 7.0.2), got: {diag:?}"
     );
     assert!(
-        !diag.message_text.contains("Property '1' is missing"),
+        !diag.message_text.contains("Property '[E.B]' is missing"),
         "must not render the erased numeric key, got: {diag:?}"
     );
 }
@@ -222,9 +222,8 @@ const bad: Palette = { red: 1 };
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741");
     assert!(
-        diag.message_text
-            .contains("Property '[Color.Green]' is missing"),
-        "renamed enum still renders the member reference, got: {diag:?}"
+        diag.message_text.contains("Property 'green' is missing"),
+        "renamed enum renders the bare literal key (tsc 7.0.2), got: {diag:?}"
     );
 }
 
@@ -445,8 +444,8 @@ const bad: N = { a: 1 };
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741");
     assert!(
-        diag.message_text.contains("Property '[E.B]' is missing"),
-        "wrapper alias over an enum mapped type still renders the member reference, got: {diag:?}"
+        diag.message_text.contains("Property 'b' is missing"),
+        "wrapper alias over an enum mapped type renders the bare literal key (tsc 7.0.2), got: {diag:?}"
     );
 }
 
@@ -466,7 +465,7 @@ const bad: { [K in E]: number } = { a: 1 };
         .find(|diag| diag.code == 2741)
         .expect("expected TS2741");
     assert!(
-        diag.message_text.contains("Property '[E.B]' is missing"),
-        "inline anonymous enum mapped type renders the member reference, got: {diag:?}"
+        diag.message_text.contains("Property 'b' is missing"),
+        "inline anonymous enum mapped type renders the bare literal key (tsc 7.0.2), got: {diag:?}"
     );
 }
