@@ -114,12 +114,25 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         };
 
-        // Check if this is a const declaration by checking the parent's flags
-        let is_const = (parent_node.flags & node_flags::CONST as u16) != 0;
+        // TS1155's message parameter follows the declaration kind:
+        // `await using` (Const|Using), `using`, or `const`.
+        let kind_flags = u32::from(parent_node.flags);
+        let ts1155_kind = if kind_flags & node_flags::AWAIT_USING == node_flags::AWAIT_USING {
+            Some("await using")
+        } else if kind_flags & node_flags::USING != 0 {
+            Some("using")
+        } else if kind_flags & node_flags::CONST != 0 {
+            Some("const")
+        } else {
+            None
+        };
 
-        // TS1155: 'const' declarations must be initialized
+        // TS1155: '<kind>' declarations must be initialized
         // Skip when file has real syntax errors — the parse error is sufficient.
-        if is_const && decl_data.initializer.is_none() && !self.ctx.has_real_syntax_errors {
+        if let Some(kind_name) = ts1155_kind
+            && decl_data.initializer.is_none()
+            && !self.ctx.has_real_syntax_errors
+        {
             // Skip for destructuring patterns - they get TS1182 from the parser
             if let Some(name_node) = self.ctx.arena.get(decl_data.name) {
                 if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -147,7 +160,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     self.ctx.error(
                         decl_node.pos,
                         decl_node.end - decl_node.pos,
-                        "'const' declarations must be initialized.".to_string(),
+                        format!("'{kind_name}' declarations must be initialized."),
                         1155,
                     );
                 }

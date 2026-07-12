@@ -140,18 +140,11 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| Path::new(""))
                     .join(&forward_slash_path);
 
-                // Render the resolved path the way tsc does for this driver
-                // mode. Explicit-file checks supply `current_directory` and use
-                // cwd-relative display; project/config checks leave it unset
-                // and keep resolved paths. Absolute reference literals always
-                // stay absolute.
-                let current_directory = if reference_path_is_absolute(&forward_slash_path) {
-                    None
-                } else {
-                    self.ctx.current_directory.as_deref()
-                };
-                let display_path = display_reference_path(&resolved, current_directory);
-                let message = format_message("File '{0}' not found.", &[&display_path]);
+                // tsc 7.0.2 prints the directive text exactly as written in
+                // BOTH explicit-file and project modes; the resolved path is
+                // used only for the existence probe.
+                let _ = &resolved;
+                let message = format_message("File '{0}' not found.", &[reference_path.as_str()]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
         }

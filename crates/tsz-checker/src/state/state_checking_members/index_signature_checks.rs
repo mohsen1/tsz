@@ -834,8 +834,14 @@ impl<'a> CheckerState<'a> {
             // quote style for string-literal property names in TS2411 diagnostics.
             let diag_prop_name = if let Some(name_node) = self.ctx.arena.get(name_idx) {
                 if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    // The node range runs one token past the `]` (a trailing
+                    // `(`, `:`, `=` leaks in); truncate at the closing bracket
+                    // so the printed name is exactly the bracketed text.
                     self.node_text(name_idx)
-                        .map(|text| text.trim_end_matches(':').to_string())
+                        .map(|text| match text.rfind(']') {
+                            Some(end) => text[..=end].to_string(),
+                            None => text.trim_end_matches(':').to_string(),
+                        })
                         .unwrap_or_else(|| prop_name.clone())
                 } else if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
                     self.node_text(name_idx)

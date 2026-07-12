@@ -145,9 +145,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if function has 'declare' modifier but also has a body
-        // Point error at the body (opening brace) to match tsc
-        if func.body.is_some() && self.has_declare_modifier(&func.modifiers) {
+        // Fires for an own `declare` modifier AND for ambient-by-containment
+        // (a body inside `declare namespace`/`declare module`); anchored at
+        // the body's opening brace like tsc.
+        if func.body.is_some()
+            && (self.has_declare_modifier(&func.modifiers)
+                || self.ctx.is_ambient_declaration(func_idx))
+        {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 func.body,

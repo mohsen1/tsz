@@ -1331,8 +1331,6 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
-        let mut reported_cycle_symbols = rustc_hash::FxHashSet::default();
-
         let is_js_file = self.ctx.is_js_file();
 
         // Collect ALIAS symbols only from scope tables, not from the full symbol arena.
@@ -1358,10 +1356,6 @@ impl<'a> CheckerState<'a> {
                 Some(s) => s,
                 None => continue,
             };
-
-            if reported_cycle_symbols.contains(&sym_id) {
-                continue;
-            }
 
             // In JS files, `import x = require(...)` is TS-only syntax (TS8002).
             // tsc skips semantic analysis for such statements — skip circular check.
@@ -1636,28 +1630,12 @@ impl<'a> CheckerState<'a> {
             }
 
             if cycle_detected {
-                // For cross-file cycles, use max SymbolId heuristic to deduplicate:
-                // only report the cycle from the file containing the highest SymbolId.
-                // For same-file cycles, report on the first symbol encountered (no dedup needed).
-                let this_file_idx = self.ctx.current_file_idx;
-                let is_cross_file = visited.iter().any(|key| key.0 != this_file_idx);
-                if is_cross_file {
-                    let max_sym_in_cycle = visited_sym_ids
-                        .iter()
-                        .max_by_key(|s| s.0)
-                        .copied()
-                        .unwrap_or(sym_id);
-                    if sym_id != max_sym_in_cycle {
-                        continue;
-                    }
-                }
-
-                for key in &visited {
-                    if key.0 == this_file_idx {
-                        reported_cycle_symbols.insert(tsz_binder::SymbolId(key.1 as u32));
-                    }
-                }
-
+                // tsc 7.0.2 reports TS2303 once at EVERY alias declaration
+                // participating in the cycle (each file flags its own
+                // specifier; both specifiers within one file too), so there
+                // is no cross-file dedup and no blanket same-file
+                // suppression — each per-symbol iteration reports its own
+                // alias at its own anchor.
                 let Some(decl_idx) = sym.primary_declaration() else {
                     continue;
                 };
