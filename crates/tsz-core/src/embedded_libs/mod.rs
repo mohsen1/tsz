@@ -503,7 +503,6 @@ pub fn get_embedded_lib_references(filename: &str) -> &'static [&'static str] {
             "dom.iterable",
             "dom.asynciterable",
         ],
-        "es2025.iterator.d.ts" => &["es2015.iterable"],
         "es5.d.ts" => &["decorators", "decorators.legacy"],
         "es5.full.d.ts" => &["es5", "dom", "webworker.importscripts", "scripthost"],
         "es6.d.ts" => &[
