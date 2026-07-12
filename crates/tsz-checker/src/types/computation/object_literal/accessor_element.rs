@@ -150,7 +150,10 @@ impl<'a> CheckerState<'a> {
             // lightweight synthetic receiver so property access checks (TS2339)
             // run during accessor body checking.
             let mut pushed_synthetic_this = false;
-            if marker_this_type.is_none() {
+            // Gated like tsc's getContextualThisParameterType: object-literal
+            // `this` typing needs noImplicitThis (or a JS file); otherwise
+            // `this` in an accessor body is plain `any`.
+            if marker_this_type.is_none() && (self.ctx.no_implicit_this() || self.is_js_file()) {
                 let mut this_props: Vec<PropertyInfo> = properties.values().cloned().collect();
                 // Splice in members declared after this accessor so that
                 // `this.<laterMember>` resolves like the complete object literal.
