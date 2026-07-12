@@ -112,7 +112,7 @@ function container() {
 }
 
 #[test]
-fn test_js_esm_prototype_assignments_keep_named_exports() {
+fn test_js_esm_prototype_function_keeps_named_exports_but_is_not_constructable_under_ts7() {
     let diagnostics = check_named_files_entry(
         &[
             (
@@ -160,13 +160,18 @@ new FromJs().method();
         },
     );
 
-    let unexpected: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2305 | 2339 | 2507))
-        .collect();
+    // The named exports still resolve across `.mjs`/`.js` ESM boundaries (no
+    // TS2305). But TypeScript 7 dropped JS constructor-function inference: an
+    // imported plain function is `() => void`, not a constructor, so
+    // `class FromMjs extends MjsBase` reports TS2507 and the failed base leaves
+    // `new FromMjs().method()` with a missing `method` (TS2339), matching tsc 7.
     assert!(
-        unexpected.is_empty(),
-        "Expected JS ESM prototype assignments to preserve named exports and instance methods, got: {diagnostics:#?}"
+        diagnostics.iter().all(|(code, _)| *code != 2305),
+        "Expected JS ESM named exports to resolve (no TS2305), got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2507),
+        "Expected TS2507 for a class extending an imported plain JS function under TypeScript 7, got: {diagnostics:#?}"
     );
 }
 

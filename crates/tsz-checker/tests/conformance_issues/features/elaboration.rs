@@ -1107,9 +1107,13 @@ exports.blah = exports.someProp;
         "Expected TS2339 for `exports.someProp`: {diagnostics:?}"
     );
     let msg = ts2339.unwrap();
+    // TypeScript 7's CommonJS classification treats `module.exports = function () {}`
+    // as an export assignment (TS2309); the later `exports.blah =` writes no longer
+    // merge into the callable, so the TS2339 receiver renders as the plain
+    // `() => void` function type rather than the merged `{ (): void; blah: any; }`.
     assert!(
-        msg.contains("{ (): void; blah: any; }"),
-        "TS2339 receiver should render as the merged callable shape, not the namespace alias.\nActual: {msg}"
+        msg.contains("() => void"),
+        "TS2339 receiver should render as the callable function type under TypeScript 7.\nActual: {msg}"
     );
     assert!(
         !msg.contains("typeof import"),
@@ -1142,9 +1146,12 @@ exports.foo = exports.missing;
         "Expected TS2339 for `exports.missing`: {diagnostics:?}"
     );
     let msg = ts2339.unwrap();
+    // TypeScript 7 classifies `module.exports = function () {}` as an export
+    // assignment, so the later `exports.foo =` write does not merge into the
+    // callable: the TS2339 receiver renders as the plain `() => void` type.
     assert!(
-        msg.contains("(): void") && msg.contains("foo: any"),
-        "TS2339 receiver should render the merged callable shape with the named export.\nActual: {msg}"
+        msg.contains("() => void"),
+        "TS2339 receiver should render as the callable function type under TypeScript 7.\nActual: {msg}"
     );
 }
 
