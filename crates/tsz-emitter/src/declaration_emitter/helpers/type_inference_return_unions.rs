@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.collect_numeric_literal_return_type_text_from_block(statements, &mut literals) {
             return None;
         }
-        (literals.len() > 1).then(|| literals.join(" | "))
+        (literals.len() > 1).then(|| Self::order_ts7_union_member_texts(&literals).join(" | "))
     }
 
     fn collect_numeric_literal_return_type_text_from_block(
@@ -291,7 +291,7 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.collect_string_literal_return_type_text_from_block(statements, &mut literals) {
             return None;
         }
-        (literals.len() > 1).then(|| literals.join(" | "))
+        (literals.len() > 1).then(|| Self::order_ts7_union_member_texts(&literals).join(" | "))
     }
 
     fn collect_string_literal_return_type_text_from_block(

@@ -614,7 +614,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             keys.push(format!("\"{name}\""));
         }
-        (!keys.is_empty()).then(|| keys.join(" | "))
+        (!keys.is_empty()).then(|| Self::order_ts7_union_member_texts(&keys).join(" | "))
     }
 
     fn array_literal_const_union_type_text(&self, array_idx: NodeIndex) -> Option<String> {
@@ -628,7 +628,7 @@ impl<'a> DeclarationEmitter<'a> {
         for &element_idx in &array.elements.nodes {
             elements.push(self.const_literal_initializer_text(element_idx)?);
         }
-        (!elements.is_empty()).then(|| elements.join(" | "))
+        (!elements.is_empty()).then(|| Self::order_ts7_union_member_texts(&elements).join(" | "))
     }
 
     fn pick_call_function_expression_has_type_parameters(&self, expr_idx: NodeIndex) -> bool {

@@ -623,9 +623,14 @@ impl<'a> DeclarationEmitter<'a> {
         if formatted.len() == 1 {
             return Self::strip_single_parenthesized_function_type_text(&formatted.remove(0).0);
         }
-        formatted
+        // TypeScript 7 orders union members by rank; the parts were collected in
+        // source order, so reorder them (keyed on the unparenthesized member
+        // text) before joining the rendered forms.
+        let raws: Vec<&str> = formatted.iter().map(|(raw, _)| raw.as_str()).collect();
+        let order = Self::ts7_union_member_order(&raws);
+        order
             .into_iter()
-            .map(|(_, rendered)| rendered)
+            .map(|idx| formatted[idx].1.clone())
             .collect::<Vec<_>>()
             .join(" | ")
     }
