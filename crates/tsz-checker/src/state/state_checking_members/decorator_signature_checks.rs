@@ -673,6 +673,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_legacy_property_decorator_call_signature(
         &mut self,
         decorator_node: NodeIndex,
+        decorator_expr: NodeIndex,
         decorator_type: TypeId,
         is_auto_accessor: bool,
         actual_this_type: Option<TypeId>,
@@ -690,6 +691,12 @@ impl<'a> CheckerState<'a> {
         let Some(resolved) = self.prepare_decorator_callee(resolved) else {
             return;
         };
+
+        // A zero-parameter decorator function is a factory used uncalled:
+        // tsc reports only the TS1329 call-it-first hint, not TS1240/TS1271.
+        if self.decorator_has_zero_arg_factory_shape(decorator_expr, resolved, decorator_node) {
+            return;
+        }
 
         let arg_types: &[TypeId] = if is_auto_accessor {
             &[TypeId::ANY, TypeId::STRING, TypeId::ANY]

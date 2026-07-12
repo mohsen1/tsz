@@ -1679,6 +1679,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.check_legacy_property_decorator_call_signature(
                         modifier_idx,
+                        decorator.expression,
                         decorator_type,
                         self.has_accessor_modifier_ref(Some(modifiers)),
                         actual_this_type,

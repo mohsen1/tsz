@@ -269,7 +269,13 @@ impl<'a> TypeFormatter<'a> {
             TypeId::STRING => Some(32),
             TypeId::NUMBER => Some(64),
             TypeId::BIGINT => Some(128),
-            TypeId::BOOLEAN => Some(256),
+            // In tsc 7's diagnostic display, `boolean` in a union sorts at its
+            // literal pair's slot — internally it is the `true | false` union
+            // whose members carry `BooleanLiteral` flags — so string/number/
+            // bigint literals precede it (oracle: '"defaulPath" | boolean',
+            // '"a" | 1n | boolean'). Bare `true`/`false` intrinsics share the
+            // same bucket as `TypeData::Literal(Boolean)`.
+            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => Some(1 << 13),
             TypeId::SYMBOL => Some(512),
             // The non-primitive `object` sorts after primitives/literals/enums
             // but BEFORE type parameters and the undefined/null tail
