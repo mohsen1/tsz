@@ -778,6 +778,42 @@ impl BinderState {
             || is_js_class_root)
             && !is_prototype_element_access
         {
+            // Nearest function-like/module container, `NONE` for the source
+            // file itself (blocks and loop/if heads are transparent).
+            fn nearest_expando_container(arena: &NodeArena, start: NodeIndex) -> NodeIndex {
+                let mut current = start;
+                for _ in 0..256 {
+                    let Some(ext) = arena.get_extended(current) else {
+                        return NodeIndex::NONE;
+                    };
+                    let parent = ext.parent;
+                    if parent.is_none() {
+                        return NodeIndex::NONE;
+                    }
+                    let Some(node) = arena.get(parent) else {
+                        return NodeIndex::NONE;
+                    };
+                    if node.is_function_like() || node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                        return parent;
+                    }
+                    current = parent;
+                }
+                NodeIndex::NONE
+            }
+            // In TS files, `fn.prop = e` declares an expando property only
+            // when the assignment's enclosing container equals the container
+            // of `fn`'s declaration — an assignment inside another function's
+            // body (or parameter default), or targeting a namespace-declared
+            // function from file scope, is TS2339 in tsc. Block/if/loop
+            // nesting shares the file container and stays declared. JS files
+            // keep the permissive expando model.
+            if !is_js_like_source
+                && symbol.value_declaration.is_some()
+                && nearest_expando_container(arena, lhs)
+                    != nearest_expando_container(arena, symbol.value_declaration)
+            {
+                return;
+            }
             Arc::make_mut(&mut self.expando_properties)
                 .entry(obj_key.clone())
                 .or_default()

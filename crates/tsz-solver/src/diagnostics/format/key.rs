@@ -161,7 +161,21 @@ impl<'a> TypeFormatter<'a> {
                     {
                         return format!("typeof {name}").into();
                     }
-                    return name.into();
+                    // A function symbol whose callable carries appended value
+                    // properties (expando assignments) renders structurally in
+                    // tsc (`{ (): void; declared: number; }`), never as the
+                    // bare name; `prototype` is not an appended property.
+                    let expando_augmented_function = self
+                        .symbol_arena
+                        .and_then(|arena| arena.get(sym_id))
+                        .is_some_and(|sym| sym.has_flags(tsz_binder::symbol_flags::FUNCTION))
+                        && shape
+                            .properties
+                            .iter()
+                            .any(|prop| &*self.atom(prop.name) != "prototype");
+                    if !expando_augmented_function {
+                        return name.into();
+                    }
                 }
                 self.format_callable(shape.as_ref()).into()
             }

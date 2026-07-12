@@ -750,6 +750,48 @@ impl<'a> CheckerState<'a> {
             let symbol_declarations = symbol.declarations.clone();
             let symbol_escaped_name = symbol.escaped_name.clone();
 
+            // In TS files, `fn.prop = e` is an expando DECLARATION only when
+            // the assignment shares its enclosing container (nearest
+            // function-like/module, `NONE` = source file; blocks and loop/if
+            // heads are transparent) with `fn`'s declaration — mirrors the
+            // binder's record-time gate. A nested-function assignment falls
+            // through to the normal property check and reports TS2339. Scoped
+            // to locally-bound symbols so a cross-arena declaration index is
+            // never compared against this file's nodes.
+            fn nearest_expando_container(
+                arena: &tsz_parser::parser::node::NodeArena,
+                start: NodeIndex,
+            ) -> NodeIndex {
+                let mut current = start;
+                for _ in 0..256 {
+                    let Some(ext) = arena.get_extended(current) else {
+                        return NodeIndex::NONE;
+                    };
+                    let parent = ext.parent;
+                    if parent.is_none() {
+                        return NodeIndex::NONE;
+                    }
+                    let Some(node) = arena.get(parent) else {
+                        return NodeIndex::NONE;
+                    };
+                    if node.is_function_like()
+                        || node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                    {
+                        return parent;
+                    }
+                    current = parent;
+                }
+                NodeIndex::NONE
+            }
+            if !self.is_js_file()
+                && symbol_value_declaration.is_some()
+                && self.ctx.binder.get_symbol(sym_id).is_some()
+                && nearest_expando_container(self.ctx.arena, property_access_idx)
+                    != nearest_expando_container(self.ctx.arena, symbol_value_declaration)
+            {
+                return false;
+            }
+
             if self.is_js_file()
                 && self.ctx.compiler_options.check_js
                 && prototype_root_expr.is_none()
